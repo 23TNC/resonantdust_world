@@ -82,9 +82,11 @@ export class TextureResolver {
    *  the master is actually art, plus the pivot on it. Applied at ingest by {@link packCoPack},
    *  identically to all four maps, which is what registers them with each other.
    *
-   *  Keyed by the RESOLVED stem, so the direction rides the key (`…/flora/e`). West needs no entry:
-   *  `FACING_BY_ROTATION` maps a west facing to the EAST stem plus `flipX`, so it inherits east's
-   *  rect by construction — which is the whole of F4, for free. */
+   *  Keyed **`stem#cell`** — the rotation index rides the key. That one key covers all three
+   *  consumers of the 0..15 space (F9/F10): a pawn facing, a linked autotile cell, and a cold
+   *  thing's VARIANT. Keying by stem alone would give every conifer variant 0's crop and clip eight
+   *  of nine. West needs no entry: `FACING_BY_ROTATION` maps a west facing to the EAST stem plus
+   *  `flipX`, so it inherits east's rect by construction — the whole of F4, for free. */
   private readonly subframe = new Map<string, [number, number, number, number, number, number]>();
   /** texture-generalization: linked stem (the `<stem>/l` name) → its DSL `internal_padding`
    *  (UNITS, of a 16-unit cell) — the BETWEEN-CELL inset inside the atlas.
@@ -145,15 +147,24 @@ export class TextureResolver {
    *
    *  A CHANGE evicts the stem's packed frames so they repack under the new rect — the same eviction
    *  discipline as {@link setSpriteScale} (bytes stay cached; only the pack redoes). */
-  setSubframe(stem: string, x: number, y: number, w: number, h: number, ax = 0.5, ay = 0.5): void {
-    const cur = this.subframe.get(stem);
+  setSubframe(stem: string, cell: number, x: number, y: number, w: number, h: number, ax = 0.5, ay = 0.5): void {
+    const key = `${stem}#${cell}`;
+    const cur = this.subframe.get(key);
     if (cur && cur[0] === x && cur[1] === y && cur[2] === w && cur[3] === h && cur[4] === ax && cur[5] === ay) return;
     // The whole frame with a centre pivot is the DEFAULT — registering it would make every
     // unauthored stem take the crop path for a no-op, and evict on first registration.
     if (!cur && x === 0 && y === 0 && w === 1 && h === 1 && ax === 0.5 && ay === 0.5) return;
-    this.subframe.set(stem, [x, y, w, h, ax, ay]);
-    this.packed.delete(stem); // co-packed by stem → drop the whole stem's frames; bytes stay cached
+    this.subframe.set(key, [x, y, w, h, ax, ay]);
+    // `cellFrames` is keyed by (packed frame, cell) and a registered rect changes that cell's UVs,
+    // so the stem's frames must go: dropping `packed` orphans the old TexFrame objects and the
+    // WeakMap entries go with them. Bytes stay cached — only the pack redoes.
+    this.packed.delete(stem);
     this.packedHash.delete(stem);
+  }
+
+  /** The authored rect for one addressable frame, or null. */
+  private subframeFor(stem: string, cell: number): [number, number, number, number, number, number] | undefined {
+    return this.subframe.get(`${stem}#${cell}`);
   }
 
   /** Repoint the texture root at login + fetch/poll the manifest. */
@@ -267,7 +278,10 @@ export class TextureResolver {
             (entry.pad?.[0] ?? 0) + ip / (16 * entry.grid[0]),
             (entry.pad?.[1] ?? 0) + ip / (16 * entry.grid[1]),
           ];
-          return { frame: this.cellFrame(quad, cell, entry.grid, pad), geo: false };
+          const sf = this.subframeFor(stem, cell);
+          const sub: [number, number, number, number] | undefined =
+            sf ? [sf[0], sf[1], sf[2], sf[3]] : undefined;
+          return { frame: this.cellFrame(quad, cell, entry.grid, pad, sub), geo: false };
         }
         return { frame: quad, geo: false };
       }
@@ -294,20 +308,33 @@ export class TextureResolver {
 
   /** A cached UV sub-frame of a packed linked-atlas frame for `cell` (row-major, 0-based), trimmed by
    *  the manifest inset `pad`. Narrows the packed frame's page rect to the cell's inset rect. */
-  private cellFrame(base: TexFrame, cell: number, grid: [number, number], pad?: [number, number]): TexFrame {
+  private cellFrame(base: TexFrame, cell: number, grid: [number, number], pad?: [number, number],
+                    sub?: [number, number, number, number]): TexFrame {
     let byCell = this.cellFrames.get(base);
     if (!byCell) this.cellFrames.set(base, (byCell = new Map()));
     const hit = byCell.get(cell);
     if (hit) return hit;
 
     const [cols, rows] = grid;
-    const [pu, pv] = pad ?? [0, 0];
     const cx = cell % cols;
     const cy = Math.floor(cell / cols) % rows;
-    const u0 = cx / cols + pu;
-    const v0 = cy / rows + pv;
-    const uw = 1 / cols - 2 * pu;
-    const vh = 1 / rows - 2 * pv;
+    // A GRID stem's crop happens HERE, not at ingest: the atlas packs the whole grid as one frame
+    // and a cell is a sub-rect of it, so there is no per-cell ingest to crop. This is the same site
+    // `internal_padding` uses, which is why the subframe subsumes it (F6) — a uniform inset is just
+    // the symmetric case of this rect. `sub` is in CELL fractions and wins where authored.
+    let u0: number, v0: number, uw: number, vh: number;
+    if (sub) {
+      u0 = (cx + sub[0]) / cols;
+      v0 = (cy + sub[1]) / rows;
+      uw = sub[2] / cols;
+      vh = sub[3] / rows;
+    } else {
+      const [pu, pv] = pad ?? [0, 0];
+      u0 = cx / cols + pu;
+      v0 = cy / rows + pv;
+      uw = 1 / cols - 2 * pu;
+      vh = 1 / rows - 2 * pv;
+    }
     // Project the cell's [0,1] UV rect onto the packed frame's PIXEL rect on its page.
     const t = new TexFrame(base.source, base.x + u0 * base.w, base.y + v0 * base.h, uw * base.w, vh * base.h);
     byCell.set(cell, t);
@@ -414,7 +441,7 @@ export class TextureResolver {
     const srcs = bmps.map((b) => (b ? new Texture(gl, { width: b.width, height: b.height, data: b, premultiply: false }) : null));
     try {
       let draws: Array<AtlasDraw | null> | undefined;
-      const sub = this.subframe.get(stem);
+      const sub = this.manifest.entry(stem)?.grid ? undefined : this.subframeFor(stem, 0);
       if (sub) {
         // ── SUBFRAME INGEST (subframe-ingest P2) ───────────────────────────────────────────────
         // The crop the whole stream is about. ONE rect out of the master, blitted into the

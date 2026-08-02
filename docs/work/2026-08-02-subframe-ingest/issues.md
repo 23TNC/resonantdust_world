@@ -105,3 +105,31 @@ non-indexed `subframe.x` default coexists with `subframe.r9.x`.
 overrides under one name has this trap, and it fails silently — which is the worst way for a content
 authoring error to fail. If bare-numeric indices are ever wanted, they need their own sub-node
 (`subframe.rot.9.x`), not a sibling of the scalar keys.
+
+## I9 — The crop magnifies: the DRAWN BOX must derive from the subframe too {#i9}
+
+Found the moment the crop went live (P2). The subframe changes what the frame *contains* — the art
+now fills it instead of sitting letterboxed inside it — but the drawn box is still sized from `size`
+/ `span` / `sprite_scale` as though the frame still held the margin. Net effect: every cropped sprite
+draws at roughly `1 / subframe.h` its correct size. The conifers came back about 2× too tall.
+
+**This is not a bug in the crop; it is the other half of it.** The old model had one number
+(`size`) meaning "how much world does this frame cover", and the frame was mostly margin, so `size`
+was implicitly absorbing the letterbox. Removing the margin without telling the draw path leaves
+`size` over-stating the art by exactly the margin it used to include.
+
+Two candidate fixes, to settle before writing either:
+
+1. **Scale the drawn box by the subframe** — `drawn.h = size · sub.h`, `drawn.w = size · sub.w`.
+   Keeps the corpus's `size` meaning "the frame's world span" and derives the art's span from it.
+   Nothing in the corpus changes.
+2. **Re-author `size` per kind** to mean the ART's span directly, now that the frame is the art.
+   Cleaner conceptually, but it re-authors every kind and silently breaks any kind not re-authored.
+
+(1) is almost certainly right — it is the same "derive, do not re-author" reasoning that made the
+subframe a crop rather than a master change ([I4](#i4)), and it keeps unauthored kinds identical
+(their subframe is the whole frame, so the factor is 1).
+
+**Also unresolved by (1):** the ANCHOR. Once the box is right, the art's bottom sits at the box's
+bottom only if `sprite_anchor.y = 1` is honoured in the *placement*, which is [F3](forks.md#f3)/P3's
+question — and the shadow-gap symptom the user reported is that anchor, not this scale.

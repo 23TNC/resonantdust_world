@@ -94,6 +94,11 @@ const DEFAULT_FACING = "e";
  *  rather than a facing. Mirrors `bin/art`'s `GRID_CATS`. */
 const LINKED_CATEGORY = "linked";
 
+/** Rotation slots per definition — the ONE index space for sprite facings, linked autotile cells
+ *  and a cold thing's variant alike (subframe-ingest F9/F10). Mirrors `ROTATIONS_PER_DEF` in
+ *  `records.ts` and `ROTATIONS_PER_DEF` in `shared/dsl`; `thingSubframe()` is strided by it. */
+const ROTATION_SLOTS = 16;
+
 /** A COLD thing's texture name + flip for its sprite variant. The def's base stem gets a
  *  trailing DIRECTION segment the resolver treats as its own stem: the single-facing
  *  DEFAULT (`world/conifer` → `world/conifer/e`), or `l` for a linked-category kind
@@ -281,6 +286,26 @@ export class WorldBridge {
       if (!stem) continue;
       const l = readLayout(this.thingLayout, kind);
       this.resolver.setSpriteScale(stem, l.scw, l.sch);
+    }
+    // subframe-ingest P2: register each thing kind's authored SUBFRAMES — which fraction of the
+    // master is actually art, per rotation index. The resolver crops to exactly that rect, the same
+    // rect for all four maps, which is what registers albedo/normal/surface/layers with each other.
+    //
+    // The stem registered here is the DRAW stem (`<base>/<facing>`), matching what `thingTexture`
+    // resolves, and the index is the CELL it passes — a cold thing's variant (F10). Registering the
+    // bare base stem instead would key nothing the draw path ever looks up.
+    const thingSub = this.content.thingSubframe();
+    for (let kind = 1; kind <= this.thingStems.length; kind++) {
+      const base = textureNameFor(this.thingStems[kind - 1]);
+      if (!base) continue;
+      const drawStem = base.startsWith(`${LINKED_CATEGORY}/`) ? `${base}/l` : `${base}/${DEFAULT_FACING}`;
+      const b = (kind - 1) * ROTATION_SLOTS * 6;
+      if (b + ROTATION_SLOTS * 6 > thingSub.length) break;
+      for (let r = 0; r < ROTATION_SLOTS; r++) {
+        const o = b + r * 6;
+        this.resolver.setSubframe(drawStem, r, thingSub[o], thingSub[o + 1], thingSub[o + 2],
+                                  thingSub[o + 3], thingSub[o + 4], thingSub[o + 5]);
+      }
     }
     this.viewport.setMaterialRegistry(
       MaterialRegistry.fromWasm(
