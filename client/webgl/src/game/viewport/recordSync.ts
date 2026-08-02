@@ -61,7 +61,14 @@ export class RecordSync {
   private defFields(resolver: TextureResolver, stem: string, cell: number, boxSpanHint: number):
       { frameX: number; frameY: number; frameSpan: number; anchorX: number; anchorY: number;
         seed: number; castType: number; receiveType: number } | null {
-    const frame = resolver.resolve(stem, "albedo", cell)?.frame;
+    // one-resolution F4: the def's page registry must track the DATA twin — the silhouette
+    // consumers (gather/refine/receiver `uSurfaceAtlas`) sample the SURFACE quadrant, which is
+    // empty on the graphics page. Registering the albedo frame's source after the split bound
+    // the graphics twin and every silhouetteHit missed: the world lost its shadows. Coordinates
+    // are identical on both twins; only the SOURCE differs. Albedo is the fallback for a stem
+    // with no surface map (its silhouette can never test either way).
+    const frame = resolver.resolve(stem, "surface", cell)?.frame
+               ?? resolver.resolve(stem, "albedo", cell)?.frame;
     if (!frame) return null;
     let page = this.pages.indexOf(frame.source);
     if (page < 0) { this.pages.push(frame.source); page = this.pages.length - 1; }
