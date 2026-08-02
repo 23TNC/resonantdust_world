@@ -23,7 +23,7 @@ _The plan for the life of the stream. Items never move; `[x]` IS the move. Conte
 - [ ] Add a first-paint probe: wall time from navigation to the first non-geo pixel, and per stem to its first real art. Acceptance: one call reports both, so "loads slowly" becomes two numbers instead of an impression.
 - [ ] Record the cold-load baseline with the cache cleared. Acceptance: per-stem fetch + decode timings written down, so the await removal is measured against a real starting point rather than a remembered one.
 - [ ] Measure frame cost in a POPULATED view under wheel zoom, not `__zoom()`. Acceptance: a number from the path the user actually drives, since the existing 3.2 ms figure came from neither.
-- [ ] Record resident bytes: composites, atlas pages, and the IndexedDB cache. Acceptance: a total, because ~306 MiB of composites is the ceiling that decides target hardware and nothing tracks it today.
+- [x] Record resident bytes: composites, atlas pages, and the IndexedDB cache. Acceptance: a total, because ~306 MiB of composites is the ceiling that decides target hardware and nothing tracks it today.
 
 ## P1 — Remove the await; flat geometry is the resting state ([F1](forks.md#f1))
 

@@ -58,3 +58,23 @@ measures `prev: 0 / master: 3`, because with both sizes now file reads the race 
 localhost has effectively infinite bandwidth. The tier optimises the one quantity the loopback
 interface removes. Every mechanism is verified in isolation; the benefit needs a throttled link to
 show up, and tuning it against localhost would be tuning a placebo.
+
+## 2026-08-02 — P0: resident bytes ([I4](issues.md#i4))
+
+Measured live:
+
+| | |
+|---|---|
+| one composite (4352 × 2304 × 4 B) | **38.25 MiB** |
+| composites × 8 (albedo/normal/surface/zdepth × cold/warm) | **306 MiB** |
+| atlas pages | 1 × 2048², twin (graphics + data) → **32 MiB** |
+| IndexedDB in use | 0.2 MiB |
+| **total GPU-resident** | **~338 MiB** |
+
+The composites are **90%** of it, and they are fixed at every zoom level — the partition ladder
+changes tiles-per-slot, never the allocation ([`squareMath`](../../../client/webgl/src/game/viewport/squareMath.ts)).
+So the resident-bytes lever is `SQUARE`, not anything in the texture path: the atlas is a rounding
+error beside the G-buffer.
+
+That reframes P4's budget item. Cutting texture memory cannot move this number; only re-costing the
+8 composites can.

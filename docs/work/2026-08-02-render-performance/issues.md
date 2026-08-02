@@ -172,3 +172,31 @@ win THERE, the tier is genuinely wrong and should be removed rather than kept on
 
 **Do not tune this on localhost.** Making the numbers look better on a fixture that cannot express
 the effect is how a placebo ships.
+
+## I10 — The `mrtScratch` realloc has a data-corruption hazard; do NOT fix it naively {#i10}
+
+P4 says *"allocated once at the largest `slotPx` and viewport-scissored"*. Read the bake before
+doing that — the obvious version silently corrupts the depth channel.
+
+`bakeSquare` draws prims into `mrtScratch` in **NDC** (`primModel` maps world → scratch NDC), so the
+prims fill the scratch **whatever its size**. The scratch is then copied out whole:
+
+```ts
+const tex = this.mrtScratch!.textures[k];
+this.blitSlot(tex, slotX, slotY, target);
+```
+
+So allocating the scratch once at the largest `slotPx` (128) and leaving the blit alone means a
+128² scratch is resampled down into a 64² or 32² slot at higher partition levels. **Content-wise
+that is fine** — NDC makes it a pure resolution change. The hazard is the FILTER: the zdepth channel
+carries the discrete painter's key `0x80 | baseRow`, and the reproject shader's own comment says
+averaging corrupts it silently. A LINEAR downsample produces keys that were never written.
+
+**So the fix is two changes, not one:** allocate once at `SQUARE`, AND make `blitSlot` sample
+NEAREST (point decimation), which is the universal rescale rule this renderer already states. Doing
+only the first is worse than leaving it alone, because the symptom is a subtly wrong z-order that
+looks like a painter's-algorithm bug rather than a filtering one.
+
+**Cheaper alternative worth costing first:** keep the per-level allocation but CACHE the scratch per
+level instead of destroying it — three render targets total, no resample, no filter question. The
+partition level only takes a handful of values.
