@@ -2,45 +2,51 @@
 
 _Decision points, options, which we chose and why._
 
-## F1 — Which rotation is `90 − world_angle`, and from which axis? {#f1}
+## F1 — There is ONE rotation, not two: the ground is drawn top-down {#f1}
 
-**The one thing that needs the user.** Both readings below produce a renderer that runs; they differ
-by **40°** on every normal in the scene, so this cannot be settled by taste.
+**Corrected 2026-08-02, before any code.** My first framing assumed a single camera looking at both
+the ground and the sprites, which forced two complementary rotations and a 40° ambiguity about which
+surface got which. `design/art-style.md` says that premise is false, in its own most-emphatic section:
 
-The user wrote: *"normals need to be pitched down 90−world_angle so they are parallel with the
-ground. This means the normal map is perpendicular to the ground."*
+> **"This is the single most important and most misunderstood point.**
+> The **world grid is viewed top-down**, but **objects and characters are drawn in an oblique
+> three-quarter top-down perspective** — they show their **front or sides**, NOT a true bird's-eye
+> projection … Do **not** render characters/creatures as if seen from directly overhead."
 
-Those two halves point at different surfaces:
+**Two different projections, by design.** That changes the answer:
 
-- *"parallel with the ground"* / *"the normal map is perpendicular to the ground"* describes a
-  **billboard card** — it stands perpendicular to the ground, so its face normal is horizontal.
-- **`90 − world_angle` = 25°** is, under the reference axis this project already documents, the
-  **ground's** correction, not the card's.
+| surface | how it is DRAWN | its flat normal `(0,0,1)` | rotation |
+|---|---|---|---|
+| the **ground** | top-down | already **straight up** — the ground's true normal | **none** |
+| a **sprite** | oblique, showing front/sides | tilted up from the card's horizontal by the art's obliquity | pitch **down** by that obliquity |
 
-`worldTilt.ts` defines `WORLD_TILT_DEG = 65` **measured from the ground plane**, and says so
-explicitly. Under that reference the camera's out-of-screen axis sits 65° above the ground, so:
+So there is exactly **one** rotation, it applies to **billboards only**, and it is what the user
+described: *"pitched down 90−world_angle so they are parallel with the ground"*.
 
-| surface | rotation from camera space | magnitude at 65° |
-|---|---|---|
-| billboard card → normal horizontal | pitch **down** by `world_angle` | **65°** |
-| ground → normal vertical | pitch **up** by `90 − world_angle` | **25°** |
+It also means `lightPass`'s existing ground comment — *"the flat-up fallback decodes to (0,0,1),
+reproducing the old overhead/grazing falloff exactly"* — was **already right**, and my plan to rotate
+the ground would have broken a working case.
 
-- **(a) The reference is the GROUND plane** (as documented). The user's `90 − world_angle` is the
-  **ground** correction and is exactly right; the card takes `world_angle` = 65°. The sentence and
-  the formula describe the two different cases.
-- **(b) The reference is the VERTICAL.** Then the camera sits 25° above the horizon, the card's
-  correction *is* `90 − world_angle` = 25°, and the sentence and formula agree — but
-  `worldTilt.ts`'s documented axis is wrong and a 65°-from-vertical camera is a nearly horizontal
-  view, which does not match the art.
+### What is still open, and it is smaller
 
-**Recommend (a)**, because the reference axis is already written down, 65° from the ground is a
-plausible 3/4 view where 65° from vertical is not, and (a) makes both halves of the user's message
-true at once rather than one of them. **But it is their geometry**, and P0a of the previous stream
-warned in writing that this exact number means two different cameras depending on the axis — so it
-is asked, not assumed.
+`90 − world_angle` = **25°** at the documented 65°-from-the-ground reference. That reads as sprites
+drawn 25° above eye level — mostly front-on, which is exactly *"they show their front or sides, NOT
+a true bird's-eye"*. **Consistent, and it makes the user's formula right as written.**
 
-**Either way the plan is the same shape**: one angle, two derived rotations, one place. Only the
-constant changes, so P1–P3 can be built before this is settled and P4 pins it.
+The residual question is not *which* surface, but whether the sprite's obliquity is **tied** to
+`world_angle` at all:
+
+- **(a) Tied** — obliquity = `90 − world_angle`, one dial moves shadow projection and normal
+  correction together.
+- **(b) Independent** — the obliquity is an art-side fact (how the generator was prompted / how
+  masters were drawn) that happens to sit near 25°, and deserves its own constant.
+
+**Recommend (a)** and note it plainly: `world_angle` and the art's obliquity are *not* the same kind
+of number — one governs shadow projection, the other governs how a picture was drawn — and this
+renderer already keeps two deliberately inconsistent projections. Tying them is a **convention**, not
+a derivation. It is the right default because one dial is better than two silently-drifting ones, but
+if the art is ever regenerated at a different obliquity, (b) is the honest answer and the constant
+should split.
 
 ## F2 — Rotate the NORMAL into world, not the light into the surface {#f2}
 

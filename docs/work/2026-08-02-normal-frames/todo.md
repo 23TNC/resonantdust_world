@@ -9,8 +9,8 @@ _The plan for the life of the stream. Items never move; `[x]` IS the move. Conte
   visible range, so a wrong normal still looks lit. Probe the term itself.
 - **A light orbiting a billboard must swing its shading.** That is the number; a static screenshot
   cannot show it.
-- **The ground case and the billboard case are checked separately.** They take different rotations
-  ([F1](forks.md#f1)) and one can be right while the other is inverted.
+- **The ground must not move.** It is drawn top-down, so its normals are already correct
+  ([F1](forks.md#f1)); a change there is a regression, not a fix.
 - **`occlusionDiffering` stays 0.** This touches shading only — any change to the occlusion walk is a
   mistake, and `__gather()` is the guard.
 - **Never quote a shadow-texel count** ([z-positioning I17](../2026-08-01-z-positioning/issues.md#i17)):
@@ -28,10 +28,10 @@ backgrounded, so rAF never runs), then `__lights(n)`.
 
 ## P1 — One angle, two rotations, one place ([F3](forks.md#f3))
 
-- [ ] Add `normalToWorld` for a BILLBOARD to `worldTilt.ts`, TS and GLSL. Acceptance: a flat `(0,0,1)` maps to a horizontal, ground-parallel vector — the card's face normal.
-- [ ] Add the GROUND rotation beside it. Acceptance: a flat `(0,0,1)` maps to straight up; the two magnitudes are complements summing to 90°.
-- [ ] Derive both from `WORLD_TILT_DEG`, never a literal. Acceptance: changing the constant moves both rotations coherently, and neither has a number of its own.
-- [ ] Round-trip both rotations. Acceptance: unit vectors stay unit; the inverse returns the input across a spread of inputs, CPU and GPU agreeing, the `LIGHT_LANES_GLSL` pattern.
+- [ ] Add `normalToWorld` for a BILLBOARD to `worldTilt.ts`, TS and GLSL ([F1](forks.md#f1)). Acceptance: a flat `(0,0,1)` maps to a horizontal, ground-parallel vector — the card's face normal.
+- [ ] Prove the GROUND needs NO rotation. Acceptance: its flat `(0,0,1)` already reads as straight up, because the grid is drawn top-down — the existing flat-up path is correct and must be left alone.
+- [ ] Derive the angle from `WORLD_TILT_DEG`, never a literal, and say at the constant that the tie is a CONVENTION ([I5](issues.md#i5)). Acceptance: one dial, with the art-vs-geometry distinction written where someone would change it.
+- [ ] Round-trip the rotation. Acceptance: unit vectors stay unit and the inverse returns the input across a spread of inputs, CPU and GPU agreeing, the `LIGHT_LANES_GLSL` pattern.
 
 ## P2 — Rotate the normal, collapse the branch ([F2](forks.md#f2))
 
@@ -47,7 +47,7 @@ backgrounded, so rAF never runs), then `__lights(n)`.
 
 ## P4 — Pin the angle and verify ([F1](forks.md#f1))
 
-- [ ] Settle the reference axis with the user, or by test. Acceptance: the billboard's flat normal is horizontal and the ground's is vertical — checkable directly, and the two readings differ by 40° so a probe distinguishes them.
+- [ ] Confirm the sprite obliquity against the art ([F1](forks.md#f1)). Acceptance: a billboard's flat normal comes out horizontal, and a lit sprite reads front-on rather than overhead-lit — the check is whether the art agrees, not whether the maths closes.
 - [ ] Capture a light orbiting one billboard. Acceptance: the lit side tracks the light through a full circle, beside the before-capture.
 - [ ] Re-measure the frame. Acceptance: no measurable cost — this is a rotation applied to a value already fetched, not a new pass or a new fetch.
 - [ ] Record the convention in `design/de-lighting.md`. Acceptance: it states that maps are authored camera-space and rotated at consumption, and names the two rotations — so the next generator change does not silently re-break it.

@@ -29,20 +29,26 @@ ndotl = clamp(dot(nrm, ldir), 0.0, 1.0);   // ldir is built in WORLD terms
 A dot product between two vectors expressed in different frames is not a shading term. Every lit
 surface is currently shaded as though the camera were looking straight down its own normal.
 
-## Two surfaces, two rotations, one angle
+## One rotation, on billboards only
 
-The fix is not one global pitch, because the two surface classes are oriented differently in the
-world and the camera sees both:
+There is a tempting wrong answer here — that the ground needs a complementary rotation — and
+`design/art-style.md` rules it out in its most-emphatic section:
 
-| surface | how it sits | its true normal | from camera space |
+> **"This is the single most important and most misunderstood point.**
+> The **world grid is viewed top-down**, but **objects and characters are drawn in an oblique
+> three-quarter top-down perspective** … Do **not** render characters/creatures as if seen from
+> directly overhead."
+
+**Two projections, by design.** So:
+
+| surface | how it is DRAWN | its flat `(0,0,1)` | rotation |
 |---|---|---|---|
-| a **billboard card** | perpendicular to the ground | **parallel** to the ground (horizontal) | pitch **down** |
-| the **ground** | parallel to the ground | **perpendicular** to it (vertical) | pitch **up** |
+| the **ground** | top-down | already **straight up** — correct | **none** |
+| a **sprite** | oblique, front/sides | tilted up from the card's horizontal | pitch **down** |
 
-Both rotations are about the same axis (screen-x, world east) and both derive from the one
-`WORLD_TILT_DEG` that `worldTilt.ts` already owns. The two magnitudes are complements — they sum to
-90° — which is why the user's sentence and their formula each describe one of them
-([F1](forks.md#f1) works out which is which, and flags the one thing that needs settling).
+Exactly the user's formula, and `90 − 65 = 25°` reads as sprites drawn 25° above eye level, which is
+*"front or sides, NOT a true bird's-eye"*. The ground's existing flat-up path is right and must be
+left alone ([F1](forks.md#f1)).
 
 ## What exists today
 

@@ -59,3 +59,22 @@ relative to the base rather than to the world, rotating the base into world spac
 with it correctly and needs no separate handling.
 
 Recorded so nobody adds a second rotation for detail and double-counts.
+
+
+## I5 — `world_angle` and the art's obliquity are different kinds of number {#i5}
+
+Recorded because [F1](forks.md#f1) ties them together as a convention and that tie is invisible once
+it works.
+
+- **`WORLD_TILT_DEG`** governs **shadow projection** — how a drawn card height becomes a world
+  elevation. It is a property of the renderer's geometry.
+- **The sprite obliquity** governs **how the art was drawn** — the angle the generator was prompted
+  at, baked into every master. It is a property of the content.
+
+They currently agree (`90 − 65 = 25°` matches *"front or sides, not overhead"*), and F1 chooses to
+derive one from the other so there is a single dial. **But nothing enforces it.** Regenerate the
+corpus at a different obliquity and the normals silently go wrong while `WORLD_TILT_DEG` still reads
+65 — the failure would look like a lighting bug, not a content one.
+
+**If they ever diverge, split the constant.** The plan's last item (recording the convention in
+`design/de-lighting.md`) exists so the next generator change has somewhere to collide with this.
