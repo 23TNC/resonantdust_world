@@ -21,10 +21,10 @@ for coverage and `__elev(i)` for the anchor.
 
 ## P0 — Measure the baseline before authoring anything
 
-- [ ] Record the current receiver-vs-drawn fringe for the `100,48` bush. Acceptance: the covered-texel count and the topmost covered row are written down, so "no fringe" later is a comparison and not an impression.
-- [ ] Measure opaque-fraction-of-frame across the corpus ([I1](issues.md#i1)). Acceptance: a per-stem table plus the average, so the resolution claim is sized before it is made.
-- [ ] Record where each prim's plan line sits today versus its art's feet. Acceptance: the letterbox offset is quantified per stem, which is the number [lighting-visual I1](../2026-07-31-lighting-visual/issues.md) closes on.
-- [ ] Confirm `packCoPack` applies one draw to all four sources. Acceptance: stated with the line quoted, because the whole design rests on that rect being shared and nothing today enforces it.
+- [x] Record the current receiver-vs-drawn fringe for the `100,48` bush. Acceptance: the covered-texel count and the topmost covered row are written down, so "no fringe" later is a comparison and not an impression.
+- [x] Measure opaque-fraction-of-frame across the corpus ([I1](issues.md#i1)). Acceptance: a per-stem table plus the average, so the resolution claim is sized before it is made.
+- [x] Record where each prim's plan line sits today versus its art's feet. Acceptance: the letterbox offset is quantified per stem, which is the number [lighting-visual I1](../2026-07-31-lighting-visual/issues.md) closes on.
+- [x] Confirm `packCoPack` applies one draw to all four sources. Acceptance: stated with the line quoted, because the whole design rests on that rect being shared and nothing today enforces it.
 
 ## P1 — Author subframe + anchor in the DSL, per direction ([F1](forks.md#f1), [F4](forks.md#f4))
 
