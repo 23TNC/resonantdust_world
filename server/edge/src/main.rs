@@ -115,6 +115,11 @@ async fn main() {
     let tex_manifest = textures.as_ref().map(|src| Arc::new(TextureManifest::build(src)));
     if let (Some(m), Some(src)) = (&tex_manifest, &textures) {
         tex_manifest::spawn_poll(m.clone(), src.clone(), pool.cfg.content_poll_secs);
+        // render-performance I8: derive every stem's 32-px preview into the cache NOW, so a
+        // client's first preview request is a file read. Without this the preview is slower than
+        // the master it precedes (its critical path contains the master's), and the client's
+        // preview tier does nothing on exactly the load that matters — the first one after deploy.
+        tex_manifest::spawn_prewarm(m.clone(), src.clone());
     }
 
     let app = Router::new()

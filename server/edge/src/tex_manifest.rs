@@ -123,6 +123,15 @@ impl TextureManifest {
     /// change. Preserves the generated-LOD set for a master whose hash is unchanged
     /// (so a routine re-scan doesn't churn the version); a re-mastered stem resets
     /// its LODs. Returns whether anything changed.
+    /// Every stem and the maps it carries — the pre-warm's work list.
+    pub fn stems_and_maps(&self) -> Vec<(String, Vec<String>)> {
+        let st = self.state.read_r();
+        st.entries
+            .iter()
+            .map(|(stem, e)| (stem.clone(), e.maps.iter().cloned().collect()))
+            .collect()
+    }
+
     pub fn refresh(&self, source: &TextureSource) -> bool {
         let TextureSource::Disk { root, .. } = source else { return false };
         let mut fresh = BTreeMap::new();
@@ -169,6 +178,42 @@ pub fn spawn_poll(manifest: Arc<TextureManifest>, source: Arc<TextureSource>, se
                 tracing::info!(version = %manifest.version_hex(), "texture manifest changed");
             }
         }
+    });
+}
+
+/// The PREVIEW size the client asks for first, in px — must match `PREVIEW_PX` in the client's
+/// `TextureResolver`.
+pub const PREVIEW_PX: u32 = 32;
+
+/// Derive every stem's PREVIEW into the cache, in the background, so the client's first request is
+/// a file read rather than a resize.
+///
+/// **Why this has to exist** (`docs/work/2026-08-02-render-performance/issues.md` I8): `serve_lod`
+/// derives a size FROM the master — read, decode, resize, encode, cache. The master is a direct
+/// file read. So a cold-cache preview's critical path strictly CONTAINS its master's and can never
+/// arrive first, which makes the client's preview tier useless exactly when it is needed: the first
+/// load after a deploy. Warming at startup moves that cost off the client's critical path entirely.
+///
+/// Sequential on purpose. This is background work competing with real requests for the same decode
+/// budget, and finishing it 30 s sooner helps nobody — being invisible while it runs does.
+pub fn spawn_prewarm(manifest: Arc<TextureManifest>, source: Arc<TextureSource>) {
+    tokio::spawn(async move {
+        let work = manifest.stems_and_maps();
+        let total = work.len();
+        let mut done = 0usize;
+        let mut failed = 0usize;
+        for (stem, maps) in work {
+            for map in maps.iter().map(String::as_str).chain(std::iter::once("albedo")) {
+                match source.serve_lod(&stem, PREVIEW_PX, map).await {
+                    Ok(Some(_)) => done += 1,
+                    // A stem lacking a map is ordinary — `maps` plus the mandatory albedo can
+                    // overlap, and a 404 here is not an error worth logging per stem.
+                    Ok(None) => {}
+                    Err(_) => failed += 1,
+                }
+            }
+        }
+        tracing::info!(stems = total, derived = done, failed, px = PREVIEW_PX, "texture previews pre-warmed");
     });
 }
 

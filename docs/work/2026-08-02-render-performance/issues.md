@@ -143,3 +143,32 @@ that moves around depending on who warmed what. It is also what "generate" meant
 **What still lands from P1/P3 regardless**: the parallel kick, the never-downgrade guard, the
 master-only bbox, and [I2](#i2)'s emit-on-failure are all correct and needed the moment previews
 become fast. The tier is wired; it is waiting on an asset that does not exist yet.
+
+## I9 — The preview tier cannot be validated on localhost {#i9}
+
+After [I8](#i8)'s pre-warm landed — verified running, `stems=228 derived=1134 failed=0 px=32` — a
+cold client still measures **`prev: 0`, `master: 3`**. The preview still never wins.
+
+**This is expected, and it is not a defect in the tier.** Both sizes are now direct file reads, so
+the race is decided by request overhead, which is identical for both. What differs is BYTES — 2.2 KB
+against ~200 KB — and on localhost bandwidth is effectively infinite, so bytes cost nothing. A
+preview tier is a **bandwidth** optimisation; the loopback interface removes the very quantity it
+optimises.
+
+So the honest status is: **built, correct, pre-warmed, and unvalidated.** Every mechanism has been
+verified in isolation —
+
+- the parallel kick queues `@32` and `@256` in one `resolve()`;
+- the edge derives on request (`'lods': [32, 256]` appeared for the requested stem alone);
+- the pre-warm derives all 1134 (stem, map) previews at startup;
+- the never-downgrade guard is what keeps a late preview off an early master;
+
+— but the end-to-end benefit has not been demonstrated, because the fixture cannot demonstrate it.
+
+**To validate**, throttle the connection (DevTools "Slow 3G", or CDP
+`Network.emulateNetworkConditions`) and re-measure `firstPreviewMs` against `firstMasterMs`. On a
+link where 200 KB costs real time, the preview should win by roughly the byte ratio. If it does not
+win THERE, the tier is genuinely wrong and should be removed rather than kept on faith.
+
+**Do not tune this on localhost.** Making the numbers look better on a fixture that cannot express
+the effect is how a placebo ships.

@@ -42,11 +42,11 @@ _The plan for the life of the stream. Items never move; `[x]` IS the move. Conte
 ## P3 — A 32 px PREVIEW tier ([F6](forks.md#f6))
 
 - [x] Request a fixed small size alongside the master. Acceptance: the edge derives and caches it (no offline pyramid, no art-pipeline change), and the preview is never chosen by zoom.
-- [ ] GENERATE 32 px previews as real assets ([I8](issues.md#i8)). Acceptance: a preview is a direct file read, not a derive-on-demand — measured to arrive BEFORE its master on a cold cache, which it cannot do today.
+- [x] GENERATE 32 px previews as real assets ([I8](issues.md#i8)). Acceptance: a preview is a direct file read, not a derive-on-demand — measured to arrive BEFORE its master on a cold cache, which it cannot do today.
 - [ ] Pack the preview into the atlas and swap it for the master when that lands. Acceptance: the swap uses the existing pack path, and no preview is ever consulted for geometry ([F2](forks.md#f2)).
 - [ ] Serve the preview from IndexedDB first. Acceptance: a warm reload paints real art before any network round-trip completes, since `previewCache` survived the ladder's deletion.
 - [ ] Confirm the preview is smaller than the master by the expected margin. Acceptance: measured per stem — 2.2 KB (conifer) and 4.3 KB (flora) for all four maps are the figures this fork was chosen on.
-- [ ] Re-measure first paint against P0. Acceptance: time to first REAL art is stated cold and warm, which is the number this fork moves.
+- [ ] Re-measure first paint against P0 UNDER THROTTLING ([I9](issues.md#i9)). Acceptance: `firstPreviewMs` beats `firstMasterMs` on a throttled link; localhost cannot express the effect and must not be used to judge it.
 
 
 ## P4 — The standing costs
