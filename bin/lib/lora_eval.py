@@ -442,21 +442,25 @@ def main():
             for cfg in cfgs:
                 tag = f"{os.path.splitext(lora)[0]}_s{st:g}_c{cfg:g}"
                 tot = []
-                for name, fam, folder, stem, seed in SUBJECTS:
+                for name, fam, folder, stem, _seed0 in SUBJECTS:
                     for d, (rd, phrase, _) in DIRS.items():
+                      # SWEEP the pinned seeds (I6: the shipping A/B was 6 species x e/s x 3 seeds
+                      # = 36 cells; one seed per subject would silently shrink the matrix to 12 and
+                      # make a single unlucky roll look like a model difference).
+                      for seed in SEEDS:
                         pos = POSITIVE_TMPL.format(rd=rd, phrase=phrase, family=fam, name=name)
                         img = Image.open(io.BytesIO(_run(graph(pos, lora, st, cfg, seed, args.size))))
-                        img.save(os.path.join(out, f"{tag}__{name}_{d}.png"))
+                        img.save(os.path.join(out, f"{tag}__{name}_{d}_{seed}.png"))
                         g = measure(img.convert("RGB")); r = refs[(name, d)]
                         sc = score(g, r); tot.append(sc)
                         # `measure` returns iou_control as "" when there is no control image, so
                         # round() only what is actually a number. This path had been dead since
                         # iou_control landed (the shipping A/B was driven ad hoc — issues I6), so
                         # the TypeError sat unnoticed until the pinned set started using it.
-                        rows.append(dict(lora=lora, strength=st, cfg=cfg, subject=name, dir=d,
+                        rows.append(dict(lora=lora, strength=st, cfg=cfg, subject=name, dir=d, seed=seed,
                                          **{k: (round(v, 4) if isinstance(v, (int, float)) else v)
                                             for k, v in g.items()}, score=round(sc, 1)))
-                        print(f"  {tag:<34} {name}_{d}: blobs={g['blobs']} bg={g['bg']:.3f} "
+                        print(f"  {tag:<34} {name}_{d}_{seed}: blobs={g['blobs']} bg={g['bg']:.3f} "
                               f"fill={g['fill']:.3f} asp={g['aspect']:.2f} -> {sc:.0f}")
                 print(f"== {tag}  MEAN SCORE {sum(tot)/len(tot):.1f} ==")
 
