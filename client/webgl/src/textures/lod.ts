@@ -37,48 +37,9 @@ export type TexMap = "albedo" | "normal" | "depth" | "emissive" | "layers" | "su
 export const ZOOM_MIN = 0.25;
 export const ZOOM_MAX = 2;
 
-/** The power-of-two LOD tier a zoom sits in — the master LOD the resolver targets
- *  (`64 × tier` px). Rounded UP so a magnified square is super-sampled, not upscaled. */
-export function lodTier(zoom: number): number {
-  const t = Math.pow(2, Math.ceil(Math.log2(zoom)));
-  return Math.min(Math.max(t, ZOOM_MIN), ZOOM_MAX);
-}
-
-/** The ART size to fetch for a tile at `zoom` — the pow2 bucket at/above its on-screen size, capped
- *  at `square` (= `SQUARE`, the maximum art size). NOTE this no longer sizes a composite slot: on the
- *  fixed grid the slot is CONSTANT at `SQUARE` texels and what varies is TILES PER SLOT. Kept as the
- *  art-ladder query only. */
-export function lodArtPx(zoom: number, square: number): number {
-  return Math.min(square, pickLodForSize(square * zoom));
-}
-
-/** The full-res master URL for a stem under a texture `root` ({@link texturesRoot}) —
- *  the gate resolves it to the canonical master albedo. */
-export function realUrl(root: string, stem: string): string {
-  return `${root}/master/${stem}`;
-}
-
-/** The half-res preview URL for a stem — the gate derives it from the master. */
-export function previewUrl(root: string, stem: string): string {
-  return `${root}/preview/${stem}`;
-}
-
-/** The `meta.json` sidecar URL for a stem — channel tints + the shadow-cast silhouette outline
- *  (`GET /textures/meta/{stem}`, JSON), fetched on demand by the lighting scatter. */
-export function metaUrl(root: string, stem: string): string {
-  return `${root}/meta/${stem}`;
-}
-
-/** The LOD buckets the resolver requests, in px (short axis). A stem's texture is
- *  fetched at the smallest bucket ≥ its on-screen size, clamped to the master. */
-export const LOD_SIZES = [16, 32, 64, 128, 256, 512, 1024] as const;
-
-/** The smallest LOD bucket that covers `px` on-screen (so a texel never stretches
- *  past a screen px), capped at the largest bucket. */
-export function pickLodForSize(px: number): number {
-  for (const s of LOD_SIZES) if (s >= px) return s;
-  return LOD_SIZES[LOD_SIZES.length - 1];
-}
+// one-resolution (2026-08-02): the LADDER helpers are DELETED — `lodTier`, `lodArtPx`,
+// `LOD_SIZES`, `pickLodForSize`, plus the orphaned `realUrl`/`previewUrl`/`metaUrl`
+// (zero consumers). One URL per (stem, map) at the manifest's max size; git is history.
 
 /** One LOD's URL for a stem's `map` (albedo|normal|depth|emissive) — the gate derives it
  *  from that map's master (short axis `size` px), clamped to the master's own size. The

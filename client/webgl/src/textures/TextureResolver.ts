@@ -1,14 +1,14 @@
-//! The N-LOD texture resolver (webgl port) — every prim that names a texture resolves through it to
-//! the best LOD available RIGHT NOW, and kicks the async load that upgrades it toward the zoom's
-//! target LOD:
+//! The ONE-RESOLUTION texture resolver (2026-08-02-one-resolution) — every prim that names a
+//! texture resolves through it to the stem's single co-packed frame, packed once at the stem's
+//! MAXIMUM served size (the manifest's `maxSize`, F2):
 //!
-//!   geo (white)  →  a low LOD (streamed / IndexedDB floor)  →  the target LOD
+//!   geo (white)  →  the one co-pack
 //!
-//! Ported from the pixijs resolver: the tier logic, manifest, hash-addressed IndexedDB cache, dedupe
-//! and LOD math are already Pixi-free and carry over verbatim. Only the GL seams change — a packed LOD
-//! is now a {@link TexFrame} (a UV sub-frame onto a shared atlas page) instead of a Pixi `Texture`,
-//! `packInto` uploads the `ImageBitmap` into an engine {@link Texture} (premultiply per-map), and
-//! `cellFrame` narrows a `TexFrame` rather than a `Rectangle`.
+//! The LOD ladder is DELETED: this game is zoom-reliant and always wants the maximum, so per-size
+//! tiers, target tracking, the preview floor and the below/above chooser were retained complexity
+//! (the old-game theory they served is gone). Minification is the MIP CHAIN's job at sample time.
+//! A packed frame is a {@link TexFrame} (a UV sub-frame onto a shared atlas page); `cellFrame`
+//! narrows a `TexFrame` for linked-atlas cells.
 //!
 //! GL is LAZY: the resolver is built at boot with no renderer (the viewport's GL context doesn't exist
 //! until the world scene), so {@link attachRenderer} wires the {@link Blitter} + pools when the
@@ -16,11 +16,10 @@
 //! frame — the caller supplies its own white fill (unlike pixijs, which packs a shared white stem).
 
 import { Blitter, type Renderer, Texture, TexFrame } from "../gl";
-import { LodPool } from "./LodPool";
+import { SpritePool } from "./SpritePool";
 import { type AtlasDraw } from "./TextureAtlas";
 import { getLod, putLod } from "./previewCache";
-import { LOD_SIZES, lodUrl, pickLodForSize, type TexMap } from "./lod";
-import { SQUARE } from "../game/viewport/squareMath";
+import { lodUrl, type TexMap } from "./lod";
 import { TextureManifest } from "./textureManifest";
 
 /** A resolve result: the atlas sub-frame to bake (null for the GEO tier — the caller uses its own
@@ -30,22 +29,11 @@ export interface ResolvedTexture {
   geo: boolean;
 }
 
-/** LOD-pool occupancy for the debug HUD. */
+/** Sprite-pool occupancy for the debug HUD — one frame per stem now, so a plain counter. */
 export interface LodStats {
   pages: number;
-  counts: ReadonlyMap<number, number>;
-  previewSize: number;
-  previewCount: number;
+  frames: number;
 }
-
-/** One tile at native scale — the target LOD floor AND ceiling (zoom 1 → `SQUARE` px). `SQUARE` is the
- *  maximum art size on the fixed slot grid: a slot holds one tile in `SQUARE` texels at lod 0, so a
- *  larger master could never be shown. Zoom past 1 magnifies instead of fetching bigger art. */
-const BASE_LOD_PX = SQUARE;
-/** A cheap low LOD fetched alongside the target while a stem has nothing on hand. */
-const FLOOR_LOD = 32;
-/** LODs at or below this pack into a 1024² page; larger into 2048². */
-const SMALL_LOD_MAX = 64;
 
 export class TextureResolver {
   private renderer: Renderer | null;
@@ -59,9 +47,9 @@ export class TextureResolver {
    *  and every mid-session lod change went off-page. Co-packing keeps all four maps co-located at every lod
    *  (normal = frame + a fixed quadrant offset), so there is no separate normal page/band. Mixed pow2 ≥16
    *  frames keep the 16-px def alignment. 2048² spill hits the off-page warn (the C5 texture array lifts it). */
-  private spritePool: LodPool | null = null;
-  /** stem → its loaded CO-PACKED `2N` frames, keyed by lod size. */
-  private readonly packed = new Map<string, Map<number, TexFrame>>();
+  private spritePool: SpritePool | null = null;
+  /** stem → its ONE loaded co-packed `2N` frame (one-resolution: the ladder is gone). */
+  private readonly packed = new Map<string, TexFrame>();
   /** Cached per-map quadrant sub-frames of a co-packed frame (frame → map → quadrant). */
   private readonly quadFrames = new WeakMap<TexFrame, Map<TexMap, TexFrame>>();
   private readonly manifest = new TextureManifest();
@@ -109,7 +97,6 @@ export class TextureResolver {
   }
   private scaleWarned = false;
 
-  private targetPx = BASE_LOD_PX;
   private readonly listeners = new Set<() => void>();
 
   constructor(renderer: Renderer | null, texturesRoot: string) {
@@ -181,14 +168,12 @@ export class TextureResolver {
     return this.manifest.entry(stem)?.hash ?? null;
   }
 
-  /** Set the target LOD from the viewport's on-screen tile size (`SQUARE × zoom`), CLAMPED to
-   *  `BASE_LOD_PX`. Zooming past 1 magnifies rather than fetching art above the maximum size — the
-   *  slot holds a tile in `SQUARE` texels, so a bigger master could not be displayed anyway. */
-  setTargetLod(px: number): void {
-    this.targetPx = Math.min(BASE_LOD_PX, Math.max(LOD_SIZES[0], px));
+  /** one-resolution F2: the stem's ONE served size — the manifest's `maxSize`. DOM consumers
+   *  (build-panel icons) build their URLs from this instead of a literal. */
+  maxSizeFor(stem: string): number | null {
+    return this.manifest.entry(stem)?.maxSize ?? null;
   }
 
-  /** Subscribe to "a LOD landed" — the viewport re-bakes to pick up the upgrade. */
   /** The tight opaque bbox (fractions of the frame, `0..1`) of `stem`'s sprite silhouette, computed
    *  once on the CPU at decode; null until the albedo has loaded. Used to size shadow-cast quads. */
   opaqueBBox(stem: string | undefined): { fx: number; fy: number; fw: number; fh: number } | null {
@@ -223,12 +208,8 @@ export class TextureResolver {
   }
 
   lodStats(): LodStats {
-    // Co-pack: ONE shared sprite pool holds every stem's 2N frame. Report per-lod frame counts + total pages.
-    const counts = new Map<number, number>();
-    for (const byStem of this.packed.values())
-      for (const size of byStem.keys()) counts.set(size, (counts.get(size) ?? 0) + 1);
-    const pages = this.spritePool?.pageCount ?? 0;
-    return { pages, counts, previewSize: FLOOR_LOD, previewCount: counts.get(FLOOR_LOD) ?? 0 };
+    // one-resolution: ONE co-pack per stem — a plain counter is the whole story.
+    return { pages: this.spritePool?.pageCount ?? 0, frames: this.packed.size };
   }
 
   /** Best sub-frame for `stem`'s `map` available now (+ tier), kicking the upgrade toward the target
@@ -254,39 +235,29 @@ export class TextureResolver {
     if (!entry) return { frame: null, geo: true };
     if (map !== "albedo" && !entry.maps.includes(map)) return { frame: null, geo: true };
 
-    const cap = entry.maxSize;
-    const gridFactor = entry.grid ? Math.max(entry.grid[0], entry.grid[1]) : 1;
-    let desired = pickLodForSize(Math.min(this.targetPx * gridFactor, cap));
-    if (desired > cap) desired = LOD_SIZES.filter((s) => s <= cap).pop() ?? LOD_SIZES[0];
-    // CO-PACK: one 2N frame per (stem, size) holds all four maps as quadrants; a map is a quadrant of it.
-    const loaded = this.packed.get(stem);
-
-    if (!loaded?.has(desired)) void this.ensureCoPack(stem, desired, entry.hash);
-    if (!(loaded && loaded.size > 0) && desired > FLOOR_LOD && FLOOR_LOD <= cap)
-      void this.ensureCoPack(stem, FLOOR_LOD, entry.hash);
-
-    if (loaded && loaded.size > 0) {
-      const best = this.bestLoaded(loaded, desired); // the 2N co-packed frame at the best-loaded size
-      if (best) {
-        const quad = this.quadrant(best, map); // this map's N×N quadrant of the co-packed frame
-        if (entry.grid && cell != null) {
-          // texture-generalization: the DSL internal_padding (units of the 16-unit cell) joins
-          // the manifest's external pad — converted to whole-atlas UV fractions (1 unit of a
-          // cols-cell atlas = 1/(16·cols) of its width).
-          const ip = this.linkedPad.get(stem) ?? 0;
-          const pad: [number, number] = [
-            (entry.pad?.[0] ?? 0) + ip / (16 * entry.grid[0]),
-            (entry.pad?.[1] ?? 0) + ip / (16 * entry.grid[1]),
-          ];
-          const sf = this.subframeFor(stem, cell);
-          const sub: [number, number, number, number] | undefined =
-            sf ? [sf[0], sf[1], sf[2], sf[3]] : undefined;
-          return { frame: this.cellFrame(quad, cell, entry.grid, pad, sub), geo: false };
-        }
-        return { frame: quad, geo: false };
-      }
+    // one-resolution: ONE co-pack per stem at its maximum served size (F2). No target, no
+    // tiers, no preview floor — a stem is packed or it is geo, and the kick is idempotent.
+    const cf = this.packed.get(stem);
+    if (!cf) {
+      void this.ensureCoPack(stem, entry.maxSize, entry.hash);
+      return { frame: null, geo: true };
     }
-    return { frame: null, geo: true };
+    const quad = this.quadrant(cf, map); // this map's N×N quadrant of the co-packed frame
+    if (entry.grid && cell != null) {
+      // texture-generalization: the DSL internal_padding (units of the 16-unit cell) joins
+      // the manifest's external pad — converted to whole-atlas UV fractions (1 unit of a
+      // cols-cell atlas = 1/(16·cols) of its width).
+      const ip = this.linkedPad.get(stem) ?? 0;
+      const pad: [number, number] = [
+        (entry.pad?.[0] ?? 0) + ip / (16 * entry.grid[0]),
+        (entry.pad?.[1] ?? 0) + ip / (16 * entry.grid[1]),
+      ];
+      const sf = this.subframeFor(stem, cell);
+      const sub: [number, number, number, number] | undefined =
+        sf ? [sf[0], sf[1], sf[2], sf[3]] : undefined;
+      return { frame: this.cellFrame(quad, cell, entry.grid, pad, sub), geo: false };
+    }
+    return { frame: quad, geo: false };
   }
 
   /** CO-PACK quadrant order — MUST match {@link TextureAtlas.addCoPacked} + the shadow gather's normal offset. */
@@ -352,26 +323,13 @@ export class TextureResolver {
     this.emit();
   }
 
-  /** The best-fit loaded LOD for `desired`: largest ≤ it, else smallest above. */
-  private bestLoaded(loaded: Map<number, TexFrame>, desired: number): TexFrame | null {
-    let below = -1;
-    let above = Infinity;
-    for (const size of loaded.keys()) {
-      if (size <= desired) {
-        if (size > below) below = size;
-      } else if (size < above) above = size;
-    }
-    const pick = below >= 0 ? below : above < Infinity ? above : -1;
-    return pick >= 0 ? loaded.get(pick) ?? null : null;
-  }
-
   // ── loads (CO-PACK) ───────────────────────────────────────────────────────────
   /** Load ALL of `stem`'s maps at `size` and CO-PACK them into one `2N` frame (albedo TL, normal TR,
    *  surface BL, layers BR). One 2N allocation per (stem, size) — the four maps land co-located on one
    *  page, so a prim's def frame + a fixed quadrant offset resolves any map at any lod. */
   private async ensureCoPack(stem: string, size: number, hash: string): Promise<void> {
-    const pkey = `${stem}@${size}`;
-    if (this.pending.has(pkey) || this.packed.get(stem)?.has(size)) return;
+    const pkey = stem; // one-resolution: one pack per stem — the size IS the manifest max
+    if (this.pending.has(pkey) || this.packed.has(stem)) return;
     this.pending.add(pkey);
     try {
       const entry = this.manifest.entry(stem);
@@ -414,9 +372,9 @@ export class TextureResolver {
     }
   }
 
-  /** Fetch (or read the IndexedDB cache for) one map's LOD bytes; null on 404 (a stem lacking the map). */
+  /** Fetch (or read the IndexedDB cache for) one map's bytes; null on 404 (a stem lacking the map). */
   private async loadMapBytes(stem: string, size: number, hash: string, map: TexMap): Promise<ArrayBuffer | null> {
-    const cached = await getLod(stem, size, map);
+    const cached = await getLod(stem, map);
     if (cached && cached.v === hash) return cached.bytes;
     const res = await fetch(lodUrl(this.root, stem, hash, size, map));
     if (res.status === 404) {
@@ -425,7 +383,7 @@ export class TextureResolver {
     }
     if (!res.ok) throw new Error(`lod fetch ${res.status}: ${lodUrl(this.root, stem, hash, size, map)}`);
     const bytes = await res.arrayBuffer();
-    void putLod(stem, size, map, { v: hash, bytes });
+    void putLod(stem, map, { v: hash, bytes });
     return bytes;
   }
 
@@ -501,9 +459,7 @@ export class TextureResolver {
       }
       const frame = this.spritePoolFor().addCoPacked(stem, srcs, quadN, draws);
       if (!frame) return false;
-      let byStem = this.packed.get(stem);
-      if (!byStem) this.packed.set(stem, (byStem = new Map()));
-      byStem.set(size, frame);
+      this.packed.set(stem, frame); // one-resolution: THE frame, not one-of-sizes
       return true;
     } finally {
       for (const s of srcs) s?.destroy();
@@ -511,8 +467,8 @@ export class TextureResolver {
   }
 
   /** The single shared CO-PACK pool (see {@link spritePool}), created on first pack. */
-  private spritePoolFor(): LodPool {
-    if (!this.spritePool) this.spritePool = new LodPool(this.renderer!, this.blitter!, 2048);
+  private spritePoolFor(): SpritePool {
+    if (!this.spritePool) this.spritePool = new SpritePool(this.renderer!, this.blitter!, 2048);
     return this.spritePool;
   }
 }

@@ -192,7 +192,6 @@ const SPARKLINE_H = 16;
 /** The power-of-two atlas buckets the textures tab tallies, one row each. A fixed
  *  list (not derived from `LOD_SIZES`) so the HUD layout stays stable; a size with
  *  no live pool simply reads 0. */
-const TEX_ATLAS_SIZES = [8, 16, 32, 64, 128, 256, 512] as const;
 
 /** Draw `samples` as a sparkline into `canvas`. Auto-scales the Y axis
  *  to the range of finite values in the window, and treats `NaN` as a
@@ -403,10 +402,8 @@ export class DebugPanel {
   /** Current viewport zoom (screen px per world px). Scene-pushed via {@link setZoom}. */
   private readonly texZoom:        HTMLSpanElement;
   private readonly texAtlases:     HTMLSpanElement;
-  /** LOD size (px) → its packed-count span, one per {@link TEX_ATLAS_SIZES}. */
-  private readonly texSizeRows = new Map<number, HTMLSpanElement>();
-  private readonly texPreviewSize:  HTMLSpanElement;
-  private readonly texPreviewCount: HTMLSpanElement;
+  /** one-resolution: ONE co-pack per stem — a single packed-frame count row. */
+  private readonly texFrames: HTMLSpanElement;
 
   // ── Sync tab values ─────────────────────────────────────────────
   /** The unified "Now" row — a 3-line value cell (Sync / Date / Server). */
@@ -518,18 +515,13 @@ export class DebugPanel {
     this.litTiers    = this.addRow(lightContent, "gather: inc / adj / walk");
     this.litRefine   = this.addRow(lightContent, "refine gate");
 
-    // ── Textures tab — atlas / slot counts ────────────────────────
-    // Atlas-page total, then a packed-texture count per power-of-two bucket, then
-    // the preview (floor) tier's live size + count.
+    // ── Textures tab — atlas occupancy ────────────────────────
+    // one-resolution: page total + ONE packed-frame count (a stem packs once, at max).
     this.texFps       = this.addRow(texturesContent, panelText("debugPanel", "fps"));
     this.texDrawCalls = this.addRow(texturesContent, panelText("debugPanel", "drawCalls"));
     this.texZoom      = this.addRow(texturesContent, panelText("debugPanel", "zoom"));
     this.texAtlases   = this.addRow(texturesContent, panelText("debugPanel", "atlases"));
-    for (const size of TEX_ATLAS_SIZES) {
-      this.texSizeRows.set(size, this.addRow(texturesContent, `${size} px`));
-    }
-    this.texPreviewSize  = this.addRow(texturesContent, panelText("debugPanel", "previewSize"));
-    this.texPreviewCount = this.addRow(texturesContent, panelText("debugPanel", "previewTextures"));
+    this.texFrames    = this.addRow(texturesContent, "packed frames");
 
     // ── Sync tab — full time-sync state ───────────────────────────
     // One "Now" row stacks the three clocks (Sync / Date / Server) so their
@@ -647,9 +639,7 @@ export class DebugPanel {
     drawCalls: number,
     atlasStats?: {
       atlases: number;
-      slotCounts: ReadonlyMap<number, number>;
-      previewSize: number;
-      previewCount: number;
+      frames: number;
     },
     syncStats?: SyncStats,
     now?: NowStats,
@@ -729,11 +719,7 @@ export class DebugPanel {
 
     if (atlasStats) {
       this.texAtlases.textContent = String(atlasStats.atlases);
-      for (const [size, span] of this.texSizeRows) {
-        span.textContent = String(atlasStats.slotCounts.get(size) ?? 0);
-      }
-      this.texPreviewSize.textContent  = `${atlasStats.previewSize} px`;
-      this.texPreviewCount.textContent = String(atlasStats.previewCount);
+      this.texFrames.textContent  = String(atlasStats.frames);
     }
     if (syncStats) {
       this.syncOffset.value.textContent = formatSignedMs(syncStats.offsetMs);

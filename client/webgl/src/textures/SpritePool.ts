@@ -1,8 +1,7 @@
-//! A LOD pool (webgl port): a small set of {@link TextureAtlas} pages holding one LOD size's
-//! textures, keyed by stem. A SEPARATE pool per LOD — a stem's 32px and 128px textures live in
-//! different pools, so a size's pages pack uniformly (equal-size rects → near-zero fragmentation) and
-//! don't compete. The built-in white fill is packed into the preview-size pool, sharing its page
-//! rather than owning one.
+//! The SPRITE POOL (one-resolution, 2026-08-02): a small set of {@link TextureAtlas} pages
+//! holding every stem's ONE co-packed frame, keyed by stem. The per-LOD-size pool split died
+//! with the atlas ladder — a stem packs once, at its manifest max, and the pow2-square LAW
+//! (F3) is enforced here by REFUSING violating frames.
 //!
 //! Packing: a source is drawn into the first page with room, spilling to a fresh page when full, and
 //! the returned {@link TexFrame} references that page's texture so all of a size's textures batch in
@@ -15,7 +14,7 @@ import { TextureAtlas, type AtlasDraw } from "./TextureAtlas";
 /** Gutter around each packed texture. 0 is safe with nearest sampling + integer frames. */
 const PADDING = 0;
 
-export class LodPool {
+export class SpritePool {
   private readonly renderer: Renderer;
   private readonly blitter: Blitter;
   private readonly pageSize: number;
@@ -48,7 +47,7 @@ export class LodPool {
     // one-resolution F3: the LAW — a violating frame is REFUSED, not warned past. A warn is how a
     // non-pow2 master drifted in unseen; a refused pack is loud (the stem renders geo until fixed).
     if (width !== height || (width & (width - 1)) !== 0 || width < 16) {
-      console.error(`[lod-pool] ${stem}: frame ${width}×${height} violates the pow2-square ≥16 LAW — REFUSED (F3, 2026-08-02-one-resolution)`);
+      console.error(`[sprite-pool] ${stem}: frame ${width}×${height} violates the pow2-square ≥16 LAW — REFUSED (F3, 2026-08-02-one-resolution)`);
       return null;
     }
     let packed: TexFrame | null = null;
@@ -62,7 +61,7 @@ export class LodPool {
     }
     if (packed) {
       if (packed.x % 16 !== 0 || packed.y % 16 !== 0)
-        console.warn(`[lod-pool] ${stem}: frame placed off the 16-px grid (${packed.x},${packed.y})`);
+        console.warn(`[sprite-pool] ${stem}: frame placed off the 16-px grid (${packed.x},${packed.y})`);
       this.byStem.set(stem, packed);
     }
     return packed;
@@ -75,7 +74,7 @@ export class LodPool {
     const full = quadN * 2;
     // one-resolution F3: the LAW — refuse, never warn past (see add()).
     if ((full & (full - 1)) !== 0 || full < 16) {
-      console.error(`[lod-pool] ${stem}: co-pack frame ${full}×${full} violates the pow2-square ≥16 LAW — REFUSED (F3, 2026-08-02-one-resolution)`);
+      console.error(`[sprite-pool] ${stem}: co-pack frame ${full}×${full} violates the pow2-square ≥16 LAW — REFUSED (F3, 2026-08-02-one-resolution)`);
       return null;
     }
     // F3's second face: a WHOLE-BLIT source (no draw rect) must BE quadN² — brick/wall shipped a
@@ -84,7 +83,7 @@ export class LodPool {
     for (let i = 0; i < sources.length; i++) {
       const s = sources[i];
       if (s && !draws?.[i] && (s.width !== quadN || s.height !== quadN)) {
-        console.error(`[lod-pool] ${stem}: co-pack source ${i} is ${s.width}×${s.height}, quadrant is ${quadN} — REFUSED (F3: mixed-size map set)`);
+        console.error(`[sprite-pool] ${stem}: co-pack source ${i} is ${s.width}×${s.height}, quadrant is ${quadN} — REFUSED (F3: mixed-size map set)`);
         return null;
       }
     }
@@ -99,7 +98,7 @@ export class LodPool {
     }
     if (packed) {
       if (packed.x % 16 !== 0 || packed.y % 16 !== 0)
-        console.warn(`[lod-pool] ${stem}: co-pack frame off the 16-px grid (${packed.x},${packed.y})`);
+        console.warn(`[sprite-pool] ${stem}: co-pack frame off the 16-px grid (${packed.x},${packed.y})`);
       this.byStem.set(stem, packed);
     }
     return packed;

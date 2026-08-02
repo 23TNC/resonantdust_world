@@ -18,9 +18,10 @@ import type { TexMap } from "./lod";
 
 const DB_NAME = "resonantdust-tex";
 const STORE = "previews";
-/** Bumped 1→2 when the key gained the `map` dimension: old albedo-keyed rows (`stem@size`)
- *  become dead weight under the new `stem@size@map` keys — harmless (re-fetched once). */
-const DB_VERSION = 2;
+/** Bumped 1→2 when the key gained the `map` dimension; 2→3 for one-resolution (2026-08-02):
+ *  the `size` dimension left the key — one row per (stem, map) at the manifest max. Old
+ *  per-size rows become dead weight under the new `stem@map` keys — harmless (re-fetched once). */
+const DB_VERSION = 3;
 
 /** A persisted LOD: the raw PNG bytes for one map plus the content hash they were fetched
  *  at (`v`), for staleness checks. */
@@ -29,8 +30,8 @@ export interface LodBytes {
   bytes: ArrayBuffer;
 }
 
-/** The composite store key for one (stem, LOD size, map). */
-const lodKey = (stem: string, size: number, map: TexMap): string => `${stem}@${size}@${map}`;
+/** The composite store key for one (stem, map) — one-resolution: no size dimension. */
+const lodKey = (stem: string, map: TexMap): string => `${stem}@${map}`;
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -77,13 +78,13 @@ function db(): Promise<IDBDatabase> {
   }));
 }
 
-/** The persisted LOD for `(stem, size, map)`, or null if absent / storage unavailable.
+/** The persisted bytes for `(stem, map)`, or null if absent / storage unavailable.
  *  The caller revalidates `.v` against the gate with a conditional request. */
-export async function getLod(stem: string, size: number, map: TexMap): Promise<LodBytes | null> {
+export async function getLod(stem: string, map: TexMap): Promise<LodBytes | null> {
   try {
     const d = await db();
     return await new Promise<LodBytes | null>((resolve, reject) => {
-      const req = d.transaction(STORE, "readonly").objectStore(STORE).get(lodKey(stem, size, map));
+      const req = d.transaction(STORE, "readonly").objectStore(STORE).get(lodKey(stem, map));
       req.onsuccess = () => resolve((req.result as LodBytes | undefined) ?? null);
       req.onerror = () => reject(req.error);
     });
@@ -92,13 +93,13 @@ export async function getLod(stem: string, size: number, map: TexMap): Promise<L
   }
 }
 
-/** Persist `entry` for `(stem, size, map)`, overwriting any prior version. Best-effort. */
-export async function putLod(stem: string, size: number, map: TexMap, entry: LodBytes): Promise<void> {
+/** Persist `entry` for `(stem, map)`, overwriting any prior version. Best-effort. */
+export async function putLod(stem: string, map: TexMap, entry: LodBytes): Promise<void> {
   try {
     const d = await db();
     await new Promise<void>((resolve, reject) => {
       const tx = d.transaction(STORE, "readwrite");
-      tx.objectStore(STORE).put(entry, lodKey(stem, size, map));
+      tx.objectStore(STORE).put(entry, lodKey(stem, map));
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
     });

@@ -64,7 +64,9 @@ export class BuildPanel extends DomPanel {
             return;
           }
           btn.textContent = "";
-          btn.style.backgroundImage = `url(${lodUrl(this.resolver.rootUrl(), stem, hash, 512)})`;
+          // one-resolution F2: the icon fetches the stem's ONE served size from the manifest.
+          const size = this.resolver.maxSizeFor(stem) ?? 512;
+          btn.style.backgroundImage = `url(${lodUrl(this.resolver.rootUrl(), stem, hash, size)})`;
           btn.style.backgroundSize = "400% 400%";
           btn.style.backgroundPosition = "0% 33.3333%";
         };

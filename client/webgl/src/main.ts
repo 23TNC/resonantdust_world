@@ -175,9 +175,7 @@ async function main(): Promise<void> {
       drawCalls.readAndReset(),
       {
         atlases: lod.pages,
-        slotCounts: lod.counts,
-        previewSize: lod.previewSize,
-        previewCount: lod.previewCount,
+        frames: lod.frames,
       },
       syncHistory.current() ?? undefined,
       buildNowStats(),

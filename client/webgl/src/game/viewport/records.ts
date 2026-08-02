@@ -128,7 +128,7 @@ vec2 primPos(uvec4 rec) {
  *  lod. */
 export const OCCLUSION_GLSL = /* glsl */ `
 // The def's ATLAS PAGE rides the (otherwise unread) anchor.x lane: frames spread across
-// LodPool pages, and sampling a page-1 frame on page 0 reads another stem's silhouette
+// SpritePool pages, and sampling a page-1 frame on page 0 reads another stem's silhouette
 // (P3 — the residual slab). Two pages bind; a def past them takes offPage — the caller's
 // conservative answer (casters: the solid box; receivers: not covered).
 bool silhouetteHit(uvec4 d, float fracX, float fracY, bool offPage) {

@@ -527,15 +527,13 @@ export class Viewport {
     const h = Math.floor(this.renderer.canvas.clientHeight);
     if (w <= 0 || h <= 0) return;
     this.camera.setBounds(w, h);
-    // LOGICAL zoom drives the lod ladder (monitor-independent — every player is on the same lod at the
-    // same zoom); RENDER scale drives anything measured in actual screen px.
+    // LOGICAL zoom drives the slot-grid partition (monitor-independent); RENDER scale drives
+    // anything measured in actual screen px. one-resolution: there is no texture target to aim —
+    // every stem packs once at its manifest max and the mip chain handles minification.
     const z = this.camera.zoom;
     const rs = this.camera.renderScale;
     const ax = this.camera.anchorX;
     const ay = this.camera.anchorY;
-    // Aim texture loads at the ACTUAL on-screen tile size (a tile is SQUARE world px), so a large
-    // display still asks for the sharpest art it can use. Clamped to SQUARE inside the resolver.
-    this.resolver?.setTargetLod(SQUARE * rs);
 
     // Both caches share the window/slot geometry (identical inputs), so their composites stay
     // slot-aligned for the warm-over-cold display blit.
