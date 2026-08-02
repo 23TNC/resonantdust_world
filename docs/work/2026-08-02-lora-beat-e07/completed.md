@@ -141,3 +141,24 @@ to confirm the baseline still reproduces, and that result is the first real entr
   a filter. The v3 build is one FLAT `1_animal/` folder — no repeat weighting, unlike v2's "three
   repeat-weighted folders (153 each), 765 effective". Whether to restore repeat weighting is a
   [P3](todo.md) decision, not silently inherited.
+- **2026-08-02 · P2.5 · The eyeball spot-check CAUGHT the v3 corruption** — see
+  [I8](issues.md#i8). 52.2% of the set had the subject collapsed to a speck. v3 was **discarded**.
+- **2026-08-02 · P2 re-decided · train on the EXISTING data, not a rebuild** (user: *"why are we
+  trying to build training data to train on instead of using the original training data first?"*).
+  Checking it proved them right: `.staging/animal-lora-train` is **701 images, 0 corrupt, fill sd
+  0.1505** — the natural variance [P2](todo.md) was rebuilding to restore was *already there*. I had
+  mislabelled that row "v2 pinned fill 0.85" in the spot-check sheet; it is not pinned. The rebuild
+  was therefore unnecessary as well as broken.
+- **2026-08-02 · P3 · Training rig located and run-6 launched.** kohya lives at
+  `appdata/comfyui-nvidia/mnt/kohya`, mounted into the ComfyUI container — nothing in the repo
+  recorded that. Dataset chosen: `quad_dataset` (459, 768, **natural** fill, direction-weighted
+  east 1× / north 2× / south 2×). The 1024 variants are the PINNED-fill rebuilds ([I1](issues.md#i1)),
+  and the n/s double weight matters given [I7](issues.md#i7).
+
+  **VRAM probe (P3.1), 20 steps: peak 11,842 MiB of 24,576 — 48%.** bf16 confirmed under real
+  training, loss ~0.02, ~3.2 s/it at batch 4, `TRAIN_EXIT_OK`.
+
+  Run-6 config vs the old ceiling: base **animagine-xl-4.0** (not cyberrealisticXL), **no warm
+  start** (invalid across a base change — run-3 warm-started from run-2), **bf16** (was fp16),
+  **batch 4** (was 1 + grad-accum 4), **dim 64 / alpha 32** (was 32/16, run-4 48/24), 15 epochs,
+  `--sample_every_n_epochs=1` on fixed seeds. 192 steps/epoch → ~2–2.5 h estimated.

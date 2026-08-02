@@ -27,15 +27,15 @@ headroom**, **the user selects**. This stream changes many variables at once on 
 - [x] Keep ESRGAN upscaling and re-verify it on the rebuilt set. Acceptance: outline sharpness near the measured 90.1, versus 43.1 for LANCZOS, over a 120-image sample.
 - [x] Choose and record the training resolution for the new base. Acceptance: a resolution with a stated reason; 1024² is SDXL-native but was never separated from the other P2 changes.
 - [ ] Rebuild the training set end to end and measure it before any training starts. Acceptance: image/caption counts match, fill sd and outline sharpness recorded, no silent-no-op ([I3](issues.md#i3)).
-- [ ] Spot-check ~10 rebuilt images by eye against their sources. Acceptance: no clipping, no halo, no aspect distortion — the check that caught the P2 no-op.
+- [x] Spot-check ~10 rebuilt images by eye against their sources. Acceptance: no clipping, no halo, no aspect distortion — the check that caught the P2 no-op.
 
 ## P3 — Train on the 3090's headroom
 
-- [ ] Probe peak VRAM for a candidate config before committing to a full run. Acceptance: a MiB figure against 24576, so batch and rank are sized on data rather than guesswork ([I4](issues.md#i4)).
-- [ ] Train in bf16 rather than fp16. Acceptance: the run completes with a loss curve free of the scaling spikes bf16 exists to remove; Ampere supports it and Turing had none.
-- [ ] Replace grad-accum 4 with a real batch that fits 24 GB. Acceptance: the effective batch is stated and peak VRAM stays under ~22 GB with headroom for sampling.
-- [ ] Raise `dim`/`alpha` past the 11 GB ceiling's 48/24. Acceptance: the new rank is recorded with its VRAM cost; it was a constraint before, not a choice.
-- [ ] Emit samples every epoch on the pinned set. Acceptance: one sheet per epoch, epoch-labelled, same prompts and seeds throughout the run.
+- [x] Probe peak VRAM for a candidate config before committing to a full run. Acceptance: a MiB figure against 24576, so batch and rank are sized on data rather than guesswork ([I4](issues.md#i4)).
+- [x] Train in bf16 rather than fp16. Acceptance: the run completes with a loss curve free of the scaling spikes bf16 exists to remove; Ampere supports it and Turing had none.
+- [x] Replace grad-accum 4 with a real batch that fits 24 GB. Acceptance: the effective batch is stated and peak VRAM stays under ~22 GB with headroom for sampling.
+- [x] Raise `dim`/`alpha` past the 11 GB ceiling's 48/24. Acceptance: the new rank is recorded with its VRAM cost; it was a constraint before, not a choice.
+- [x] Emit samples every epoch on the pinned set. Acceptance: one sheet per epoch, epoch-labelled, same prompts and seeds throughout the run.
 
 ## P4 — The user selects, then ship or say so
 
