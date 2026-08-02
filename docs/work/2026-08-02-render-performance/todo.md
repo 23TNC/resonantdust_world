@@ -38,11 +38,16 @@ _The plan for the life of the stream. Items never move; `[x]` IS the move. Conte
 - [ ] Cap concurrent decodes so a zone's worth of stems cannot storm the main thread. Acceptance: a bounded queue, with the bound justified by P2's measurement.
 - [ ] Decide whether decode moves to a worker ([F3](forks.md#f3)). Acceptance: a stated answer with its cost — `ImageBitmap` is transferable, but the atlas upload must stay on the GL thread.
 
-## P3 — A placeholder tier, which is not a ladder ([F2](forks.md#f2))
+## P3 — DRAW the placeholder from the DSL ([F4](forks.md#f4))
 
-- [ ] Fetch one small tier purely as a placeholder, swapped when the master lands. Acceptance: it is never consulted for zoom and never feeds geometry, so [subframe-ingest I7](../2026-08-02-subframe-ingest/issues.md#i7)'s instability cannot return.
-- [ ] Serve the placeholder from IndexedDB first. Acceptance: a warm reload paints real art before any network round-trip completes, since `previewCache` survived the ladder's deletion.
-- [ ] Re-measure first paint. Acceptance: cold and warm figures both stated against P0.
+- [ ] Pin the shape source ([I6](issues.md#i6)). Acceptance: a stated answer — the authored subframe rect alone, or a coarse per-kind silhouette beside it — since everything below draws whatever this decides.
+- [ ] Synthesize a co-pack quadrant set on the GPU from the shape + authored tints. Acceptance: one pass writes all four quadrants, so a placeholder is indistinguishable from a real frame to every consumer downstream.
+- [ ] Draw albedo as the outline stroke, near-black. Acceptance: it matches the master convention (`albedo-outlines-by-design`), so the blit's residual path needs no special case.
+- [ ] Fill surface.B with coverage and G with 1. Acceptance: shadows, the receiver map and `silhouetteHit` all work on a placeholder — the world is LIT before any art downloads, not flat-lit.
+- [ ] Write a flat `#8080FF` normal quadrant. Acceptance: the light pass reads `(0,0,1)` and needs no branch for placeholder frames.
+- [ ] Fill layers.R and let `packChannels` apply the kind's authored tints. Acceptance: a placeholder carries the same colours the real asset will, rather than a neutral grey.
+- [ ] Swap the real co-pack in through the existing pack path. Acceptance: no placeholder is ever consulted for geometry, and the swap needs no new eviction rule.
+- [ ] Re-measure first paint against P0. Acceptance: time to first RECOGNISABLE asset is stated, which is the number this fork actually moves — first non-geo pixel was already near-zero.
 
 ## P4 — The standing costs
 
