@@ -52,12 +52,18 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P4 — the wolf gets thirsty
 
-- [ ] npc initializes thirst at mint: SET_NEED (satisfaction 1.0, now-tic) chained after CREATE.
+- [x] npc initializes thirst at mint: SET_NEED (satisfaction 1.0, now-tic) chained after CREATE.
       Acceptance: an rd-npc soak shows one need row per minted wolf; re-mint stays one row.
-- [ ] The Brain evaluates needs each decision tick (crate import) and surfaces moodlets + mood in
+      → adopt-time init with a 2 s snapshot grace: a restart against a wolf WITH a row held the
+      guard (no reset — the drill row survived); the row deleted by hand → "thirst initialised
+      FULL" fired once → SQL shows exactly one row `NEED(1, 255, set_tic 6052)`.
+- [x] The Brain evaluates needs each decision tick (crate import) and surfaces moodlets + mood in
       its decision context, logging band transitions. Behaviour stays A→B — drink is the successor
       stream's. Acceptance: the soak log flips Thirsty→Dehydrated at the COMPUTED crossing tics
-      with zero events in between (F4).
+      with zero events in between (F4). → `mind_needs` in the wolves Brain (payload buffered
+      per-entity pre-adoption; `Bot::now_tic` off the learned TicAnchor); first contact logged
+      `[dehydrated] mood 0.1 next None` — the P2 drill row correctly drained. The full
+      crossing-tic flip is P6's drill (the corpus rate is deliberately slow: full→Thirsty ≈ 39 min).
 
 ## P5 — the panel shows moodlets, never bars
 

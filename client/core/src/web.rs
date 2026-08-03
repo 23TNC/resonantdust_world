@@ -598,6 +598,7 @@ impl Engine {
                     entity_reference,
                     tic,
                     parts: resonantdust_codec::payload::payload_parts(&payload),
+                    payload,
                 });
             }
             // A settled, promoted event — the INTENT channel. Anchor the tic estimate and

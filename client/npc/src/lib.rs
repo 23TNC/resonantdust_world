@@ -84,6 +84,10 @@ pub struct Bot {
     /// The world server this session logged into (from [`Event::LoggedIn`]) — the base URL its
     /// `/content` corpus is fetched from (the def-id authority, first-pawns F5).
     pub server_url: Option<String>,
+    /// The latest tic anchor `(tic, received_at, tics_per_sec)` off [`Event::TicAnchor`] — the
+    /// engine's LEARNED rate estimate (never raw `TIC_HZ`), stamped at event receipt. Feeds
+    /// [`Bot::now_tic`], which is what lets a brain evaluate lazy needs (needs-moodlets F4).
+    tic_anchor: Option<(u16, std::time::Instant, f64)>,
 }
 
 impl Bot {
@@ -94,7 +98,7 @@ impl Bot {
         let client = Client::spawn(config, move |event: Event| {
             let _ = ev_tx.send(event);
         });
-        let mut bot = Bot { client, events, paused: false, server_url: None };
+        let mut bot = Bot { client, events, paused: false, server_url: None, tic_anchor: None };
         if bot.client.login(name).is_err() {
             tracing::error!("client engine failed to start");
             return None;
@@ -161,14 +165,29 @@ impl Bot {
         }
     }
 
-    /// Track harness-level state off an event (the pause flag).
+    /// Track harness-level state off an event (the pause flag + the tic anchor).
     pub(crate) fn note(&mut self, event: &Event) {
-        if let Event::Paused { paused } = event {
-            if *paused != self.paused {
-                tracing::info!(paused, "simulation freeze changed (/pause)");
+        match event {
+            Event::Paused { paused } => {
+                if *paused != self.paused {
+                    tracing::info!(paused, "simulation freeze changed (/pause)");
+                }
+                self.paused = *paused;
             }
-            self.paused = *paused;
+            Event::TicAnchor { tic, tics_per_sec, .. } => {
+                self.tic_anchor = Some((*tic, std::time::Instant::now(), *tics_per_sec));
+            }
+            _ => {}
         }
+    }
+
+    /// The current sim tic, extrapolated from the latest anchor at its LEARNED rate — `None`
+    /// until the first anchor lands. Receipt-stamped, so it carries event-delivery jitter
+    /// (~a tick of the pump), which is fine for band evaluation; it is never a movement clock.
+    pub fn now_tic(&self) -> Option<u16> {
+        let (tic, at, rate) = self.tic_anchor?;
+        let elapsed = at.elapsed().as_secs_f64() * rate;
+        Some(tic.wrapping_add(elapsed as u16))
     }
 }
 
@@ -181,6 +200,14 @@ impl Bot {
 /// authored tics-per-tile, already resolved through `codec::speed::resolve` (unauthored →
 /// default). The payload is `{ "rd": [[name, source], …] }`, loaded with the shared DSL.
 pub async fn resolve_thing(server_url: &str, name: &str) -> Result<(u32, u16), String> {
+    let bundle = fetch_corpus(server_url).await?;
+    resolve_thing_in(&bundle, name)
+}
+
+/// Fetch + load the world server's `/content` corpus into a [`Bundle`] — the def-id, speed
+/// AND needs authority (needs-moodlets P4: the Brain keeps the bundle to run `needs_eval`
+/// on its pawn's payload, the same eval the client reaches through wasm — F3).
+pub async fn fetch_corpus(server_url: &str) -> Result<resonantdust_dsl::loader::Bundle, String> {
     // The login hands back the WS endpoint (`ws://host:port/ws`); the corpus lives on the same
     // server's HTTP side. Swap the scheme and drop the `/ws` path.
     let base = server_url
@@ -201,8 +228,14 @@ pub async fn resolve_thing(server_url: &str, name: &str) -> Result<(u32, u16), S
             Some((pair.get(0)?.as_str()?.to_string(), pair.get(1)?.as_str()?.to_string()))
         })
         .collect();
-    let bundle = resonantdust_dsl::loader::load(&sources)
-        .map_err(|errs| format!("corpus load: {} error(s), first: {:?}", errs.len(), errs.first()))?;
+    resonantdust_dsl::loader::load(&sources)
+        .map_err(|errs| format!("corpus load: {} error(s), first: {:?}", errs.len(), errs.first()))
+}
+
+/// Resolve a pawn kind's `(packed definition_reference, tics-per-tile)` from an already-loaded
+/// corpus — [`resolve_thing`]'s body, split so a brain that keeps the [`Bundle`] resolves
+/// through the one it holds.
+pub fn resolve_thing_in(bundle: &resonantdust_dsl::loader::Bundle, name: &str) -> Result<(u32, u16), String> {
     let kind = bundle
         .thing_object_id(name)
         .ok_or_else(|| format!("thing `{name}` not in the corpus"))?;

@@ -1,5 +1,24 @@
 # Completed — needs & moodlets
 
+## 2026-08-03 · P4 — the wolf gets thirsty (2/2)
+
+**The payload surfaces raw** (the seam P5 shares): `Event::PawnParts` gains the untouched
+opcode stream (`api.rs`, both engines, the wasm bridge + `WasmClient` typing) — the core
+decodes PART for its own join and passes NEED/MOODLET through to the eval's consumers.
+
+**npc**: `fetch_corpus`/`resolve_thing_in` split so the Brain KEEPS the bundle;
+`Bot::now_tic()` extrapolates from the latest learned-rate TicAnchor (never raw TIC_HZ).
+The wolves Brain buffers payloads per entity (snapshot may fan `Payload` before the
+adoption's `StateObject`), and `mind_needs` each decision tick: a single-shot thirst mint
+guarded by a 2 s snapshot grace (a restart must never refill a half-drained wolf), then the
+shared `needs_eval` (F3) with band-transition logging — moodlets + mood live on the Brain as
+the successor action stream's decision context.
+
+**Verified live** (rd-npc): restart against the P2-drill row → NO re-init, first eval
+logged `[dehydrated] mood 0.1 next None` (sat 0.098 set at tic 1616 fully drained by 5734 —
+the lazy math agreeing with the wasm probes); payload row deleted by hand → adopt → grace →
+"thirst initialised FULL" once → SQL `NEED(1, 255, set_tic 6052)`, exactly one row.
+
 ## 2026-08-03 · P3 — one evaluation, everywhere (2/2)
 
 `shared/dsl::needs_eval` (dependency-free — decoded rows in, moodlets out):

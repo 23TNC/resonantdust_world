@@ -771,7 +771,7 @@ fn event_to_js(event: &client::Event) -> JsValue {
             set("tic", &JsValue::from_f64(*tic as f64));
             set("removed", &JsValue::from_bool(*removed));
         }
-        Event::PawnParts { macro_position, entity_reference, tic, parts } => {
+        Event::PawnParts { macro_position, entity_reference, tic, parts, payload } => {
             set("kind", &JsValue::from_str("pawnParts"));
             set("macroPosition", &JsValue::from_f64(*macro_position as f64));
             set("entityReference", &JsValue::from_f64(*entity_reference as f64));
@@ -783,6 +783,11 @@ fn event_to_js(event: &client::Event) -> JsValue {
                 arr.set_index((i * 2 + 1) as u32, *def);
             }
             set("parts", &arr);
+            // The RAW opcode stream (needs-moodlets P4) — the panel feeds it straight to the
+            // one eval (`Content.pawnMoodlets`); the host never decodes NEED/MOODLET itself.
+            let raw = js_sys::Uint32Array::new_with_length(payload.len() as u32);
+            raw.copy_from(payload);
+            set("payload", &raw);
         }
         Event::ColdTiles { macro_position, subtype_id, layer_id, tic, tiles } => {
             set("kind", &JsValue::from_str("coldTiles"));

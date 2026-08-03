@@ -169,6 +169,9 @@ export interface PawnParts {
   entityReference: number;
   tic: number;
   parts: { slot: number; def: number }[];
+  /** The RAW payload opcode stream (needs-moodlets P4) — fed verbatim to the wasm
+   *  `pawnMoodlets`/`pawnMood` eval; the host never decodes NEED/MOODLET entries itself. */
+  payload: Uint32Array;
 }
 export type PawnPartsHandler = (p: PawnParts) => void;
 
@@ -230,6 +233,8 @@ type WorldEvent =
       tic: number;
       /** (slot, def) pairs flattened `[slot, def, slot, def, …]`. */
       parts: Uint32Array;
+      /** The raw payload opcode stream (needs-moodlets P4). */
+      payload: Uint32Array;
     }
   | { kind: "zoneClosed"; macroPosition: number }
   | { kind: "paused"; paused: boolean }
@@ -751,6 +756,7 @@ export class WasmClient {
             entityReference: ev.entityReference,
             tic: ev.tic,
             parts,
+            payload: ev.payload ?? new Uint32Array(0),
           });
         }
         break;

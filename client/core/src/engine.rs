@@ -539,6 +539,7 @@ impl Engine {
             // joins them to the entity's StateObjects (either may arrive first).
             ServerMsg::Payload { entity_reference, zone, tic, payload } => {
                 self.emit(Event::PawnParts {
+                    payload: payload.clone(),
                     macro_position: zone,
                     entity_reference,
                     tic,
