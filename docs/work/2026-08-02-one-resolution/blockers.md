@@ -22,3 +22,9 @@ at HEAD).
 
 **Recommendation**: (a), plus one foreground pan drill with you watching — five
 minutes, both zoom extremes, and P6 closes one way or the other on your eyes.
+
+**RESOLVED 2026-08-02**: the user chose forward-fix over rollback and asked for a
+consolidated stream — [`2026-08-02-lod-aftermath`](../2026-08-02-lod-aftermath/README.md)
+absorbs P6's remainder (flora/lighting/z-order/pan) with the render-performance
+coordination built into its P0. This stream is DONE; the aftermath stream carries the
+bugs.

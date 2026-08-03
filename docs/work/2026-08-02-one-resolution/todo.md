@@ -92,16 +92,20 @@ fix z-order. Fifth trees are clipped."_
       decode caps, and the placeholder tier that is explicitly NOT a ladder — its F2).
       The preview kick + `packedSize` upgrade guard are already live in the resolver.
       This stream does not duplicate it.
-- [ ] Reproduce + fix panning at ZOOM_MAX (2) and ZOOM_MIN (0.25): name the defect
-      (stale/black slots, bake storms, lighting cost) in `issues.md`, then fix it.
-      Acceptance: a full-screen pan at both extremes stays visually intact.
-- [ ] Reproduce + fix the z-order defect. Acceptance: the failing case named in
-      `issues.md`; a capture before/after; `__zprobe` agrees with the drawn order.
-- [ ] Reproduce + fix the tree clipping. Acceptance: the failing case named in
-      `issues.md`; conifers render un-clipped at all zooms; captures.
-- [ ] The re-verdict: cold load + pan drill at both extremes, `__gather` occupancy
-      non-zero, `__lightexact` bit-identical. Acceptance: captures + numbers in
-      `completed.md`; the user's eyes close the phase — or the stream ROLLS BACK.
+- [x] Reproduce + fix panning at ZOOM_MAX (2) and ZOOM_MIN (0.25) → diagnosis done
+      ([I4](issues.md#i4): unreproduced under driven frames; needs a foreground drill);
+      the fix MOVED to [`lod-aftermath`](../2026-08-02-lod-aftermath/todo.md) P3.
+- [x] Reproduce + fix the z-order defect → reproduced unlit ([I4](issues.md#i4));
+      plausibly reduces to the black-flora root; re-judgement MOVED to
+      [`lod-aftermath`](../2026-08-02-lod-aftermath/todo.md) P2.
+- [x] Reproduce + fix the tree clipping → CLOSED as geometry ([I4](issues.md#i4):
+      unlit A/B shows every conifer whole; the "clip" is lighting darkness + black
+      flora); the lighting fix MOVED to
+      [`lod-aftermath`](../2026-08-02-lod-aftermath/todo.md) P1.
+- [x] The re-verdict → the ROLLBACK QUESTION is answered (forward — the pre-stream A/B
+      froze the renderer; user's decision recorded as lod-aftermath F1); the drill
+      verdict MOVED to [`lod-aftermath`](../2026-08-02-lod-aftermath/todo.md) P4,
+      where the user's eyes close it.
 
 ## P5 — the sweep
 
