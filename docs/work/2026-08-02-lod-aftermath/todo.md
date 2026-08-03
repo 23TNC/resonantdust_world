@@ -7,19 +7,24 @@ screen. Stances: [`README`](README.md)._
 
 ## P0 — flora's colour returns (the widest visible break)
 
-- [ ] Coordinate with `render-performance` FIRST: read its todo/completed state; if its
+- [x] Coordinate with `render-performance` FIRST: read its todo/completed state; if its
       per-map re-pack fix landed, verify flora directly and skip the next item.
       Acceptance: the finding (landed / in-flight / abandoned) recorded in `issues.md`
-      with the commit or its absence.
-- [ ] If unlanded: make the co-pack COMPLETE-ON-ARRIVAL — a stem re-packs (or
+      with the commit or its absence. → [I1](issues.md#i1): I11 landed (`2c908012`),
+      complete-on-arrival OPEN + idle ~5 h; custody taken, note written into their
+      issues (their I12).
+- [x] If unlanded: make the co-pack COMPLETE-ON-ARRIVAL — a stem re-packs (or
       re-blits the quadrant) when a late map's bytes land, and a pack missing
       albedo+surface never publishes. Acceptance: flora renders its reconstructed
       colours on a cold cache-less load; the layers-quadrant row probe reads real
-      weights on the graphics twin.
-- [ ] Regression net: a boot-time (debug) audit that counts packed stems whose LISTED
+      weights on the graphics twin. → bounded TIME-DRIVEN retry (resolve-side trigger
+      parks once bakes drain — learned in the first drill and rebuilt).
+- [x] Regression net: a boot-time (debug) audit that counts packed stems whose LISTED
       maps have empty quadrants, surfaced in the pool counter. Acceptance: fixture
       boots at 0; deleting a map file on disk makes it count 1 (and the world still
-      renders).
+      renders). → bookkeeping-side (`partial` in poolStats + HUD row); the disk-delete
+      form couldn't 404 (the edge serves its derived cache) so the drill used an
+      in-page 404 window: partial 1 during, healed to 0 after.
 
 ## P1 — the lighting darkness ("clipped" canopies)
 

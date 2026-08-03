@@ -235,3 +235,18 @@ drains to **0 in 3 ticks**, where it previously never drained during load. 916 i
 `conifer/e` is in nearly every square of a forest view, so dirtying 916 is correct, not wasteful. A
 rare stem (a torch, a wolf) dirties a handful.
 
+
+## I12 — complete-on-arrival LANDED by lod-aftermath (custody note) {#i12}
+
+2026-08-02 ~23:00, written by the `lod-aftermath` session: your P1 "let each map
+upgrade the co-pack independently" overlaps a bug that black-rendered flora (a
+transient 404 baked an incomplete co-pack for the whole session, with `packedHash` set
+so nothing ever retried). Since this stream was armed-but-idle ~5 h, lod-aftermath
+landed the MINIMAL completeness fix in `ensureCoPack`: a `partialPacks` ledger (stem →
+missing maps), a bounded TIME-DRIVEN retry (3 attempts, 2 s backoff ×2 — time-driven
+because resolve() goes quiet once bakes drain), and a `partial` counter in
+`poolStats()`/the HUD. Drilled live: 404 window → `partial: 1`, world renders
+progressive; outage ends → the timer re-packs → `partial: 0`, layers row reads real
+weights, old frame serves throughout. VERIFY against your P1 items rather than
+re-implementing; the per-map INDEPENDENT upgrade (no Promise.all) remains yours —
+untouched.

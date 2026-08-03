@@ -176,6 +176,7 @@ async function main(): Promise<void> {
       {
         atlases: pool.pages,
         frames: pool.frames,
+        partial: pool.partial,
       },
       syncHistory.current() ?? undefined,
       buildNowStats(),

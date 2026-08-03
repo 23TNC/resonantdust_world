@@ -40,11 +40,18 @@ export interface ResolvedTexture {
   geo: boolean;
 }
 
-/** Sprite-pool occupancy for the debug HUD — one frame per stem now, so a plain counter. */
+/** Sprite-pool occupancy for the debug HUD — one frame per stem now, so a plain counter.
+ *  `partial` counts packed stems missing a LISTED map's bytes (lod-aftermath P0: the
+ *  black-flora class — a transient 404 must never silently bake an incomplete co-pack). */
 export interface PoolStats {
   pages: number;
   frames: number;
+  partial: number;
 }
+
+/** lod-aftermath P0: bounded re-pack for a co-pack that landed incomplete. */
+const PARTIAL_RETRY_MAX = 3;
+const PARTIAL_RETRY_BASE_MS = 2000;
 
 export class TextureResolver {
   private renderer: Renderer | null;
@@ -110,6 +117,13 @@ export class TextureResolver {
     this.packedHash.delete(name);
   }
   private scaleWarned = false;
+
+  /** lod-aftermath P0: stems whose LAST master pack was missing a listed map's bytes (a 404
+   *  during an outage window) — completeness bookkeeping + a bounded TIME-DRIVEN retry, so
+   *  ONE transient failure can never silently bake an incomplete co-pack for a session (I2:
+   *  black flora). Time-driven because resolve() goes quiet once the bakes drain — a
+   *  resolve-side trigger parks forever (learned in the first drill). */
+  private readonly partialPacks = new Map<string, { missing: TexMap[]; retries: number }>();
 
   private readonly listeners = new Set<(stem?: string) => void>();
 
@@ -228,7 +242,7 @@ export class TextureResolver {
 
   poolStats(): PoolStats {
     // one-resolution: ONE co-pack per stem — a plain counter is the whole story.
-    return { pages: this.spritePool?.pageCount ?? 0, frames: this.packed.size };
+    return { pages: this.spritePool?.pageCount ?? 0, frames: this.packed.size, partial: this.partialPacks.size };
   }
 
   /** Whether the serving manifest lists `stem` (human-pawns P3): the variant-folder
@@ -370,6 +384,10 @@ export class TextureResolver {
       const order: TexMap[] = ["albedo", "normal", "surface", "layers"];
       const want = order.map((m) => m === "albedo" || entry.maps.includes(m)); // absent → transparent quadrant
       const bytes = await Promise.all(order.map((m, i) => (want[i] ? this.loadMapBytes(stem, size, hash, m) : Promise.resolve(null))));
+      // lod-aftermath P0 (I2): a LISTED map whose bytes did not come back is a PARTIAL pack —
+      // pack anyway (progressive beats geo) but remember, so a bounded retry can complete it.
+      // Only the MASTER tier is tracked; a partial preview is superseded by the master anyway.
+      const missing = order.filter((m, i) => want[i] && !bytes[i]) as TexMap[];
       // All four maps are DATA maps → STRAIGHT-alpha decode (RGB survives; no premultiply).
       const raw = { premultiplyAlpha: "none" as const };
       const bmps = await Promise.all(bytes.map((b) => (b ? createImageBitmap(new Blob([b]), raw) : Promise.resolve(null))));
@@ -399,6 +417,29 @@ export class TextureResolver {
       if (ok) {
         this.packedSize.set(stem, size);
         this.packedHash.set(stem, hash);
+        if (size >= (entry.maxSize ?? size)) {
+          if (missing.length) {
+            const prev = this.partialPacks.get(stem);
+            const retries = prev?.retries ?? 0;
+            this.partialPacks.set(stem, { missing, retries });
+            if (retries < PARTIAL_RETRY_MAX) {
+              const delay = PARTIAL_RETRY_BASE_MS * Math.pow(2, retries);
+              console.warn(`[resolver] ${stem}: packed WITHOUT [${missing.join(", ")}] — retry ${retries + 1}/${PARTIAL_RETRY_MAX} in ${delay} ms`);
+              setTimeout(() => {
+                const p = this.partialPacks.get(stem);
+                const e = this.manifest.entry(stem);
+                if (!p || !e) return;           // healed or unlisted meanwhile
+                p.retries++;
+                this.packedSize.delete(stem);   // reopen the size guard; the old frame keeps serving
+                void this.ensureCoPack(stem, e.maxSize, e.hash);
+              }, delay);
+            } else {
+              console.warn(`[resolver] ${stem}: still missing [${missing.join(", ")}] after ${PARTIAL_RETRY_MAX} retries — giving up (the partial counter stays raised)`);
+            }
+          } else {
+            this.partialPacks.delete(stem); // complete — heal the ledger
+          }
+        }
         this.emit(stem);
       } else {
         // I2: a pack that FAILS must still notify. `if (ok) emit()` alone left a stem whose bytes had

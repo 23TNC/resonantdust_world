@@ -404,6 +404,8 @@ export class DebugPanel {
   private readonly texAtlases:     HTMLSpanElement;
   /** one-resolution: ONE co-pack per stem — a single packed-frame count row. */
   private readonly texFrames: HTMLSpanElement;
+  /** lod-aftermath P0: packed stems missing a listed map (the black-flora regression net). */
+  private readonly texPartial: HTMLSpanElement;
 
   // ── Sync tab values ─────────────────────────────────────────────
   /** The unified "Now" row — a 3-line value cell (Sync / Date / Server). */
@@ -522,6 +524,7 @@ export class DebugPanel {
     this.texZoom      = this.addRow(texturesContent, panelText("debugPanel", "zoom"));
     this.texAtlases   = this.addRow(texturesContent, panelText("debugPanel", "atlases"));
     this.texFrames    = this.addRow(texturesContent, "packed frames");
+    this.texPartial   = this.addRow(texturesContent, "partial packs");
 
     // ── Sync tab — full time-sync state ───────────────────────────
     // One "Now" row stacks the three clocks (Sync / Date / Server) so their
@@ -640,6 +643,7 @@ export class DebugPanel {
     atlasStats?: {
       atlases: number;
       frames: number;
+      partial: number;
     },
     syncStats?: SyncStats,
     now?: NowStats,
@@ -720,6 +724,7 @@ export class DebugPanel {
     if (atlasStats) {
       this.texAtlases.textContent = String(atlasStats.atlases);
       this.texFrames.textContent  = String(atlasStats.frames);
+      this.texPartial.textContent = String(atlasStats.partial);
     }
     if (syncStats) {
       this.syncOffset.value.textContent = formatSignedMs(syncStats.offsetMs);
