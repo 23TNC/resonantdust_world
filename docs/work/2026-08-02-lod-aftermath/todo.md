@@ -31,13 +31,30 @@ screen. Stances: [`README`](README.md)._
       Acceptance: no pitch-black canopy at any zoom; trees read whole lit AND unlit;
       `__lightexact` bit-identical + `__gather` occupancy nonzero.
 
-## P2 — z-order, re-judged
+## P2 — z-order + depth layering (the ONE-KEY model, F2)
 
 - [ ] After P0: re-capture the unlit overdraw case. If it vanished with flora's colour,
       close as reduced-to-P0; if not, root-cause the bake paint order vs the zdepth
       painter's key for the failing pair. Acceptance: the verdict + capture in
       `issues.md`; if real, the fix verified by `__zprobe` agreeing with the drawn
       order.
+- [ ] ONE base-row derivation ([F2](forks.md#f2)): a shared records/GLSL definition of
+      "ground-contact row" consumed by the bake sort, the zdepth lane, the presence
+      sort, and the refine — replacing their independent derivations. Acceptance:
+      grep shows the four call sites reading the one definition; typecheck; render
+      unchanged (`__zprobe` + captures).
+- [ ] The shadow-layering compare (user: "shadows in the back are not drawn over
+      shadows in the front"): the refine skips a caster whose ground-contact row is
+      NORTH of the receiver's — its shadow lands on the receiver's back face, never
+      drawn. One subtract-compare on fetched words. Acceptance: a staged
+      caster-behind-receiver scene shows no front-face shadow; `__lightexact`
+      bit-identical; `__gather` occupancy sane.
+- [ ] Presence on EVERY physically-occupied tile (user; extends the x-span work): a
+      prim registers in each tile its FOOTPRINT covers, and the receiver/gather
+      dilation loops shrink accordingly (they exist to paper over under-registration).
+      Acceptance: `__zprobe` finds the prim from any occupied tile; `droppedReceivers`
+      stays 0 at the fixture; the gather's per-step tile fetches REDUCE (count logged
+      before/after).
 
 ## P3 — panning at the zoom extremes
 

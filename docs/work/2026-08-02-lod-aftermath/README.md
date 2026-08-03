@@ -27,8 +27,12 @@ world was structural.
 2. **"Clipped" trees = lighting darkness** — unlit A/B proves geometry whole; hard
    black bands across canopies are shadow/N·L interplay (normal-frames' pitch, the
    billboard shadow path, the wrap floor) at high zoom. ROOT NOT YET ISOLATED.
-3. **Z-order** — one unlit reproduction (black blob over a canopy); plausibly reduces
-   to bug 1 (a colored flora in the same order may read correctly). RE-JUDGE after 1.
+3. **Z-order + depth layering** — one unlit reproduction (black blob over a canopy);
+   plausibly reduces to bug 1. RE-JUDGE after 1 — then P2 lands the settled depth
+   model ([F2](forks.md#f2)): screen.z ≡ unit.y, ONE ground-contact-row key with one
+   shared derivation, the back-caster shadow compare, and presence on every
+   physically-occupied tile (evaluated ~free on the CPU, likely a GPU WIN — the
+   dilation loops exist to paper over under-registration).
 4. **Pan at max/min zoom** — unreproduced; pan artifacts are a live-eye class. Needs a
    FOREGROUND drill (the hidden-tab rAF phantom is recorded and must not be
    re-diagnosed as a bug).
