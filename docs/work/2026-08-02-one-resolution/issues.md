@@ -63,6 +63,40 @@ registering the surface quadrant's own coords double-offset the sample one quadr
 past the art (the first fix attempt; still zero). Verified: gather 355 occluding
 pairs, walk = brute, silhouette shadows on screen at the fixture.
 
+## I4 — the P6 diagnosis: five complaints, four distinct causes {#i4}
+
+**"Blocks on texture load"** — three truths at once. (a) My own probes ran against a
+HIDDEN tab: rAF never fires there, so `tick()` never runs, the canvas stays 300×150,
+the cache never partitions, and NOTHING kicks — a phantom deadlock that evaporates the
+moment frames are driven (the standing foreground-tab rule; likely also the "tab hangs
+black" sightings). (b) The real UX regression — geo-until-max with no fast tier — is
+[`render-performance`](../2026-08-02-render-performance/README.md)'s charter, armed and
+mid-flight; the PREVIEW kick + `packedSize` guard are already live at HEAD. (c) The
+in-place A/B against the PRE-stream commit found the OLD code FREEZES the renderer
+under the very tick storms HEAD survives (the invalidateAll-per-arrival stampede that
+I11 fixed) — **evidence against rollback**.
+
+**"Trees are clipped"** — CLOSED as geometry: the unlit A/B shows every conifer whole.
+The "clip" is lighting darkness (hard black shadow bands across canopies) plus the
+black flora blobs below reading as holes. Remains open as a LIGHTING TUNING item, not
+a texture one.
+
+**BLACK FLORA (the blobs, and most of the "z-order" impression)** — flora's albedo is
+near-black BY DESIGN (`albedo-outlines` model: colour = layers reconstruction), and its
+LAYERS quadrant is EMPTY ON BOTH TWINS while the disk bytes carry real weights (R mean
+53–84). The independent-per-map pack landed flora without its layers and nothing
+re-packed — render-performance's I2 class ("a stem whose bytes arrived can sit
+incomplete"). Their seam; coordinated, not double-fixed here.
+
+**"Z-order"** — one reproduced-unlit capture: a black flora blob overdraws a conifer
+canopy whose base looks south of it. May reduce entirely to the black-flora defect
+(a correctly-ordered flora that WASN'T black would read fine); re-judge after the
+layers fix lands.
+
+**"Pan at max/min zoom"** — NOT yet reproduced: pan drills need a foreground tab
+(driven ticks render, but pan artifacts are exactly the class the eye catches live).
+Open.
+
 Lesson recorded: the def frame is ONE rect serving two pages and two addressing modes —
 any future re-plumbing of `resolve()`/quadrants must re-run `__gather()` (zero
 `nonZeroBefore` is the tell) before shipping; the P5 sweep checked `__lightexact`
