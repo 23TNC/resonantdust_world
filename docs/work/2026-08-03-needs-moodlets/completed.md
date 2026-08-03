@@ -1,5 +1,23 @@
 # Completed — needs & moodlets
 
+## 2026-08-03 · P3 — one evaluation, everywhere (2/2)
+
+`shared/dsl::needs_eval` (dependency-free — decoded rows in, moodlets out):
+`satisfaction_at` (lazy `sat0 − elapsed/deplete`, clamp 0, u16 wrap), `active_moodlets`
+(band membership `lo <= sat < hi` + unexpired timed grants; unknown ids skip, a stored
+grant of a conditional moodlet is inert), `mood` (`clamp(0.5 + Σ, 0..1)`),
+`next_crossing_tic` (earliest band crossing / timed expiry strictly ahead — the sleep
+schedule that replaces sampling, F4). 5 unit tests pin the edges: `sat == hi` NOT active,
+crossing at `floor((s0−T)·deplete)+1` exactly, empty clamps INSIDE Dehydrated with no
+further crossings, expiry at exactly `duration`, wrap-window arithmetic.
+
+`shared/wasm`: `pawnMoodlets` (stride-3 `[id, offset, remaining]`), `pawnMood`,
+`pawnNextCrossing` (−1 = never), `moodletLabels` — all taking the RAW payload vec, so the
+client never re-derives a band comparison (F3). **Verified in the browser** against
+hand-computed corpus values (deplete 21600): full → `[] / 0.5 / 14041`; mid (q64) →
+`Thirsty −0.15 / 0.35 / 3262`; empty → `Dehydrated −0.40 / 0.10 / −1`; timed grant →
+`Quenched +0.20, remaining 3500 / 0.7 / 3600`. Exact on every lane.
+
 ## 2026-08-03 · P2 — the shard remembers (3/3, re-shaped by F7)
 
 The planned "new NEED table" was a plan bug ([F7](forks.md#f7)): the pawn PAYLOAD sidecar is

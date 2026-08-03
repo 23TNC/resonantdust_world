@@ -228,6 +228,52 @@ impl Content {
         self.bundle.thing_subframe()
     }
 
+    // ── needs & moodlets (needs-moodlets P3/F3) — the ONE eval, reached through wasm ──
+
+    /// A pawn's ACTIVE moodlets at `now_tic`, evaluated from its raw payload sidecar
+    /// (`NEED` + `MOODLET` entries — `TABLES.md § payload`). Flat **stride-3** per active
+    /// moodlet: `[moodlet_id, mood_offset, remaining_tics]` (`remaining 0` = conditional,
+    /// alive while its band holds). The SAME `needs_eval` the npc Brain imports natively —
+    /// the panel and the Brain cannot disagree on a crossing by construction.
+    #[wasm_bindgen(js_name = pawnMoodlets)]
+    pub fn pawn_moodlets(&self, payload: Vec<u32>, now_tic: u16) -> Vec<f64> {
+        let needs = resonantdust_codec::payload::payload_needs(&payload);
+        let grants = resonantdust_codec::payload::payload_moodlets(&payload);
+        let active = resonantdust_dsl::needs_eval::active_moodlets(&self.bundle, &needs, &grants, now_tic);
+        let mut out = Vec::with_capacity(active.len() * 3);
+        for m in &active {
+            out.extend_from_slice(&[f64::from(m.moodlet_id), m.mood, f64::from(m.remaining)]);
+        }
+        out
+    }
+
+    /// The pawn's MOOD at `now_tic` — `clamp(0.5 + Σ active offsets, 0..1)` (F5).
+    #[wasm_bindgen(js_name = pawnMood)]
+    pub fn pawn_mood(&self, payload: Vec<u32>, now_tic: u16) -> f64 {
+        let needs = resonantdust_codec::payload::payload_needs(&payload);
+        let grants = resonantdust_codec::payload::payload_moodlets(&payload);
+        let active = resonantdust_dsl::needs_eval::active_moodlets(&self.bundle, &needs, &grants, now_tic);
+        resonantdust_dsl::needs_eval::mood(&active)
+    }
+
+    /// The next FUTURE tic the pawn's active-moodlet set can change WITHOUT a new write
+    /// (band crossing or timed expiry), or `-1` when nothing ahead changes — what lets the
+    /// panel re-evaluate on a schedule instead of sampling (F4).
+    #[wasm_bindgen(js_name = pawnNextCrossing)]
+    pub fn pawn_next_crossing(&self, payload: Vec<u32>, now_tic: u16) -> f64 {
+        let needs = resonantdust_codec::payload::payload_needs(&payload);
+        let grants = resonantdust_codec::payload::payload_moodlets(&payload);
+        resonantdust_dsl::needs_eval::next_crossing_tic(&self.bundle, &needs, &grants, now_tic)
+            .map_or(-1.0, f64::from)
+    }
+
+    /// Every moodlet's display LABEL in `moodlet_id` order (index 0 → id 1) — the panel's
+    /// name lookup. Labels are presentation; ids are what the eval returns.
+    #[wasm_bindgen(js_name = moodletLabels)]
+    pub fn moodlet_labels(&self) -> Vec<String> {
+        self.bundle.moodlet_params_all().into_iter().map(|m| m.label).collect()
+    }
+
     /// Per-kind emitted light, stride-8 (`[r, g, b, intensity, reach, radius, height, flags]`;
     /// flags bit 0 = cast_shadows, bit 1 = hot). `reach == 0` ⇒ the kind emits no light.
     #[wasm_bindgen(js_name = thingLight)]

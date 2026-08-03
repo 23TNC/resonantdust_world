@@ -21,6 +21,7 @@
 
 pub mod content;
 pub mod loader;
+pub mod needs_eval;
 pub mod parser;
 pub mod vm;
 

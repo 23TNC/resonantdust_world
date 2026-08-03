@@ -39,11 +39,16 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P3 — one evaluation, everywhere (F3)
 
-- [ ] `needs_eval` in a shared rust crate: `satisfaction_at(tic)`, active conditional moodlets,
+- [x] `needs_eval` in a shared rust crate: `satisfaction_at(tic)`, active conditional moodlets,
       `mood = clamp(base + Σ offsets)`, `next_crossing_tic`. Acceptance: unit tests pin the band
-      edges — the exact crossing tic, the clamp at 0, and an absent row.
-- [ ] Expose the eval through `shared/wasm` for the client. Acceptance: the wasm call returns the
+      edges — the exact crossing tic, the clamp at 0, and an absent row. → `shared/dsl/needs_eval`
+      (dep-free; rows in, moodlets out); 5 tests incl. sat==hi NOT active at the edge, tic wrap,
+      timed expiry at exactly duration, band+grant stacking.
+- [x] Expose the eval through `shared/wasm` for the client. Acceptance: the wasm call returns the
       identical moodlet set as the rust test fixture at three probe tics (full, mid-band, empty).
+      → `pawnMoodlets`/`pawnMood`/`pawnNextCrossing` (raw payload in) + `moodletLabels`; browser
+      probes vs hand-computed corpus values: full → mood 0.5/next 14041, mid → Thirsty 0.35/3262,
+      empty → Dehydrated 0.10/−1, timed → Quenched remaining 3500. All exact.
 
 ## P4 — the wolf gets thirsty
 
