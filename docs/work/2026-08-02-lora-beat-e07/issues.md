@@ -173,3 +173,28 @@ collapsed. Verified against the corrupt wolf (caught) and the good bear (passed)
 **Worth stating plainly:** had P2.5 been skipped as a formality, we would have trained ~3 hours on
 a set where half the images teach the model that subjects are tiny specks on white — and the most
 likely reading of that result would have been "the new base is bad".
+
+## I9 — The drawn FRAME is back on natural-fill data — the pinned-`fill` diagnosis was wrong {#i9}
+_2026-08-02 · run-6 epoch samples · **refutes the run-4 root cause**_
+
+Run-4's south failure (head-only portrait inside a drawn white rectangle) was root-caused as
+*"pinning `fill = 0.85` gave all 459 images an identical ~7.5% white margin, which the model
+learned as a feature and now draws."*
+
+**Run-6 draws the rectangle anyway**, at every sampled epoch, while trained on `quad_dataset` —
+which has **natural fill variance (sd ~0.15)**, not the pinned 0.003. Different base model,
+different precision, different rank, no warm start, and the artefact is unchanged.
+
+So the margin cannot be the cause: the property said to teach it is absent. Combined with
+[I7](#i7) — both candidate bases produced face-emblems for front views with **no LoRA at all** —
+the better reading is that **front-view quadrupeds are a prior problem the LoRA cannot fix from
+459 images**, and the frame is what the model reaches for when asked to compose a subject it has
+no body plan for.
+
+Consistent with everything on record: run-5 jittered the fill and changed nothing
+([I1](#i1)), which was read as "the range was too small". It now looks like the hypothesis was
+simply wrong.
+
+**East is unaffected and good** — by epoch 10 the tiger is a clean single flat sprite in lying
+profile with a hard outline, which is the convention. The failure is direction-specific, not
+global.
