@@ -97,6 +97,21 @@ export interface PrimitiveLight {
   flicker?: boolean;
 }
 
+/** lod-aftermath P2 (F2, the ONE depth key): a surface's depth is the `unit.y` of its GROUND
+ *  CONTACT — a billboard's base line, a tile's own row. `screen.z` ordering ≡ this ordering
+ *  (`screen.z = tan(world_angle) · unit.y`; settled with the user over two diagrams). FOUR
+ *  consumers must agree and must derive it HERE, never inline: the bake paint order
+ *  (`WorldBridge.thingOrder` / `MoverLayer`'s slot order encode the SAME row at creation —
+ *  bound by this contract), the zdepth painter's lane, the presence sort, and the record
+ *  anchor + refine compares (GPU side: `primPos`). */
+export function groundContactY(p: Primitive): number {
+  return p.y + p.height;
+}
+/** The tile-row form of {@link groundContactY} — the zdepth lane's and painter's key. */
+export function groundContactRow(p: Primitive): number {
+  return Math.floor((p.y + p.height) / SQUARE);
+}
+
 /** What a channel's resolve returns — the merged bake gathers albedo material + normal + depth. */
 export interface ResolvedPrim {
   texture: Texture;

@@ -10,7 +10,7 @@
 
 import { Renderer, Program, Geometry, Texture, TexFrame } from "../../gl";
 import { Camera } from "./Camera";
-import { SquareCache, type PrimitiveSpec, type ChannelSpec, type Primitive } from "./SquareCache";
+import { SquareCache, groundContactRow, type PrimitiveSpec, type ChannelSpec, type Primitive } from "./SquareCache";
 import type { TextureResolver } from "../../textures";
 import { AlbedoBlitShader } from "./albedoBlitShader";
 import { OverlayShader, overlayModeFor } from "./overlayShader";
@@ -110,6 +110,9 @@ export class Viewport {
   readonly shadows: ShadowBuffer;
   /** The synthetic emitter P2/P3 exercise the real path with (no lights are authored yet). */
   private debugLightPrim = 0;
+  /** lod-aftermath P1: isolation toggles (see `__shadows` / `__ndotl`). */
+  private debugNoShadow = false;
+  private debugFlatN = false;
   /** lighting-rework P5: is the new lighting driven + displayed? Off until `__lit(true)`. */
   // lighting-correctness P1b: LIT IS THE DEFAULT — the reconciler keeps records live, so the
   // chain simply runs once the map is ready. `__lit(false)` remains the unlit A/B.
@@ -211,6 +214,16 @@ export class Viewport {
       this.litEnabled = on ?? !this.litEnabled;
       return { lit: this.litEnabled };
     };
+    // lod-aftermath P1 isolation toggles: __shadows(false) skips the occlusion test;
+    // __ndotl(false) forces flat shading (no N·L, no wrap floor). Both default ON.
+    (globalThis as unknown as { __shadows: (on?: boolean) => unknown }).__shadows = (on?: boolean) => {
+      this.debugNoShadow = !(on ?? this.debugNoShadow);
+      return { shadows: !this.debugNoShadow };
+    };
+    (globalThis as unknown as { __ndotl: (on?: boolean) => unknown }).__ndotl = (on?: boolean) => {
+      this.debugFlatN = !(on ?? this.debugFlatN);
+      return { ndotl: !this.debugFlatN };
+    };
     // DEBUG (material-system P4): global colour-placement override for the F1 by-eye A/B —
     // __material(0 uv | 1 world | 2 detail-keyed | 3 normal-keyed), no arg / -1 = per-material.
     (globalThis as unknown as { __material: (mode?: number) => number }).__material = (mode?: number) => {
@@ -278,7 +291,7 @@ export class Viewport {
       // MUST use the SAME row convention as the gather's caster depth: the draw-box bottom
       // `prim.y + prim.height` (= coldShadowData's stored base-centre `ay`), NOT orderRow — those differ by a
       // per-sprite anchor offset, which biased the comparison (some trees right, some wrong).
-      { key: `zdepth-world-${suffix}`, resolve: (prim) => ({ texture: white, tint: 0xffffff, depth: prim.zIndex >= 1 ? (0x80 | (Math.floor((prim.y + prim.height) / SQUARE) & 0x7f)) / 255 : -1 }) },
+      { key: `zdepth-world-${suffix}`, resolve: (prim) => ({ texture: white, tint: 0xffffff, depth: prim.zIndex >= 1 ? (0x80 | (groundContactRow(prim) & 0x7f)) / 255 : -1 }) },
     ];
   }
 
@@ -576,7 +589,7 @@ export class Viewport {
       const lwin = { cols: w.cols, rows: w.rows, level: w.level };
       this.shadows.gather(this.renderer, { prim: r.primTex, def: r.defTex, light: r.lightTex,
                                            presence: r.presenceTex, atlas: atlas ?? this.white, atlas2 },
-                          w.winCol, w.winRow, false, false, 2, lwin);
+                          w.winCol, w.winRow, false, false, 0, lwin);
       // P5: the receiver map FIRST, once -- it is geometry, so it is the same for every light and
       // the eight light fragments read it instead of each re-deciding (I2).
       this.lights.receivers(this.renderer, r.primTex, r.defTex, r.presenceTex, atlas ?? this.white, w.winCol, w.winRow, atlas2, lwin);
@@ -592,6 +605,7 @@ export class Viewport {
       this.lights.run(this.renderer, r.primTex, r.lightTex, w.winCol, w.winRow,
                       { def: r.defTex, shadow: this.shadows.prev, atlas: atlas ?? this.white, atlas2,
                         refine: canRefine, win: lwin,
+                        noShadow: this.debugNoShadow, flatN: this.debugFlatN,
                         normalCold: nCold ?? undefined, normalWarm: nWarm ?? undefined,
                         surfaceWarm: sWarm ?? undefined,
                         depthCold: dCold ?? undefined, depthWarm: dWarm ?? undefined,
@@ -947,13 +961,13 @@ export class Viewport {
     gl.drawElements = function (...a: unknown[]) { draws++; return (de as (...x: unknown[]) => void).apply(gl, a); } as typeof gl.drawElements;
     gl.drawArrays = function (...a: unknown[]) { draws++; return (da as (...x: unknown[]) => void).apply(gl, a); } as typeof gl.drawArrays;
     // two real gathers: the first fills the incumbents, the second is the steady state the tiers describe
-    this.shadows.gather(this.renderer, tex, win.winCol, win.winRow, false, false, 2, { cols: win.cols, rows: win.rows, level: win.level });
-    this.shadows.gather(this.renderer, tex, win.winCol, win.winRow, false, false, 2, { cols: win.cols, rows: win.rows, level: win.level });
+    this.shadows.gather(this.renderer, tex, win.winCol, win.winRow, false, false, 0, { cols: win.cols, rows: win.rows, level: win.level });
+    this.shadows.gather(this.renderer, tex, win.winCol, win.winRow, false, false, 0, { cols: win.cols, rows: win.rows, level: win.level });
     const drawsPerGather = draws / 2;
     gl.drawElements = de; gl.drawArrays = da;
 
     // tier pass — same shader, uDebugTier=1, does NOT swap, so it cannot disturb the steady state
-    this.shadows.gather(this.renderer, tex, win.winCol, win.winRow, true, false, 2, { cols: win.cols, rows: win.rows, level: win.level });
+    this.shadows.gather(this.renderer, tex, win.winCol, win.winRow, true, false, 0, { cols: win.cols, rows: win.rows, level: win.level });
     const d = this.shadows.dims;
     const W = 256, H = 64;
     const buf = new Uint32Array(W * H * 4);
@@ -980,10 +994,10 @@ export class Viewport {
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       return b;
     };
-    this.shadows.gather(this.renderer, tex, win.winCol, win.winRow, false, false, 2, { cols: win.cols, rows: win.rows, level: win.level });      // steady state (swaps)
-    this.shadows.gather(this.renderer, tex, win.winCol, win.winRow, false, false, 2, { cols: win.cols, rows: win.rows, level: win.level });
+    this.shadows.gather(this.renderer, tex, win.winCol, win.winRow, false, false, 0, { cols: win.cols, rows: win.rows, level: win.level });      // steady state (swaps)
+    this.shadows.gather(this.renderer, tex, win.winCol, win.winRow, false, false, 0, { cols: win.cols, rows: win.rows, level: win.level });
     const walked = readCur();
-    this.shadows.gather(this.renderer, tex, win.winCol, win.winRow, false, true, 2, { cols: win.cols, rows: win.rows, level: win.level });   // brute, no swap
+    this.shadows.gather(this.renderer, tex, win.winCol, win.winRow, false, true, 0, { cols: win.cols, rows: win.rows, level: win.level });   // brute, no swap
     const brute = readCur();
     // Compare OCCLUSION, not identity. Where several casters block the same ray, "which one" is
     // arbitrary: the walk takes the first along the ray, brute the first in scan order, and both are
@@ -1035,7 +1049,7 @@ export class Viewport {
                          seed: d.seed, intensity: d.intensity, reach: d.reach });
     }
     rec.upload(gl);
-    this.shadows.gather(this.renderer, tex, win.winCol, win.winRow, false, true, 2, { cols: win.cols, rows: win.rows, level: win.level });
+    this.shadows.gather(this.renderer, tex, win.winCol, win.winRow, false, true, 0, { cols: win.cols, rows: win.rows, level: win.level });
     const afterCleared = casterFields(readCur());
     for (const [i, ct] of saved) {
       const d = rec.debugPrim(i);

@@ -28,38 +28,48 @@ screen. Stances: [`README`](README.md)._
 
 ## P1 — the lighting darkness ("clipped" canopies)
 
-- [ ] Reproduce at zoom 2 and isolate the term: toggle shadows-only vs N·L-only vs
+- [x] Reproduce at zoom 2 and isolate the term: toggle shadows-only vs N·L-only vs
       wrap-floor values on the dark canopy bands (three A/B captures). Acceptance: the
-      dominant term named in `issues.md` with captures.
-- [ ] Fix the named term (candidates, judged by the isolation: billboard shadow
+      dominant term named in `issues.md` with captures. → `__shadows(false)` removed
+      EVERY dark band: 100% the occlusion term (zero-contribution shadows). New
+      toggles `__shadows`/`__ndotl` stay as drills.
+- [x] Fix the named term (candidates, judged by the isolation: billboard shadow
       attenuation, the normal pitch on canopy texels, the wrap floor at high zoom).
       Acceptance: no pitch-black canopy at any zoom; trees read whole lit AND unlit;
-      `__lightexact` bit-identical + `__gather` occupancy nonzero.
+      `__lightexact` bit-identical + `__gather` occupancy nonzero. → SHADOW_KEEP 0.35:
+      a shadow DIMS its light, never deletes it (tunable constant).
 
 ## P2 — z-order + depth layering (the ONE-KEY model, F2)
 
-- [ ] After P0: re-capture the unlit overdraw case. If it vanished with flora's colour,
+- [x] After P0: re-capture the unlit overdraw case. If it vanished with flora's colour,
       close as reduced-to-P0; if not, root-cause the bake paint order vs the zdepth
       painter's key for the failing pair. Acceptance: the verdict + capture in
       `issues.md`; if real, the fix verified by `__zprobe` agreeing with the drawn
-      order.
-- [ ] ONE base-row derivation ([F2](forks.md#f2)): a shared records/GLSL definition of
+      order. → CLOSED reduced-to-P0: textured flora renders correctly BEHIND canopies
+      (unlit close-up); the black fill had destroyed the depth cues — the paint order
+      was right all along.
+- [x] ONE base-row derivation ([F2](forks.md#f2)): a shared records/GLSL definition of
       "ground-contact row" consumed by the bake sort, the zdepth lane, the presence
       sort, and the refine — replacing their independent derivations. Acceptance:
       grep shows the four call sites reading the one definition; typecheck; render
-      unchanged (`__zprobe` + captures).
-- [ ] The shadow-layering compare (user: "shadows in the back are not drawn over
+      unchanged (`__zprobe` + captures). → `groundContactY/Row` exported from
+      SquareCache; recordSync + the zdepth lane consume it; `thingOrder`/slot order
+      bound by the contract note (they encode the row at creation, pre-Primitive).
+- [x] The shadow-layering compare (user: "shadows in the back are not drawn over
       shadows in the front"): the refine skips a caster whose ground-contact row is
       NORTH of the receiver's — its shadow lands on the receiver's back face, never
       drawn. One subtract-compare on fetched words. Acceptance: a staged
       caster-behind-receiver scene shows no front-face shadow; `__lightexact`
-      bit-identical; `__gather` occupancy sane.
-- [ ] Presence on EVERY physically-occupied tile (user; extends the x-span work): a
+      bit-identical; `__gather` occupancy sane. → landed WITH the P1 fix; the A/B
+      captures show rear-caster canopy shadows gone; occupancy 355, exact ✓.
+- [x] Presence on EVERY physically-occupied tile (user; extends the x-span work): a
       prim registers in each tile its FOOTPRINT covers, and the receiver/gather
       dilation loops shrink accordingly (they exist to paper over under-registration).
       Acceptance: `__zprobe` finds the prim from any occupied tile; `droppedReceivers`
       stays 0 at the fixture; the gather's per-step tile fetches REDUCE (count logged
-      before/after).
+      before/after). → full-box registration (1050 presence tiles at the fixture);
+      dilation 2→0 in BOTH passes = 15→1 fetches/walk-step, 3→1/receiver-texel;
+      walk = brute at dilation 0; dropped 0.
 
 ## P3 — panning at the zoom extremes
 

@@ -53,6 +53,8 @@ uniform highp usampler2D uShadow;    // the gather's output: WHICH caster occlud
 uniform highp usampler2D uReceiver;  // P3: which receiver owns each lighting texel (the receiver map)
 uniform int uRefine;                 // 0 = no shadows, 1 = refine at THIS resolution (F12)
 uniform int uDebugGate;              // 1 = emit the gate's selectivity instead of light
+uniform int uNoShadow;               // lod-aftermath P1 isolation: 1 = skip the occlusion test
+uniform int uFlatN;                  // lod-aftermath P1 isolation: 1 = force ndotl = 1 (no N·L, no wrap floor)
 uniform int uLightW;                 // lighting texels per TILE (TEXTILE_LIGHT >> level)
 uniform int uUnitT;                  // shadow texels per TILE (TEXTILE_UNIT >> level)
 uniform int uCols;                   // window extent in TILES — the slot torus modulus
@@ -68,6 +70,9 @@ const int   LIGHT_SLOTS = ${LIGHT_SLOTS};
 const float LIGHT_SCALE = ${LIGHT_SCALE}.0;
 const float UPT         = ${UNITS_PER_TILE}.0;
 const int   TILE_DIM    = 256;
+// lod-aftermath P1: the fraction of a light that SURVIVES occlusion — shadows dim, never
+// delete (0.0 = the old pitch-black; tune by eye).
+const float SHADOW_KEEP = 0.35;
 
 int pmod(int a, int m) { return ((a % m) + m) % m; }
 
@@ -217,7 +222,7 @@ void main() {
     vec3 ldir = normalize(vec3(Lpos.x - P.x, P.y - Lpos.y, worldHeightForDrawn(Lz2)));
     ndotl = clamp(dot(nrm, ldir), 0.0, 1.0);
   }
-  at *= mix(0.25, 1.0, ndotl);
+  if (uFlatN == 0) { at *= mix(0.25, 1.0, ndotl); }   // P1 isolation: uFlatN skips shading
 
   // Emitters carry their DSL light RGB in colour.1-3 (lighting-correctness P1b — the torch's
   // authored colour); an all-zero RGB (the debug lights) falls back to the warmth ramp on .4.
@@ -235,7 +240,7 @@ void main() {
   // the card's BACK face, which is never drawn — painting them on the front put tree-shaped
   // bands on back-lit sprites. Back-lit fronts already rest at the N·L wrap floor.
   bool backLit = recvIdx != 0u && Lpos.y < Puse.y;
-  if (uRefine == 1 && !backLit) {
+  if (uRefine == 1 && !backLit && uNoShadow == 0) {
     // P4: the shadow buffer rides the SAME slot torus at uUnitT texels/tile. The lit point can
     // sit south of the fragment's own tile (a billboard's base), so guard the window bounds.
     int utx = int(floor(Puse.x / UPT)), uty = int(floor(Puse.y / UPT));
@@ -249,6 +254,13 @@ void main() {
       // its own caster (the ray from the light to a point on r's card clips r's silhouette
       // by construction; testing it painted self-shadow bands on the wolf's flank).
       if (caster == recvIdx) { caster = 0u; }
+      // lod-aftermath P2 (F2, the ONE depth key): a BILLBOARD receiver takes no shadow from a
+      // caster whose ground-contact row is NORTH of its own — that shadow lands on the card's
+      // back face, which is never drawn. Ground receivers keep every caster.
+      if (caster != 0u && recvIdx != 0u) {
+        vec2 cPos = primPos(fetchPrim(caster));
+        if (cPos.y < Puse.y) { caster = 0u; }
+      }
       if (caster != 0u) {
         gated = true;
         occluded = occludesAt(caster, Lpos, primElevation(rec), Puse, targetH);
@@ -256,7 +268,11 @@ void main() {
     }
   }
   if (uDebugGate == 1) { fragColor = vec4(gated ? 1.0 : 0.0, occluded ? 1.0 : 0.0, 1.0, 1.0); return; }
-  if (occluded) { fragColor = vec4(0.0); return; }
+  // lod-aftermath P1 (isolated live: shadows-off removed EVERY dark band — occlusion at zero
+  // contribution was the whole "clipped canopy" read). A shadow DIMS its light, never deletes
+  // it: SHADOW_KEEP of the contribution survives, so shadowed areas grade instead of dropping
+  // to bare ambient. One constant, both a look knob and the fix.
+  if (occluded) { at *= SHADOW_KEEP; }
   // F2: stored at 1/LIGHT_SCALE so 4x overbright survives a 0..1 fixed-point format.
   // NaN/Inf guard (P6): clamp() is UNDEFINED on NaN, so a single bad record could otherwise write a
   // NaN into a slot -- and the delta path would then blend it into the summed map, where it poisons
@@ -514,7 +530,8 @@ export class LightPass {
         p.uInt("uLightW", lightW);
         p.uInt("uCols", win?.cols ?? SLOTS_X);
         p.uInt("uRows", win?.rows ?? SLOTS_Y);
-        p.uInt("uDilateY", 2);          // tallest authored card, in tiles; content-derived later
+        p.uInt("uDilateY", 0);          // lod-aftermath P2: full-footprint presence — a texel's
+                                        // own tile lists every overlapping card; no scan needed
         p.uVec2("uWindowOrigin", originTileX, originTileY);
       },
     });
@@ -524,7 +541,7 @@ export class LightPass {
   run(renderer: Renderer, prim: Texture, light: Texture,
       originTileX: number, originTileY: number,
       opt: { def?: Texture; shadow?: Texture; atlas?: Texture; atlas2?: Texture; refine?: boolean;
-             debugGate?: boolean;
+             debugGate?: boolean; noShadow?: boolean; flatN?: boolean;
              // P4: the window's torus extent in TILES + the level (texels-per-tile halve per step).
              win?: { cols: number; rows: number; level: number };
              // lighting-visual P2: the baked normal composites + the display torus that addresses
@@ -554,6 +571,8 @@ export class LightPass {
         p.uInt("uRows", opt.win?.rows ?? SLOTS_Y);
         p.uInt("uRefine", opt.refine ? 1 : 0);
         p.uInt("uDebugGate", opt.debugGate ? 1 : 0);
+        p.uInt("uNoShadow", opt.noShadow ? 1 : 0);
+        p.uInt("uFlatN", opt.flatN ? 1 : 0);
         p.uInt("uSlotCols", opt.slotCols ?? 0);
         p.uInt("uSlotRows", opt.slotRows ?? 0);
         p.uInt("uSlotPx", opt.slotPx ?? 0);

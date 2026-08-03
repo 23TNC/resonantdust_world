@@ -255,7 +255,10 @@ export class ShadowBuffer {
    *  caster, so the hit rates are measured rather than assumed. */
   gather(renderer: Renderer, tex: { prim: Texture; def: Texture; light: Texture; presence: Texture; atlas: Texture; atlas2?: Texture },
          originTileX: number, originTileY: number, debugTier = false, brute = false,
-         dilateX = 2, win?: { cols: number; rows: number; level: number }): void {
+         dilateX = 0, win?: { cols: number; rows: number; level: number }): void {
+    // lod-aftermath P2: default 0 — full-footprint presence lists a card in every tile its
+    // box overlaps, so the walk's neighbourhood scan (15 fetches/step at dilate 2) collapses
+    // to the visited tile alone. Pass a dilation only for drills that bypass the reconciler.
     renderer.draw({
       program: this.prog, geometry: this.quad, target: this.a, blend: "none",
       textures: { uPrim: tex.prim, uDef: tex.def, uLight: tex.light, uPresence: tex.presence,

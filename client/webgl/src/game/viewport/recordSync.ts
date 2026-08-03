@@ -13,7 +13,7 @@
 //! rewrites only occupied tiles (+ clears newly-vacated ones); the light map clears + rebuilds
 //! only when an emitter's (index, tile, reach) signature changes.
 
-import type { Primitive } from "./SquareCache";
+import { groundContactY, type Primitive } from "./SquareCache";
 import type { Texture } from "../../gl";
 import type { TextureResolver } from "../../textures";
 import { Records, INDEX_NONE, INTENSITY_MAX, REACH_MAX_TILES } from "./records";
@@ -161,7 +161,7 @@ export class RecordSync {
     // master's bottom margin puts the plan line south of the feet again, so shadows start below
     // the feet by that margin. Curing THAT wants a real anchor lane in the record, not a second
     // frame for the geometry to disagree about.
-    const groundRowOf = (p: Primitive): number => p.y + p.height;
+    const groundRowOf = groundContactY; // F2: THE one derivation (SquareCache), aliased locally
     const carrierGround = new Map<number, { ax: number; ay: number }>();
     for (const p of warmA) {
       if (p.carrierOf === undefined) {
@@ -260,17 +260,21 @@ export class RecordSync {
         const tx = Math.floor(ax / SQUARE);
         const ty = Math.floor(ay / SQUARE);
         if (p.textureName) {
-          // P5 (user design): a prim occupies presence in EVERY tile its drawn box
-          // x-overlaps — the wolf's 2-tile card must be FOUND by receiver resolution (and
-          // the caster walk) from either tile, not just its anchor's. y stays the base row:
-          // the card rises north and the consumers already y-scan for the overhang.
+          // lod-aftermath P2 (user; extends P5's x-span): a prim occupies presence in EVERY
+          // tile its DRAWN BOX overlaps — both axes. The receiver pass and the caster walk
+          // then find every candidate in the texel's OWN tile, and their dilation scans
+          // (which existed only to paper over base-row-only registration) collapse to zero.
           const tx0 = Math.floor(p.x / SQUARE);
           const tx1 = Math.floor((p.x + p.width - 1) / SQUARE);
+          const ty0 = Math.floor(p.y / SQUARE);
+          const ty1 = Math.floor((p.y + p.height - 1) / SQUARE);
           for (let t = tx0; t <= tx1; t++) {
-            const tkey = (((t + 2048) & 0xffff) << 16) | ((ty + 2048) & 0xffff);
-            let list = byTile.get(tkey);
-            if (!list) byTile.set(tkey, (list = []));
-            list.push({ index: idx, layer: p.zIndex ?? 0 });
+            for (let ry = ty0; ry <= ty1; ry++) {
+              const tkey = (((t + 2048) & 0xffff) << 16) | ((ry + 2048) & 0xffff);
+              let list = byTile.get(tkey);
+              if (!list) byTile.set(tkey, (list = []));
+              list.push({ index: idx, layer: p.zIndex ?? 0 });
+            }
           }
         }
         if (L) emitters.push({ index: idx, tileX: tx, tileY: ty,
