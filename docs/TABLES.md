@@ -355,6 +355,8 @@ opcodes by `count`. Opcodes (append-only):
 | opcode | value | count | operands | meaning |
 |---|---|---|---|---|
 | `PART` | 1 | 2 | `slot`, `definition_reference` | the FULL def part slot `slot` draws (body = slot 0, head = slot 1; an equip verb later swaps a slot's def) |
+| `NEED` | 2 | 1 | `need_id:8 \| satisfaction:8 \| set_tic:16` | one need's row (needs-moodlets F7): satisfaction quantised `0..=255`, NEVER ticked — observers compute `satisfaction_at(tic)` from the corpus `deplete` rate (F4). `SET_NEED` upserts by `need_id` |
+| `MOODLET` | 3 | 1 | `moodlet_id:8 \| 0:8 \| grant_tic:16` | one STORED (timed) moodlet grant (F2): expiry = `grant_tic + duration` from the corpus, DERIVED never stored; a re-grant refreshes the entry. Conditional (band) moodlets never appear here |
 
 `payload_log` — the write-history sidecar of `entity_state_log`; one row per payload-carrying
 state write (spawn / future equips — NOT movement):
@@ -379,8 +381,15 @@ state write (spawn / future equips — NOT movement):
 lock, and every write here rides a state-write transaction: `spawn` inserts both rows (an
 EMPTY payload inserts neither), and the `entity_tables!` `state_hook` drags the `payload`
 row's zone key along inside every `entity_state` upsert, so a zone-crossing can never leave
-the sidecar behind. `payload_log` is currently un-gc'd (volume = spawns + equips, not hops);
-it joins the gc when an equip verb exists to grow it.
+the sidecar behind. `payload_log` is currently un-gc'd (volume = spawns + equips + need
+sets, not hops); it joins the gc when the volume warrants.
+
+**Payload-entry verbs (needs-moodlets F7):** `SET_NEED` / `GRANT_MOODLET` splice ONE entry —
+the pawn module's `set_need` / `grant_moodlet` reducers read the current payload, upsert by
+id (`resonantdust_codec::payload::upsert_need/upsert_moodlet`) and write log + projection in
+one transaction. The MODULE composes, the worker relays; the verb's `obj` is a Write operand
+so the entity's claim still serialises these with its movement writes. Idempotent on replay
+(same tic → same word; the log row upserts by uid).
 
 ### Not shaped yet
 

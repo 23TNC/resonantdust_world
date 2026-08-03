@@ -569,6 +569,10 @@ const CLIENT_VERBS: &[u32] = &[
     resonantdust_codec::action::MOVE_TO,
     resonantdust_codec::action::SET,
     resonantdust_codec::action::BUILD_WALL, // build-walls D5: the client-issued build order
+    // needs-moodlets P2: open like MOVE_TO while no ownership model exists — the npc mints
+    // thirst and the drills force-set it through this door. Tighten with ownership.
+    resonantdust_codec::action::SET_NEED,
+    resonantdust_codec::action::GRANT_MOODLET,
 ];
 
 /// Validate + relay a client intent to `event_shard.queue`. The door enforces "logged in",

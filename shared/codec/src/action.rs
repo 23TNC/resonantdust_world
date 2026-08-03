@@ -66,6 +66,17 @@ pub const MOVE_STEP: u32 = 8;
 /// Immediate building is the worker's CURRENT policy, not this verb's contract: the
 /// documented future swaps the queued events for blueprint-entity creates (`ACTIONS.md`).
 pub const BUILD_WALL: u32 = 9;
+/// Set one NEED's satisfaction on a pawn (needs-moodlets F7). Operands: `obj` (write — the
+/// pawn; grouping serialises this with its movement writes), `need_id` (imm, 1-based corpus
+/// id), `satisfaction` (imm, quantised `0..=255`). The pawn module's `set_need` reducer
+/// splices the `NEED` payload entry itself (`set_tic` = the composing tic) — the worker
+/// relays, so the verb adds nothing to the worker's read set.
+pub const SET_NEED: u32 = 10;
+/// Grant one STORED (timed) moodlet to a pawn (needs-moodlets F2/F7). Operands: `obj`
+/// (write), `moodlet_id` (imm, 1-based corpus id). `grant_tic` = the composing tic; expiry
+/// is DERIVED (`grant_tic + duration` from the corpus), never stored. A re-grant refreshes
+/// the timer. Conditional (band) moodlets have no verb — they are derived, not granted.
+pub const GRANT_MOODLET: u32 = 11;
 
 /// What an operand is, for deriving the write/read sets. Only `entity_reference` operands matter to
 /// the sets; `Imm` operands (numbers, positions, definitions) are neither.
@@ -106,6 +117,8 @@ pub fn signature(action: u32) -> Option<&'static [OperandKind]> {
         MOVE_STEP => &[ReadWrite, Imm, Imm], // obj, dest, trip-serial (worker-only chain hop)
         SET => &[Write, Imm, Imm, Imm, Imm], // cold_row, type_id, tile_reference, kind_reference, data
         BUILD_WALL => &[Imm, Imm, Imm], // start, end, object — writes nothing; the worker queues SETs
+        SET_NEED => &[Write, Imm, Imm], // obj, need_id, satisfaction (0..=255)
+        GRANT_MOODLET => &[Write, Imm], // obj, moodlet_id
         _ => return None,
     })
 }

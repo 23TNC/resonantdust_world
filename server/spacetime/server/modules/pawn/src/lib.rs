@@ -70,6 +70,79 @@ fn payload_follow_state(ctx: &ReducerContext, r: &TargetState, _tic: u16) {
     }
 }
 
+// ── needs & moodlets — payload-entry verbs (needs-moodlets F7) ──────────────────────
+//
+// `SET_NEED` / `GRANT_MOODLET` splice ONE entry into the pawn's payload sidecar. The
+// MODULE composes (read current → upsert → write log + projection, one transaction), so
+// the worker just relays the verb — no payload subscription joins its read set. The
+// entity's claim serialises these with its movement writes (the verb's `obj` is a Write
+// operand). Idempotent on replay: the same tic re-splices the same word, and the log row
+// upserts by uid instead of double-inserting.
+
+/// Shared splice: apply `edit` to the CURRENT payload, then write the log row + the
+/// zone-keyed projection. The zone follows the entity's promoted state (the same key the
+/// `state_hook` maintains on hops); a pawn with no state row keeps its existing payload
+/// zone (or lands unkeyed 0 until promotion — the wolf is promoted at spawn).
+fn write_payload_entry(ctx: &ReducerContext, tic: u16, entity: u32, edit: impl FnOnce(&mut Vec<u32>)) {
+    let existing = ctx.db.payload().entity_reference().find(entity);
+    let mut words = existing.as_ref().map(|p| p.payload.clone()).unwrap_or_default();
+    edit(&mut words);
+    let zone = ctx
+        .db
+        .entity_state()
+        .entity_reference()
+        .find(entity)
+        .map(|s| s.macro_position_reference)
+        .or(existing.as_ref().map(|p| p.macro_position_reference))
+        .unwrap_or(0);
+    let uid = pack_state_uid(entity, tic);
+    let log = PayloadLog { uid, entity_reference: entity, tic, payload: words.clone() };
+    if ctx.db.payload_log().uid().find(uid).is_some() {
+        ctx.db.payload_log().uid().update(log);
+    } else {
+        ctx.db.payload_log().insert(log);
+    }
+    let row = Payload { entity_reference: entity, macro_position_reference: zone, tic, payload: words };
+    if existing.is_some() {
+        ctx.db.payload().entity_reference().update(row);
+    } else {
+        ctx.db.payload().insert(row);
+    }
+}
+
+/// `SET_NEED` — upsert one need's `(satisfaction, set_tic)` word (`set_tic` = this tic;
+/// observers compute the current value from the corpus deplete rate, F4).
+#[spacetimedb::reducer]
+pub fn set_need(
+    ctx: &ReducerContext,
+    _worker: u8,
+    tic: u16,
+    entity_reference: u32,
+    need_id: u32,
+    satisfaction: u32,
+) -> Result<(), String> {
+    write_payload_entry(ctx, tic, entity_reference, |p| {
+        resonantdust_codec::payload::upsert_need(p, need_id as u8, satisfaction as u8, tic);
+    });
+    Ok(())
+}
+
+/// `GRANT_MOODLET` — upsert one stored (timed) moodlet grant (`grant_tic` = this tic;
+/// expiry is DERIVED from the corpus duration, never stored; a re-grant refreshes).
+#[spacetimedb::reducer]
+pub fn grant_moodlet(
+    ctx: &ReducerContext,
+    _worker: u8,
+    tic: u16,
+    entity_reference: u32,
+    moodlet_id: u32,
+) -> Result<(), String> {
+    write_payload_entry(ctx, tic, entity_reference, |p| {
+        resonantdust_codec::payload::upsert_moodlet(p, moodlet_id as u8, tic);
+    });
+    Ok(())
+}
+
 // ── spawn — server-minted pawn ids (`CREATE`) ───────────────────────────────────────
 
 /// The replay ledger: `(event_reference, index) → minted entity_reference`. A `CREATE` replay

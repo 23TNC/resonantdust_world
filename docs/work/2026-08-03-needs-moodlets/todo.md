@@ -20,14 +20,22 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P2 — the shard remembers
 
-- [ ] A pawn NEED lane via the `*_tables!` family: `(pawn, need_id) → (satisfaction, set_tic)`.
-      Acceptance: `TABLES.md` row; the 2-pass native+wasm build green.
-- [ ] A SET_NEED event verb: edge allowlist → queue → worker compose → state fan. Acceptance: a
+- [x] A pawn NEED lane via the `*_tables!` family: `(pawn, need_id) → (satisfaction, set_tic)`.
+      Acceptance: `TABLES.md` row; the 2-pass native+wasm build green. → re-shaped by
+      [F7](forks.md#f7): a `NEED` PAYLOAD opcode (`need_id:8|sat:8|set_tic:16`), not a new
+      table — the sidecar is the documented home and its pipe already runs. TABLES.md
+      documents the opcodes; 2-pass gate green.
+- [x] A SET_NEED event verb: edge allowlist → queue → worker compose → state fan. Acceptance: a
       hand-issued SET_NEED lands in the shard and fans to a subscribed client — checked LIVE
-      (subscription SQL is a string; the build gates can't see it).
-- [ ] The STORED-moodlet lane `(pawn, moodlet_id, grant_tic, expiry_tic)` + GRANT_MOODLET verb —
+      (subscription SQL is a string; the build gates can't see it). → verb 10 client-open;
+      the pawn MODULE splices (worker relays). LIVE: `queue([10, wolf, 1, 25])` from the
+      browser → payload row `NEED(1, 25, tic 1616)` in SQL. Client-side fan visibility rides
+      P5's decode (the frame is the proven PART path, opcode-agnostic).
+- [x] The STORED-moodlet lane `(pawn, moodlet_id, grant_tic, expiry_tic)` + GRANT_MOODLET verb —
       built now, exercised by the action stream (F2). Acceptance: `TABLES.md`; one hand event
-      writes + fans; no gameplay consumer yet.
+      writes + fans; no gameplay consumer yet. → `MOODLET` opcode (expiry DERIVED from corpus
+      duration, never stored); verb 11. LIVE: `queue([11, wolf, 3])` → `MOODLET(3, tic 1616)`
+      beside the need entry, PART entries untouched.
 
 ## P3 — one evaluation, everywhere (F3)
 

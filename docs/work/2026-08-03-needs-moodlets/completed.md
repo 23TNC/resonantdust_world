@@ -1,5 +1,31 @@
 # Completed — needs & moodlets
 
+## 2026-08-03 · P2 — the shard remembers (3/3, re-shaped by F7)
+
+The planned "new NEED table" was a plan bug ([F7](forks.md#f7)): the pawn PAYLOAD sidecar is
+the documented home ("parts, and later inventory/stats/needs/…") and its pipe — zone-keyed
+rows, claim-slaved writes, edge fan, client decode — already runs for PART. Landed instead:
+
+- **codec**: `NEED` (op 2, `need_id:8|sat:8|set_tic:16`) + `MOODLET` (op 3,
+  `moodlet_id:8|0:8|grant_tic:16`; expiry DERIVED from corpus duration) opcodes with
+  `upsert_need`/`upsert_moodlet` (rewrite-in-place by id) + decoders; 4 new codec tests
+  (in-place upsert, re-grant refresh, lane packing, PART coexistence).
+- **verbs**: `SET_NEED` (10: obj write, need_id, sat 0..=255) and `GRANT_MOODLET` (11)
+  in `action.rs` + `ACTIONS.md`; client-open at the edge door (like MOVE_TO — no ownership
+  model yet, noted in the allowlist).
+- **pawn module**: `set_need`/`grant_moodlet` reducers — the MODULE composes the splice
+  (read current payload → upsert → log + projection, one transaction, idempotent by uid), so
+  the worker's NEEDS arm just relays and its read set grows by nothing.
+- **bindings** regenerated for BOTH consumers (edge `src/bindings/pawn` + `st-bindings`);
+  worker/orchestrator/master rebuilt + restarted; module republished via `rd redeploy --run`.
+
+**Verified LIVE**: browser `queue([10, wolf, 1, 25])` + `queue([11, wolf, 3])` → SQL on
+`resonantdust-dev-pawn-0` shows the wolf's payload = `NEED(1, 25, tic 1616)` +
+`MOODLET(3, tic 1616)`, zone 98 — the whole chain (edge door → grouping → claim → worker
+relay → module splice) in one pass. HONEST GAP: the client-side fan is mechanism-proven
+(the same opcode-agnostic frame PART uses) but not yet OBSERVED client-side — the core
+drops non-PART opcodes until P5's decode; P5's acceptance closes it.
+
 ## 2026-08-03 · P1 — the corpus speaks needs and moodlets (5/5)
 
 `shared/dsl` gains the `<need>` + `<moodlet>` registries (material-style: direct `@define`,

@@ -48,6 +48,25 @@ layout carries label + offset + duration now and leaves room for a category id w
 break. Rejected for this stream: designing the category taxonomy before a single need exists —
 that is the spreadsheet-first failure the moodlet abstraction is meant to avoid.
 
+## F7 — need rows are PAYLOAD OPCODES, not new tables {#f7}
+
+The plan's P2 wording ("a pawn NEED lane via the `*_tables!` family") turned out to be a plan bug:
+the pawn module's PAYLOAD sidecar (human-pawns P0/F5) is the DOCUMENTED home for exactly this —
+its header reads "a pawn's open-ended state (parts, and later inventory/stats/**needs**/…)", and
+`shared/codec/payload.rs` promises "the stream grows new opcodes (inventory, stats, needs, …)
+without breaking old readers; opcode ids are APPEND-ONLY". Building a parallel table pair would
+re-plumb a pipe that already runs end-to-end: `payload` rows are zone-keyed, slaved to the
+entity's claim, fanned by the edge (`on_insert`/`on_update` + the zone subscription), decoded by
+`client/core` — the PART opcode proves every stage.
+
+**Chosen**: `NEED` (opcode 2, word `need_id:8 | satisfaction:8 | set_tic:16`) and `MOODLET`
+(opcode 3, word `moodlet_id:8 | _:8 | grant_tic:16` — expiry DERIVED from the corpus duration,
+never stored) entries in the pawn payload; `SET_NEED` / `GRANT_MOODLET` verbs composed by the
+pawn module itself (the reducer reads + splices the current payload — the worker relays, so no
+new worker read-set). Rejected: the literal new-table plan — new subscription strings, new fan
+plumbing, a second zone-follow, all duplicating the sidecar. The P2 acceptance criteria carry
+over unchanged (TABLES.md documents the opcodes; the hand event still lands + fans).
+
 ## F6 — needs live on the PAWN SHARD {#f6}
 
 Need rows + stored moodlets are shard lanes written through the normal event path (edge allowlist

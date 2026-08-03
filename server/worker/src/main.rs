@@ -26,7 +26,8 @@ use std::time::Duration;
 use spacetimedb_sdk::{DbContext, Table as _};
 
 use resonantdust_codec::action::{
-    self, Route, BUILD_WALL, CREATE, INIT_ZONE, MOVE_STEP, MOVE_TO, PLACE, PROMOTE, SET,
+    self, Route, BUILD_WALL, CREATE, GRANT_MOODLET, INIT_ZONE, MOVE_STEP, MOVE_TO, PLACE, PROMOTE,
+    SET, SET_NEED,
 };
 use resonantdust_codec::object::{
     cold_row_layer_id, cold_row_macro_position, cold_row_subtype, data_rotation, def_kind_id,
@@ -42,7 +43,7 @@ use resonantdust_codec::tic::{tic_add, tic_after, tic_before};
 use resonantdust_st_bindings::{data_shard, event_shard, index, pawn, thing, tile};
 use resonantdust_uplink::acquire;
 use data_shard::{write as _, EntityStateLogTableAccess as _};
-use pawn::{spawn as _, write as _, EntityStateLogTableAccess as _};
+use pawn::{grant_moodlet as _, set_need as _, spawn as _, write as _, EntityStateLogTableAccess as _};
 use event_shard::{complete as _, queue_at as _, EventLogTableAccess as _};
 use index::MasterClockTableAccess as _;
 // P4: the worker also composes cold rows — the **baseline** (`INIT_ZONE` → `write`) and the **overlay**
@@ -541,6 +542,29 @@ async fn main() {
                 }
             }
             if spawn_failed {
+                continue;
+            }
+
+            // ── NEEDS (SET_NEED / GRANT_MOODLET) ── payload-entry verbs (needs-moodlets F7):
+            // the PAWN MODULE composes the splice (read current payload → upsert → write),
+            // so this arm only relays. Idempotent by content at this tic, so a failed call
+            // defers the whole tic (like a write) and the re-pass re-calls harmlessly.
+            let mut need_failed = false;
+            for (_event_reference, actions) in &events {
+                for inst in action::program(actions) {
+                    let Ok(inst) = inst else { break };
+                    let r = match (inst.action, inst.operands) {
+                        (SET_NEED, [obj, need, sat]) => pawn.reducers().set_need(self_ref, t, *obj, *need, *sat),
+                        (GRANT_MOODLET, [obj, moodlet]) => pawn.reducers().grant_moodlet(self_ref, t, *obj, *moodlet),
+                        _ => continue,
+                    };
+                    if let Err(err) = r {
+                        tracing::warn!(%err, tic = t, "need/moodlet write failed — will retry next pass");
+                        need_failed = true;
+                    }
+                }
+            }
+            if need_failed {
                 continue;
             }
 
