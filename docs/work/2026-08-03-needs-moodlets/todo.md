@@ -67,12 +67,19 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P5 — the panel shows moodlets, never bars
 
-- [ ] Subscribe the need + stored-moodlet lanes for anchored pawns. Acceptance: selecting the wolf
-      shows the rows client-side — checked LIVE (subscription SQL again).
-- [ ] A MOODLETS section in the details panel: label + mood offset per active moodlet + the summed
+- [x] Subscribe the need + stored-moodlet lanes for anchored pawns. Acceptance: selecting the wolf
+      shows the rows client-side — checked LIVE (subscription SQL again). → F7 made this the
+      EXISTING payload subscription; `MoverLayer.pawnPayload` holds the raw stream (pawnDefs
+      lifecycle). LIVE: the browser reads `[131073, 33494948]` = `NEED(1, 255, 6052)` off the
+      selected wolf — closing P2's fan-observation gap.
+- [x] A MOODLETS section in the details panel: label + mood offset per active moodlet + the summed
       mood, evaluated lazily per frame via the wasm eval (TicEstimate for the now-tic). NO need
       bars anywhere — the abstraction is the feature. Acceptance: a forced-low SET_NEED makes
       Thirsty appear without a reload, and the band flip happens on screen at the crossing.
+      → provider evaluates via `pawnMoodlets`/`pawnMood` at `ticDelta(0)` mod 2¹⁶; panel shows
+      `mood NN%` + indented moodlet rows (timed grants append `Nt`). LIVE: forced sat 60 →
+      "mood 35% / Thirsty −0.15" appeared without reload; the npc logged the SAME flip
+      (`tic 7881, next 10804`) — two observers, one row, one eval.
 
 ## P6 — the drill
 

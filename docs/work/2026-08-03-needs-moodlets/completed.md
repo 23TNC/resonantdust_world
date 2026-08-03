@@ -1,5 +1,20 @@
 # Completed — needs & moodlets
 
+## 2026-08-03 · P5 — the panel shows moodlets, never bars (2/2)
+
+Under F7 the "subscription" was already live (the payload fan): `MoverLayer` keeps the raw
+stream per entity (`pawnPayload`, `pawnDefs` lifecycle at despawn/zone-close/clear), the
+WorldScene provider evaluates it through the wasm eval at the learned now-tic
+(`ticDelta(0)` mod 2¹⁶), and the details panel renders `mood NN%` + one indented row per
+active moodlet (`Thirsty −0.15`; timed grants append their remaining tics). No need scalar
+appears anywhere in the UI — the interface note in `DetailsProviders` says why.
+
+**Verified live**: the selected wolf's client-side payload reads `NEED(1, 255, 6052)` —
+the P2 fan-observation gap CLOSED; a forced `SET_NEED sat 60` flipped the panel to
+"mood 35% / Thirsty −0.15" with NO reload, and the npc logged the identical flip
+(`tic 7881, moodlets ["thirsty"], mood 0.35, next_crossing 10804`) — two observers, one
+row, one eval (F3 doing its job).
+
 ## 2026-08-03 · P4 — the wolf gets thirsty (2/2)
 
 **The payload surfaces raw** (the seam P5 shares): `Event::PawnParts` gains the untouched

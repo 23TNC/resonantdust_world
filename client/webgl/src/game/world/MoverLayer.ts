@@ -237,6 +237,9 @@ export class MoverLayer {
   /** Payload part slots per entity (`slot → def`), joined from `PawnParts` events — either
    *  side of the join may arrive first (human-pawns P3). */
   private readonly pawnDefs = new Map<number, Map<number, number>>();
+  /** The latest RAW payload stream per entity (needs-moodlets P5) — same lifecycle as
+   *  {@link pawnDefs}; see {@link pawnPayload}. */
+  private readonly payloads = new Map<number, Uint32Array>();
 
   constructor(
     private readonly client: WasmClient,
@@ -270,6 +273,7 @@ export class MoverLayer {
     }
     this.movers.clear();
     this.pawnDefs.clear();
+    this.payloads.clear();
   }
 
   /** Wall-clock of the previous {@link tick} — the chase integrates real dt. */
@@ -419,13 +423,22 @@ export class MoverLayer {
   }
 
   /** The payload's part slots landed/changed for an entity — join them to a live mover
-   *  (either side may arrive first; a pre-mover payload just waits in the map). */
-  private onPawnParts(p: { entityReference: number; parts: { slot: number; def: number }[] }): void {
+   *  (either side may arrive first; a pre-mover payload just waits in the map). The RAW
+   *  stream is kept too (needs-moodlets P5): the details panel feeds it verbatim to the
+   *  wasm `pawnMoodlets` eval — this layer never decodes NEED/MOODLET entries. */
+  private onPawnParts(p: { entityReference: number; parts: { slot: number; def: number }[]; payload: Uint32Array }): void {
     const map = new Map<number, number>();
     for (const e of p.parts) map.set(e.slot, e.def);
     this.pawnDefs.set(p.entityReference, map);
+    this.payloads.set(p.entityReference, p.payload);
     const m = this.movers.get(p.entityReference);
     if (m) this.applyVisual(m, p.entityReference, m.kind, m.def, m.rx, m.ry, m.facing, m.macroPosition);
+  }
+
+  /** The latest RAW payload opcode stream fanned for `entity`, or null — the details
+   *  panel's eval input (needs-moodlets P5). */
+  pawnPayload(entity: number): Uint32Array | null {
+    return this.payloads.get(entity) ?? null;
   }
 
   // ── internals ───────────────────────────────────────────────────────
@@ -790,6 +803,7 @@ export class MoverLayer {
       this.movers.delete(key);
     }
     this.pawnDefs.delete(key);
+    this.payloads.delete(key);
     this.pendingIntents.delete(key);
   }
 
@@ -799,6 +813,7 @@ export class MoverLayer {
         for (const p of m.parts) this.viewport.warmRemovePrim(p.id);
         this.movers.delete(key);
         this.pawnDefs.delete(key);
+        this.payloads.delete(key);
         this.pendingIntents.delete(key);
       }
     }

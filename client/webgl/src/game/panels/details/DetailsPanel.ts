@@ -18,6 +18,11 @@ export interface DetailsProviders {
   pawn(entity: number): {
     kind: number; stem: string; tileX: number; tileY: number; facing: number;
     macroPosition: number; moving: boolean; ticsPerTile: number;
+    /** The pawn's ACTIVE moodlets + summed mood (needs-moodlets P5), evaluated lazily by
+     *  the provider through the ONE wasm eval. The NEED scalars are deliberately absent —
+     *  the panel shows CONSEQUENCES, never bars (the stream's whole point). */
+    moodlets: { label: string; mood: number; remaining: number }[];
+    mood: number;
   } | null;
   thing(primId: number): {
     textureName?: string; x: number; y: number; width: number; height: number; zIndex: number;
@@ -74,7 +79,15 @@ export class DetailsPanel extends DomPanel {
           `speed     ${info.ticsPerTile} tics/tile`,
           `zone      ${info.macroPosition}`,
           `state     ${info.moving ? "moving" : "resting"}`,
+          `mood      ${Math.round(info.mood * 100)}%`,
         );
+        // Moodlets — the Sims-4 layer: consequences with names, never the need scalars.
+        // A timed grant shows its remaining tics; a band moodlet holds while its band does.
+        for (const m of info.moodlets) {
+          const sign = m.mood >= 0 ? "+" : "−";
+          const timer = m.remaining > 0 ? `  ${m.remaining}t` : "";
+          rows.push(`  ${m.label}  ${sign}${Math.abs(m.mood).toFixed(2)}${timer}`);
+        }
       } else {
         rows.push("(despawned)");
       }
