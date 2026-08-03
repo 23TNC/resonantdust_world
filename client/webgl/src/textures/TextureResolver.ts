@@ -90,11 +90,14 @@ export class TextureResolver {
    *  the master is actually art, plus the pivot on it. Applied at ingest by {@link packCoPack},
    *  identically to all four maps, which is what registers them with each other.
    *
-   *  Keyed **`stem#cell`** — the rotation index rides the key. That one key covers all three
-   *  consumers of the 0..15 space (F9/F10): a pawn facing, a linked autotile cell, and a cold
-   *  thing's VARIANT. Keying by stem alone would give every conifer variant 0's crop and clip eight
-   *  of nine. West needs no entry: `FACING_BY_ROTATION` maps a west facing to the EAST stem plus
-   *  `flipX`, so it inherits east's rect by construction — the whole of F4, for free. */
+   *  Keyed **`stem#cell`** — but the cell axis belongs to GRID masters alone (a linked autotile
+   *  cell, or a facing kind whose manifest entry carries `grid`), applied per cell at `cellFrame`.
+   *  Everything else is one master per stem and reads `#0` at ingest: a pawn facing rides the
+   *  stem (`…/e`), and so does a cold thing's VARIANT (`…/<v>/e`, lod-aftermath I3 — keying
+   *  variants as cells of the canonical stem gave every conifer variant 0's crop and clipped
+   *  eight of nine, because `resolve()` drops the cell on a non-grid entry). West needs no entry:
+   *  `FACING_BY_ROTATION` maps a west facing to the EAST stem plus `flipX`, so it inherits east's
+   *  rect by construction — the whole of F4, for free. */
   private readonly subframe = new Map<string, [number, number, number, number, number, number]>();
   /** texture-generalization: linked stem (the `<stem>/l` name) → its DSL `internal_padding`
    *  (UNITS, of a 16-unit cell) — the BETWEEN-CELL inset inside the atlas.
@@ -146,6 +149,14 @@ export class TextureResolver {
    *  tile through the linked-atlas path (`<stem>/l` + a neighbor-context cell). */
   linkedGridFor(stem: string): [number, number] | null {
     return this.manifest.entry(`${stem}/l`)?.grid ?? null;
+  }
+
+  /** The manifest grid for an EXACT stem name, or null — the variant-routing probe: a facing
+   *  kind whose master really is a cell grid keeps the cell dialect; a folder-variant kind
+   *  (conifer `0..8/`) rides the stem instead, because `resolve()` drops the cell on a
+   *  non-grid entry and ingest crops with `#0` alone. */
+  gridOf(name: string): [number, number] | null {
+    return this.manifest.entry(name)?.grid ?? null;
   }
 
   /** subframe-ingest: register a stem's DSL-authored SUBFRAME — the fraction of the master that is

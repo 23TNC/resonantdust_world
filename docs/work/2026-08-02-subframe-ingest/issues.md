@@ -218,3 +218,26 @@ resolving to one wrong index is the shape of that failure.
 
 **I11 itself stands and is still unfixed** — the mover registration really is missing, it is simply
 not what broke the wolf.
+
+## I12 — CUSTODY (lod-aftermath): the variant-as-cell dialect is retired for folder-variant kinds {#i12}
+
+Written by the lod-aftermath session, 2026-08-03. The I10 registration keyed a cold thing's
+per-variant rects as CELLS of the canonical draw stem — but `packCoPack` crops a non-grid stem with
+`subframeFor(stem, 0)` alone, and `resolve()` drops the cell on a non-grid entry, so every conifer
+ingested the CANONICAL master under VARIANT 0's sapling rect: clipped edges, blown up to fit, nine
+variants identical. Fixed in lod-aftermath I3: `thingTexture` now routes `<base>/<v>/e` via a `has`
+probe (mirroring `moverSlotTexture`) and `WorldBridge.registerThingSubframes` keys each mastered
+variant's rect on ITS OWN stem at `#0`; linked kinds and true `grid` entries keep the per-cell
+dialect (probed via the new `resolver.gridOf`). Verify rather than re-implement.
+
+Two findings left in YOUR charter:
+
+1. **`setSpriteScale` is dead-keyed for cold things** (feeds your open F5 compose item): the
+   registration in `WorldBridge.refreshStems` keys the BARE base (`biome-thing/default/conifer`),
+   while ingest looks up the DRAW stem (`…/e`) — authored `sprite_scale 0.5` has been inert since
+   def-frame-anchors P5. Re-keying it will suddenly APPLY those scales (conifers would halve), so it
+   belongs with your I9 drawn-box decision, not as a silent fix.
+2. **Thing OVERRIDES don't repaint on a routing change** — their raw params aren't cached the way
+   ground overrides are, so one painted before the manifest lands keeps the canonical stem until its
+   next state update. Rare (manifest races the FIRST paint only) and self-healing, noted for
+   completeness.

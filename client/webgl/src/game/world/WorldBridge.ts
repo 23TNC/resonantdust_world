@@ -105,20 +105,42 @@ const VARIANT_SLOTS = 16;
 /** The rotation index of {@link DEFAULT_FACING} — a cold thing ships one mastered facing, so its
  *  subframes are read at this rotation and indexed by VARIANT. `FACING_BY_ROTATION` order. */
 const DEFAULT_FACING_ROTATION = 1;
+/** The variant FOLDER the edge registers under the bare stem (`register_kind`: folder `1` →
+ *  `<prefix>/<facing>`, every other numeric folder → `<prefix>/<v>/<facing>`). Variant 1 must
+ *  therefore never be routed through a `/1/` stem — it IS the canonical stem. */
+const CANONICAL_VARIANT = 1;
 
 /** A COLD thing's texture name + flip for its sprite variant. The def's base stem gets a
  *  trailing DIRECTION segment the resolver treats as its own stem: the single-facing
  *  DEFAULT (`world/conifer` → `world/conifer/e`), or `l` for a linked-category kind
- *  (`linked/wall_smooth` → `linked/wall_smooth/l`). `cell` selects which grid cell of the
- *  master atlas to bake: for a facing kind the packed **variant** (modulo the kind's
- *  variant count in the resolver); for a linked kind the neighbour-context cell. A
- *  white/absent stem stays a flat tint rect. (Movers render via {@link moverSlotTexture} —
- *  human-pawns P3.) */
-export function thingTexture(stem: string | undefined, _rotation: number, variant: number): { name: string | undefined; flipX: boolean; cell?: number } {
+ *  (`linked/wall_smooth` → `linked/wall_smooth/l`).
+ *
+ *  The VARIANT rides the STEM (lod-aftermath I3, mirroring {@link moverSlotTexture}):
+ *  variant folders are stem-addressable (`<base>/<v>/e`, human-pawns P1; the canonical
+ *  folder 1 keeps the bare `<base>/e`), so the routed stem ingests ITS OWN master under
+ *  ITS OWN subframe. The old dialect passed the variant as a grid CELL — but `resolve()`
+ *  drops the cell on a non-grid entry, so every conifer drew the canonical master cropped
+ *  by variant 0's sapling rect: clipped edges, blown up to fit. `cell` remains only for a
+ *  facing kind whose manifest entry really is a grid (`grid` set), and for a linked kind's
+ *  neighbour-context cell. A white/absent stem stays a flat tint rect. (Movers render via
+ *  {@link moverSlotTexture} — human-pawns P3.) */
+export function thingTexture(
+  stem: string | undefined,
+  _rotation: number,
+  variant: number,
+  has?: (name: string) => boolean,
+): { name: string | undefined; flipX: boolean; cell?: number } {
   const base = textureNameFor(stem);
   if (!base) return { name: undefined, flipX: false };
   if (base.startsWith(`${LINKED_CATEGORY}/`)) return { name: `${base}/l`, flipX: false, cell: 0 };
-  return { name: `${base}/${DEFAULT_FACING}`, flipX: false, cell: variant };
+  const canonical = `${base}/${DEFAULT_FACING}`;
+  if (variant !== CANONICAL_VARIANT && has) {
+    const withVariant = `${base}/${variant}/${DEFAULT_FACING}`;
+    if (has(withVariant)) return { name: withVariant, flipX: false, cell: 0 };
+  }
+  // Unmastered variant (or the canonical folder itself) → the canonical stem. The cell still
+  // carries the variant for the rare grid facing kind; a non-grid entry ignores it.
+  return { name: canonical, flipX: false, cell: variant };
 }
 
 /** A pawn part SLOT's texture name (human-pawns P3): facing from the mover rotation (west
@@ -198,6 +220,9 @@ export class WorldBridge {
    *  indexed by `defId - 1` (same as the stem tables) — {@link Content.thingLayout}.
    *  Decoded per prim via {@link readLayout} + {@link placeThing}. Refreshed on hot-swap. */
   private thingLayout: Float64Array = new Float64Array();
+  /** The corpus subframe table (`VARIANT_SLOTS × ROTATION_SLOTS × 6` per kind), cached per
+   *  content apply — see {@link registerThingSubframes}. */
+  private thingSub: Float64Array = new Float64Array();
   /** Per-def packed-channel material bindings, flat stride-8 (`[mat0, tint0, …, mat3,
    *  tint3]` per def), indexed by `defId - 1` — {@link Content.tilePackedChannels} /
    *  `thingPackedChannels`. Sliced per prim into a {@link PackedChannel}[] the albedo bake
@@ -266,6 +291,9 @@ export class WorldBridge {
     this.tileStems = this.content.tileTextureStems();
     this.thingStems = this.content.thingTextureStems();
     this.thingLayout = this.content.thingLayout();
+    // Cached: registerThingSubframes re-runs on resolver emits (manifest races content), and the
+    // wasm table is large (16 variants × 16 rotations × 6 per kind) — read it once per corpus.
+    this.thingSub = this.content.thingSubframe();
     this.tilePacked = this.content.tilePackedChannels();
     this.thingPacked = this.content.thingPackedChannels();
     this.thingLight = this.content.thingLight();
@@ -294,30 +322,7 @@ export class WorldBridge {
       const l = readLayout(this.thingLayout, kind);
       this.resolver.setSpriteScale(stem, l.scw, l.sch);
     }
-    // subframe-ingest P2: register each thing kind's authored SUBFRAMES — which fraction of the
-    // master is actually art, per rotation index. The resolver crops to exactly that rect, the same
-    // rect for all four maps, which is what registers albedo/normal/surface/layers with each other.
-    //
-    // The stem registered here is the DRAW stem (`<base>/<facing>`), matching what `thingTexture`
-    // resolves, and the index is the CELL it passes — a cold thing's variant (F10). Registering the
-    // bare base stem instead would key nothing the draw path ever looks up.
-    const thingSub = this.content.thingSubframe();
-    for (let kind = 1; kind <= this.thingStems.length; kind++) {
-      const base = textureNameFor(this.thingStems[kind - 1]);
-      if (!base) continue;
-      const drawStem = base.startsWith(`${LINKED_CATEGORY}/`) ? `${base}/l` : `${base}/${DEFAULT_FACING}`;
-      const stride = VARIANT_SLOTS * ROTATION_SLOTS * 6;
-      const b = (kind - 1) * stride;
-      if (b + stride > thingSub.length) break;
-      // A cold thing resolves ONE mastered facing and passes its VARIANT as the cell, so the rect
-      // to register for cell `v` is `[variant v][rotation of that facing]` — the two axes read at
-      // the point where the draw path collapses them, rather than the corpus collapsing them (I10).
-      for (let v = 0; v < VARIANT_SLOTS; v++) {
-        const o = b + (v * ROTATION_SLOTS + DEFAULT_FACING_ROTATION) * 6;
-        this.resolver.setSubframe(drawStem, v, thingSub[o], thingSub[o + 1], thingSub[o + 2],
-                                  thingSub[o + 3], thingSub[o + 4], thingSub[o + 5]);
-      }
-    }
+    this.thingArtSig = this.registerThingSubframes();
     this.viewport.setMaterialRegistry(
       MaterialRegistry.fromWasm(
         this.content.materialNoiseFields(),
@@ -327,6 +332,62 @@ export class WorldBridge {
         this.content.materialDetail(),
       ),
     );
+  }
+
+  /** The stem-routing signature of the last {@link registerThingSubframes} pass. `has()` answers
+   *  change when the manifest lands (it may land AFTER content), and a change must both
+   *  re-register the ingest rects and repaint cold things onto their variant stems. */
+  private thingArtSig = "";
+
+  /** {@link thingTexture}'s manifest probe, bound once (both paint sites pass it). */
+  private readonly hasStem = (name: string): boolean => this.resolver.has(name);
+
+  /** subframe-ingest P2 / lod-aftermath I3: register each thing kind's authored SUBFRAMES — which
+   *  fraction of the master is actually art — against the stems the draw path ACTUALLY resolves.
+   *
+   *  - LINKED kinds and true GRID facing kinds: per-CELL rects on the one drawn stem (`<base>/l`
+   *    or `<base>/<facing>`), applied by `cellFrame` at resolve — cells are sub-rects of one
+   *    packed master.
+   *  - Folder-variant kinds (the corpus norm — conifer `0..8/`): ONE rect per mastered variant
+   *    STEM at `#0`, because ingest crops a non-grid stem with `subframeFor(stem, 0)` alone.
+   *    The old registration keyed rects as CELLS of the canonical stem: ingest then cropped the
+   *    canonical master by variant 0's (sapling) rect and served that one clipped, blown-up frame
+   *    to every variant. An unmastered variant registers nothing — it draws the canonical stem,
+   *    which carries the canonical folder's own rect.
+   *
+   *  Returns the routed-stem signature so a manifest arrival that changes `has()` answers can be
+   *  detected and repainted (see {@link onTexturesChanged}). */
+  private registerThingSubframes(): string {
+    const thingSub = this.thingSub;
+    let sig = "";
+    for (let kind = 1; kind <= this.thingStems.length; kind++) {
+      const base = textureNameFor(this.thingStems[kind - 1]);
+      if (!base) continue;
+      const stride = VARIANT_SLOTS * ROTATION_SLOTS * 6;
+      const b = (kind - 1) * stride;
+      if (b + stride > thingSub.length) break;
+      const drawStem = base.startsWith(`${LINKED_CATEGORY}/`) ? `${base}/l` : `${base}/${DEFAULT_FACING}`;
+      if (drawStem.endsWith("/l") || this.resolver.gridOf(drawStem)) {
+        // One packed master, addressed by cell — the rect for cell `v` is
+        // `[variant v][rotation of the mastered facing]` (I10: the two axes read at the point
+        // where the draw path collapses them).
+        for (let v = 0; v < VARIANT_SLOTS; v++) {
+          const o = b + (v * ROTATION_SLOTS + DEFAULT_FACING_ROTATION) * 6;
+          this.resolver.setSubframe(drawStem, v, thingSub[o], thingSub[o + 1], thingSub[o + 2],
+                                    thingSub[o + 3], thingSub[o + 4], thingSub[o + 5]);
+        }
+        continue;
+      }
+      for (let v = 0; v < VARIANT_SLOTS; v++) {
+        const stem = v === CANONICAL_VARIANT ? drawStem : `${base}/${v}/${DEFAULT_FACING}`;
+        if (v !== CANONICAL_VARIANT && !this.resolver.has(stem)) continue;
+        const o = b + (v * ROTATION_SLOTS + DEFAULT_FACING_ROTATION) * 6;
+        this.resolver.setSubframe(stem, 0, thingSub[o], thingSub[o + 1], thingSub[o + 2],
+                                  thingSub[o + 3], thingSub[o + 4], thingSub[o + 5]);
+        sig += stem + ";";
+      }
+    }
+    return sig;
   }
 
   /** Slice a prim's up-to-4 packed-channel bindings out of a stride-8 per-def table by
@@ -642,7 +703,7 @@ export class WorldBridge {
       const variant = flat[i + 6];
       const ck = cellKey(typeId, tileX, tileY);
       if (this.baselineSuppressed(ck, key, tic)) continue; // a newer override wins this cell — skip baseline
-      const tex = thingTexture(this.thingStems[kindId - 1], data, variant);
+      const tex = thingTexture(this.thingStems[kindId - 1], data, variant, this.hasStem);
       // Anchor/size/footprint from the def layout; a tall sprite rises past its cell,
       // a west facing mirrors the pivot with the art (see placeThing).
       const p = placeThing(tileX, tileY, readLayout(this.thingLayout, kindId), tex.flipX, !tex.name);
@@ -694,21 +755,29 @@ export class WorldBridge {
 
   /** tile-lighting I1: a stem's linked-ness just RESOLVED (its grid landed with the
    *  manifest) — re-expand every tile row and repaint ground overrides so tiles painted
-   *  bare-stem during the race re-route through `<stem>/l` + the neighbor cell. Runs once
-   *  per resolved stem; a no-op while nothing is pending. */
+   *  bare-stem during the race re-route through `<stem>/l` + the neighbor cell.
+   *
+   *  lod-aftermath I3: the same race exists for VARIANT routing — the manifest may land after
+   *  the first cold rows, when every `has()` probe answered false and every thing painted the
+   *  canonical stem. Re-run the subframe registration (cheap map lookups against the cached
+   *  table) and repaint THING rows whenever the routed-stem set actually changed. */
   private onTexturesChanged(): void {
-    if (this.linkedUnknown.size === 0) return;
-    let resolved = false;
+    const sig = this.registerThingSubframes();
+    const routingChanged = sig !== this.thingArtSig;
+    this.thingArtSig = sig;
+
+    let linkedResolved = false;
     for (const stem of [...this.linkedUnknown]) {
       if (this.resolver.linkedGridFor(stem)) {
         this.linkedUnknown.delete(stem);
-        resolved = true;
+        linkedResolved = true;
       }
     }
-    if (!resolved) return;
+    if (!linkedResolved && !routingChanged) return;
     for (const [key, row] of [...this.coldRowsRaw]) {
-      if ("tiles" in row) this.reExpandRow(key);
+      if ("tiles" in row ? linkedResolved : routingChanged) this.reExpandRow(key);
     }
+    if (!linkedResolved) return;
     for (const [ent, ov] of [...this.coldOverrides]) {
       if (!ov.ground || ov.id === null) continue;
       this.viewport.removePrim(ov.id);
@@ -799,7 +868,7 @@ export class WorldBridge {
         ground = { tileX, tileY, kindId, tint, geoColor }; // tile-lighting I1: repaintable
       } else {
         // Thing override — the thing sprite, bottom-anchored like the scatter.
-        const tex = thingTexture(this.thingStems[kindId - 1], data, variant);
+        const tex = thingTexture(this.thingStems[kindId - 1], data, variant, this.hasStem);
         const p = placeThing(tileX, tileY, readLayout(this.thingLayout, kindId), tex.flipX, !tex.name);
         id = this.viewport.addPrim({
           texture: this.white,

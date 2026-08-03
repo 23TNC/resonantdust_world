@@ -71,6 +71,14 @@ screen. Stances: [`README`](README.md)._
       dilation 2→0 in BOTH passes = 15→1 fetches/walk-step, 3→1/receiver-texel;
       walk = brute at dilation 0; dropped 0.
 
+- [x] REOPENED by the user 2026-08-03: trees clip at the edges. Root-cause the
+      bbox/atlas path. Acceptance: cause named in `issues.md`; trees render whole and
+      VARY by variant on screen. → [I3](issues.md#i3): variants rode the CELL but are
+      STEMS — ingest cropped every conifer by variant 0's sapling rect. Fixed by
+      stem-routing (`thingTexture` + per-variant-stem subframes + manifest-race
+      repaint); verified live — 455 prims across 22 variant stems, 9 per-stem rects,
+      whole varied canopies, partial 0.
+
 ## P3 — panning at the zoom extremes
 
 - [ ] The FOREGROUND pan drill (user watching, or the tab granted focus): full-screen

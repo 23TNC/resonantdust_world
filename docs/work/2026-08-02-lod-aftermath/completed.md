@@ -1,5 +1,28 @@
 # Completed — LOD aftermath
 
+## 2026-08-03 · tree clipping reopened and fixed — the variant rides the STEM (I3)
+
+The user's eyes reopened the clip: every conifer drew the CANONICAL master cropped by
+VARIANT 0's sapling rect (the tightest in the set), scale-to-fit enlarged — clipped
+edges, oversized, and all nine variants identical. Cause chain in
+[I3](issues.md#i3): `thingTexture` spoke the grid dialect (canonical stem + cell),
+`resolve()` drops the cell on a non-grid entry, ingest reads `#0` alone — while
+variants became stem-addressable FOLDERS (human-pawns P1).
+
+Fix mirrors `moverSlotTexture`: `thingTexture` routes `<base>/<v>/e` via a `has`
+probe; `registerThingSubframes` keys each mastered variant's rect on its own stem at
+`#0` (linked/grid kinds keep the cell dialect, probed by the new `resolver.gridOf`);
+`onTexturesChanged` re-registers and repaints thing rows when a late manifest changes
+the routing signature.
+
+**Verified live** (foreground tab, `focus=100,50&zoom=1`): 455 flora/conifer prims
+across 22 VARIANT stems (canonical folders on the bare stem, `conifer/1/e` correctly
+absent); 9 conifer subframe keys all at `#0`, each its own rect, anchor `(0.5, 1)`;
+screenshot + zoom show varied, WHOLE trees — canopy tips, side branches, trunk flares
+intact, shadows matching each variant's silhouette; pool 1 page / partial 0 (the boot
+warnings were P0's bounded retry healing a cold edge cache, ledger empty after).
+Typecheck clean.
+
 ## 2026-08-03 · P1–P2 — shadows dim instead of delete; the one depth key lands
 
 **P1, isolated then fixed**: new drill toggles `__shadows(on)` / `__ndotl(on)`;
