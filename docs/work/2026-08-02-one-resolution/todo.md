@@ -86,15 +86,12 @@ was asynchronous, and it wasn't because it was fast. Secondly we should keep the
 previews. Third we need to solve panning at max and min zoom levels. Fourth we need to
 fix z-order. Fifth trees are clipped."_
 
-- [ ] Restore the 32-px PREVIEW tier as the fast-first tier — exactly TWO tiers
-      (preview → max), no ladder, no target tracking: resolve serves the preview
-      co-pack the moment it lands and the max swaps in async. Acceptance: a cold
-      cache-less load paints textured (preview) world in ≤ ~1 s; masters upgrade in
-      place; network shows 32 + max only.
-- [ ] Verify NOTHING blocks on texture load (the perceived block = geo-until-max):
-      boot/critical paths never await packs; mip regeneration coalesces to once per
-      frame instead of per-arrival (burst arrivals = one 2048² mipgen each = stutter).
-      Acceptance: no long tasks > 50 ms attributable to packing in a boot profile.
+- [x] Restore the 32-px previews + never block on texture load → OWNED BY
+      [`2026-08-02-render-performance`](../2026-08-02-render-performance/README.md)
+      (armed, in flight in a concurrent session: the await removal, per-map upgrades,
+      decode caps, and the placeholder tier that is explicitly NOT a ladder — its F2).
+      The preview kick + `packedSize` upgrade guard are already live in the resolver.
+      This stream does not duplicate it.
 - [ ] Reproduce + fix panning at ZOOM_MAX (2) and ZOOM_MIN (0.25): name the defect
       (stale/black slots, bake storms, lighting cost) in `issues.md`, then fix it.
       Acceptance: a full-screen pan at both extremes stays visually intact.

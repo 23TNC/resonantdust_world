@@ -162,3 +162,25 @@ to confirm the baseline still reproduces, and that result is the first real entr
   start** (invalid across a base change — run-3 warm-started from run-2), **bf16** (was fp16),
   **batch 4** (was 1 + grad-accum 4), **dim 64 / alpha 32** (was 32/16, run-4 48/24), 15 epochs,
   `--sample_every_n_epochs=1` on fixed seeds. 192 steps/epoch → ~2–2.5 h estimated.
+- **2026-08-02 · Run-6 verdict: REJECTED by the user.** *"none of these are good"*, and on the best
+  cell — *"the east tiger is fine, I guess, at epoch 10. But it's still a bit incorrect as the neck
+  and some of the details are incorrect."* Side-by-side against the corpus reference, the gap is
+  **structure and detail, not style**: the head is stuck on via a narrow neck with a visible seam
+  (the reference flows head into shoulder), ~5 vestigial stripes against ~14, no belly shape at all,
+  a single eye dot for a face. It kept silhouette, pose and rough colour and lost every piece of
+  internal structure — the signature of **underfitting**, not of a wrong style target.
+- **2026-08-02 · The cause: every run in this project has trained the LoRA at HALF strength.**
+  kohya scales the LoRA by `alpha / dim`. Run-6 was 64/32 = **0.5×**; run-3 was 32/16, run-4 48/24
+  — all 0.5×. Paired with a conservative 5e-5 LR that is roughly **4× less learning signal** than
+  the config implies. `avr_loss` sat at ~0.018 for all 2880 steps, though that is weak evidence on
+  its own (diffusion loss is famously uninformative); the visual evidence is what carries it.
+- **2026-08-02 · Run-7 launched** — `alpha 64` (1.0×, not 0.5×), `LR 1e-4` (unet) / `5e-5` (TE),
+  **1024** on `quad_dataset_1024`, 20 epochs, `AdamW` (not 8bit), **samples at 1024**.
+  Probe: **15,228 MiB of 24,576 (62%)**, 2.88 s/it, clean exit — gradient checkpointing STAYS on,
+  as predicted; there is not room to drop it at 1024.
+
+  **Dataset note:** `quad_dataset_1024` is the PINNED-fill set. Using it deliberately, because
+  [I9](issues.md#i9) refuted the pinned-fill diagnosis — run-6 drew the frame artefact while
+  trained on natural-variance data, so the reason to avoid pinned fill no longer holds. Every 1024
+  set is ESRGAN-upscaled from 64–256 px sources regardless, so source art is the real detail
+  ceiling; 1024 buys latent room (128² vs 96²) for the strokes that exist.
