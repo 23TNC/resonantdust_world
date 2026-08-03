@@ -78,6 +78,34 @@ Stances: [`README`](README.md)._
       paragraph says "partition level") and the affected component docs. Acceptance:
       `bin/rd docs-check` green.
 
+## P6 — the user's verdict (2026-08-02): fix performance or roll back
+
+_User, verbatim: "with the changes to lod came a ton of performance issues and bugs…
+First it seems you decided to block on texture load. There is a reason texture loading
+was asynchronous, and it wasn't because it was fast. Secondly we should keep the 32px
+previews. Third we need to solve panning at max and min zoom levels. Fourth we need to
+fix z-order. Fifth trees are clipped."_
+
+- [ ] Restore the 32-px PREVIEW tier as the fast-first tier — exactly TWO tiers
+      (preview → max), no ladder, no target tracking: resolve serves the preview
+      co-pack the moment it lands and the max swaps in async. Acceptance: a cold
+      cache-less load paints textured (preview) world in ≤ ~1 s; masters upgrade in
+      place; network shows 32 + max only.
+- [ ] Verify NOTHING blocks on texture load (the perceived block = geo-until-max):
+      boot/critical paths never await packs; mip regeneration coalesces to once per
+      frame instead of per-arrival (burst arrivals = one 2048² mipgen each = stutter).
+      Acceptance: no long tasks > 50 ms attributable to packing in a boot profile.
+- [ ] Reproduce + fix panning at ZOOM_MAX (2) and ZOOM_MIN (0.25): name the defect
+      (stale/black slots, bake storms, lighting cost) in `issues.md`, then fix it.
+      Acceptance: a full-screen pan at both extremes stays visually intact.
+- [ ] Reproduce + fix the z-order defect. Acceptance: the failing case named in
+      `issues.md`; a capture before/after; `__zprobe` agrees with the drawn order.
+- [ ] Reproduce + fix the tree clipping. Acceptance: the failing case named in
+      `issues.md`; conifers render un-clipped at all zooms; captures.
+- [ ] The re-verdict: cold load + pan drill at both extremes, `__gather` occupancy
+      non-zero, `__lightexact` bit-identical. Acceptance: captures + numbers in
+      `completed.md`; the user's eyes close the phase — or the stream ROLLS BACK.
+
 ## P5 — the sweep
 
 - [x] Cold loads at zoom 2 / 1 / 0.5 / 0.25: textured world, pools + shadows intact,
