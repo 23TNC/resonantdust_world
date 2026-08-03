@@ -5,17 +5,17 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P1 — the corpus speaks needs and moodlets
 
-- [ ] Add `&need.*` to `shared/dsl`: id/label, `deplete` (TICS full→empty, F4), and its moodlet
+- [x] Add `&need.*` to `shared/dsl`: id/label, `deplete` (TICS full→empty, F4), and its moodlet
       BANDS (`lo`/`hi` satisfaction fractions). Acceptance: a thirst block round-trips in the
       loader's crate tests; an unauthored kind emits an empty need list.
-- [ ] Add `&moodlet.*`: label, `mood` offset (−1..1), `duration` tics (0 = conditional, F2).
+- [x] Add `&moodlet.*`: label, `mood` offset (−1..1), `duration` tics (0 = conditional, F2).
       Acceptance: a loader test proves two moodlets bound to one need coexist without colliding.
-- [ ] Attach needs to kinds via `&thing.needs` (a list of need names). Acceptance: the wolf block
+- [x] Attach needs to kinds via `&thing.needs` (a list of need names). Acceptance: the wolf block
       lists thirst; the bundle exposes a per-kind need table the way `thingLayout` does.
-- [ ] Author `content/data/needs.rd`: thirst depleting (F1), Thirsty (sat < 0.35, mood −0.15) and
+- [x] Author `content/data/needs.rd`: thirst depleting (F1), Thirsty (sat < 0.35, mood −0.15) and
       Dehydrated (sat < 0.10, mood −0.40) — numbers PROVISIONAL but authored, never hardcoded.
       Acceptance: `bin/dsl` publishes; corpus parses in the crate tests.
-- [ ] Record the new layouts in `VARIABLES.md` (it outranks code). Acceptance: docs-check green;
+- [x] Record the new layouts in `VARIABLES.md` (it outranks code). Acceptance: docs-check green;
       lanes documented before any consumer lands.
 
 ## P2 — the shard remembers

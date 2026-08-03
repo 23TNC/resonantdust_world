@@ -51,6 +51,9 @@
             @define>
                 ; speed: TICS PER TILE (pawn-movement F1) — 12 → 2 s/tile at 6 Hz.
                 12 &thing.speed set
+                ; needs (needs-moodlets P1): the wolf carries thirst — see
+                ; content/data/needs.rd for the need + its moodlet bands.
+                "thirst &thing.needs.0 set
                 0 return
             @on_create>
                 0 return

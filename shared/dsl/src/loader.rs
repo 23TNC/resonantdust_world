@@ -309,6 +309,57 @@ pub struct LightParts {
   pub flicker: bool,
 }
 
+/// Band slots read for `&need.band.<i>.*` — the max conditional-moodlet bands per need.
+/// Indexed bare-digit like `packed.<i>` (safe: `need.band` never holds a scalar sibling,
+/// the I8 hazard `rotation_key` exists for).
+pub const NEED_BANDS: usize = 4;
+
+/// Need slots read for `&thing.needs.<i>` — the max needs one kind carries.
+pub const NEEDS_PER_KIND: usize = 8;
+
+/// One BAND on a need's satisfaction — the conditional moodlet active while
+/// `lo <= satisfaction < hi` (needs-moodlets F2: band moodlets are DERIVED by every
+/// observer from `(need row, tic, corpus)`; no grant events exist for them). Bands are
+/// authored EXCLUSIVE — Dehydrated `[0, 0.10)`, Thirsty `[0.10, 0.35)` — so at most one
+/// band moodlet per need is active and "which state" needs no priority rule.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NeedBand {
+  /// The `<moodlet>` name this band activates (resolved via [`Bundle::moodlet_id`]).
+  pub moodlet: String,
+  /// Band start (inclusive), `0..1` satisfaction. Default `0`.
+  pub lo: f64,
+  /// Band end (exclusive), `0..1` satisfaction.
+  pub hi: f64,
+}
+
+/// A `<need>` def's parameters (needs-moodlets P1). A need is a 0..1 SATISFACTION that
+/// depletes toward zero (F1 — one dialect for every need; bad states are LOW). Nothing
+/// ticks it: a pawn's row stores `(satisfaction, set_tic)` and every observer computes
+/// `satisfaction_at(tic)` from `deplete` (F4 — the TICS/TILE posture).
+#[derive(Debug, Clone, PartialEq)]
+pub struct NeedParams {
+  /// Display label ("Thirst") — authoring/debug only. The need itself is NEVER shown;
+  /// the moodlet abstraction is the feature.
+  pub label: String,
+  /// TICS from full (`1.0`) to empty (`0.0`). `0` = unauthored (the need never drains).
+  pub deplete: f64,
+  /// The conditional-moodlet bands, in authored slot order.
+  pub bands: Vec<NeedBand>,
+}
+
+/// A `<moodlet>` def's parameters — the DISPLAYED consequence of hidden state: a label
+/// + a mood offset (stat modifiers join later). `duration == 0` marks a CONDITIONAL
+/// moodlet (alive exactly while its band holds); `> 0` a TIMED one (a stored grant
+/// expiring `duration` tics after its `grant_tic` — the action stream's kind, F2).
+#[derive(Debug, Clone, PartialEq)]
+pub struct MoodletParams {
+  pub label: String,
+  /// Mood offset while active, `-1..1` (mood = clamp(base + Σ offsets), F5).
+  pub mood: f64,
+  /// Lifetime in TICS for a stored grant; `0` = conditional (band-derived).
+  pub duration: f64,
+}
+
 /// Everything the runtime needs to resolve and render tiles, built once at load.
 #[derive(Default, Debug)]
 pub struct Bundle {
@@ -344,6 +395,16 @@ pub struct Bundle {
   /// order, append-stable, same discipline as `tile_ids` — so the client's atlas /
   /// registry lookups stay valid as materials are added.
   material_ids: Vec<String>,
+  /// Need defs by name — the `<need>` registry (`@define` sets its [`NeedParams`]).
+  needs: HashMap<String, Node>,
+  /// Need names ordered by 1-based `need_id` (`0` = none). Append-stable — this id is
+  /// what a pawn-shard need row carries, so it must never renumber.
+  need_ids: Vec<String>,
+  /// Moodlet defs by name — the `<moodlet>` registry (`@define` sets its [`MoodletParams`]).
+  moodlets: HashMap<String, Node>,
+  /// Moodlet names ordered by 1-based `moodlet_id` (`0` = none). Append-stable — a
+  /// STORED grant row carries this id (conditional moodlets are derived, F2).
+  moodlet_ids: Vec<String>,
 }
 
 impl Bundle {
@@ -961,6 +1022,117 @@ impl Bundle {
   pub fn material_params_all(&self) -> Vec<MaterialParams> {
     self.material_ids.iter().map(|n| self.material_params(n).unwrap_or_default()).collect()
   }
+
+  // ---------- needs & moodlets (needs-moodlets P1) ----------
+
+  /// Every need name in `need_id` order (index 0 → id 1).
+  pub fn need_names(&self) -> &[String] {
+    &self.need_ids
+  }
+  /// The 1-based `need_id` for a name (`None` if unknown).
+  pub fn need_id(&self, name: &str) -> Option<u16> {
+    self.need_ids.iter().position(|n| n == name).map(|i| i as u16 + 1)
+  }
+  /// The need name for a `need_id` (`0` is the empty sentinel).
+  pub fn need_name(&self, id: u16) -> Option<&str> {
+    (id != 0).then(|| self.need_ids.get(id as usize - 1)).flatten().map(String::as_str)
+  }
+
+  /// A need's [`NeedParams`] — run its `@define` (needs sit directly under the `::def`,
+  /// no facet, like materials) and read `&need.*`. Band slots are `&need.band.<i>.*`;
+  /// a slot naming no moodlet is skipped, so authored bands stay dense in slot order.
+  pub fn need_params(&self, name: &str) -> Option<NeedParams> {
+    let h = self.needs.get(name)?.hook("define")?;
+    let mut store = Store::default();
+    let _ = run(&h.body, &mut store);
+    let mut bands = Vec::new();
+    for i in 0..NEED_BANDS {
+      let Some(moodlet) = read_sym(&store, &format!("need.band.{i}.moodlet")) else { continue };
+      bands.push(NeedBand {
+        moodlet,
+        lo: store.read(&format!("need.band.{i}.lo")).map(|c| c.as_f64()).unwrap_or(0.0),
+        hi: store.read(&format!("need.band.{i}.hi")).map(|c| c.as_f64()).unwrap_or(0.0),
+      });
+    }
+    Some(NeedParams {
+      label: read_sym(&store, "need.label").unwrap_or_else(|| name.to_string()),
+      deplete: store.read("need.deplete").map(|c| c.as_f64()).unwrap_or(0.0),
+      bands,
+    })
+  }
+  /// The whole need registry in `need_id` order.
+  pub fn need_params_all(&self) -> Vec<NeedParams> {
+    self
+      .need_ids
+      .iter()
+      .map(|n| self.need_params(n).unwrap_or(NeedParams { label: n.clone(), deplete: 0.0, bands: Vec::new() }))
+      .collect()
+  }
+
+  /// Every moodlet name in `moodlet_id` order (index 0 → id 1).
+  pub fn moodlet_names(&self) -> &[String] {
+    &self.moodlet_ids
+  }
+  /// The 1-based `moodlet_id` for a name (`None` if unknown).
+  pub fn moodlet_id(&self, name: &str) -> Option<u16> {
+    self.moodlet_ids.iter().position(|n| n == name).map(|i| i as u16 + 1)
+  }
+  /// The moodlet name for a `moodlet_id` (`0` is the empty sentinel).
+  pub fn moodlet_name(&self, id: u16) -> Option<&str> {
+    (id != 0).then(|| self.moodlet_ids.get(id as usize - 1)).flatten().map(String::as_str)
+  }
+
+  /// A moodlet's [`MoodletParams`] — its `@define`'s `&moodlet.*` reads.
+  pub fn moodlet_params(&self, name: &str) -> Option<MoodletParams> {
+    let h = self.moodlets.get(name)?.hook("define")?;
+    let mut store = Store::default();
+    let _ = run(&h.body, &mut store);
+    Some(MoodletParams {
+      label: read_sym(&store, "moodlet.label").unwrap_or_else(|| name.to_string()),
+      mood: store.read("moodlet.mood").map(|c| c.as_f64()).unwrap_or(0.0),
+      duration: store.read("moodlet.duration").map(|c| c.as_f64()).unwrap_or(0.0),
+    })
+  }
+  /// The whole moodlet registry in `moodlet_id` order.
+  pub fn moodlet_params_all(&self) -> Vec<MoodletParams> {
+    self
+      .moodlet_ids
+      .iter()
+      .map(|n| self.moodlet_params(n).unwrap_or(MoodletParams { label: n.clone(), mood: 0.0, duration: 0.0 }))
+      .collect()
+  }
+
+  /// The needs a thing kind carries — `&thing.needs.<i>` syms from its `:data @define`,
+  /// resolved to 1-based need ids. A slot naming an unknown need is DROPPED (a typo
+  /// surfaces as the need never draining, caught by the crossing drill — the loader has
+  /// no warn channel). Empty for a kind authoring none.
+  pub fn thing_needs(&self, object_id: u16) -> Vec<u16> {
+    let Some(node) = self.thing_name(object_id).and_then(|n| self.things.get(n)) else { return Vec::new() };
+    let Some(store) = self.run_node_hook(node, "data", "define") else { return Vec::new() };
+    let mut out = Vec::new();
+    for i in 0..NEEDS_PER_KIND {
+      if let Some(name) = read_sym(&store, &format!("thing.needs.{i}")) {
+        if let Some(id) = self.need_id(&name) {
+          out.push(id);
+        }
+      }
+    }
+    out
+  }
+
+  /// Every thing's needs in `object_id` order, flattened **stride-[`NEEDS_PER_KIND`]**
+  /// per kind (`0` = empty slot) — the bundle table the wasm boundary ships, the way
+  /// [`Self::thing_layout`] does.
+  pub fn thing_needs_table(&self) -> Vec<f64> {
+    let mut out = Vec::with_capacity(self.thing_ids.len() * NEEDS_PER_KIND);
+    for id in 1..=self.thing_ids.len() as u16 {
+      let needs = self.thing_needs(id);
+      for i in 0..NEEDS_PER_KIND {
+        out.push(needs.get(i).copied().unwrap_or(0) as f64);
+      }
+    }
+    out
+  }
 }
 
 /// Read a slot as a content name: a `Sym` (`grass &tile set`) yields the string;
@@ -987,6 +1159,8 @@ pub fn load(sources: &[(String, String)]) -> Result<Bundle, Vec<LoadError>> {
         index_defs(&node, "thing", &mut bundle.things, &mut bundle.thing_ids);
         index_defs(&node, "biome", &mut bundle.biomes, &mut bundle.biome_ids);
         index_defs(&node, "material", &mut bundle.materials, &mut bundle.material_ids);
+        index_defs(&node, "need", &mut bundle.needs, &mut bundle.need_ids);
+        index_defs(&node, "moodlet", &mut bundle.moodlets, &mut bundle.moodlet_ids);
       }
       Err(e) => errors.push(LoadError { file: name.clone(), message: format!("parse: {e}") }),
     }
@@ -1198,6 +1372,15 @@ mod tests {
     // the wolf stays the 1-part degenerate case
     let wolf = b.visual_for_object(b.thing_object_id("wolf").unwrap()).unwrap();
     assert_eq!(wolf.parts.len(), 1);
+    // needs-moodlets P1: the corpus authors thirst + its band moodlets, and the wolf
+    // carries it — every band names a REGISTERED moodlet (a typo here would silently
+    // never display).
+    let thirst = b.need_id("thirst").expect("thirst registered");
+    let np = b.need_params("thirst").unwrap();
+    assert!(np.deplete > 0.0, "thirst drains");
+    assert_eq!(np.bands.len(), 2, "Thirsty + Dehydrated");
+    assert!(np.bands.iter().all(|band| b.moodlet_id(&band.moodlet).is_some()), "bands name real moodlets");
+    assert_eq!(b.thing_needs(b.thing_object_id("wolf").unwrap()), vec![thirst]);
   }
 
   #[test]
@@ -1421,6 +1604,99 @@ mod tests {
     let table = b.tile_packed_channels();
     assert_eq!(table[0], [PackedChannel::default(); 4]);
     assert_eq!(table[1][0], PackedChannel { material_id: 1, tint: 0x6b6b6b });
+  }
+
+  #[test]
+  fn needs_and_moodlets_registry() {
+    // needs-moodlets P1: a thirst need with TWO bands referencing two moodlets — the
+    // pair coexisting on one need is the I10-class check (two slots, no collision).
+    let needs = "\
+<need>
+  ::thirst>
+    @define>
+      \"Thirst &need.label set
+      864000 &need.deplete set
+      \"thirsty &need.band.0.moodlet set
+      0.10 &need.band.0.lo set
+      0.35 &need.band.0.hi set
+      \"dehydrated &need.band.1.moodlet set
+      0 &need.band.1.lo set
+      0.10 &need.band.1.hi set
+      0 return
+  ::rest>
+    @define>
+      0 return
+<moodlet>
+  ::thirsty>
+    @define>
+      \"Thirsty &moodlet.label set
+      -0.15 &moodlet.mood set
+      0 return
+  ::dehydrated>
+    @define>
+      \"Dehydrated &moodlet.label set
+      -0.40 &moodlet.mood set
+      0 return
+  ::quenched>
+    @define>
+      \"Quenched &moodlet.label set
+      0.20 &moodlet.mood set
+      3600 &moodlet.duration set
+      0 return
+";
+    let b = load(&[src("data/needs.rd", needs)]).expect("clean load");
+
+    // registries: 1-based, first-appearance order.
+    assert_eq!(b.need_id("thirst"), Some(1));
+    assert_eq!(b.need_name(1), Some("thirst"));
+    assert_eq!(b.moodlet_id("dehydrated"), Some(2));
+    assert_eq!(b.need_id("nope"), None);
+
+    let t = b.need_params("thirst").unwrap();
+    assert_eq!(t.label, "Thirst");
+    assert_eq!(t.deplete, 864000.0);
+    assert_eq!(t.bands.len(), 2, "two bands coexist on one need");
+    assert_eq!(t.bands[0], NeedBand { moodlet: "thirsty".into(), lo: 0.10, hi: 0.35 });
+    assert_eq!(t.bands[1], NeedBand { moodlet: "dehydrated".into(), lo: 0.0, hi: 0.10 });
+
+    // an unauthored need: label falls back to its name, zero deplete, no bands.
+    let r = b.need_params("rest").unwrap();
+    assert_eq!((r.label.as_str(), r.deplete, r.bands.len()), ("rest", 0.0, 0));
+
+    // moodlets: conditional (duration 0) vs timed.
+    let thirsty = b.moodlet_params("thirsty").unwrap();
+    assert_eq!((thirsty.label.as_str(), thirsty.mood, thirsty.duration), ("Thirsty", -0.15, 0.0));
+    let quenched = b.moodlet_params("quenched").unwrap();
+    assert_eq!((quenched.mood, quenched.duration), (0.20, 3600.0));
+    assert_eq!(b.need_params_all().len(), 2);
+    assert_eq!(b.moodlet_params_all().len(), 3);
+  }
+
+  #[test]
+  fn thing_needs_from_data_define() {
+    // The wolf lists thirst via `&thing.needs.0`; the tree authors none. Unknown
+    // names are dropped, and the flat table is stride-NEEDS_PER_KIND with 0 = empty.
+    let needs = "<need>\n  ::thirst>\n    @define>\n      0 return\n";
+    let things = "\
+<thing>
+  ::tree>
+    :data>
+      @define>
+        0 return
+  ::wolf>
+    :data>
+      @define>
+        \"thirst &thing.needs.0 set
+        \"typo_need &thing.needs.1 set
+        0 return
+";
+    let b = load(&[src("data/needs.rd", needs), src("data/things.rd", things)]).expect("load");
+    assert_eq!(b.thing_needs(2), vec![1], "thirst resolves, the typo drops");
+    assert_eq!(b.thing_needs(1), Vec::<u16>::new());
+    let table = b.thing_needs_table();
+    assert_eq!(table.len(), 2 * NEEDS_PER_KIND);
+    assert_eq!(table[NEEDS_PER_KIND], 1.0, "wolf slot 0 → need id 1");
+    assert_eq!(table[0], 0.0, "tree slot 0 empty");
   }
 
   #[test]

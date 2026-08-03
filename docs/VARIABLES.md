@@ -518,6 +518,41 @@ variants is taken, so no variant is clipped.
 **`internal_padding` was deleted into this** — a uniform inset *is* a uniform subframe, so a linked
 tile grid authors its inset as a subframe like everything else.
 
+## Needs & moodlets (`shared/dsl` → shard / npc / `client/webgl`)
+
+**The pawn's hidden state and its displayed consequences.** Work stream:
+[`work/2026-08-03-needs-moodlets`](work/2026-08-03-needs-moodlets/README.md). A **need** is a 0..1
+SATISFACTION depleting toward zero (F1 — one dialect for every need; bad states are LOW; the
+player never sees the scalar). A **moodlet** is what displays: a label + a mood offset. Mood is
+`clamp(0.5 + Σ active offsets, 0..1)` (F5).
+
+```
+<need> ::name> @define>                     registry def — 1-based need_id, append-stable
+&need.label                                 display/debug label (the need itself is never shown)
+&need.deplete                               TICS full→empty; 0 = never drains (unauthored)
+&need.band.<0..3>.moodlet                   the <moodlet> active while lo <= satisfaction < hi
+&need.band.<0..3>.lo | .hi                  the band, 0..1 — authored EXCLUSIVE, ≤1 active/need
+
+<moodlet> ::name> @define>                  registry def — 1-based moodlet_id, append-stable
+&moodlet.label                              the displayed name
+&moodlet.mood                               mood offset while active, -1..1
+&moodlet.duration                           TICS a STORED grant lives; 0 = conditional (derived)
+
+&thing.needs.<0..7>                         the needs a kind carries (:data @define, sym slots)
+```
+
+Exposed as `need_params_all()` / `moodlet_params_all()` (registry order) and
+`thing_needs_table()` — **stride 8** per kind of 1-based need ids, `0` = empty slot.
+
+**Nothing ticks a need** (F4): a pawn's shard row is `(satisfaction, set_tic)`; observers compute
+`satisfaction_at(tic)` and every band-crossing tic from `deplete`. **Conditional moodlets
+(`duration 0`) are DERIVED** from `(row, tic, corpus)` by every observer identically — no grant
+events exist for them (F2); **timed moodlets (`duration > 0`)** are stored grants
+`(pawn, moodlet_id, grant_tic)` expiring `duration` tics later (the action stream's kind).
+
+**Indexed slots are bare digits** (`band.0`, `needs.3`) — the `packed.<i>` shape. Safe because
+these nodes never hold a scalar sibling (the `rotation_key` I8 hazard); do not add one.
+
 ## Removed
 
 `valid_at`, `cold_reference`, `hot_reference`, `reference_id`, `event_word` — see
