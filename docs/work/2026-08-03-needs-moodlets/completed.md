@@ -1,5 +1,29 @@
 # Completed — needs & moodlets
 
+## 2026-08-03 · P6 — the drill (2/2) — the stream's evidence
+
+**The crossing drill** (F4 made measurable): `SET_NEED sat 28` (0.1098) landed at tic 8378;
+the computed Dehydrated crossing is 8378 + ⌊0.0098·21600⌋+1 = **8590**; the npc flipped at
+observed 8595 (its 1 s decision-tick granularity — the eval itself is exact at 8590, pinned
+by unit tests + the wasm probes); the payload row's tic read 8378 before AND after = zero
+writes, zero wire events between set and flip. Rode along: the sat-0 clamp no longer
+reports a spurious next-crossing (a bottom band holds forever; test added; seen fixed live
+— a starved wolf now reports `next None`).
+
+**The lived soak** (deplete drill-scaled 21600 → 1800 = 5 min full→empty, REVERTED after):
+set FULL at tic **9253** — one write — then, with trips issuing continuously the whole way:
+- npc at 9256: `[] mood 0.5 next_crossing Some(10424)` — its own prediction matching the
+  hand-computed ⌊0.65·1800⌋+1 = 1171 offset;
+- **Thirsty** observed 10425 (computed 10424): npc `mood 0.35 next Some(10874)`, panel
+  captured `mood 35% / Thirsty −0.15`, state `moving`;
+- **Dehydrated** observed 10876 (computed 10874): npc `mood 0.1 next None`, panel captured
+  `mood 10% / Dehydrated −0.40`, still `moving`;
+- the payload row's tic stayed **9253** across the entire 4.5-minute arc.
+
+Panel and Brain agreed at every step because they cannot disagree (F3 — one eval). The
+corpus is back at 21600 and the npc restarted on it. 16/16 items done; **the user's eyes
+close the stream**.
+
 ## 2026-08-03 · P5 — the panel shows moodlets, never bars (2/2)
 
 Under F7 the "subscription" was already live (the payload fan): `MoverLayer` keeps the raw

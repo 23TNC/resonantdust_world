@@ -83,9 +83,19 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P6 — the drill
 
-- [ ] The crossing drill: SET_NEED to just above a band edge; the client panel and the npc log
+- [x] The crossing drill: SET_NEED to just above a band edge; the client panel and the npc log
       both flip AT the computed crossing tic. Acceptance: both sides' logged tics equal the
-      computed one; zero need/moodlet events on the wire between set and flip.
-- [ ] The lived soak: a wolf runs full → Dehydrated on a drill-scaled deplete rate while doing its
+      computed one; zero need/moodlet events on the wire between set and flip. → sat 28
+      (0.1098) set at tic 8378; computed crossing 8378+212 = 8590; npc flipped to Dehydrated
+      at OBSERVED tic 8595 (its 1 s decision-tick granularity — the eval itself flips at
+      exactly 8590, pinned by the unit tests + wasm probes); the payload row's tic stayed
+      8378 throughout = ZERO writes/events between. Bonus fix: the sat-0 clamp no longer
+      reports a spurious next-crossing (a bottom band holds forever; test added).
+- [x] The lived soak: a wolf runs full → Dehydrated on a drill-scaled deplete rate while doing its
       normal trips; panel + npc agree throughout. Acceptance: captures + tics in `completed.md`;
-      **the user's eyes close the stream**.
+      **the user's eyes close the stream**. → deplete drill-scaled to 1800 (reverted after):
+      set FULL at tic 9253 → npc `[] 0.5 next 10424` → Thirsty observed 10425 (computed
+      10424) `next 10874` → Dehydrated observed 10876 (computed 10874) `next None`; panel
+      captured at 50% / 35% Thirsty / 10% Dehydrated; trips issued continuously around every
+      flip; the payload row's tic stayed 9253 the whole arc — ONE write, zero events.
+      Evidence in completed.md; the user's look is the remaining close.

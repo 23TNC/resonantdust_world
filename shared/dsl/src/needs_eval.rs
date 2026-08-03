@@ -120,6 +120,12 @@ pub fn next_crossing_tic(
         let s0 = f64::from(q) / 255.0;
         for band in &np.bands {
             for threshold in [band.lo, band.hi] {
+                // A threshold at 0 is never crossed: satisfaction CLAMPS there, so a
+                // bottom band (`lo == 0`) holds forever — waking at the clamp tic would
+                // be a spurious no-change wake (seen live: a starved wolf's "next").
+                if threshold <= 0.0 {
+                    continue;
+                }
                 if s0 > threshold {
                     // First elapsed with `sat < threshold`: sat == threshold is NOT below, so +1.
                     let cross = ((s0 - threshold) * np.deplete).floor() as u16 + 1;
@@ -216,6 +222,9 @@ mod tests {
         assert!((mood(&m) - 0.10).abs() < 1e-9, "0.5 − 0.40");
         // …and nothing ahead can change without a write.
         assert_eq!(next_crossing_tic(&b, &needs, &[], 5000), None);
+        // Inside Dehydrated but not yet at 0 (sat 0.05 at elapsed 950): the only threshold
+        // below is the CLAMP (band.lo == 0), which is never crossed — no spurious wake.
+        assert_eq!(next_crossing_tic(&b, &needs, &[], 950), None);
     }
 
     #[test]
