@@ -23,17 +23,23 @@ band = [
   { condition = "dehydrated", lo = 0.0, hi = 0.1 },
 ]
 
+# `priority` sorts the details panel's cards, DESCENDING — the top 4 show maximized, the
+# rest minimized. Authored, never derived from mood: urgency is not magnitude. Author in
+# TENS so a new condition slots between two without renumbering anything.
+
 [[condition]]
 id = 1
 name = "thirsty"
 label = "Thirsty"
 mood = -0.15
+priority = 20
 
 [[condition]]
 id = 2
 name = "dehydrated"
 label = "Dehydrated"
 mood = -0.4
+priority = 30
 
 [[condition]]
 id = 3
@@ -41,3 +47,4 @@ name = "quenched"
 label = "Quenched"
 mood = 0.2
 duration = 3600.0
+priority = 10

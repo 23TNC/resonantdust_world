@@ -20,8 +20,12 @@ export interface DetailsProviders {
     macroPosition: number; moving: boolean; ticsPerTile: number;
     /** The pawn's ACTIVE conditions + summed mood (needs-moodlets P5), evaluated lazily by
      *  the provider through the ONE wasm eval. The NEED scalars are deliberately absent —
-     *  the panel shows CONSEQUENCES, never bars (the stream's whole point). */
-    conditions: { label: string; mood: number; remaining: number }[];
+     *  the panel shows CONSEQUENCES, never bars (the stream's whole point).
+     *
+     *  **Order is authoritative** (conditions F3): the shared eval has already sorted by
+     *  `priority` desc, `|mood|` desc, `condition_id` asc. The panel maximizes the first four
+     *  and minimizes the rest — it never sorts, and must not. */
+    conditions: { label: string; mood: number; remaining: number; priority: number }[];
     mood: number;
   } | null;
   thing(primId: number): {

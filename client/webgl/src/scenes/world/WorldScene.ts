@@ -112,18 +112,26 @@ export class WorldScene extends Scene {
         // needs-moodlets P5: evaluate the pawn's RAW payload through the ONE wasm eval
         // (F3) at the LEARNED now-tic — lazily, at the panel's own refresh cadence (F4:
         // nothing ticks; the row + the corpus + the tic are the whole computation).
-        let conditions: { label: string; mood: number; remaining: number }[] = [];
+        let conditions: { label: string; mood: number; remaining: number; priority: number }[] = [];
         let mood = 0.5;
         const payload = this.moverLayer.pawnPayload(e);
         const d = ctx.client.ticDelta(0); // fractional now-tic (mod 2^16 below)
         if (payload && d !== null) {
           const now = ((Math.floor(d) % 0x10000) + 0x10000) % 0x10000;
           const c = getContent();
+          // Stride 4: [condition_id, mood, remaining, priority]. The eval returns them
+          // ALREADY SORTED (conditions F3 — priority desc, |mood| desc, id asc); this loop
+          // preserves that order and must never re-sort. `priority` is carried for display.
           const flat = c.pawnConditions(payload, now);
           const labels = c.conditionLabels();
-          for (let i = 0; i + 2 < flat.length; i += 3) {
+          for (let i = 0; i + 3 < flat.length; i += 4) {
             const id = flat[i];
-            conditions.push({ label: labels[id - 1] ?? `#${id}`, mood: flat[i + 1], remaining: flat[i + 2] });
+            conditions.push({
+              label: labels[id - 1] ?? `#${id}`,
+              mood: flat[i + 1],
+              remaining: flat[i + 2],
+              priority: flat[i + 3],
+            });
           }
           mood = c.pawnMood(payload, now);
         }

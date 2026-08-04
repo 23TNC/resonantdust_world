@@ -23,13 +23,16 @@ use crate::loader::{Bundle, ConditionParams, NeedParams};
 /// The base mood an unburdened pawn sits at (F5).
 pub const MOOD_BASE: f64 = 0.5;
 
-/// One ACTIVE condition: the corpus id, its mood offset, and — for a timed grant — the tics
-/// it has left (`0` = DERIVED, alive exactly while its band holds).
+/// One ACTIVE condition: the corpus id, its mood offset, the tics it has left (`0` = DERIVED,
+/// alive exactly while its band holds), and its authored display priority.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ActiveCondition {
     pub condition_id: u16,
     pub mood: f64,
     pub remaining: u16,
+    /// The corpus `priority`, carried so consumers can render but never re-decide the order —
+    /// [`active_conditions`] has already sorted (conditions F3).
+    pub priority: i32,
 }
 
 /// The current satisfaction of a need row at `now` — `sat0 − elapsed/deplete`, clamped at 0.
@@ -49,6 +52,13 @@ pub fn satisfaction_at(satisfaction: u8, set_tic: u16, deplete: f64, now: u16) -
 ///
 /// `needs` = decoded `NEED` entries `(need_id, satisfaction, set_tic)`; `grants` = decoded
 /// `CONDITION` entries `(condition_id, grant_tic)` (`resonantdust_codec::payload`).
+///
+/// **The result is SORTED** — `priority` desc, then `|mood|` desc, then `condition_id` asc
+/// (conditions F2/F3). The order is a corpus rule, so it is decided here, once, for every
+/// observer: the details panel maximizes the first four and the npc reads the same ranking
+/// for its decisions. No consumer re-sorts; a second implementation in TS is precisely the
+/// drift class this crate exists to prevent. The tie-breaks make it a TOTAL order, so the
+/// cards cannot swap places between two evaluations of an unchanged pawn.
 pub fn active_conditions(
     bundle: &Bundle,
     needs: &[(u8, u8, u16)],
@@ -63,7 +73,12 @@ pub fn active_conditions(
             if sat >= band.lo && sat < band.hi {
                 if let Some(cid) = bundle.condition_id(&band.condition) {
                     if let Some(cp) = condition_of(bundle, cid as u8) {
-                        out.push(ActiveCondition { condition_id: cid, mood: cp.mood, remaining: 0 });
+                        out.push(ActiveCondition {
+                            condition_id: cid,
+                            mood: cp.mood,
+                            remaining: 0,
+                            priority: cp.priority,
+                        });
                     }
                 }
             }
@@ -80,9 +95,18 @@ pub fn active_conditions(
                 condition_id: u16::from(cid),
                 mood: cp.mood,
                 remaining: (cp.duration - elapsed) as u16,
+                priority: cp.priority,
             });
         }
     }
+    // `sort_by` (stable) with a total comparator — see the doc comment. `|mood|` compares with
+    // `total_cmp` so a NaN authored into the corpus orders instead of panicking.
+    out.sort_by(|a, b| {
+        b.priority
+            .cmp(&a.priority)
+            .then_with(|| b.mood.abs().total_cmp(&a.mood.abs()))
+            .then_with(|| a.condition_id.cmp(&b.condition_id))
+    });
     out
 }
 
@@ -188,6 +212,83 @@ mood = 0.20
 duration = 100
 "#;
         load(&[("needs.toml".into(), src.into())]).expect("fixture loads")
+    }
+
+    /// A fixture built to make EVERY sort key decide something, and to make the
+    /// insertion order deliberately wrong on all three:
+    /// - `low` (id 1) is the LAST band on the need but authors the highest priority;
+    /// - `mid_a` / `mid_b` tie on priority, so `|mood|` splits them (`mid_b` is stronger);
+    /// - `tie_a` / `tie_b` tie on priority AND `|mood|`, so `condition_id` splits them —
+    ///   and `tie_b` (id 4) precedes `tie_a` (id 5) in the corpus.
+    fn sort_fixture() -> Bundle {
+        let src = r#"
+[[need]]
+id = 1
+name = "n"
+deplete = 0
+band = [
+  { condition = "mid_a", lo = 0.0, hi = 1.01 },
+  { condition = "mid_b", lo = 0.0, hi = 1.01 },
+  { condition = "tie_b", lo = 0.0, hi = 1.01 },
+  { condition = "low",   lo = 0.0, hi = 1.01 },
+]
+
+[[condition]]
+id = 1
+name = "low"
+mood = -0.01
+priority = 99
+
+[[condition]]
+id = 2
+name = "mid_a"
+mood = -0.10
+priority = 10
+
+[[condition]]
+id = 3
+name = "mid_b"
+mood = 0.50
+priority = 10
+
+[[condition]]
+id = 4
+name = "tie_b"
+mood = -0.20
+priority = 5
+
+[[condition]]
+id = 5
+name = "tie_a"
+mood = 0.20
+priority = 5
+duration = 100
+"#;
+        load(&[("needs.toml".into(), src.into())]).expect("sort fixture loads")
+    }
+
+    #[test]
+    fn the_order_is_priority_then_magnitude_then_id() {
+        let b = sort_fixture();
+        // Bands are non-exclusive here ON PURPOSE — this test is about ORDER, not membership,
+        // and overlapping bands are the cheapest way to get four derived conditions at once.
+        let order: Vec<u16> = active_conditions(&b, &[(1, 255, 0)], &[(5, 0)], 50)
+            .iter()
+            .map(|c| c.condition_id)
+            .collect();
+        assert_eq!(
+            order,
+            vec![1, 3, 2, 4, 5],
+            "priority desc (low first), then |mood| desc (mid_b 0.50 > mid_a 0.10), \
+             then id asc (tie_b 4 before tie_a 5 — equal priority AND equal |mood| 0.20)"
+        );
+        // Priority rides out with each row so a consumer can render it and never re-sort.
+        let by_id = |id| active_conditions(&b, &[(1, 255, 0)], &[(5, 0)], 50)
+            .into_iter()
+            .find(|c| c.condition_id == id)
+            .unwrap();
+        assert_eq!(by_id(1).priority, 99);
+        assert_eq!(by_id(5).priority, 5, "a TIMED grant carries priority too");
     }
 
     #[test]

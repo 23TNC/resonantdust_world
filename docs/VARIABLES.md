@@ -546,6 +546,20 @@ stream's charter, alongside the still-pending drink action.
 Exposed as `need_params_all()` / `condition_params_all()` (registry order) and
 `thing_needs_table()` — **stride 8** per kind of 1-based need ids, `0` = empty slot.
 
+**`priority` orders the display, and it is AUTHORED** (conditions F2). The details panel maximizes
+the top 4 conditions and minimizes the rest, so the ranking is a game-design decision and lives in
+the corpus where it can be tuned without a rebuild. Author in **tens** (10/20/30) so a new
+condition slots between two without renumbering; absent = `0`.
+
+**The sort is `priority` desc → `|mood|` desc → `condition_id` asc**, and it is computed **once**,
+inside `needs_eval::active_conditions` (F3) — never in a consumer. Every observer therefore ranks
+identically: the panel's card order and the npc's decision order are the same list. The two
+tie-breaks make it a TOTAL order, so a pawn whose state has not changed cannot have its cards swap
+places between evaluations. `pawnConditions` (wasm) returns **stride 4** —
+`[condition_id, mood, remaining, priority]` — already in that order; `priority` rides along to be
+*shown*, not to be re-sorted. Do not derive priority from `|mood|`: it cannot express "mild but
+urgent", and it degenerates entirely once a condition's effect is a need rather than a mood.
+
 **Nothing ticks a need** (F4): a pawn's shard row is `(satisfaction, set_tic)`; observers compute
 `satisfaction_at(tic)` and every band-crossing tic from `deplete`. The two kinds of condition:
 **DERIVED (`duration 0`)** — a band on a need's satisfaction, computed from `(row, tic, corpus)` by

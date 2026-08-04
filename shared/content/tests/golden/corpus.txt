@@ -167,16 +167,19 @@ pawn/human/male
         label: "Thirsty",
         mood: -0.15,
         duration: 0.0,
+        priority: 20,
     },
     ConditionParams {
         label: "Dehydrated",
         mood: -0.4,
         duration: 0.0,
+        priority: 30,
     },
     ConditionParams {
         label: "Quenched",
         mood: 0.2,
         duration: 3600.0,
+        priority: 10,
     },
 ]
 == thing visual parts ==

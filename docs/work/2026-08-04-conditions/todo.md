@@ -65,16 +65,16 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P3 — priority becomes authored data
 
-- [ ] Add an optional `priority` (integer, default `0`) to `ConditionParams` + `ConditionToml` and
+- [x] Add an optional `priority` (integer, default `0`) to `ConditionParams` + `ConditionToml` and
       author it on thirsty/dehydrated/quenched ([F2](forks.md#f2)). Acceptance: a loader unit test
       reads the authored value; an omitted key yields `0`.
-- [ ] Make `active_conditions` return its result sorted by `priority` desc, then `|mood|` desc,
+- [x] Make `active_conditions` return its result sorted by `priority` desc, then `|mood|` desc,
       then `condition_id` asc ([F3](forks.md#f3)). Acceptance: a unit test with a deliberately
       shuffled input asserts the exact emitted order.
-- [ ] Widen the wasm `pawnConditions` stride from 3 to 4 (`id, mood, remaining, priority`) and
+- [x] Widen the wasm `pawnConditions` stride from 3 to 4 (`id, mood, remaining, priority`) and
       re-thread the TS decode. Acceptance: the panel's conditions arrive already ordered — the TS
       does no sorting of its own.
-- [ ] Document `priority` in `docs/VARIABLES.md`'s conditions block. Acceptance: `bin/rd
+- [x] Document `priority` in `docs/VARIABLES.md`'s conditions block. Acceptance: `bin/rd
       docs-check` green; the block states the three-key sort and that priority is corpus-tunable.
 
 ## P4 — the strip is a sibling that draws past the panel ([F7](forks.md#f7))

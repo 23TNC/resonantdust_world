@@ -199,6 +199,13 @@ pub struct ConditionParams {
   pub mood: f64,
   /// Lifetime in TICS for a stored grant; `0` = DERIVED (band-computed).
   pub duration: f64,
+  /// Display PRIORITY, descending — the details panel maximizes the top 4 and minimizes the
+  /// rest (conditions F2). AUTHORED, never derived: `|mood|` cannot express "mild but urgent",
+  /// and it means nothing at all once a condition's effect is a need rather than a mood ([F6]).
+  /// Absent = `0`. Author in tens so a new condition can be slotted between two without
+  /// renumbering. The full sort — `priority` desc, `|mood|` desc, `condition_id` asc — lives in
+  /// [`crate::needs_eval::active_conditions`], NOT in any consumer (F3).
+  pub priority: i32,
 }
 
 /// One part SLOT of a kind's visual skeleton (human-pawns P2). Slot index =

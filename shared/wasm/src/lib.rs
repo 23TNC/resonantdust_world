@@ -231,18 +231,27 @@ impl Content {
     // ── needs & conditions (needs-moodlets P3/F3) — the ONE eval, reached through wasm ──
 
     /// A pawn's ACTIVE conditions at `now_tic`, evaluated from its raw payload sidecar
-    /// (`NEED` + `CONDITION` entries — `TABLES.md § payload`). Flat **stride-3** per active
-    /// condition: `[condition_id, mood_offset, remaining_tics]` (`remaining 0` = DERIVED,
-    /// alive while its band holds). The SAME `needs_eval` the npc Brain imports natively —
-    /// the panel and the Brain cannot disagree on a crossing by construction.
+    /// (`NEED` + `CONDITION` entries — `TABLES.md § payload`). Flat **stride-4** per active
+    /// condition: `[condition_id, mood_offset, remaining_tics, priority]` (`remaining 0` =
+    /// DERIVED, alive while its band holds). The SAME `needs_eval` the npc Brain imports
+    /// natively — the panel and the Brain cannot disagree on a crossing by construction.
+    ///
+    /// **Already sorted** (conditions F3) — `priority` desc, `|mood|` desc, `condition_id` asc.
+    /// The caller renders in the order given; `priority` rides along so it can be shown, not so
+    /// it can be re-sorted. A TS sort here would be the second implementation of a corpus rule.
     #[wasm_bindgen(js_name = pawnConditions)]
     pub fn pawn_conditions(&self, payload: Vec<u32>, now_tic: u16) -> Vec<f64> {
         let needs = resonantdust_codec::payload::payload_needs(&payload);
         let grants = resonantdust_codec::payload::payload_conditions(&payload);
         let active = resonantdust_content::needs_eval::active_conditions(&self.bundle, &needs, &grants, now_tic);
-        let mut out = Vec::with_capacity(active.len() * 3);
-        for m in &active {
-            out.extend_from_slice(&[f64::from(m.condition_id), m.mood, f64::from(m.remaining)]);
+        let mut out = Vec::with_capacity(active.len() * 4);
+        for c in &active {
+            out.extend_from_slice(&[
+                f64::from(c.condition_id),
+                c.mood,
+                f64::from(c.remaining),
+                f64::from(c.priority),
+            ]);
         }
         out
     }

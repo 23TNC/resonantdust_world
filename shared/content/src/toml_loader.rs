@@ -300,6 +300,9 @@ struct ConditionToml {
   mood: f64,
   #[serde(default)]
   duration: f64,
+  /// Card sort key, descending; absent = 0. See [`ConditionParams::priority`].
+  #[serde(default)]
+  priority: i32,
 }
 
 // ── loading ────────────────────────────────────────────────────────────────────────
@@ -379,8 +382,11 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
         label: m.label.clone().unwrap_or_else(|| m.name.clone()),
         mood: m.mood,
         duration: m.duration,
+        priority: m.priority,
       }),
-      None => (String::new(), ConditionParams { label: String::new(), mood: 0.0, duration: 0.0 }),
+      None => (String::new(), ConditionParams {
+        label: String::new(), mood: 0.0, duration: 0.0, priority: 0,
+      }),
     })
     .collect();
 
@@ -742,6 +748,12 @@ id = 1
 name = "thirsty"
 label = "Thirsty"
 mood = -0.15
+priority = 20
+
+[[condition]]
+id = 2
+name = "dehydrated"
+mood = -0.4
 
 [[biome]]
 name = "forest"
@@ -790,6 +802,9 @@ scatter = [ { salt = 6, p = 0.99, thing = "wolf" } ]
     assert_eq!(b.need_id("thirst"), Some(1));
     assert_eq!(b.need_params("thirst").unwrap().bands.len(), 1);
     assert_eq!(b.condition_params("thirsty").unwrap().mood, -0.15);
+    // priority: authored is read back verbatim; an omitted key is 0, never a derived guess.
+    assert_eq!(b.condition_params("thirsty").unwrap().priority, 20);
+    assert_eq!(b.condition_params("dehydrated").unwrap().priority, 0, "absent = 0");
   }
 
   #[test]

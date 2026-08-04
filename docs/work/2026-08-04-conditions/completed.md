@@ -110,3 +110,34 @@ mood      30%
 That is the npc's evaluation, independently recomputed by the wasm eval from the same payload:
 same two conditions, same offsets, same mood. The panel still renders them as text rows — cards are
 P4.
+
+## 2026-08-04 — P3: priority is authored corpus data, sorted in the ONE eval
+
+**What landed.** `ConditionParams.priority: i32` (+ `ConditionToml`, `#[serde(default)]` so an
+omitted key is `0` and never a derived guess), authored in the corpus as dehydrated 30 / thirsty 20
+/ quenched 10 — **in tens**, so a future condition slots between two without renumbering.
+`active_conditions` now returns its result sorted `priority` desc → `|mood|` desc → `condition_id`
+asc, and `ActiveCondition` carries `priority` out. The wasm `pawnConditions` stride widened 3 → 4
+(`[id, mood, remaining, priority]`); `WorldScene`'s decode reads fours and preserves the order.
+`DetailsPanel`'s provider type carries `priority` and documents that the order is authoritative.
+`VARIABLES.md` states the rule, the tens convention, and why derive-from-mood is wrong.
+
+**How it was verified.**
+- New unit test `the_order_is_priority_then_magnitude_then_id`, on a fixture built so **each** key
+  decides something and the insertion order is deliberately wrong on all three: the highest-priority
+  condition is authored LAST in the band list, two conditions tie on priority so `|mood|` splits
+  them, and two tie on priority AND `|mood|` (0.20 both, opposite signs) so `condition_id` splits
+  them. Asserts the exact sequence `[1, 3, 2, 4, 5]`. Also asserts `priority` rides out on both a
+  derived row and a timed grant.
+- Loader test extended: an authored `priority = 20` reads back verbatim; a condition that omits the
+  key yields `0`.
+- `cargo test -p resonantdust-content` — **12 unit + 2 golden green**.
+- Golden re-blessed: the diff is **three added lines**, the three authored priorities. Nothing else
+  moved — notably the `needs probes` section is byte-identical, which is the evidence that adding
+  the sort did not reorder any existing result.
+- `docker compose -f shared/compose.yml run --rm check` — the **2-pass** gate (native all-targets +
+  wasm32 `--features js`) green, so the browser surface really compiles, not just the native lib.
+- `npm run typecheck` clean; `bin/rd build shared` regenerated the bundle.
+
+**Not yet observed live:** the panel is still text rows, so the *visible* effect of ordering lands
+with the cards in P4. The order itself is proven by the unit test and the unchanged golden probes.
