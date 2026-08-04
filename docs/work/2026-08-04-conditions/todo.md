@@ -113,13 +113,13 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P6 — the strip behaves at the screen edge ([B1](blockers.md#b1) resolved)
 
-- [ ] Clamp the strip at the VIEWPORT edge — past it, scroll inside the strip
+- [x] Clamp the strip at the VIEWPORT edge — past it, scroll inside the strip
       ([B1](blockers.md#b1) method #1 as the inner fallback). Acceptance: 12 conditions expanded in
       an 800px window — every card reachable, and `document.body` never scrolls horizontally.
-- [ ] Make the strip's empty area pointer-transparent so it does not steal world input. Acceptance:
+- [x] Make the strip's empty area pointer-transparent so it does not steal world input. Acceptance:
       a right-click on world tiles under the strip's gaps still issues a move; a click on a card
       does not.
-- [ ] Verify the strip against a panel snapped to the RIGHT edge of the screen. Acceptance: the
+- [x] Verify the strip against a panel snapped to the RIGHT edge of the screen. Acceptance: the
       cards extend past the panel and stay on-screen (clamped), not off the right of the viewport.
 - [ ] Run the wolf drill end to end on the TOML corpus with the cards live. Acceptance: a wolf runs
       full → Dehydrated, cards appear/disappear at the computed crossing tics, and the user's eyes

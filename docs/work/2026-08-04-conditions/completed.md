@@ -141,3 +141,44 @@ asc, and `ActiveCondition` carries `priority` out. The wasm `pawnConditions` str
 
 **Not yet observed live:** the panel is still text rows, so the *visible* effect of ordering lands
 with the cards in P4. The order itself is proven by the unit test and the unchanged golden probes.
+
+## 2026-08-04 — P4/P5: the cards, and the click that maximizes them all
+
+**What landed.** `game/panels/details/ConditionCards.ts` — the strip, as a `position: fixed`
+element appended to the panel's HOST (`#app`), i.e. a **sibling** of the panel root, not a child
+([F7](forks.md#f7)). It re-anchors to the panel's bottom-left off `onRectChange` + `onFocus` +
+`onMinimizeChange` + `onOpenChange` + `window.resize`, takes `panelZ + 1` so it draws over the
+panel's own bottom edge without leapfrogging the next thing focused, and is removed in `destroy`.
+Conditions left `DetailsPanel`'s text rows entirely; the body now reserves the strip's band as
+bottom padding so its last text row cannot hide under the cards.
+
+A card is label + signed mood + remaining-tics timer, hover-lit, `cursor: pointer`, with
+`stopPropagation` so a card click never falls through to a world select. The top `MAXIMIZED = 4`
+render at `CARD_W = 80`, the rest at `CARD_W_MIN = 28` (`MINIMIZED_FRACTION = 0.35`). Clicking a
+minimized card expands them all; clicking any card while expanded collapses back
+([F5](forks.md#f5) — a state with no exit is a trap). The flag is PANEL state, persisted as
+`details.conditionsExpanded`, so selecting a different pawn does not silently re-collapse it.
+
+**How it was verified** (measured in the running client, not eyeballed):
+
+| check | result |
+|---|---|
+| padding from the panel's left / bottom edge | `8` / `8` — exactly `PAD_LEFT` / `PAD_BOTTOM` |
+| gaps between cards | `6` px throughout (card origins 8, 94, 180, 266, 352, 386) |
+| 4 maximized + rest minimized | widths `80,80,80,80,28,28`; flags `000011` |
+| 4 maximized fit the default panel width | `8 + 4×80 + 3×6 = 346` ≤ the panel's `355` |
+| **exceeds the panel** | strip `406` px against a `355` px panel — **51 px past the right edge, unclipped** |
+| drag / resize / window-resize | left `8`, bottom `8` held across all three |
+| minimize → restore | strip `none` → `flex`; close → reopen likewise, one node throughout |
+| click a minimized card | `406 → 510` px, flags `000011 → 000000`, `localStorage '1'` |
+| click any card while expanded | back to `406` / `000011`, `localStorage '0'` |
+| reload while expanded | reopens expanded at `510` px |
+
+**Deviation from the item's letter:** P4's first item said to give the remaining text rows "their
+own `<pre>` child". No child was needed — the body element is already `white-space: pre`, and once
+the conditions moved out to the strip there was nothing left to separate them from. The item's
+intent (no condition rows in the body) is met and verified by grep.
+
+**Added:** `window.__cards(n | rows | null)` — a debug pin on the strip. The corpus authors three
+conditions and two of them are DERIVED bands on the same need, so no real pawn can carry more than
+three at once; the 4-maximized rule and the viewport clamp are untestable without it.

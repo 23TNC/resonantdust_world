@@ -50,6 +50,8 @@ export const MAXIMIZED = 4;
 export const MINIMIZED_FRACTION = 0.35;
 /** Minimized card width, px (derived; kept as a constant so tests and CSS agree). */
 export const CARD_W_MIN = Math.round(CARD_W * MINIMIZED_FRACTION);
+/** Gap kept between the strip and the viewport edges when it has to be clamped, px. */
+export const EDGE_MARGIN = 8;
 
 const CARD_BG = "rgba(28, 31, 42, 0.96)";
 const CARD_BG_HOVER = "rgba(44, 48, 64, 0.98)";
@@ -252,8 +254,9 @@ export class ConditionCards {
     try { localStorage.setItem(key, v ? "1" : "0"); } catch { /* no persistence available */ }
   }
 
-  /** Re-anchor to the panel's bottom-left and mirror its visibility. Cheap enough to run on
-   *  every drag frame — it reads one rect and writes three style properties. */
+  /** Re-anchor to the panel's bottom-left, clamp at the SCREEN edge, and mirror the panel's
+   *  visibility. Cheap enough to run on every drag frame — one rect read, a few style writes,
+   *  and the natural width computed arithmetically rather than measured (no layout thrash). */
   private reflow(): void {
     if (!this.cards.length || !this.host.visible()) {
       this.el.style.display = "none";
@@ -261,11 +264,46 @@ export class ConditionCards {
     }
     const r = this.host.rect();
     this.el.style.display = "flex";
-    this.el.style.left = `${r.left + PAD_LEFT}px`;
     this.el.style.top = `${r.bottom - PAD_BOTTOM - CARD_H}px`;
     // One above the panel it belongs to, so it draws over the panel's own bottom edge but does
     // not leapfrog whatever the user focuses next.
     this.el.style.zIndex = String(this.host.zIndex() + 1);
+
+    // The clamp is the VIEWPORT, not the panel (B1 #4 with #1 as the inner fallback). Two
+    // distinct cases, and conflating them is what makes a right-anchored panel feel broken:
+    const natural = this.naturalWidth();
+    const room = window.innerWidth - EDGE_MARGIN * 2;
+    if (natural <= room) {
+      // 1. The strip FITS on screen but its natural origin would push it off the right — e.g.
+      //    the panel is snapped to the right edge. Slide the origin left instead of scrolling:
+      //    every card stays visible and the strip still hugs the panel's bottom.
+      const wanted = r.left + PAD_LEFT;
+      const maxLeft = window.innerWidth - EDGE_MARGIN - natural;
+      this.el.style.left = `${Math.max(EDGE_MARGIN, Math.min(wanted, maxLeft))}px`;
+      this.el.style.width = "";
+      this.el.style.overflowX = "";
+      // Fits ⇒ stay fully pass-through: only the cards take pointer events, so the gaps and
+      // the strip's tail never swallow a click meant for the world.
+      this.el.style.pointerEvents = "none";
+    } else {
+      // 2. The strip is wider than the SCREEN — no placement helps, so it becomes a scroller
+      //    (B1 method #1, applied at the screen edge instead of the panel edge). It has to take
+      //    pointer events to be scrollable at all; acceptable here because at this width it
+      //    already spans the viewport, so the world it covers is a 42px band at the bottom.
+      this.el.style.left = `${EDGE_MARGIN}px`;
+      this.el.style.width = `${room}px`;
+      this.el.style.overflowX = "auto";
+      this.el.style.pointerEvents = "auto";
+    }
+  }
+
+  /** The width the strip WANTS, from the card counts — no DOM measurement, so this is safe to
+   *  call inside `reflow` without forcing a synchronous layout on every drag frame. */
+  private naturalWidth(): number {
+    const n = this.cards.length;
+    if (n === 0) return 0;
+    const big = this.expanded ? n : Math.min(n, MAXIMIZED);
+    return big * CARD_W + (n - big) * CARD_W_MIN + (n - 1) * CARD_GAP;
   }
 }
 

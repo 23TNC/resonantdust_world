@@ -146,6 +146,32 @@ world input outside its own bounds, must clamp at the **viewport** edge (scroll 
 past that — [B1](blockers.md#b1) method #1 as the inner fallback), and must be torn down with the
 panel.
 
+## F9 — the strip slides before it scrolls {#f9}
+
+_2026-08-04, resolved during P6._ [B1](blockers.md#b1) chose the sibling overlay with in-strip
+scrolling as the inner fallback. Implementing it exposed a case the blocker's table did not
+separate: a panel **near the right edge of the screen**. Anchoring the strip at `panelLeft + 8`
+would push it off-screen, and falling straight to "scroll inside the strip" would mean a user with
+a right-docked details panel scrolls to see cards that would have fit on screen perfectly well.
+
+**Chosen**: two distinct cases. If the strip FITS the viewport, slide its origin left until it does
+— `left = clamp(panelLeft + PAD_LEFT, EDGE_MARGIN, viewportW − EDGE_MARGIN − naturalWidth)`. Only
+when the strip is wider than the **screen** does it become a scroller. Measured: a bottom-right
+panel at `left 1504` gets a strip at `left 1344` (slid 168 px), right edge 1854 inside a 1862 px
+viewport, no scrolling, all six cards visible.
+
+The scroll branch takes `pointer-events: auto`, which the fitting branch does not — a scroller that
+does not receive pointer events cannot be scrolled. The cost is real but narrow: at that width the
+strip already spans the viewport, so the world it shadows is a 42 px band at the very bottom.
+
+Rejected: **always scroll when the natural origin overflows** — makes a right-docked panel feel
+broken for no benefit. **Flip the strip to grow leftwards from the panel's right edge** — the strip
+would then change direction depending on where the panel sits, so the first card moves under the
+user; the sort order is the one thing that must stay put.
+
+Width is computed **arithmetically** from the card counts, not measured off the DOM, so `reflow`
+never forces a synchronous layout — it runs on every drag frame.
+
 ## F8 — the conditions drill lives in the npc brain {#f8}
 
 _2026-08-04, resolved during P1._ Two of this stream's acceptance criteria are unreachable on the
