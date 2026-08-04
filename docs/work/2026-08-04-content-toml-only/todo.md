@@ -13,22 +13,31 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P1 — the dead die first
 
-- [ ] Replace `load_r2`'s `manifest.json` fetch with a SigV4 `ListObjectsV2` over
+- [x] Replace `load_r2`'s `manifest.json` fetch with a SigV4 `ListObjectsV2` over
       `<prefix>/content/`, taking `*.toml` keys sorted ([F4](forks.md#f4)). Acceptance: a unit
-      test keeps `x.toml`, drops `manifest.json`, `y.rd` and a subdir key; `cargo check` green.
-- [ ] Delete `content/manifest.json` and `bin/dsl`'s `reindex` command. Acceptance:
+      test keeps `x.toml`, drops `manifest.json`, `y.rd` and a subdir key; `cargo check` green. →
+      `r2_list_keys` (paginated, percent-decoded) + the pure `content_keys` filter;
+      `content_keys_keeps_root_toml_only` passes, crate compiles.
+- [x] Delete `content/manifest.json` and `bin/dsl`'s `reindex` command. Acceptance:
       `grep -rn manifest.json bin/ server/ shared/` finds nothing; `bin/dsl` usage lists no
-      `reindex`.
-- [ ] Delete the `.rd` facet fallback branch in `server/edge/src/content.rs` `load_disk`
+      `reindex`. → both deleted; `bin/` is clean. Three hits remain in `content.rs` — two
+      comments explaining the deletion and one test fixture asserting it's filtered out.
+- [x] Delete the `.rd` facet fallback branch in `server/edge/src/content.rs` `load_disk`
       ([I5](issues.md#i5)). Acceptance: `load_disk` reads root `*.toml` only; the edge redeploys
-      and `/content` still serves the 4 client TOMLs.
-- [ ] Rename the `.rd` fixture names in `server/edge/src/content.rs` and
+      and `/content` still serves the 4 client TOMLs. → branch gone;
+      `load_disk_reads_root_toml_sorted` proves root-only + `biomes.toml`/nested exclusion.
+      Redeploy check deferred to the P2 commit (nothing else changed on that path).
+- [x] Rename the `.rd` fixture names in `server/edge/src/content.rs` and
       `shared/content/src/content.rs` version tests to `.toml`. Acceptance: `cargo test -p
-      resonantdust-edge -p resonantdust-content` green; no test names a dead dialect.
-- [ ] Port `bin/lib/def_span.py` to read `content/things.toml` ([I4](issues.md#i4)), keeping its
+      resonantdust-edge -p resonantdust-content` green; no test names a dead dialect. → both
+      renamed; edge's 5 content tests green, the shared workspace's 80 green incl. the golden
+      fixture. The `/content` payload's `"rd"` KEY is a live wire contract — [F6](forks.md#f6)
+      moves it to P4.
+- [x] Port `bin/lib/def_span.py` to read `content/things.toml` ([I4](issues.md#i4)), keeping its
       span≠size≠footprint rules and pow2 round-up. Acceptance:
       `python3 bin/lib/def_span.py biome-thing/default/conifer` prints `2`; `--all` lists every
-      def naming a texture.
+      def naming a texture. → both pass; an empty read now exits **2** and `bin/art` surfaces it,
+      so I4's silent-zero can't recur.
 
 ## P2 — the art manifests leave `content/`
 
@@ -62,6 +71,13 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 - [ ] Call `content-check` from `.git/hooks/pre-commit` beside `docs-check`, sharing the
       `SKIP_DOCS_CHECK=1` escape hatch. Acceptance: a commit staging `content/x.json` is refused
       with the check's message; the same commit succeeds under the skip var.
+- [ ] Rename the `/content` payload key `"rd"` → `"toml"` in `server/edge`, `contentBoot.ts` and
+      `client/npc/src/lib.rs` in one commit ([F6](forks.md#f6)). Acceptance: edge redeployed, the
+      webgl client boots and renders the world, `rd-npc` resolves a def.
+- [ ] Purge the stale `.rd` prose comments in `client/webgl` (`WorldBridge`, `Viewport`,
+      `worldTilt`, `material`, `contentBoot`), `shared/wasm`, `client/npc`, and
+      `server/edge/src/{config,worldgen}.rs`. Acceptance: `grep -rn '\.rd\b' client/ shared/
+      server/ --include='*.rs' --include='*.ts'` names only history.
 - [ ] Truth pass: `docs/CONVENTIONS.md`'s "`.rd` content specs" line, `docs/README.md`,
       `bin/dsl`'s header, and the `art-script-ported` / `dsl-script-ported` / `content-hot-update`
       memories. Acceptance: `bin/rd docs-check` green; no doc or memory names a live `.rd`.

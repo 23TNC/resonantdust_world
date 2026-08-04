@@ -21,7 +21,7 @@ pub fn read_content_dir(content_root: &Path) -> io::Result<Vec<(String, String)>
 
 /// A deterministic corpus fingerprint — FNV-1a over each source's **basename**
 /// and **text** (NUL-separated), in the order given. No paths or timestamps, so
-/// it's identical across machines and moves iff a `.rd` file's name or bytes
+/// it's identical across machines and moves iff a corpus file's name or bytes
 /// change. A consumer that reloads content compares this across reads to decide
 /// whether to rebuild (the server's worldgen hot-reload; the gateway keeps an
 /// equivalent over its served subset).
@@ -77,16 +77,16 @@ mod tests {
 
   #[test]
   fn version_is_deterministic_and_sensitive() {
-    let a = srcs(&[("data/tiles.rd", "grass"), ("visual/tiles.rd", "#fff")]);
+    let a = srcs(&[("things.toml", "grass"), ("tiles.toml", "#fff")]);
     assert_eq!(content_version(&a), content_version(&a));
     // a text edit moves it
-    let b = srcs(&[("data/tiles.rd", "grass"), ("visual/tiles.rd", "#000")]);
+    let b = srcs(&[("things.toml", "grass"), ("tiles.toml", "#000")]);
     assert_ne!(content_version(&a), content_version(&b));
-    // order is part of the identity (data before visual)
-    let c = srcs(&[("visual/tiles.rd", "#fff"), ("data/tiles.rd", "grass")]);
+    // order is part of the identity
+    let c = srcs(&[("tiles.toml", "#fff"), ("things.toml", "grass")]);
     assert_ne!(content_version(&a), content_version(&c));
     // keys on basename, so a dir-prefix change alone doesn't move it
-    let d = srcs(&[("x/data/tiles.rd", "grass"), ("y/visual/tiles.rd", "#fff")]);
+    let d = srcs(&[("x/things.toml", "grass"), ("y/tiles.toml", "#fff")]);
     assert_eq!(content_version(&a), content_version(&d));
   }
 }

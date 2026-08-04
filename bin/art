@@ -136,10 +136,19 @@ nearest_pow2() {
 # corpus does not author one. This is the fix for the pipeline sizing textures by blob extent: a
 # conifer landing in 256 was its blob happening to agree with its span, not the span being read.
 # Empty output means "fall back" — the caller keeps its measured pow2 box (stream F5).
+#
+# Exit 1 from the reader is "no span authored for this stem" — expected, silenced. Exit 2 is "the
+# reader is stale / the corpus moved" and is ALWAYS surfaced: that failure once hid behind this
+# `2>/dev/null` for a whole migration and every freshly mastered leaf lost its span
+# (content-toml-only I4).
 _span_side() {  # kind_rel  (e.g. biome-thing/default/conifer)
   command -v python3 >/dev/null || return 1
-  local sp
-  sp=$(RD_REPO_ROOT="$REPO_ROOT" python3 "$SCRIPT_DIR/lib/def_span.py" "$1" 2>/dev/null) || return 1
+  local sp rc err
+  err=$(mktemp)
+  sp=$(RD_REPO_ROOT="$REPO_ROOT" python3 "$SCRIPT_DIR/lib/def_span.py" "$1" 2>"$err"); rc=$?
+  (( rc == 2 )) && cat "$err" >&2
+  rm -f "$err"
+  (( rc == 0 )) || return 1
   [[ -n "$sp" ]] && echo $(( sp * ${RD_TILE_PX:-128} ))
 }
 

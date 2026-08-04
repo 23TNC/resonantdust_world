@@ -71,6 +71,28 @@ Known limit, accepted: this repo has no R2 credentials (`bin/keys` is empty), so
 cannot be exercised live here. Acceptance is a unit test over the key filter plus a clean build;
 recorded as [I3](issues.md#i3) so the first real deploy knows to watch it.
 
+## F6 — the `"rd"` wire key is renamed, in P4, as its own coordinated change {#f6}
+
+_2026-08-04, found while executing P1._ The `/content` payload is
+`{ "version": "<hex>", "rd": [[name, text], …] }` and three consumers destructure that `rd` key:
+the webgl client's `contentBoot.ts:72`, the npc's `lib.rs:224`, and the edge's own snapshot test.
+The dialect it is named after has been deleted; the key is now a fossil in a live protocol.
+
+**Chosen**: rename it to `"toml"` in P4's truth pass, edge and all three consumers in **one**
+commit, with the redeploy + a client boot as acceptance. Not in P1: P1's claim is "the deleted
+things are deleted", and a wire rename spanning three consumers has a different blast radius and
+deserves its own verification. Alongside it go the stale `.rd` prose comments now scattered
+through `client/webgl` (`WorldBridge`, `Viewport`, `worldTilt`, `material`, `contentBoot`),
+`shared/wasm/src/lib.rs`, `client/npc/src/lib.rs`, and `server/edge/src/{config,worldgen}.rs` —
+they cite `content/visual/things.rd` and friends as if those files existed.
+
+Rejected: **renaming it inside P1** (a protocol change smuggled into a deletion commit — if the
+client black-screens, the bisect points at five unrelated things; the previous stream's embed
+incident is exactly this failure). **Leaving `"rd"` forever** (`delete-don't-deprecate`: an
+authoritative name may not lie, and a wire field is as authoritative as names get). **A
+compatibility window accepting both keys** — there is one server and one client, deployed
+together; a dual-read path would outlive its reason.
+
 ## F5 — one texture index is the destination {#f5}
 
 _2026-08-04._ Two indexes scan the same master tree. The edge's `tex_manifest` carries hash,

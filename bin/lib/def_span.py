@@ -75,10 +75,14 @@ def scan(path=None):
             if span is not None:
                 row["span_authored"] = max(row.get("span_authored", 0.0), span)
     if not out:
-        raise SystemExit(
+        # Exit 2, not 1: exit 1 means "this stem has no authored span, fall back" and callers
+        # silence it. A stale reader must NOT hide inside that. See content-toml-only I4.
+        print(
             f"def_span: {os.path.relpath(path, REPO)} yielded no texture-bearing defs — "
-            "the corpus moved or this reader is stale (see content-toml-only I4)"
+            "the corpus moved or this reader is stale (see content-toml-only I4)",
+            file=sys.stderr,
         )
+        raise SystemExit(2)
     return out
 
 

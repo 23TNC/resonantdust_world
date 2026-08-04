@@ -2,6 +2,46 @@
 
 _Dated evidence: what landed and how it was checked. Append chronologically._
 
+## 2026-08-04 · P1 — the dead die first (5/5)
+
+**The R2 index is gone, and with it the class of bug.** `load_r2` now calls `r2_list_keys` —
+SigV4 `ListObjectsV2` over `<prefix>/content/`, following continuation tokens, percent-decoding
+each key (rusty-s3 asks for `encoding-type=url`) — and feeds the pure `content_keys` filter. That
+filter is the thing under test: given a realistic listing (the corpus, `biomes.toml`,
+`manifest.json`, a leftover `visual/tiles.rd`, a nested `visual/x.toml`, and a texture key outside
+the prefix) it yields exactly `[materials, needs, things, tiles].toml`. Verified by
+`content_keys_keeps_root_toml_only`, with the whole edge crate compiling against rusty-s3 0.5 —
+which is as far as [I3](issues.md#i3) said this could be taken without bucket credentials.
+
+`content/manifest.json` and `bin/dsl reindex` deleted; `cmd_upload` now just pings
+`/content/refresh` where it used to rewrite the index. `grep -rn manifest.json bin/` is clean; the
+three remaining hits in `content.rs` are two comments explaining why the mechanism died and one
+test fixture asserting the key is filtered out — descriptions of a deleted thing, not references
+to a live one.
+
+**[I5](issues.md#i5) closed**: the `.rd` facet fallback in `load_disk` is gone, so both sources
+now apply one rule — root `*.toml`, sorted, minus `biomes.toml`. The rewritten
+`load_disk_reads_root_toml_sorted` proves it drops `biomes.toml`, `manifest.json` **and** a nested
+`visual/nested.toml`, which matters because the R2 side must agree and `content_keys` drops nested
+keys too. All 5 edge content tests green; the shared workspace's 80 green including the golden
+fixture after the same fixture rename there.
+
+**[I4](issues.md#i4) closed, with the failure mode designed out.** `def_span.py` reads
+`content/things.toml` through a small table-aware scanner (Python 3.10 on this host has no
+`tomllib`, and `bin/` must work on a bare checkout — so it tracks which TOML table it is inside
+and reads three keys out of `[[thing.part]]`, deliberately not a parser). `biome-thing/default/
+conifer` → `2`, and `--all` lists all five texture-bearing defs. The part that matters: an empty
+read is now a **loud exit 2**, distinct from exit 1's legitimate "no span authored, fall back",
+and `bin/art`'s `_span_side` — which swallowed stderr with `2>/dev/null` and is exactly where the
+silence lived — now surfaces it. End to end: `_span_side biome-thing/default/conifer` → `256`,
+the documented span-2 square, restored.
+
+Also fixed en route: `content.rs`'s module header and `ContentSource` docs described a "DSL
+corpus" read as `data`/`visual`/`material` facets, none of which has been true since P6.
+
+One fork logged, not built: [F6](forks.md#f6) — the `/content` payload's `"rd"` key is a live
+three-consumer wire contract, so it moves to P4 as its own commit rather than riding a deletion.
+
 ## 2026-08-04 · P0 — the inventory, frozen (1/1)
 
 `git ls-files content` measured, not assumed: 12 tracked paths, 5 of them the corpus. Every one
