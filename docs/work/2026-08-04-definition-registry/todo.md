@@ -9,15 +9,21 @@ numbering to the registry, and leaves `definition_reference` exactly as it is.
 
 ## P0 — freeze what a def id means today
 
-- [ ] Inventory every site that PACKS or UNPACKS a `definition_reference`, with what it reads and
+- [x] Inventory every site that PACKS or UNPACKS a `definition_reference`, with what it reads and
       whether a table lookup is reachable there. Acceptance: `issues.md` names file:line for each;
-      any site not already in [I1](issues.md#i1)/[I2](issues.md#i2) is investigated before P1.
-- [ ] A golden dump of today's `(name → packed def)` for every corpus def, committed as a fixture.
+      any site not already in [I1](issues.md#i1)/[I2](issues.md#i2) is investigated before P1. →
+      [I6](issues.md#i6): 7 sites, 3 pack / 4 unpack. The finding that reshapes P4 — the relay
+      COMPOSES a def from the row's own fields, so the READ path never needs the registry.
+- [x] A golden dump of today's `(name → packed def)` for every corpus def, committed as a fixture.
       Acceptance: two runs byte-identical; the fixture is what P4 replays to prove resolution
-      through the registry yields the same ids for unchanged content.
-- [ ] Grep the corpus + code for every place a def id is STORED (zone kinds, pawn defs, payload
+      through the registry yields the same ids for unchanged content. → split by crate boundary:
+      `name → kind_id` in the golden corpus (blessed), packed defs in `npc::def_fixture` (codec
+      lives there). Wolf pins at `0x30010070`, the value the live npc logs.
+- [x] Grep the corpus + code for every place a def id is STORED (zone kinds, pawn defs, payload
       `PART` words, `cold_row`). Acceptance: the list names each table/field, so P4's re-point can
-      be checked against every reader of a stored id.
+      be checked against every reader of a stored id. → [I7](issues.md#i7): 5 stores, two shapes —
+      tiles/things keep the KIND HALF only, pawns store the WHOLE def (table + payload `PART`).
+      Nothing stores a NAME.
 
 ## P1 — the schema, documented before parsed
 

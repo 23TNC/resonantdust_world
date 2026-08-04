@@ -17,6 +17,67 @@ Note what is *absent*: nothing reads `def_kind_id` and expects a stable meaning 
 render decode uses it as an opaque table index, which is precisely why [F5](forks.md#f5) can burn
 kind ids for versioning without touching a consumer.
 
+## I7 — where a def id is STORED {#i7}
+
+_2026-08-04, P0 item 3. Every place a number allocated by the registry comes to rest._
+
+| Store | Field | Width | Holds |
+|---|---|---|---|
+| `tile` module — dense rows | `DenseItem.kind_reference` | u16 | `kind_id:12 \| variant_id:4` — one per tile of a zone's baseline |
+| `tile` module — overlay rows | `OverlayItem.kind_reference` | u16 | same, per overridden cell |
+| `thing` module — dense + overlay | `OverlayItem.kind_reference` | u16 | same, plus `data` |
+| `pawn` module | `definition_reference` | u32 | the FULL packed def — `spawn()`'s operand |
+| payload opcode stream | `PART slot definition_reference` | u32 | a pawn part slot's full def ([`payload.rs:33`](../../../shared/codec/src/payload.rs)) |
+| cold row header | `subtype_id` | — | the type half's other coordinate, supplied at relay ([I6](#i6)) |
+
+Two shapes, and the split matters for [P4](todo.md):
+
+- **Tiles and things store only the KIND HALF** (`kind_id | variant`). Their `type` is implied by
+  which module the row lives in and their `subtype` comes from the row header, which is exactly why
+  the relay can compose a full def without consulting anything ([I6](#i6)).
+- **Pawns store the WHOLE def**, in two places — the `pawn` table and the payload's `PART` entries.
+  These are the rows that carry a species nibble, and therefore the rows that P5's change to species
+  resolution must not disturb. The `def_fixture` test in `client/npc` pins their current values.
+
+Nothing stores a def NAME. Every store is a number, which is what makes
+[F6](forks.md#f6)'s "old objects keep old ids forever" free: the stored row already means what it
+meant, and the registry never has to rewrite one.
+
+## I6 — the READ path never needs the registry; only allocation and name→id do {#i6}
+
+_2026-08-04, P0 item 1. The full pack/unpack inventory, and the finding that reshapes P4._
+
+**Every site that touches a `definition_reference`:**
+
+| Site | Direction | What it does |
+|---|---|---|
+| [`edge/ws.rs:479`](../../../server/edge/src/ws.rs) | PACK | `pack_definition_reference(pack_type_reference(TYPE_BIOME_TILE, row.subtype_id), it.kind_reference)` — relaying a cold tile row |
+| [`edge/ws.rs:508`](../../../server/edge/src/ws.rs) | PACK | the same for `TYPE_BIOME_THING` |
+| [`npc/lib.rs:257`](../../../client/npc/src/lib.rs) | PACK | `pack_definition_from_ids(TYPE_PAWN, species, kind, 0)` — the stem-parsing site P5 deletes |
+| [`worker/main.rs:92`](../../../server/worker/src/main.rs) | UNPACK | `def_type_id` → key the speed table |
+| [`worker/main.rs:495`](../../../server/worker/src/main.rs) | UNPACK | `def_type_id` → route `CREATE`, reject unknown types |
+| [`wasm/lib.rs:523-532`](../../../shared/wasm/src/lib.rs) | UNPACK | `def_kind_id`/`def_type_id`/`def_variant_id` → per-cell render decode |
+| [`wasm/lib.rs:561`](../../../shared/wasm/src/lib.rs) | UNPACK | `def_type_id` in `cold_cell` |
+
+No site outside [I1](#i1) needed investigating, and **`def_subtype_id` has no caller at all** —
+consistent with [I2](#i2).
+
+**The finding.** Look at what the two relay sites compose from: a code constant (`TYPE_BIOME_TILE`),
+the **cold row's own header** (`row.subtype_id`), and the **stored** `kind_reference`
+(`kind_id:12 | variant_id:4`, written by `worldgen.rs:126/132` and `worker/main.rs:612`). The def is
+*assembled from fields that are already in the row* — no name is resolved and no table is consulted.
+
+So the registry is needed at exactly two moments:
+
+1. **Allocation** — content load, when a tuple first needs a number ([P2](todo.md)/[P3](todo.md)).
+2. **Name → id resolution** — worldgen picking a tile/thing by name, the npc resolving `"wolf"`, a
+   client placing by name ([P4](todo.md)).
+
+It is **not** needed on the read path, the relay path, or the render path. That materially lowers
+P4's risk: re-pointing `tile_def_id`/`thing_object_id` touches resolution only, and every stored id
+keeps decoding exactly as it does today — which is also what makes [F13](forks.md#f13)'s frozen
+layout free rather than constraining.
+
 ## I2 — subtype IS decoded at runtime — from the COLD ROW, not from the def {#i2}
 
 _Corrected 2026-08-04 after the user challenged the first wording, which was misleadingly broad._

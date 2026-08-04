@@ -81,6 +81,34 @@ fn dump(b: &Bundle) -> String {
         &mut out,
     );
 
+    // ── name → id, EXPLICITLY (definition-registry P0) ────────────────────────────────────
+    //
+    // The registries above already pin this implicitly — the id IS the line number — but that
+    // is a reading convention, not an assertion, and the definition-registry stream is about to
+    // move who owns these numbers. Stating the pairs makes the replay check mechanical: after
+    // resolution moves to the server-side registry, every unchanged def must still answer with
+    // the id it answers with here. Retired ids appear as holes and MUST stay holes.
+    sec(
+        "tile def_ids (name → kind_id)",
+        b.tile_names()
+            .iter()
+            .filter(|n| !n.is_empty())
+            .map(|n| format!("{n} {}", b.tile_def_id(n).unwrap_or(0)))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        &mut out,
+    );
+    sec(
+        "thing object_ids (name → kind_id)",
+        b.thing_names()
+            .iter()
+            .filter(|n| !n.is_empty())
+            .map(|n| format!("{n} {}", b.thing_object_id(n).unwrap_or(0)))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        &mut out,
+    );
+
     // ── per-def scalar/colour lookups ──
     sec(
         "tile colors",

@@ -292,3 +292,56 @@ pub fn log_event(event: &Event) {
         Event::ColdState { .. } | Event::CallStats(_) | Event::SubStats { .. } | Event::ClockSync(_) => {}
     }
 }
+
+#[cfg(test)]
+mod def_fixture {
+    //! The PACKED-COMPOSITION half of the definition-registry P0 oracle.
+    //!
+    //! `shared/content`'s golden fixture pins `name → kind_id`, but it cannot pin the packed
+    //! `definition_reference` — that crate deliberately has no codec dependency. This does, and it
+    //! is also where the composition actually happens, so the pinning lives beside the code that
+    //! will change.
+    //!
+    //! What it guards: [`resolve_thing_in`] derives a pawn's SPECIES by string-parsing the texture
+    //! stem's second segment through a code-owned palette. P5 deletes that and reads the species
+    //! from the authored taxonomy instead. These values must not move when it does — a re-subtyped
+    //! pawn would be adopted and rendered wrong forever.
+
+    use resonantdust_content::loader::load;
+
+    /// The repo's authored corpus, or `None` in a packaged build without it.
+    fn corpus() -> Option<resonantdust_content::loader::Bundle> {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
+        let sources = resonantdust_content::content::read_content_dir(&root).ok()?;
+        if sources.is_empty() {
+            return None;
+        }
+        Some(load(&sources).expect("the repo corpus loads clean"))
+    }
+
+    #[test]
+    fn packed_pawn_defs_are_pinned() {
+        let Some(bundle) = corpus() else { return };
+        // (name, packed definition_reference, tics-per-tile) as of 2026-08-04. The wolf's
+        // `0x30010070` is the value the live npc logs on every boot.
+        for (name, want_def, want_speed) in
+            [("wolf", 0x3001_0070u32, 12u16), ("human_female", 0x3002_00A0, 16), ("human_male", 0x3002_00B0, 16)]
+        {
+            let (def, speed) = super::resolve_thing_in(&bundle, name).expect(name);
+            assert_eq!(def, want_def, "{name}: packed def moved (was {want_def:#010x}, now {def:#010x})");
+            assert_eq!(speed, want_speed, "{name}: speed moved");
+        }
+    }
+
+    #[test]
+    fn species_comes_from_the_stem_today() {
+        // The coupling P5 removes, asserted so its removal is a deliberate, visible change:
+        // the species nibble is the texture stem's SECOND segment, not an authored field.
+        let Some(bundle) = corpus() else { return };
+        let (def, _) = super::resolve_thing_in(&bundle, "wolf").unwrap();
+        assert_eq!(
+            resonantdust_codec::object::def_subtype_id(def),
+            resonantdust_codec::object::pawn_species_subtype_id("animal").unwrap(),
+        );
+    }
+}
