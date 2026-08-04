@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use client::world::tile_to_position;
 use client::Event;
-use resonantdust_codec::action::{CREATE, PROMOTE, SET_NEED};
+use resonantdust_codec::action::{CREATE, GRANT_CONDITION, PROMOTE, SET_NEED};
 use resonantdust_codec::object::{def_sans_variant, position_macro, TYPE_PAWN};
 use resonantdust_codec::payload::payload_needs;
 use resonantdust_codec::refs::entity_ref_type_id;
@@ -66,6 +66,19 @@ pub struct Wolves {
     active: Vec<u16>,
     /// The decision context the successor action stream reads: current mood.
     pub mood: f64,
+    /// **Drill** (env `NPC_THIRST`, `0..=255`): the satisfaction the mint writes instead of
+    /// full. Thirst depletes over 21600 tics (1 h wall at 6 Hz), so waiting for a real band
+    /// crossing is not a test loop — `NPC_THIRST=20` puts the wolf inside Dehydrated at once.
+    /// Unset = the authored behaviour, full (`255`).
+    thirst_drill: Option<u8>,
+    /// **Drill** (env `NPC_GRANT`, comma-separated condition ids): TIMED grants to queue once
+    /// after the mint, through `GRANT_CONDITION`. Nothing in the game issues that verb yet —
+    /// the drink action is the successor stream — so this is the only way to exercise the
+    /// stored-grant lane end to end, and the only way to put enough conditions on one pawn to
+    /// test the details panel's card strip.
+    grant_drill: Vec<u32>,
+    /// Single-shot latch for `grant_drill`.
+    grants_queued: bool,
 }
 
 impl Wolves {
@@ -97,6 +110,12 @@ impl Wolves {
             init_queued: false,
             active: Vec::new(),
             mood: needs_eval::MOOD_BASE,
+            thirst_drill: std::env::var("NPC_THIRST").ok().and_then(|s| s.trim().parse().ok()),
+            grant_drill: std::env::var("NPC_GRANT")
+                .ok()
+                .map(|s| s.split(',').filter_map(|p| p.trim().parse().ok()).collect())
+                .unwrap_or_default(),
+            grants_queued: false,
         }
     }
 
@@ -123,15 +142,31 @@ impl Wolves {
         if self.thirst != 0 && !self.init_queued && std::time::Instant::now() > self.init_after {
             let has_thirst = payload_needs(&payload).iter().any(|&(id, _, _)| id == self.thirst);
             if !has_thirst {
-                let program = vec![SET_NEED, wolf, u32::from(self.thirst), 255];
+                let sat = self.thirst_drill.unwrap_or(255);
+                let program = vec![SET_NEED, wolf, u32::from(self.thirst), u32::from(sat)];
                 if bot.client.queue(program).is_err() {
                     tracing::error!("engine gone during thirst init");
                     return;
                 }
-                tracing::info!(wolf = format!("{wolf:#010x}"), need = self.thirst,
-                               "thirst initialised FULL (no row after the snapshot grace)");
+                tracing::info!(wolf = format!("{wolf:#010x}"), need = self.thirst, satisfaction = sat,
+                               drill = self.thirst_drill.is_some(),
+                               "thirst initialised (no row after the snapshot grace)");
             }
             self.init_queued = true;
+        }
+
+        // Drill: queue the requested TIMED grants once (`NPC_GRANT=3` etc.). One program per
+        // grant — `GRANT_CONDITION` takes a single condition id and upserts by it.
+        if !self.grants_queued && !self.grant_drill.is_empty() && self.init_queued {
+            for &id in &self.grant_drill {
+                if bot.client.queue(vec![GRANT_CONDITION, wolf, id]).is_err() {
+                    tracing::error!("engine gone during the grant drill");
+                    return;
+                }
+                tracing::info!(wolf = format!("{wolf:#010x}"), condition = id,
+                               "GRANT_CONDITION queued (drill)");
+            }
+            self.grants_queued = true;
         }
 
         // Evaluate — needs nothing but the row, the tic, and the corpus.

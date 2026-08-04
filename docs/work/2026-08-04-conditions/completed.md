@@ -31,3 +31,49 @@ rows moved — the acceptance criterion exactly. The un-blessed test then passes
 **Fixed en route:** [I2](issues.md#i2) — the `BLESS_GOLDEN` branch had become unreachable when the
 DSL died, so the fixture could not be regenerated at all. The dead `.rd` oracle half is deleted and
 the bless path now lives in the surviving TOML test.
+
+## 2026-08-04 — P1: the wire names follow, and the renamed chain runs live
+
+**What landed.** `PAYLOAD_OP_MOODLET` → `PAYLOAD_OP_CONDITION` (**still 3**) with
+`condition_word` / `payload_conditions` / `upsert_condition`; `GRANT_MOODLET` → `GRANT_CONDITION`
+(**still opcode 11, arity 2**). The pawn module's reducer `grant_moodlet` → `grant_condition`,
+republished. Both binding trees regenerated. The edge verb allowlist, the worker relay arm, the npc
+brain and `client/core`'s `PawnParts` doc all follow. `shared/wasm` came with them (a P2 item pulled
+forward — `rd redeploy` builds `shared`, so it could not wait): `pawnConditions` / `conditionLabels`.
+
+**How it was verified.**
+- `cargo test -p resonantdust-codec` — **63 tests green**; `PAYLOAD_OP_CONDITION == 3`,
+  `GRANT_CONDITION == 11`, the arity table still yields `&[Write, Imm]` for 11.
+- `bin/rd deploy module pawn` — published with no schema error.
+- `bin/rd build spacetime pawn` — `grant_condition_reducer.rs` written, `grant_moodlet_reducer.rs`
+  deleted; `git diff --stat` on the binding tree shows **only** those two files plus `mod.rs`, i.e.
+  no formatting churn. `st-bindings` mirrored and byte-identical to the edge's copy.
+- `bin/rd build edge` / `bin/sim build worker|master|orchestrator|npc` / `bin/rd build core --check`
+  — all green. `bin/rd redeploy --run` clean, then `bin/rd redeploy` reports "nothing changed".
+- Generated `shared/pkg/resonantdust_shared.d.ts` exports `pawnConditions` and `conditionLabels`;
+  no `moodlet` symbol survives in it.
+
+**The live drill** (the real proof — this is the whole renamed chain, npc → edge allowlist → worker
+relay → republished reducer → payload op → shard fan → npc decode → `active_conditions`), run with
+the new [F8](forks.md#f8) drills, `NPC_THIRST=20 NPC_GRANT=3`:
+
+```
+thirst initialised … satisfaction=20 drill=true
+GRANT_CONDITION queued (drill) … condition=3
+condition band change tic=1704 conditions=["dehydrated"]              mood=0.0999…  next=Some(5305)
+condition band change tic=1710 conditions=["dehydrated", "quenched"]  mood=0.3      next=Some(5305)
+```
+
+Both arithmetic checks hold: `0.5 − 0.40 = 0.10` for the derived band alone, `0.5 − 0.40 + 0.20 =
+0.30` once the timed grant stacks. The wolf CREATE-minted, adopted and ran authoritative trips
+throughout (the republish wipes the module's data, so it re-minted).
+
+**Fixed en route:** [I3](issues.md#i3) — `rd build core --check` had been red since 2026-08-03
+(`headless.rs` never learned the `payload` field that needs-moodlets P4 added to `Event::PawnParts`).
+[I4](issues.md#i4) — the two-week-old edge container predated the `content` bind mount in
+`compose.yml`, so worldgen and content serving were both dead; `rd down edge && rd up edge` fixed
+it. Neither was caused by this stream.
+
+**Not verified:** no log line from the edge or worker names the accepted verb — they don't log verbs
+at INFO. The npc evidence above is stronger (the grant could not have reached the payload otherwise),
+but the literal wording of the item's criterion ("edge log shows the verb accepted") was not met.

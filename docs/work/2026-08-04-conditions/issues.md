@@ -47,3 +47,25 @@ compiles `src/bin/`. The stream that added the field ran the former.
 **Fix**: destructure `payload` and log it — headless is the wire-observation harness, so the raw
 opcode stream is exactly what it exists to print. `rd build core --check` green. Found while
 verifying this stream's npc/core rename; unrelated to the rename itself.
+
+## I4 — a long-lived dev container does not pick up new compose mounts {#i4}
+
+_2026-08-04. **Fixed** in P1 (operational, no code)._ After `rd redeploy --run` the edge came up
+with `worldgen disabled (content load failed)` and `content serving disabled … read content dir
+content: No such file or directory`, so no zone would generate — the live half of P1's acceptance
+was untestable and it looked like this stream had broken content.
+
+It had not. `edge-edge-1` was **created two weeks ago** and idles on `sleep infinity`; `rd redeploy`
+`exec`s the freshly built binary inside that existing container. `compose.yml` gained
+`../../content:/workspace/content:ro` on the `edge` service **after** the container was created,
+and docker only binds mounts at container CREATE — so the running container genuinely had no
+`/workspace/content`, while the compose file said it did. `docker exec edge-edge-1 ls
+/workspace/content` → "No such file or directory" is the one-line diagnosis.
+
+**Fix**: `bin/rd down edge && bin/rd up edge` recreates it with the current mount set; the next
+`redeploy --run` logged `worldgen content loaded tiles=6` and `content serving enabled`.
+
+**Standing lesson** — this is the same shape as `docker-cargo-mtime-miss`: the long-lived container
+is a cache, and a compose edit is invisible to it. Any change to a service's `volumes`,
+`environment` or `ports` needs a `down`/`up` of that service, not just a redeploy. Symptom to
+recognise: the binary behaves as if a path the compose file mounts does not exist.

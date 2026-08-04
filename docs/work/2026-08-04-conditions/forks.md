@@ -145,3 +145,22 @@ Consequences carried into P6: the overlay needs a z-index above the panel band, 
 world input outside its own bounds, must clamp at the **viewport** edge (scroll inside the overlay
 past that — [B1](blockers.md#b1) method #1 as the inner fallback), and must be torn down with the
 panel.
+
+## F8 — the conditions drill lives in the npc brain {#f8}
+
+_2026-08-04, resolved during P1._ Two of this stream's acceptance criteria are unreachable on the
+authored corpus: `GRANT_CONDITION` has **no caller** (the drink action is the successor stream), and
+thirst depletes over 21600 tics — an hour of wall clock before the first band crossing. P4 also
+asks for "6 conditions forced onto a wolf".
+
+**Chosen**: two env drills on the `Wolves` brain. `NPC_THIRST=<0..=255>` makes the one-shot mint
+write that satisfaction instead of full, so the wolf starts inside whichever band you want.
+`NPC_GRANT=<ids>` queues one `GRANT_CONDITION` per id after the mint. Both are unset by default —
+the authored behaviour is untouched — and both go through the ordinary client verb path, so what
+they exercise is the real chain, not a test double.
+
+Rejected: **editing `content/needs.toml`'s `deplete` for a test run** — the corpus is the game's
+data, a test must not require mutating it, and the golden fixture would fail for the duration.
+**A one-off script that pokes the reducer directly** — it would bypass the edge allowlist and the
+worker relay, i.e. exactly the two hops this stream renamed and most needs proving.
+**Waiting the hour** — not a test loop.

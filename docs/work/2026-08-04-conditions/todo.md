@@ -27,29 +27,29 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P1 — the wire names follow (values do not move)
 
-- [ ] Rename `PAYLOAD_OP_MOODLET` → `PAYLOAD_OP_CONDITION` and `moodlet_word` /
+- [x] Rename `PAYLOAD_OP_MOODLET` → `PAYLOAD_OP_CONDITION` and `moodlet_word` /
       `payload_moodlets` / `upsert_moodlet` to the `condition` spelling in
       `shared/codec/src/payload.rs`, value still `3`. Acceptance: `cargo test -p
       resonantdust-codec` green; `PAYLOAD_OP_CONDITION == 3`.
-- [ ] Rename `GRANT_MOODLET` → `GRANT_CONDITION` in `shared/codec/src/action.rs`, opcode still
+- [x] Rename `GRANT_MOODLET` → `GRANT_CONDITION` in `shared/codec/src/action.rs`, opcode still
       `11` and arity still 2. Acceptance: `cargo test -p resonantdust-codec` green; the arity
       table still yields `&[Write, Imm]` for `11`.
-- [ ] Rename the pawn module's `grant_moodlet` reducer → `grant_condition` and its `MOODLET`
+- [x] Rename the pawn module's `grant_moodlet` reducer → `grant_condition` and its `MOODLET`
       payload splice in `server/spacetime/server/modules/pawn/src/lib.rs`. Acceptance: `bin/rd
       deploy module pawn` publishes without a schema error.
-- [ ] Regenerate `server/st-bindings/src/pawn/` and `server/edge/src/bindings/pawn/` against the
+- [x] Regenerate `server/st-bindings/src/pawn/` and `server/edge/src/bindings/pawn/` against the
       republished module. Acceptance: `grant_condition_reducer.rs` exists,
       `grant_moodlet_reducer.rs` is deleted, `cargo check -p resonantdust-edge` green.
-- [ ] Rename the `GRANT_MOODLET` verb in the edge allowlist + relay (`server/edge/src/ws.rs`) and
+- [x] Rename the `GRANT_MOODLET` verb in the edge allowlist + relay (`server/edge/src/ws.rs`) and
       the worker relay (`server/worker/src/main.rs`). Acceptance: `bin/rd redeploy --run` clean; a
       client-issued grant still lands (edge log shows the verb accepted).
-- [ ] Rename the `moodlet` identifiers in `client/npc/src/lib.rs` and `brains/wolves.rs`.
+- [x] Rename the `moodlet` identifiers in `client/npc/src/lib.rs` and `brains/wolves.rs`.
       Acceptance: `cargo check -p resonantdust-npc` green; `bin/sim run npc` logs a band flip
       naming a "condition".
 
 ## P2 — the client and the authoritative docs
 
-- [ ] Rename `pawn_moodlets` / `moodlet_labels` → `pawn_conditions` / `condition_labels` and their
+- [x] Rename `pawn_moodlets` / `moodlet_labels` → `pawn_conditions` / `condition_labels` and their
       js_names in `shared/wasm/src/lib.rs`. Acceptance: `bin/rd build shared` green (native +
       wasm32); the generated `.d.ts` exports `pawnConditions` and `conditionLabels`.
 - [ ] Rename `moodlets` → `conditions` through `WasmClient.ts`, `MoverLayer.ts`, `WorldScene.ts`
