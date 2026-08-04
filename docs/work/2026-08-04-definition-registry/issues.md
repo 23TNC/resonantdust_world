@@ -17,6 +17,33 @@ Note what is *absent*: nothing reads `def_kind_id` and expects a stable meaning 
 render decode uses it as an opaque table index, which is precisely why [F5](forks.md#f5) can burn
 kind ids for versioning without touching a consumer.
 
+## I8 — the registry cannot COMPOSE an id; it can only record one {#i8}
+
+_2026-08-04, P2. A plan gap, found on contact with the module._
+
+The plan wrote the reducer as `ensure(type, subType, kind, variant, version) → id` — the module
+composing the number. It cannot, because three of the four coordinates are not the module's to know:
+
+| Coordinate | Where its number comes from today | Can the module see it? |
+|---|---|---|
+| `type_id` | the code palette in `shared/codec` (`TYPE_BIOME_TILE = 1`, …) | yes — it deps the codec |
+| `subtype_id` | **AUTHORED IN THE CORPUS** — `biomes.toml` writes `subtype = 6` for forest; pawn species come from the codec palette | **no** — the module never reads `content/` |
+| `kind_id` | corpus order today; the registry's job to allocate | it can allocate |
+| `variant_id` | **CHOSEN AT PLACEMENT, not per def** — `worldgen.rs:127` packs `(seed >> 13) & 0x0F`, a random art variation per cell; pawns always pack 0 | no — it is not a per-def fact |
+
+So the registry's real job is narrower than "allocate the id": it **records** the tuple → id
+mapping durably and uniquely, while COMPOSITION stays where the corpus is readable. That is also the
+better split — the module has no business knowing that `forest` means 6, and a module that had to
+would need the corpus mounted into a WASM reducer.
+
+Recorded as a [deviation](deviations.md) rather than silently re-scoped: the reducer takes the
+composed `id` and the four strings, and enforces uniqueness and collision-detection. The caller
+(master, at content load) does the composing.
+
+Note the variant row above, because it matters for [F2](forks.md#f2)'s cross-product: a `variant`
+array of `[0..15]` mints 16 ROWS so all 16 are resolvable, but nothing *assigns* a cell a variant —
+worldgen rolls one. The rows exist so the roll always lands on a registered definition.
+
 ## I7 — where a def id is STORED {#i7}
 
 _2026-08-04, P0 item 3. Every place a number allocated by the registry comes to rest._

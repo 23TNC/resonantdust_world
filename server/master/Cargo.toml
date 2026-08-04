@@ -18,4 +18,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 resonantdust-st-bindings = { path = "../st-bindings" }
 resonantdust-codec = { path = "../../shared/codec" }
+# The corpus, for the definition registry (definition-registry F11: the master is the single
+# allocator). It reads the taxonomy + the authored biome subtype ids the composition needs —
+# neither is reachable from inside a WASM reducer, which is why composition lives here (I8).
+resonantdust-content = { path = "../../shared/content" }
 resonantdust-uplink = { path = "../uplink" }

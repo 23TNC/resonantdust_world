@@ -71,3 +71,42 @@ id can address), an extra **authored** variant is a load error (wrapping would a
 onto one id). `pawn/animal/wolf` is named as the kind sitting one slot from the ceiling.
 
 Verified: `bin/rd docs-check` clean across all three edits.
+
+## 2026-08-04 · P2 — the registry table + allocator (3/3)
+
+**`index.definitions` is live**, not just compiled. Published to `resonantdust-dev-index-0` and
+exercised through the CLI:
+
+- `ensure_definition(0x3000fe70, 0, biome-thing, default, conifer, "4")` → one row.
+- the identical call again → still one row (the idempotent path, so every server may call it on
+  every boot without coordination — belt-and-braces behind [F11](forks.md#f11)'s single master).
+- the same id claimed by `moss` → **rejected by name**:
+  `definition id 0x3000fe70 collision: registered as biome-thing/default/conifer/4 v0, now claimed
+  by biome-thing/default/moss/4 v0`.
+- a v1 of the same tuple with a new id → **two rows**, v0 untouched. That is [F6](forks.md#f6)
+  working: the old definition keeps existing for the entities that hold it.
+
+**A plan gap, found on contact and recorded rather than quietly re-scoped** ([I8](issues.md#i8),
+[deviations.md](deviations.md)). The plan had the reducer composing the id. It cannot: `subtype_id`
+is AUTHORED in `biomes.toml` (forest is 6) and the module never reads `content/`, and `variant_id`
+is chosen at PLACEMENT — `worldgen.rs:127` rolls `(seed >> 13) & 0x0F` per cell — so it is not a
+per-def fact at all. Composition moved to `server/master`, where F11 already put the allocator and
+where the corpus is loaded. The module records, enforces uniqueness, and detects collisions.
+
+`master/src/defs.rs` composes in the FROZEN layout and refuses rather than wraps, with three named
+`AllocError` arms. Two of the four tests are the load-bearing ones:
+
+- a conifer version bump takes a new `kind_id` while the `rock` beside it in the same subType stays
+  **bit-identical**, and the subType/variant nibbles never move — [F5](forks.md#f5)'s isolation.
+- a 17th variant is refused, and the test **demonstrates why** instead of asserting it away: the
+  packer masks, so slot 16 silently becomes variant 0 and the 17th definition would alias onto the
+  1st. My first version of that assertion was backwards and the failure is what surfaced it.
+
+Two `pub const`s added to the codec (`KIND_ID_LIMIT`, `VARIANT_ID_LIMIT`), derived from the existing
+masks so they cannot drift. They name the ceiling the layout already has — no field added, none
+moved ([F13](forks.md#f13) holds).
+
+`bin/sim` gains `test`, since these crates are SDK-client binaries with no lib target and their
+tests live in `#[cfg(test)]` modules inside the binary.
+
+Verified: index module builds + publishes; 4 `defs::` tests green via `bin/sim test master`.

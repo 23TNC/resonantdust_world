@@ -44,6 +44,14 @@ const SUBTYPE_ID_MASK: u16 = 0xFFF; // 12 bits
 const KIND_ID_MASK: u16 = 0xFFF; // 12 bits
 const VARIANT_ID_MASK: u16 = 0xF; // 4 bits
 
+// The masks' bounds, named so an allocator can REFUSE at the ceiling instead of wrapping into it
+// (definition-registry). Derived from the masks above, so they cannot drift from the layout —
+// these add no field and change no layout, they only state what the existing one already permits.
+/// One past the largest `kind_id` / `subtype_id` — both u12, so 4096.
+pub const KIND_ID_LIMIT: u32 = KIND_ID_MASK as u32 + 1;
+/// One past the largest `variant_id` — u4, so **16 variants per (type, subType, kind)**.
+pub const VARIANT_ID_LIMIT: u32 = VARIANT_ID_MASK as u32 + 1;
+
 /// Reserved "no type" id — the null/unset sentinel. Real types are `1..=15`.
 pub const TYPE_NONE: u8 = 0;
 

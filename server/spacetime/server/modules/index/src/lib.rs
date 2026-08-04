@@ -428,3 +428,100 @@ pub fn resolve_player(ctx: &ReducerContext, player_id: u32) -> Option<Server> {
     let server_id = server_of(ctx, player_id)?;
     ctx.db.servers().server_id().find(server_id)
 }
+
+// ── the definition registry ──────────────────────────────────────────────────
+//
+// The corpus DESCRIBES; this table NUMBERS (work `2026-08-04-definition-registry`). One row per
+// `(type, sub_type, kind, variant)` tuple the corpus applies to, per version. `docs/TABLES.md`
+// § `definitions` is authoritative for the shape.
+//
+// **This module records ids; it does not compose them** (I8). Three of the four coordinates are
+// not its to know: `subtype_id` is AUTHORED in the corpus (`biomes.toml` writes `subtype = 6` for
+// forest) and this module never reads `content/`; `variant_id` is chosen at PLACEMENT, not per def
+// (worldgen rolls an art variation per cell). The master composes the id where the corpus is
+// already loaded — F11 put the allocator there anyway — and calls `ensure_definition`.
+//
+// **Old rows are never deleted or rewritten.** A version bump inserts a row with a new id; entities
+// holding the old id keep resolving to the old row and keep behaving as it describes (F6).
+// Reclaiming a retired id is designed but deliberately NOT built (F7) — `entity_state_log` is
+// append-only history, so a reclaimed id would make replay lie.
+
+/// One definition: a packed `definition_reference` and the taxonomy it stands for.
+#[table(accessor = definitions, public)]
+pub struct Definition {
+    /// The packed `definition_reference` — `type_id:4 | subtype_id:12 | kind_id:12 | variant_id:4`.
+    /// Layout in `docs/VARIABLES.md` and FROZEN (F13); this stream changes no data structure.
+    #[primary_key]
+    pub id: u32,
+    /// Bumped on a SIMULATION-visible change only (F12) — art, tint and comments do not bump.
+    /// A bump mints a NEW row with a new id; this one stays.
+    pub version: u32,
+    /// Taxonomy. `type_name`, not `type` — `type` is a Rust keyword.
+    pub type_name: String,
+    pub sub_type: String,
+    /// The kind name. NOT indexed: SpacetimeDB 2.1 cannot range-filter a `String` btree from a
+    /// reducer, and the registry is a few hundred rows read at load — a scan is honest and an
+    /// index nothing can use is dead weight.
+    pub kind: String,
+    /// The variant LABEL as the art tree spells it (`"4"`, `"wall"`). The id carries the u4 SLOT;
+    /// a label is free-form because the manifest, not the id, addresses the folder.
+    pub variant: String,
+}
+
+/// Record `id` as the definition for this tuple+version. **Idempotent**: a repeat call for the same
+/// tuple is a no-op, so every server may call it on every boot without coordination — belt-and-braces
+/// behind F11's single master.
+///
+/// Rejects a COLLISION loudly: an `id` already registered to a different tuple means two definitions
+/// aliased onto one number, which is the single thing this registry exists to prevent. Failing the
+/// load is strictly better than a world where a conifer renders as moss.
+#[reducer]
+pub fn ensure_definition(
+    ctx: &ReducerContext,
+    id: u32,
+    version: u32,
+    type_name: String,
+    sub_type: String,
+    kind: String,
+    variant: String,
+) -> Result<(), String> {
+    if let Some(existing) = ctx.db.definitions().id().find(id) {
+        if existing.type_name == type_name
+            && existing.sub_type == sub_type
+            && existing.kind == kind
+            && existing.variant == variant
+            && existing.version == version
+        {
+            return Ok(()); // already recorded — the idempotent path
+        }
+        return Err(format!(
+            "definition id {id:#010x} collision: registered as \
+             {}/{}/{}/{} v{}, now claimed by {type_name}/{sub_type}/{kind}/{variant} v{version}",
+            existing.type_name, existing.sub_type, existing.kind, existing.variant, existing.version,
+        ));
+    }
+    ctx.db.definitions().insert(Definition { id, version, type_name, sub_type, kind, variant });
+    Ok(())
+}
+
+/// The highest-version id for a tuple, or `None` if the tuple has no definition.
+///
+/// This is the resolution rule (F6): NEW placements take the newest definition, while entities
+/// already holding an older id keep it and keep behaving as it describes. Callers that hold an id
+/// never come here — a stored id is already the answer (I6).
+pub fn resolve_definition(
+    ctx: &ReducerContext,
+    type_name: &str,
+    sub_type: &str,
+    kind: &str,
+    variant: &str,
+) -> Option<u32> {
+    ctx.db
+        .definitions()
+        .iter()
+        .filter(|d| {
+            d.kind == kind && d.type_name == type_name && d.sub_type == sub_type && d.variant == variant
+        })
+        .max_by_key(|d| d.version)
+        .map(|d| d.id)
+}

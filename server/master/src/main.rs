@@ -21,6 +21,8 @@
 //! `master_clock.tic` is a `u32` absolute counter; the shards take its low 16 bits as their wrapping
 //! `master_tic`. The truncation happens only here, at the fan-out boundary.
 
+mod defs;
+
 use std::time::Duration;
 
 use spacetimedb_sdk::DbContext;

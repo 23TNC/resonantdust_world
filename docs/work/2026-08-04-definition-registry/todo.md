@@ -44,15 +44,20 @@ numbering to the registry, and leaves `definition_reference` exactly as it is.
 
 ## P2 — the registry table + allocator
 
-- [ ] Add the registry table to the `index` module with an `ensure(type, subType, kind, variant,
+- [x] Add the registry table to the `index` module with an `ensure(type, subType, kind, variant,
       version) → id` reducer, written by the master ([F11](forks.md#f11)). Acceptance: a module test
-      shows a repeat call for one tuple returns the SAME id rather than a second.
-- [ ] Allocate ids by burning `kind_id` per version ([F5](forks.md#f5)); `subType` ids stay stable
+      shows a repeat call for one tuple returns the SAME id rather than a second. → `definitions` +
+      `ensure_definition`, published and exercised LIVE: repeat call = one row; a colliding id is
+      rejected by name. Signature deviates ([deviations.md](deviations.md), [I8](issues.md#i8)).
+- [x] Allocate ids by burning `kind_id` per version ([F5](forks.md#f5)); `subType` ids stay stable
       across versions. Acceptance: a test bumps one kind's version and asserts the sibling kinds in
-      that subType keep their ids.
-- [ ] Refuse allocation past a field's width — u12 kind, u4 variant ([F13](forks.md#f13)).
+      that subType keep their ids. → `master/src/defs.rs::compose`; the sibling `rock` is
+      bit-identical across a conifer bump, and subType/variant nibbles are untouched.
+- [x] Refuse allocation past a field's width — u12 kind, u4 variant ([F13](forks.md#f13)).
       Acceptance: the reducer errors loudly at the boundary; a test asserts a 17th variant of one
-      kind fails rather than wrapping. The wolf is one slot from this today.
+      kind fails rather than wrapping. The wolf is one slot from this today. → `AllocError` with
+      three named arms; the test also DEMONSTRATES the wrap (slot 16 packs to variant 0), which is
+      why refusing beats absorbing.
 
 ## P3 — the loader: taxonomy in, cross-product out
 

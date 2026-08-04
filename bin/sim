@@ -8,6 +8,7 @@
 #
 #   sim build  <crate>            cargo build --release, in docker
 #   sim check  <crate>            cargo check --all-targets (fast, no link)
+#   sim test   <crate> [args]     cargo test (tests live inside the binary — no lib target)
 #   sim run    <crate> [K=V ...]  (re)start the built binary detached, extra env passed through
 #   sim stop   <crate>            stop + remove its container
 #   sim logs   <crate> [-f]       tail its container logs
@@ -85,6 +86,10 @@ cmd_build() {
 }
 cmd_check() { require_crate "$1"; log "check $1"; cargo_in "$1" cargo check --all-targets; }
 
+# Unit tests for a sim crate, in the same builder image `check`/`build` use. These crates are
+# SDK clients with no lib target, so their tests live in `#[cfg(test)]` modules inside the binary.
+cmd_test() { require_crate "$1"; local c="$1"; shift; log "test $c"; cargo_in "$c" cargo test "$@"; }
+
 # The path-dep source roots a crate's binary is built from — the stale-binary guard sweeps
 # these for files newer than the binary.
 dep_roots() {
@@ -149,12 +154,13 @@ main() {
   case "$cmd" in
     build) cmd_build "$@" ;;
     check) cmd_check "$@" ;;
+    test)  cmd_test "$@" ;;
     run)   cmd_run "$@" ;;
     stop)  cmd_stop "$@" ;;
     logs)  cmd_logs "$@" ;;
     ps)    cmd_ps ;;
     -h|--help|help) usage ;;
-    *) die "unknown command '$cmd' (build|check|run|stop|logs|ps)" ;;
+    *) die "unknown command '$cmd' (build|check|test|run|stop|logs|ps)" ;;
   esac
 }
 main "$@"
