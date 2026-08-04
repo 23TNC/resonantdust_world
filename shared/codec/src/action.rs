@@ -72,11 +72,11 @@ pub const BUILD_WALL: u32 = 9;
 /// splices the `NEED` payload entry itself (`set_tic` = the composing tic) — the worker
 /// relays, so the verb adds nothing to the worker's read set.
 pub const SET_NEED: u32 = 10;
-/// Grant one STORED (timed) moodlet to a pawn (needs-moodlets F2/F7). Operands: `obj`
-/// (write), `moodlet_id` (imm, 1-based corpus id). `grant_tic` = the composing tic; expiry
+/// Grant one STORED (timed) condition to a pawn (needs-moodlets F2/F7). Operands: `obj`
+/// (write), `condition_id` (imm, 1-based corpus id). `grant_tic` = the composing tic; expiry
 /// is DERIVED (`grant_tic + duration` from the corpus), never stored. A re-grant refreshes
-/// the timer. Conditional (band) moodlets have no verb — they are derived, not granted.
-pub const GRANT_MOODLET: u32 = 11;
+/// the timer. DERIVED (band) conditions have no verb — they are computed, not granted.
+pub const GRANT_CONDITION: u32 = 11;
 
 /// What an operand is, for deriving the write/read sets. Only `entity_reference` operands matter to
 /// the sets; `Imm` operands (numbers, positions, definitions) are neither.
@@ -118,7 +118,7 @@ pub fn signature(action: u32) -> Option<&'static [OperandKind]> {
         SET => &[Write, Imm, Imm, Imm, Imm], // cold_row, type_id, tile_reference, kind_reference, data
         BUILD_WALL => &[Imm, Imm, Imm], // start, end, object — writes nothing; the worker queues SETs
         SET_NEED => &[Write, Imm, Imm], // obj, need_id, satisfaction (0..=255)
-        GRANT_MOODLET => &[Write, Imm], // obj, moodlet_id
+        GRANT_CONDITION => &[Write, Imm], // obj, condition_id
         _ => return None,
     })
 }

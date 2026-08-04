@@ -22,7 +22,7 @@ pub mod target_state_type;
 pub mod bump_reducer;
 pub mod claim_reducer;
 pub mod gc_reducer;
-pub mod grant_moodlet_reducer;
+pub mod grant_condition_reducer;
 pub mod set_need_reducer;
 pub mod spawn_reducer;
 pub mod write_reducer;
@@ -50,7 +50,7 @@ pub use spawn_log_table::*;
 pub use bump_reducer::bump;
 pub use claim_reducer::claim;
 pub use gc_reducer::gc;
-pub use grant_moodlet_reducer::grant_moodlet;
+pub use grant_condition_reducer::grant_condition;
 pub use set_need_reducer::set_need;
 pub use spawn_reducer::spawn;
 pub use write_reducer::write;
@@ -74,11 +74,11 @@ pub enum Reducer {
     Gc {
         horizon: u16,
 }    ,
-    GrantMoodlet {
+    GrantCondition {
         worker: u8,
         tic: u16,
         entity_reference: u32,
-        moodlet_id: u32,
+        condition_id: u32,
 }    ,
     SetNeed {
         worker: u8,
@@ -115,7 +115,7 @@ impl __sdk::Reducer for Reducer {
                         Reducer::Bump { .. } => "bump",
             Reducer::Claim { .. } => "claim",
             Reducer::Gc { .. } => "gc",
-            Reducer::GrantMoodlet { .. } => "grant_moodlet",
+            Reducer::GrantCondition { .. } => "grant_condition",
             Reducer::SetNeed { .. } => "set_need",
             Reducer::Spawn { .. } => "spawn",
             Reducer::Write { .. } => "write",
@@ -144,16 +144,16 @@ fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
 }             => __sats::bsatn::to_vec(&gc_reducer::GcArgs {
                 horizon: horizon.clone(),
 }),
-            Reducer::GrantMoodlet{
+            Reducer::GrantCondition{
                 worker,
                 tic,
                 entity_reference,
-                moodlet_id,
-}             => __sats::bsatn::to_vec(&grant_moodlet_reducer::GrantMoodletArgs {
+                condition_id,
+}             => __sats::bsatn::to_vec(&grant_condition_reducer::GrantConditionArgs {
                 worker: worker.clone(),
                 tic: tic.clone(),
                 entity_reference: entity_reference.clone(),
-                moodlet_id: moodlet_id.clone(),
+                condition_id: condition_id.clone(),
 }),
             Reducer::SetNeed{
                 worker,

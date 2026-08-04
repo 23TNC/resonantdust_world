@@ -70,9 +70,9 @@ fn payload_follow_state(ctx: &ReducerContext, r: &TargetState, _tic: u16) {
     }
 }
 
-// ── needs & moodlets — payload-entry verbs (needs-moodlets F7) ──────────────────────
+// ── needs & conditions — payload-entry verbs (needs-moodlets F7) ──────────────────────
 //
-// `SET_NEED` / `GRANT_MOODLET` splice ONE entry into the pawn's payload sidecar. The
+// `SET_NEED` / `GRANT_CONDITION` splice ONE entry into the pawn's payload sidecar. The
 // MODULE composes (read current → upsert → write log + projection, one transaction), so
 // the worker just relays the verb — no payload subscription joins its read set. The
 // entity's claim serialises these with its movement writes (the verb's `obj` is a Write
@@ -127,18 +127,18 @@ pub fn set_need(
     Ok(())
 }
 
-/// `GRANT_MOODLET` — upsert one stored (timed) moodlet grant (`grant_tic` = this tic;
+/// `GRANT_CONDITION` — upsert one stored (timed) condition grant (`grant_tic` = this tic;
 /// expiry is DERIVED from the corpus duration, never stored; a re-grant refreshes).
 #[spacetimedb::reducer]
-pub fn grant_moodlet(
+pub fn grant_condition(
     ctx: &ReducerContext,
     _worker: u8,
     tic: u16,
     entity_reference: u32,
-    moodlet_id: u32,
+    condition_id: u32,
 ) -> Result<(), String> {
     write_payload_entry(ctx, tic, entity_reference, |p| {
-        resonantdust_codec::payload::upsert_moodlet(p, moodlet_id as u8, tic);
+        resonantdust_codec::payload::upsert_condition(p, condition_id as u8, tic);
     });
     Ok(())
 }

@@ -572,7 +572,7 @@ const CLIENT_VERBS: &[u32] = &[
     // needs-moodlets P2: open like MOVE_TO while no ownership model exists — the npc mints
     // thirst and the drills force-set it through this door. Tighten with ownership.
     resonantdust_codec::action::SET_NEED,
-    resonantdust_codec::action::GRANT_MOODLET,
+    resonantdust_codec::action::GRANT_CONDITION,
 ];
 
 /// Validate + relay a client intent to `event_shard.queue`. The door enforces "logged in",

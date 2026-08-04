@@ -269,3 +269,37 @@ Also from the user, and worth recording because it removes a constraint I was tr
 *"we can use white backgrounds and just key them as we have hard black edges anyway."* A uniform
 off-white or tan plate keys out cleanly — `lora_eval`'s `bg_uni` metric exists for exactly this
 distinction. Background TONE is not a defect; only a non-uniform background is.
+
+## I12 — `rd_quadruped` was a constant, not a contrast — and RimWorld animals have no legs {#i12}
+_2026-08-03 · **both found by the user**; the tag counts are measured_
+
+**Two errors, one root.** Runs 6–9 all trained on `quad_dataset` alone. Tag counts:
+
+| tag | full 701 set (`dataset`) | `quad_dataset` (459) |
+|---|---|---|
+| `rd_quadruped` | 498 | **459 — every image** |
+| `rd_biped` | 90 | 0 |
+| `rd_winged` | 69 | 0 |
+| **`rd_humanoid`** | **51** | 0 |
+| `rd_multiped` | 27 | 0 |
+| `rd_legless` | 27 | 0 |
+
+A tag present on **100% of examples cannot discriminate anything** — it is a learnable constant,
+structurally the same defect as run-4's white margin. With 51 humanoids and 90 bipeds present,
+`rd_quadruped` instead teaches what a quadruped is *not*.
+
+**So run-9 was never the `e07` structure.** `e07` = run-2 on 701 images / 6 body plans → run-3 on
+459 quadrupeds. Run-9 = run-8 on 459 quadrupeds → run-9 on 459 quadrupeds. I reproduced the warm
+start and missed that stage one is a **different corpus** — making it the same stage run longer,
+which is exactly the degeneration [F1](forks.md#f1) warned about and which I then did myself.
+
+**And I misjudged the output.** I reported run-9's leg articulation as the headline improvement.
+The corpus reference is a **solid body mass with an unbroken bottom edge** — RimWorld convention
+has no articulated limbs. Leg separation is drift toward generic animal anatomy, i.e. precisely
+what losing the humanoid/biped contrast would cause. I had already sent the user the side-by-side
+that shows it. **Evaluate silhouette mass, not anatomy.**
+
+**Run-10** is stage one done properly: fresh, full 701-image corpus, all six body plans, 768 (the
+corpus's own resolution — 1024 would only interpolate), `alpha 64 / LR 5e-5` carried from run-8
+untouched because that axis was never the problem. Samples cover four body plans via
+`sample_prompts.txt`, not the quadruped-only set.

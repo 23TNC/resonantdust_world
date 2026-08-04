@@ -32,3 +32,18 @@ Not caught earlier because both halves read green: the dead test *passes* by ret
 are deleted, and the bless branch lives in the surviving comparison test. Verified by blessing (the
 diff was the 8 expected rename lines) and re-running un-blessed to green. This is `toml-content`'s
 leftover, found here — recorded in this stream because this is where it was fixed.
+
+## I3 — `rd build core --check` had been red since 2026-08-03 {#i3}
+
+_2026-08-04. **Fixed** in P1._ `client/core/src/bin/headless.rs:136` destructures
+`Event::PawnParts { macro_position, entity_reference, tic, parts }` — but `74bdbe58`
+(needs-moodlets P4) added a fifth field, `payload: Vec<u32>`, and never updated the binary.
+`rustc` E0027, "pattern does not mention field `payload`".
+
+It hid because the two gates disagree about scope: `rd build core` (release, default) builds the
+**lib** and passed, while `rd build core --check` runs `--all-targets` and is the only one that
+compiles `src/bin/`. The stream that added the field ran the former.
+
+**Fix**: destructure `payload` and log it — headless is the wire-observation harness, so the raw
+opcode stream is exactly what it exists to print. `rd build core --check` green. Found while
+verifying this stream's npc/core rename; unrelated to the rename itself.

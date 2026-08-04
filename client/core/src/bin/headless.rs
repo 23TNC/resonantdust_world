@@ -133,12 +133,13 @@ fn log_event(event: &Event) {
                 "state object"
             )
         }
-        Event::PawnParts { macro_position, entity_reference, tic, parts } => {
+        Event::PawnParts { macro_position, entity_reference, tic, parts, payload } => {
             info!(
                 macro_position = format!("{macro_position:#06x}"),
                 entity_reference = format!("{entity_reference:#010x}"),
                 tic,
                 parts = format!("{parts:?}"),
+                payload = format!("{payload:?}"),
                 "pawn parts"
             )
         }

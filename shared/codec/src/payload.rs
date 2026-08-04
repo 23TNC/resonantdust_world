@@ -17,12 +17,12 @@ pub const PAYLOAD_OP_PART: u32 = 1;
 /// forced set). One entry per need; `SET_NEED` upserts by `need_id`.
 pub const PAYLOAD_OP_NEED: u32 = 2;
 
-/// `MOODLET word` — one STORED (timed) moodlet grant, word = `moodlet_id:8 | 0:8 |
+/// `CONDITION word` — one STORED (timed) condition grant, word = `condition_id:8 | 0:8 |
 /// grant_tic:16` (needs-moodlets F2/F7). Expiry is DERIVED — `grant_tic + duration`
 /// from the corpus — never stored; a re-grant refreshes the timer by rewriting the
-/// entry. Conditional (band) moodlets never appear here — they are derived from NEED
+/// entry. DERIVED (band) conditions never appear here — they are computed from NEED
 /// entries by every observer.
-pub const PAYLOAD_OP_MOODLET: u32 = 3;
+pub const PAYLOAD_OP_CONDITION: u32 = 3;
 
 /// Compose one entry's header word: `opcode:16 | count:16`.
 pub fn payload_header(opcode: u32, count: u16) -> u32 {
@@ -61,9 +61,9 @@ pub fn need_word(need_id: u8, satisfaction: u8, set_tic: u16) -> u32 {
     ((need_id as u32) << 24) | ((satisfaction as u32) << 16) | set_tic as u32
 }
 
-/// Pack one stored-moodlet word: `moodlet_id:8 | 0:8 | grant_tic:16`.
-pub fn moodlet_word(moodlet_id: u8, grant_tic: u16) -> u32 {
-    ((moodlet_id as u32) << 24) | grant_tic as u32
+/// Pack one stored-condition word: `condition_id:8 | 0:8 | grant_tic:16`.
+pub fn condition_word(condition_id: u8, grant_tic: u16) -> u32 {
+    ((condition_id as u32) << 24) | grant_tic as u32
 }
 
 /// Decode a payload's `NEED` entries → `(need_id, satisfaction, set_tic)`, stream order.
@@ -74,9 +74,9 @@ pub fn payload_needs(payload: &[u32]) -> Vec<(u8, u8, u16)> {
         .collect()
 }
 
-/// Decode a payload's `MOODLET` entries → `(moodlet_id, grant_tic)`, stream order.
-pub fn payload_moodlets(payload: &[u32]) -> Vec<(u8, u16)> {
-    scan(payload, PAYLOAD_OP_MOODLET).map(|w| ((w >> 24) as u8, w as u16)).collect()
+/// Decode a payload's `CONDITION` entries → `(condition_id, grant_tic)`, stream order.
+pub fn payload_conditions(payload: &[u32]) -> Vec<(u8, u16)> {
+    scan(payload, PAYLOAD_OP_CONDITION).map(|w| ((w >> 24) as u8, w as u16)).collect()
 }
 
 /// Upsert one need's entry in place: rewrite the word whose `need_id` matches, else append
@@ -85,9 +85,9 @@ pub fn upsert_need(payload: &mut Vec<u32>, need_id: u8, satisfaction: u8, set_ti
     upsert(payload, PAYLOAD_OP_NEED, need_id, need_word(need_id, satisfaction, set_tic));
 }
 
-/// Upsert one stored-moodlet grant: a re-grant of the same moodlet refreshes its timer.
-pub fn upsert_moodlet(payload: &mut Vec<u32>, moodlet_id: u8, grant_tic: u16) {
-    upsert(payload, PAYLOAD_OP_MOODLET, moodlet_id, moodlet_word(moodlet_id, grant_tic));
+/// Upsert one stored-condition grant: a re-grant of the same condition refreshes its timer.
+pub fn upsert_condition(payload: &mut Vec<u32>, condition_id: u8, grant_tic: u16) {
+    upsert(payload, PAYLOAD_OP_CONDITION, condition_id, condition_word(condition_id, grant_tic));
 }
 
 /// Iterate every operand word of `opcode`'s entries (an entry may carry several words —
@@ -154,12 +154,12 @@ mod tests {
     }
 
     #[test]
-    fn moodlet_grants_refresh_by_id() {
+    fn condition_grants_refresh_by_id() {
         let mut p = Vec::new();
-        upsert_moodlet(&mut p, 3, 500);
-        upsert_moodlet(&mut p, 3, 800); // re-grant → refreshed timer, same entry
-        upsert_moodlet(&mut p, 4, 810);
-        assert_eq!(payload_moodlets(&p), vec![(3, 800), (4, 810)]);
+        upsert_condition(&mut p, 3, 500);
+        upsert_condition(&mut p, 3, 800); // re-grant → refreshed timer, same entry
+        upsert_condition(&mut p, 4, 810);
+        assert_eq!(payload_conditions(&p), vec![(3, 800), (4, 810)]);
         assert_eq!(payload_needs(&p), Vec::<(u8, u8, u16)>::new());
     }
 

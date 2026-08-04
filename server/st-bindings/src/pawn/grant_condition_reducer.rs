@@ -12,59 +12,59 @@ use spacetimedb_sdk::__codegen::{
 
 #[derive(__lib::ser::Serialize, __lib::de::Deserialize, Clone, PartialEq, Debug)]
 #[sats(crate = __lib)]
-pub(super) struct GrantMoodletArgs {
+pub(super) struct GrantConditionArgs {
     pub worker: u8,
     pub tic: u16,
     pub entity_reference: u32,
-    pub moodlet_id: u32,
+    pub condition_id: u32,
 }
 
-impl From<GrantMoodletArgs> for super::Reducer {
-    fn from(args: GrantMoodletArgs) -> Self {
-        Self::GrantMoodlet {
+impl From<GrantConditionArgs> for super::Reducer {
+    fn from(args: GrantConditionArgs) -> Self {
+        Self::GrantCondition {
             worker: args.worker,
             tic: args.tic,
             entity_reference: args.entity_reference,
-            moodlet_id: args.moodlet_id,
+            condition_id: args.condition_id,
 }
 }
 }
 
-impl __sdk::InModule for GrantMoodletArgs {
+impl __sdk::InModule for GrantConditionArgs {
     type Module = super::RemoteModule;
 }
 
 #[allow(non_camel_case_types)]
-/// Extension trait for access to the reducer `grant_moodlet`.
+/// Extension trait for access to the reducer `grant_condition`.
 ///
 /// Implemented for [`super::RemoteReducers`].
-pub trait grant_moodlet {
-    /// Request that the remote module invoke the reducer `grant_moodlet` to run as soon as possible.
+pub trait grant_condition {
+    /// Request that the remote module invoke the reducer `grant_condition` to run as soon as possible.
     ///
     /// This method returns immediately, and errors only if we are unable to send the request.
     /// The reducer will run asynchronously in the future,
     ///  and this method provides no way to listen for its completion status.
-    /// /// Use [`grant_moodlet:grant_moodlet_then`] to run a callback after the reducer completes.
-    fn grant_moodlet(&self, worker: u8,
+    /// /// Use [`grant_condition:grant_condition_then`] to run a callback after the reducer completes.
+    fn grant_condition(&self, worker: u8,
 tic: u16,
 entity_reference: u32,
-moodlet_id: u32,
+condition_id: u32,
 ) -> __sdk::Result<()> {
-        self.grant_moodlet_then(worker, tic, entity_reference, moodlet_id,  |_, _| {})
+        self.grant_condition_then(worker, tic, entity_reference, condition_id,  |_, _| {})
     }
 
-    /// Request that the remote module invoke the reducer `grant_moodlet` to run as soon as possible,
+    /// Request that the remote module invoke the reducer `grant_condition` to run as soon as possible,
     /// registering `callback` to run when we are notified that the reducer completed.
     ///
     /// This method returns immediately, and errors only if we are unable to send the request.
     /// The reducer will run asynchronously in the future,
     ///  and its status can be observed with the `callback`.
-    fn grant_moodlet_then(
+    fn grant_condition_then(
         &self,
         worker: u8,
 tic: u16,
 entity_reference: u32,
-moodlet_id: u32,
+condition_id: u32,
 
         callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
             + Send
@@ -72,19 +72,19 @@ moodlet_id: u32,
     ) -> __sdk::Result<()>;
 }
 
-impl grant_moodlet for super::RemoteReducers {
-    fn grant_moodlet_then(
+impl grant_condition for super::RemoteReducers {
+    fn grant_condition_then(
         &self,
         worker: u8,
 tic: u16,
 entity_reference: u32,
-moodlet_id: u32,
+condition_id: u32,
 
         callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
             + Send
             + 'static,
     ) -> __sdk::Result<()> {
-        self.imp.invoke_reducer_with_callback(GrantMoodletArgs { worker, tic, entity_reference, moodlet_id,  }, callback)
+        self.imp.invoke_reducer_with_callback(GrantConditionArgs { worker, tic, entity_reference, condition_id,  }, callback)
     }
 }
 

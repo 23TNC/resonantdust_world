@@ -62,7 +62,7 @@ pub struct Wolves {
     /// Single-shot latch for the SET_NEED mint (the splice upserts, so a replay is safe —
     /// the latch only stops US from re-queueing every tick).
     init_queued: bool,
-    /// The ACTIVE moodlet ids at the last evaluation — the transition detector.
+    /// The ACTIVE condition ids at the last evaluation — the transition detector.
     active: Vec<u16>,
     /// The decision context the successor action stream reads: current mood.
     pub mood: f64,
@@ -110,10 +110,10 @@ impl Wolves {
 
     /// The needs pass, each decision tick (needs-moodlets P4): mint thirst once on a wolf
     /// that provably has none, then EVALUATE — the lazy read (F4) of the payload's NEED +
-    /// MOODLET entries through the shared `needs_eval` (F3). Band transitions are logged
+    /// CONDITION entries through the shared `needs_eval` (F3). Band transitions are logged
     /// with the tic they were observed at; between crossings this computes and logs
     /// nothing, because nothing changed and nothing was written. Behaviour stays A→B —
-    /// the moodlets are the DECISION CONTEXT the successor action stream reads.
+    /// the conditions are the DECISION CONTEXT the successor action stream reads.
     fn mind_needs(&mut self, bot: &Bot) {
         let Some(wolf) = self.wolf else { return };
         let Some(bundle) = &self.bundle else { return };
@@ -137,16 +137,16 @@ impl Wolves {
         // Evaluate — needs nothing but the row, the tic, and the corpus.
         let Some(now) = bot.now_tic() else { return };
         let needs = payload_needs(&payload);
-        let grants = resonantdust_codec::payload::payload_moodlets(&payload);
-        let active = needs_eval::active_moodlets(bundle, &needs, &grants, now);
+        let grants = resonantdust_codec::payload::payload_conditions(&payload);
+        let active = needs_eval::active_conditions(bundle, &needs, &grants, now);
         self.mood = needs_eval::mood(&active);
-        let ids: Vec<u16> = active.iter().map(|m| m.moodlet_id).collect();
+        let ids: Vec<u16> = active.iter().map(|m| m.condition_id).collect();
         if ids != self.active {
             let names: Vec<&str> =
-                ids.iter().filter_map(|&id| bundle.moodlet_name(id)).collect();
+                ids.iter().filter_map(|&id| bundle.condition_name(id)).collect();
             let next = needs_eval::next_crossing_tic(bundle, &needs, &grants, now);
-            tracing::info!(tic = now, moodlets = ?names, mood = self.mood, next_crossing = ?next,
-                           "moodlet band change");
+            tracing::info!(tic = now, conditions = ?names, mood = self.mood, next_crossing = ?next,
+                           "condition band change");
             self.active = ids;
         }
     }
