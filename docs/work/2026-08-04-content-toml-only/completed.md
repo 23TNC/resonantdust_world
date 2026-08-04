@@ -2,6 +2,39 @@
 
 _Dated evidence: what landed and how it was checked. Append chronologically._
 
+## 2026-08-04 · P4 — the gate, and the dialect stops being named (5/5)
+
+**`rd content-check`** reads the git INDEX rather than the loader, because `read_content_dir` is
+flat and TOML-only — a stray file is *invisible* to it, so it would never fail a build, it would
+just sit there accumulating company. Reading the index also gives the pre-commit hook the
+semantics it wants: a staged `content/x.json` is refused, an untracked scratch file is left alone.
+Verified in both directions and on the bypass: staged stray → named and refused with HEAD
+unmoved; clean tree → passes; `SKIP_DOCS_CHECK=1` → skips both checks together.
+
+**The wire key and the tool name stopped lying.** `bin/dsl` → `bin/content` ([F7](forks.md#f7)),
+19 log prefixes included. The `/content` payload key `rd` → `toml` ([F6](forks.md#f6)) across the
+edge, `contentBoot.ts` and `client/npc` in one commit — one server, one client, deployed
+together, so a dual-read window would have outlived its reason.
+
+That last one is proved end-to-end, not by grep. With the edge redeployed and the client running,
+I recoloured grass in `tiles.toml` and watched the world **repaint red with no reload**, then
+reverted and watched it go back. A broken key on either side would have thrown in
+`buildFromPayload` and left it green — the render is the assertion. `/content` serves
+`{version, toml}`; the rebuilt npc logs `def 0x30010070 speed 12 thirst 1`.
+
+**[I8](issues.md#i8) — the sweep found 7 edge worldgen tests dead**, red since `toml-content` P6
+deleted the dialect their fixtures are written in. That stream's green gate was `cargo check` plus
+the shared workspace's tests, and `server/edge`'s test binary was in neither: a `check` happily
+compiles a test that can never pass. Fixtures ported to TOML, 19/19 green. The absence of a
+repo-wide `cargo test` is recorded in the memory as a standing hazard — it is a bigger fix than
+this stream should make.
+
+Docs + memory: CONVENTIONS' `dev/` component list, two live falsehoods in VARIABLES (a
+`content/visual/things.rd` that no longer exists), `dsl-script-ported` rewritten as
+`content-script-ported`, `toml-content` marked superseded-in-part, `content-hot-update` and
+`art-script-ported` corrected, and a new `content-toml-only` memory. Past streams' `completed` /
+`todo` files keep their old paths deliberately — they record what was true then.
+
 ## 2026-08-04 · P3 — the deploy topology leaves `content/` (2/2)
 
 `content/servers/{alpha,claude,dev,test}` → `deploy/servers/`, as renames git tracked as renames.

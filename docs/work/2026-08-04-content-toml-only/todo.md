@@ -98,9 +98,13 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
       "the DSL" in `edge/{main,ws,connections,config,tex_manifest}` and `shared/wasm`. The sweep
       uncovered [I8](issues.md#i8): 7 edge worldgen tests dead since the dialect was deleted —
       fixtures ported to TOML, 19/19 green.
-- [ ] Truth pass: `docs/CONVENTIONS.md`'s "`.rd` content specs" line, `docs/README.md`,
+- [x] Truth pass: `docs/CONVENTIONS.md`'s "`.rd` content specs" line, `docs/README.md`,
       `bin/content`'s header, and the `art-script-ported` / `dsl-script-ported` / `content-hot-update`
-      memories. Acceptance: `bin/rd docs-check` green; no doc or memory names a live `.rd`.
+      memories. Acceptance: `bin/rd docs-check` green; no doc or memory names a live `.rd`. →
+      CONVENTIONS' `dev/` list + two live lies in VARIABLES; `dsl-script-ported` REWRITTEN as
+      `content-script-ported`, `toml-content` marked superseded-in-part, `content-hot-update` +
+      `art-script-ported` corrected, new `content-toml-only` memory + index rows. Past streams'
+      history files keep their old paths — editing them would falsify the record.
 
 ## P5 — one texture index (the destination, [F5](forks.md#f5))
 

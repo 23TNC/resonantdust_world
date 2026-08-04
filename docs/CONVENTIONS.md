@@ -18,7 +18,7 @@ entry too, because *how they change dictates how their consumers operate*.
 
 - **Groups** (mirrors the repo): `client/`, `server/`, `server/spacetime/modules`,
   `shared/`, and `dev/` (developer + gameplay: the scripts + specs + assets that are the
-  foundation of how we build — `rd`, `art`, `dsl`, the `.rd` content specs, sprite templates).
+  foundation of how we build — `rd`, `art`, `content`, the TOML corpus specs, sprite templates).
 - **Not components:** an **individual table** (the *module* that holds it is the component); a
   **build output** (`shared/pkg`, `shared/target`); a **piece of a component** (worldgen ⊂ edge).
 - **Cross-cutting concepts** are documented where they live, not minted as fake deployables — and

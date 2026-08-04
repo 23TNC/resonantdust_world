@@ -387,9 +387,9 @@ one not, drifting up to a unit and painting a halo around every sprite
 ([`work/2026-08-02-normal-frames`](work/2026-08-02-normal-frames/issues.md#i8)). Placement and
 sampling now both address the **frame**, which carries no rounding and is the rect the bake draws.
 
-The crop moved to atlas **ingest**, from a DSL-authored subframe
-([`work/2026-08-02-subframe-ingest`](work/2026-08-02-subframe-ingest/README.md)) — see the DSL
-variables below. The lane is reserved for the **anchor** (`u16 x | u16 y`, sixteenths of a unit),
+The crop moved to atlas **ingest**, from a corpus-authored subframe
+([`work/2026-08-02-subframe-ingest`](work/2026-08-02-subframe-ingest/README.md)) — see the
+subframe variables below. The lane is reserved for the **anchor** (`u16 x | u16 y`, sixteenths of a unit),
 which is what lets a prim's plan line sit on its art's feet rather than on its frame's bottom edge.
 
 **The two BLUE channels are NO LONGER the same layout** (z-positioning P0b). `definition_index` moved
@@ -415,7 +415,7 @@ construction rather than by tuning (work `2026-08-01-z-positioning`, F7).
 height is a *world* height, so `RecordSync` converts it on the way in — every reader downstream then
 compares like with like. The tilt enters in exactly two places: turning a **drawn extent** into a
 world elevation (`× sin(world_tilt)`, the factor `shadowGather.ts` used and
-`content/visual/things.rd` still documents), and `screen.z = tan(world_tilt) · unit.z`, which is a
+`content/things.toml` still documents), and `screen.z = tan(world_tilt) · unit.z`, which is a
 depth perpendicular to the screen used **only** for z-ordering, never as a height.
 `client/webgl/src/game/viewport/worldTilt.ts` is the one place the angle appears.
 
