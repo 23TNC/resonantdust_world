@@ -1,5 +1,14 @@
 # Completed — TOML content
 
+## 2026-08-04 · P7 — the cold boot (17/17 boxes; the user's eyes close the stream)
+
+Edge + master/orchestrator/worker + npc bounced together on the TOML-only tree: the npc
+re-resolved `def 0x30010070 speed 12 thirst 1` and re-adopted its wolf; the client
+cold-loaded the IDENTICAL forest at the fixture view; the golden gate's final run is
+3/3 green (the TOML corpus still byte-matches the frozen `.rd` fixture). What remains is
+the user's look — and the ongoing invariant is now the fixture itself: a deliberate
+content tune re-blesses with `BLESS_GOLDEN=1`; an accidental table drift fails the build.
+
 ## 2026-08-04 · P6 — the deletion + the rename (3/3)
 
 parser.rs, vm.rs, the hook/facet machinery, the `.rd` corpus, the converter, the `.rd`

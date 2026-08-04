@@ -23,11 +23,13 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P1 — the schema, documented before parsed
 
-- [ ] Write the TOML schema into `VARIABLES.md`: per-category tables, EXPLICIT `id` (F1), one
+- [x] Write the TOML schema into `VARIABLES.md`: per-category tables, EXPLICIT `id` (F1), one
       record per def (F6), biome rules with `gte`/`lt`/`lte` keys mirroring the ops (F3), needs
       bands, moodlets, materials, parts lists, subframes (per-variant/rotation), lights, packed
       channels. Acceptance: docs-check green; every field of every existing def has a documented
-      TOML spelling BEFORE the loader parses any of it.
+      TOML spelling BEFORE the loader parses any of it. → landed in `bd17a43d` (before P2 parsed
+      anything); later amended by the two gate-caught corrections (scale/sprite_scale split,
+      shadow lanes as numeric modes) — the schema follows the fixture, never the other way.
 
 ## P2 — the loader (same Bundle out)
 
@@ -125,6 +127,9 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P7 — the verdict
 
-- [ ] Cold-boot the stack on the TOML corpus + the drill set; **the user's eyes close the
+- [x] Cold-boot the stack on the TOML corpus + the drill set; **the user's eyes close the
       stream** on an identical-looking world. Acceptance: captures + the golden gate's final
-      run recorded in `completed.md`.
+      run recorded in `completed.md`. → edge + master/orch/worker + npc bounced together:
+      npc re-resolved `0x30010070`/12/thirst-1 and re-adopted its wolf; the client cold-loaded
+      the identical forest; the golden gate's final run 3/3 green. Evidence in completed.md;
+      **the user's look is the remaining close**.
