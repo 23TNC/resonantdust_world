@@ -41,10 +41,12 @@ tower-http = { version = "0.6", features = ["cors"] }
 # Content + texture serving from R2 (CONTENT_SOURCE / TEXTURE_SOURCE = r2): reqwest
 # GETs assets over short-lived SigV4-presigned URLs rusty-s3 builds (R2 is
 # S3-compatible), reusing the native-tls/openssl the SDK already links. Disk mode
-# uses neither. `url` is rusty-s3's endpoint type.
+# uses neither. `url` is rusty-s3's endpoint type; `percent-encoding` decodes the
+# object keys ListObjectsV2 returns (rusty-s3 asks for `encoding-type=url`).
 reqwest = "0.12"
 rusty-s3 = "0.5"
 url = "2"
+percent-encoding = "2"
 # On-demand texture derivation: downscale a master albedo into the requested
 # lower resolution (the half-res preview) instead of pre-baking. PNG-only, lean.
 image = { version = "0.25", default-features = false, features = ["png"] }

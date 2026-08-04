@@ -14,10 +14,10 @@ set -euo pipefail
 # CONSUMER: the world SERVER serves this corpus at GET /content (CONTENT_SOURCE=r2
 # pulls it from R2; disk mode reads the local tree). The client fetches it from the
 # server it logs into and hot-swaps on change. Set RD_SERVER=<url> to have
-# upload/reindex ping the server's /content/refresh (optional — it re-polls on its
-# own). Textures publish separately via bin/art.
+# upload ping the server's /content/refresh (optional — it re-polls on its own).
+# Textures publish separately via bin/art.
 #
-# Commands: upload / download / reindex / upload_file / download_file (see usage).
+# Commands: upload / download / upload_file / download_file (see usage).
 # Creds live in bin/keys/r2.env (gitignored); the rest is public config.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -253,10 +253,11 @@ cmd_upload() {
     done
     _upload_root_toml || return 1
     echo "dsl: uploaded *.toml + ${CONTENT_FOLDERS[*]} to s3://$R2_BUCKET/$R2_PREFIX/content/"
-    # A full upload pushed every local file, so it's safe to rewrite the index to
-    # match the tree exactly — this is the ONLY thing that prunes deleted files
-    # and registers new ones in bulk.
-    cmd_reindex || return 1
+    # No index to rewrite: the server LISTS the bucket prefix to learn its corpus
+    # (content-toml-only F4), so a new or renamed file registers itself and there
+    # is no second place to go stale. Deletions still need a manual R2 prune —
+    # upload is incremental and never deletes.
+    _refresh_server
     return
   fi
   local arg
@@ -338,51 +339,17 @@ cmd_download_file() {  # relpath
   echo "dsl: downloaded content/$rel"
 }
 
-# Regenerate content/manifest.json from the LOCAL content tree (the source of
-# truth) and upload it to R2. A future gate reads this index to learn its corpus
-# (it can't list a bucket). A BULK change (new/renamed/deleted .rd files) leaves
-# it stale until this runs. Lists every data/**.rd + visual/**.rd + biome/**.rd
-# as three arrays of paths relative to content/. Assumes the referenced files are
-# already in R2 (run `dsl upload` first, or use its built-in reindex).
-#
-# NOTE: no gate consumer reads this yet (content-serving is TODO) — this defines
-# the shape ahead of that reader.
-cmd_reindex() {
-  _r2_preflight || return 1
-  local content_dir="$REPO_ROOT/content"
-  local manifest="$content_dir/manifest.json"
-  python3 - "$content_dir" "$manifest" <<'PY'
-import json, glob, os, sys
-root, out = sys.argv[1], sys.argv[2]
-os.chdir(root)
-def rd_paths(folder):
-    return sorted(glob.glob(f'{folder}/**/*.rd', recursive=True))
-manifest = {folder: rd_paths(folder) for folder in ('data', 'visual', 'biome')}
-json.dump(manifest, open(out, 'w'), indent=2)
-open(out, 'a').write('\n')
-counts = ', '.join(f'{len(v)} {k}' for k, v in manifest.items())
-print(f"dsl: manifest.json — {counts}")
-PY
-  _r2_cp_up "$manifest" "$R2_PREFIX/content/manifest.json" || return 1
-  echo "dsl: wrote content/manifest.json and uploaded it to s3://$R2_BUCKET/$R2_PREFIX/content/manifest.json"
-  _refresh_server
-}
-
 usage() {
   cat >&2 <<EOF
 usage: dsl <command>
 
 commands:
   upload [arg…]       Sync content up to the Cloudflare R2 asset bucket via a
-                      dockerized aws-cli. With no arg, uploads all corpus folders
-                      (${CONTENT_FOLDERS[*]}) then reindexes. Incremental, never
-                      deletes. Each arg is either a folder (${CONTENT_FOLDERS[*]})
-                      or a single file path relative to content/ (anything with a
-                      '/', e.g. visual/tiles.rd) — file args route to upload_file.
-
-  reindex             Regenerate content/manifest.json from the LOCAL tree and
-                      upload it — the only thing that prunes deleted files +
-                      registers new ones in bulk. A full \`upload\` runs this too.
+                      dockerized aws-cli. With no arg, uploads the root *.toml
+                      corpus and all corpus folders (${CONTENT_FOLDERS[*]}).
+                      Incremental, never deletes. Each arg is either a folder
+                      (${CONTENT_FOLDERS[*]}) or a single file path relative to
+                      content/ (anything with a '/') — routed to upload_file.
 
   download [arg…]     Pull content from R2 down into content/, OVERWRITING the
                       local copy (folder mirror deletes local files absent on
@@ -399,9 +366,10 @@ commands:
 
 R2 keys are namespaced under $R2_PREFIX/content/. Needs S3 creds in
 bin/keys/r2.env (gitignored). The world SERVER serves this corpus at GET /content
-and re-polls its source periodically; set RD_SERVER=<url> to have upload/reindex
-POST /content/refresh so an R2-backed server re-reads immediately (optional — it
-re-polls on its own otherwise).
+and re-polls its source periodically; set RD_SERVER=<url> to have upload POST
+/content/refresh so an R2-backed server re-reads immediately (optional — it
+re-polls on its own otherwise). The server LISTS the bucket prefix to learn its
+corpus, so there is no index to regenerate.
 EOF
 }
 
@@ -410,7 +378,6 @@ main() {
   shift || true
   case "$cmd" in
     upload) cmd_upload "$@" ;;
-    reindex) cmd_reindex "$@" ;;
     download) cmd_download "$@" ;;
     upload_file) cmd_upload_file "$@" ;;
     download_file) cmd_download_file "$@" ;;

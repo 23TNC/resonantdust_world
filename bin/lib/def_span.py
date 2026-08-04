@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Resolve a texture stem's FRAME SPAN in tiles from the DSL corpus.
+"""Resolve a texture stem's FRAME SPAN in tiles from the TOML corpus.
 
 The span is what decides the pow2 square a leaf packs into (`span * TILE_PX`), and the corpus is
-where it is authored — `content/**/*.rd`, as `<n> &thing.span set` inside the def that also names
-the texture with `"<stem> &thing.texture set`. This module only READS it. Nothing here may become a
+where it is authored — `content/things.toml`, as `span = <n>` inside the `[[thing.part]]` that also
+names the texture with `texture = "<stem>"`. This module only READS it. Nothing here may become a
 second place to author a span; see the stream's F1.
 
 Two traps this deliberately avoids:
@@ -19,18 +19,30 @@ Two traps this deliberately avoids:
 rounds UP to the next pow2 and reports when it had to — better a too-large frame than a fractional
 px-per-unit.
 
+**Why a hand-rolled reader.** The host runs Python 3.10, which predates `tomllib`, and `bin/` tools
+must work on a bare checkout with no pip installs. So this walks the corpus line by line, tracking
+which TOML table it is inside, and reads three keys out of `[[thing.part]]`. It is NOT a TOML
+parser and must not grow into one — if it ever needs more than these keys, call the real loader.
+The one hard rule it enforces is [I4](../../docs/work/2026-08-04-content-toml-only/issues.md): an
+empty result is a LOUD error, never a silent zero. The old `.rd` reader failed silently for a whole
+migration and cost every freshly mastered leaf its span stamp.
+
   python3 bin/lib/def_span.py biome-thing/default/conifer   # -> 2
   python3 bin/lib/def_span.py --all                          # every stem it can resolve
 """
-import argparse, glob, os, re, sys
+import argparse, os, re, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.environ.get("RD_REPO_ROOT") or os.path.abspath(os.path.join(HERE, "..", ".."))
 
-DEF_RE = re.compile(r'^\s*::([\w-]+)>')
-TEX_RE = re.compile(r'"([\w/.-]+)\s+&thing\.texture set')
-SPAN_RE = re.compile(r'([\d.]+)\s+&thing\.span set')
-FOOT_RE = re.compile(r'([\d.]+)\s+&thing\.footprint\.([wh]) set')
+# A TOML table header: `[[thing]]`, `[[thing.part]]`, `[thing.part.subframe]`. Captures the dotted
+# path so nested tables (subframes carry their own `x`/`w` keys) never leak into a part's fields.
+TABLE_RE = re.compile(r'^\s*\[\[?([\w.]+)\]?\]')
+STR_RE = re.compile(r'^\s*(\w+)\s*=\s*"([^"]*)"')
+NUM_RE = re.compile(r'^\s*(\w+)\s*=\s*([\d.]+)\s*$')
+# `footprint = { w = 1.0, h = 2.0 }` — an inline table, the only one this reads.
+FOOT_RE = re.compile(r'^\s*footprint\s*=\s*\{([^}]*)\}')
+FOOT_KV_RE = re.compile(r'(\w+)\s*=\s*([\d.]+)')
 
 
 def next_pow2(n):
@@ -40,37 +52,70 @@ def next_pow2(n):
     return p
 
 
-def scan(root=None):
-    """{texture_stem: {'def','span','span_authored','footprint','file'}} for every def naming a texture."""
-    root = root or os.path.join(REPO, "content")
+def scan(path=None):
+    """{texture_stem: {'def','span_authored','footprint','file'}} for every part naming a texture.
+
+    Keyed by stem, so two parts of one thing sharing a texture (the human's body + head) collapse to
+    one row. When they disagree on `span` the LARGER wins — an undersized frame crops the art, an
+    oversized one only wastes texels.
+    """
+    path = path or os.path.join(REPO, "content", "things.toml")
     out = {}
-    for path in sorted(glob.glob(os.path.join(root, "**", "*.rd"), recursive=True)):
-        cur, blocks = None, {}
-        for line in open(path):
-            m = DEF_RE.match(line)
-            if m:
-                cur = m.group(1)
-                blocks.setdefault(cur, {"def": cur, "file": os.path.relpath(path, REPO),
-                                        "footprint": [1.0, 1.0]})
-            if cur is None:
-                continue
-            b = blocks[cur]
-            t = TEX_RE.search(line)
-            if t:
-                b["texture"] = t.group(1)
-            s = SPAN_RE.search(line)
-            if s:
-                b["span_authored"] = float(s.group(1))
-            f = FOOT_RE.search(line)
-            if f:
-                b["footprint"][0 if f.group(2) == "w" else 1] = float(f.group(1))
-        for b in blocks.values():
-            stem = b.get("texture")
+    for thing_def, parts in _things(path):
+        for p in parts:
+            stem = p.get("texture")
             # `white` is the flat placeholder, not a texture tree path — it has no leaf to size.
             if not stem or stem == "white":
                 continue
-            out[stem] = b
+            row = out.setdefault(
+                stem,
+                {"def": thing_def, "file": os.path.relpath(path, REPO), "footprint": p["footprint"]},
+            )
+            span = p.get("span_authored")
+            if span is not None:
+                row["span_authored"] = max(row.get("span_authored", 0.0), span)
+    if not out:
+        raise SystemExit(
+            f"def_span: {os.path.relpath(path, REPO)} yielded no texture-bearing defs — "
+            "the corpus moved or this reader is stale (see content-toml-only I4)"
+        )
     return out
+
+
+def _things(path):
+    """[(thing_name, [part, …]), …] — the corpus grouped, with subframe tables skipped."""
+    things, table, cur = [], None, None
+    with open(path) as fh:
+        for line in fh:
+            m = TABLE_RE.match(line)
+            if m:
+                table = m.group(1)
+                if table == "thing":
+                    cur = ["?", []]
+                    things.append(cur)
+                elif table == "thing.part" and cur is not None:
+                    cur[1].append({"footprint": [1.0, 1.0]})
+                continue
+            if cur is None:
+                continue
+            if table == "thing":
+                s = STR_RE.match(line)
+                if s and s.group(1) == "name":
+                    cur[0] = s.group(2)
+            elif table == "thing.part" and cur[1]:
+                part = cur[1][-1]
+                s = STR_RE.match(line)
+                if s and s.group(1) == "texture":
+                    part["texture"] = s.group(2)
+                n = NUM_RE.match(line)
+                if n and n.group(1) == "span":
+                    part["span_authored"] = float(n.group(2))
+                f = FOOT_RE.match(line)
+                if f:
+                    for k, v in FOOT_KV_RE.findall(f.group(1)):
+                        if k in ("w", "h"):
+                            part["footprint"][0 if k == "w" else 1] = float(v)
+    return [(name, parts) for name, parts in things]
 
 
 def span_for(stem, table=None):

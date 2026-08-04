@@ -1,4 +1,4 @@
-//! Content serving — the gateway pulls the DSL corpus from a source (local disk
+//! Content serving — the gateway pulls the TOML corpus from a source (local disk
 //! in dev, Cloudflare R2 when deployed), caches it in memory, and hands it to
 //! clients over `GET /content`. This is the runtime alternative to the client
 //! embedding the corpus at build time: the gateway is the one place that holds
@@ -12,11 +12,11 @@
 //! `/content` and hot-swaps — no reload. `POST /content/refresh` forces the poll
 //! immediately (so `dsl upload` can ping the gate).
 //!
-//! **What's served.** The `data` + `visual` + `material` facets — the client's `Content`
-//! bundle. `biome` is server-only worldgen and is never sent to clients. Sources
-//! are ordered **data first, then visual, then material**, matching the world server's
-//! `read_content_dir`, so tile / thing def-ids agree on both sides by
-//! construction.
+//! **What's served.** Every root `content/*.toml` except `biomes.toml`, sorted — the
+//! client's `Content` bundle. Biomes are server-only worldgen and are never sent to
+//! clients. Both sources ([`load_disk`], [`content_keys`]) apply that one rule, so the
+//! served corpus is identical whether it came off disk or out of the bucket. Def ids are
+//! explicit in the TOML, so load order carries no id meaning.
 
 use crate::lock::RwRecover;
 use std::io;
@@ -24,18 +24,18 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-/// Ordered `(name, text)` source pairs — data facets first, then visual. `name`
-/// is the path relative to `content/` (e.g. `"visual/tiles.rd"`), used for the
-/// version basename and passed through to the client for error messages.
+/// Ordered `(name, text)` source pairs, sorted by name. `name` is the corpus basename
+/// (e.g. `"tiles.toml"`), used for the version fingerprint and passed through to the
+/// client for error messages.
 type Sources = Vec<(String, String)>;
 
 /// Where the gateway reads the corpus from.
 pub enum ContentSource {
     /// A local content directory (dev — the bind-mounted `content/`). Reads
-    /// top-level `data/*.rd` then `visual/*.rd`.
+    /// top-level `*.toml`, sorted.
     Disk(PathBuf),
-    /// The Cloudflare R2 asset bucket (deployed). Reads `manifest.json`, then
-    /// each `data` / `visual` key it lists.
+    /// The Cloudflare R2 asset bucket (deployed). Lists `<prefix>/content/` and
+    /// reads every root `*.toml` key it holds — the bucket is its own index.
     R2(R2Config),
 }
 
@@ -70,13 +70,13 @@ impl ContentSource {
     }
 }
 
-/// Read the served corpus from a content dir.
+/// Read the served corpus from a content dir: top-level `*.toml`, sorted, minus
+/// `biomes.toml` (server-only worldgen; ids are explicit, so serving order carries no id
+/// meaning).
 ///
-/// **TOML wins** (toml-content P5): top-level `content/*.toml` (sorted) is THE corpus
-/// when any exist — clients get everything except `biomes.toml` (server-only worldgen;
-/// ids are explicit so serving order carries no id meaning). The legacy `.rd` facet walk
-/// (`data` → `visual` → `material`, data first so def-ids match; `biome` skipped) remains
-/// as the fallback until the cutover deletes it.
+/// Root-only and TOML-only, matching [`content_keys`] on the R2 side. The `.rd` facet walk
+/// (`data` → `visual` → `material`) that used to sit under this as a fallback was a fourth
+/// private copy of the content walk and died with the dialect (content-toml-only I5).
 fn load_disk(root: &Path) -> io::Result<Sources> {
     let mut toml: Vec<PathBuf> = std::fs::read_dir(root)?
         .filter_map(Result::ok)
@@ -84,75 +84,111 @@ fn load_disk(root: &Path) -> io::Result<Sources> {
         .filter(|p| p.extension().is_some_and(|x| x == "toml"))
         .filter(|p| p.file_name().is_some_and(|n| n != "biomes.toml"))
         .collect();
-    if !toml.is_empty() {
-        toml.sort();
-        let mut out = Sources::new();
-        for path in toml {
-            let text = std::fs::read_to_string(&path)?;
-            let file = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
-            out.push((file.to_string(), text));
-        }
-        return Ok(out);
-    }
+    toml.sort();
     let mut out = Sources::new();
-    for facet in ["data", "visual", "material"] {
-        let dir = root.join(facet);
-        if !dir.is_dir() {
-            continue;
-        }
-        let mut entries: Vec<PathBuf> = std::fs::read_dir(&dir)?
-            .filter_map(Result::ok)
-            .map(|e| e.path())
-            .filter(|p| p.extension().is_some_and(|x| x == "rd"))
-            .collect();
-        entries.sort();
-        for path in entries {
-            let text = std::fs::read_to_string(&path)?;
-            let file = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
-            out.push((format!("{facet}/{file}"), text));
-        }
+    for path in toml {
+        let text = std::fs::read_to_string(&path)?;
+        let file = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
+        out.push((file.to_string(), text));
     }
     Ok(out)
 }
 
-/// The R2 `manifest.json` index (`bin/dsl reindex`). Only the client facets are
-/// deserialized; `biome` is intentionally ignored (server-only worldgen). `material` is
-/// the client-side render registry (defaults empty for a manifest predating it).
-#[derive(serde::Deserialize, Default)]
-struct Manifest {
-    #[serde(default)]
-    data: Vec<String>,
-    #[serde(default)]
-    visual: Vec<String>,
-    #[serde(default)]
-    material: Vec<String>,
+/// Reduce raw bucket keys to the served corpus: strip the `<prefix>/content/` prefix,
+/// keep root-level `*.toml` only, drop `biomes.toml`, sort. **The bucket is the index**
+/// (content-toml-only F4) — there is no manifest file to go stale, so this must apply
+/// exactly `load_disk`'s rules or the two sources would serve different corpora.
+///
+/// Keys arriving from a subdirectory are dropped rather than flattened: the disk walk is
+/// root-only, and a nested key would collide with a root basename in the fingerprint
+/// (which hashes basenames, not paths).
+fn content_keys(keys: &[String], key_prefix: &str) -> Vec<String> {
+    let mut names: Vec<String> = keys
+        .iter()
+        .filter_map(|k| k.strip_prefix(key_prefix))
+        .filter(|rel| !rel.contains('/') && rel.ends_with(".toml") && *rel != "biomes.toml")
+        .map(str::to_string)
+        .collect();
+    names.sort();
+    names
 }
 
-/// Fetch `manifest.json` from R2, then each `data` + `visual` + `material` key it
-/// lists (data first, preserving the manifest's sorted order). Keys are resolved under
-/// `<prefix>/content/`.
+/// List `<prefix>/content/` and fetch every corpus key it holds. R2 is S3-compatible, so
+/// `ListObjectsV2` over the prefix makes the bucket self-describing — the old
+/// `manifest.json` index listed five `.rd` keys deleted by `toml-content` P6 and broke
+/// this path silently (I2). Paginated, because correctness costs one loop.
 async fn load_r2(cfg: &R2Config) -> Result<Sources, String> {
-    let manifest_text = r2_get_text(cfg, "manifest.json").await?;
-    let manifest: Manifest =
-        serde_json::from_str(&manifest_text).map_err(|e| format!("parse manifest.json: {e}"))?;
+    let key_prefix = format!("{}/content/", cfg.prefix);
+    let keys = r2_list_keys(cfg, &key_prefix).await?;
     let mut out = Sources::new();
-    for key in manifest.data.iter().chain(manifest.visual.iter()).chain(manifest.material.iter()) {
-        let text = r2_get_text(cfg, key).await?;
-        out.push((key.clone(), text));
+    for name in content_keys(&keys, &key_prefix) {
+        let text = r2_get_text(cfg, &name).await?;
+        out.push((name, text));
+    }
+    if out.is_empty() {
+        return Err(format!("R2 LIST {key_prefix}: no *.toml corpus keys"));
     }
     Ok(out)
 }
 
-/// GET one object's text from R2 at `<prefix>/content/<rel>` via a short-lived
-/// SigV4-presigned URL (R2 is S3-compatible). `rel` is `"manifest.json"` or a
-/// manifest key like `"visual/tiles.rd"`.
-async fn r2_get_text(cfg: &R2Config, rel: &str) -> Result<String, String> {
-    use rusty_s3::{Bucket, Credentials, S3Action, UrlStyle};
+/// Every object key under `key_prefix`, following continuation tokens. Keys come back
+/// percent-encoded (`rusty-s3` sets `encoding-type=url`), so each is decoded before it
+/// reaches the caller.
+async fn r2_list_keys(cfg: &R2Config, key_prefix: &str) -> Result<Vec<String>, String> {
+    use rusty_s3::S3Action;
+    use rusty_s3::actions::ListObjectsV2;
+
+    let (bucket, creds) = r2_bucket(cfg)?;
+    let mut keys = Vec::new();
+    let mut token: Option<String> = None;
+    loop {
+        let mut action = bucket.list_objects_v2(Some(&creds));
+        action.with_prefix(key_prefix.to_string());
+        if let Some(t) = &token {
+            action.with_continuation_token(t.clone());
+        }
+        let signed = action.sign(Duration::from_secs(60));
+        let body = reqwest::get(signed)
+            .await
+            .map_err(|e| format!("R2 LIST {key_prefix}: {e}"))?
+            .error_for_status()
+            .map_err(|e| format!("R2 LIST {key_prefix}: {e}"))?
+            .text()
+            .await
+            .map_err(|e| format!("R2 LIST {key_prefix} body: {e}"))?;
+        let parsed = ListObjectsV2::parse_response(&body)
+            .map_err(|e| format!("R2 LIST {key_prefix} parse: {e}"))?;
+        for c in &parsed.contents {
+            keys.push(
+                percent_encoding::percent_decode_str(&c.key).decode_utf8_lossy().into_owned(),
+            );
+        }
+        match parsed.next_continuation_token {
+            Some(t) => token = Some(t),
+            None => break,
+        }
+    }
+    Ok(keys)
+}
+
+/// The signing pair both R2 actions need.
+fn r2_bucket(cfg: &R2Config) -> Result<(rusty_s3::Bucket, rusty_s3::Credentials), String> {
+    use rusty_s3::{Bucket, Credentials, UrlStyle};
 
     let base = url::Url::parse(&cfg.endpoint).map_err(|e| format!("bad R2 endpoint: {e}"))?;
     let bucket = Bucket::new(base, UrlStyle::Path, cfg.bucket.clone(), cfg.region.clone())
         .map_err(|e| format!("R2 bucket: {e}"))?;
     let creds = Credentials::new(cfg.access_key.clone(), cfg.secret_key.clone());
+    Ok((bucket, creds))
+}
+
+/// GET one object's text from R2 at `<prefix>/content/<rel>` via a short-lived
+/// SigV4-presigned URL (R2 is S3-compatible). `rel` is a corpus basename like
+/// `"tiles.toml"`.
+async fn r2_get_text(cfg: &R2Config, rel: &str) -> Result<String, String> {
+    use rusty_s3::S3Action;
+
+    let (bucket, creds) = r2_bucket(cfg)?;
     let key = format!("{}/content/{}", cfg.prefix, rel);
 
     let action = bucket.get_object(Some(&creds), &key);
@@ -167,7 +203,7 @@ async fn r2_get_text(cfg: &R2Config, rel: &str) -> Result<String, String> {
 
 /// A deterministic corpus fingerprint — FNV-1a over each source's `basename` and
 /// `text` (separated by NULs), in load order. No paths or timestamps, so it's
-/// identical across machines and moves iff a served `.rd` file's name or bytes
+/// identical across machines and moves iff a served corpus file's name or bytes
 /// change. The same hash the old game used, so the semantics carry over.
 fn content_version(sources: &Sources) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325; // FNV-1a offset basis
@@ -278,55 +314,80 @@ mod tests {
 
     #[test]
     fn version_is_deterministic_and_sensitive() {
-        let a = srcs(&[("data/tiles.rd", "grass"), ("visual/tiles.rd", "#fff")]);
+        let a = srcs(&[("things.toml", "grass"), ("tiles.toml", "#fff")]);
         assert_eq!(content_version(&a), content_version(&a), "same corpus → same hash");
 
         // a text change moves the fingerprint
-        let b = srcs(&[("data/tiles.rd", "grass"), ("visual/tiles.rd", "#000")]);
+        let b = srcs(&[("things.toml", "grass"), ("tiles.toml", "#000")]);
         assert_ne!(content_version(&a), content_version(&b));
 
-        // order matters (data before visual is part of the identity)
-        let c = srcs(&[("visual/tiles.rd", "#fff"), ("data/tiles.rd", "grass")]);
+        // order matters — it is part of the corpus identity
+        let c = srcs(&[("tiles.toml", "#fff"), ("things.toml", "grass")]);
         assert_ne!(content_version(&a), content_version(&c));
     }
 
     #[test]
     fn version_uses_basename_not_path() {
-        // Disk and R2 name the same file differently only by directory depth
-        // above the facet; the fingerprint keys on the basename so both agree.
-        let disk = srcs(&[("visual/tiles.rd", "#fff")]);
-        let same = srcs(&[("visual/tiles.rd", "#fff")]);
-        assert_eq!(content_version(&disk), content_version(&same));
+        // Disk serves bare basenames and R2 strips its key prefix to the same, so the
+        // two sources agree by construction; the basename keying makes that explicit.
+        let disk = srcs(&[("tiles.toml", "#fff")]);
+        let keyed = srcs(&[("some/prefix/tiles.toml", "#fff")]);
+        assert_eq!(content_version(&disk), content_version(&keyed));
     }
 
     #[test]
     fn snapshot_payload_shape() {
-        let snap = build_snapshot(&srcs(&[("data/tiles.rd", "grass")]));
+        let snap = build_snapshot(&srcs(&[("tiles.toml", "grass")]));
         let v: serde_json::Value = serde_json::from_str(&snap.payload_json).unwrap();
         assert_eq!(v["version"], format!("{:016x}", snap.version));
-        assert_eq!(v["rd"][0][0], "data/tiles.rd");
+        assert_eq!(v["rd"][0][0], "tiles.toml");
         assert_eq!(v["rd"][0][1], "grass");
     }
 
     #[test]
-    fn load_disk_reads_data_then_visual_sorted() {
+    fn content_keys_keeps_root_toml_only() {
+        // What a real bucket listing looks like after `toml-content`: the corpus, the
+        // server-only biome file, the art manifests bin/dsl used to push, and the dead
+        // index. Only root `*.toml` minus `biomes.toml` is the served corpus.
+        let keys: Vec<String> = [
+            "rd/content/tiles.toml",
+            "rd/content/things.toml",
+            "rd/content/materials.toml",
+            "rd/content/needs.toml",
+            "rd/content/biomes.toml",     // server-only worldgen — never served
+            "rd/content/manifest.json",   // the index this stream deleted
+            "rd/content/visual/tiles.rd", // a dead dialect, still in the bucket
+            "rd/content/visual/x.toml",   // nested: the disk walk is root-only
+            "rd/textures/wolf/albedo.png", // outside the prefix entirely
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+
+        let got = content_keys(&keys, "rd/content/");
+        assert_eq!(got, ["materials.toml", "needs.toml", "things.toml", "tiles.toml"]);
+    }
+
+    #[test]
+    fn load_disk_reads_root_toml_sorted() {
         let dir = std::env::temp_dir().join(format!("gw-content-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        for (facet, file, body) in [
-            ("data", "tiles.rd", "d-tiles"),
-            ("data", "things.rd", "d-things"),
-            ("visual", "tiles.rd", "v-tiles"),
-            ("biome", "biomes.rd", "should-be-skipped"),
+        std::fs::create_dir_all(&dir).unwrap();
+        for (file, body) in [
+            ("tiles.toml", "t"),
+            ("things.toml", "th"),
+            ("biomes.toml", "should-be-skipped"), // server-only worldgen
+            ("manifest.json", "not-corpus"),
         ] {
-            let fdir = dir.join(facet);
-            std::fs::create_dir_all(&fdir).unwrap();
-            std::fs::write(fdir.join(file), body).unwrap();
+            std::fs::write(dir.join(file), body).unwrap();
         }
+        // A nested TOML is invisible: the walk is root-only, matching `content_keys`.
+        std::fs::create_dir_all(dir.join("visual")).unwrap();
+        std::fs::write(dir.join("visual/nested.toml"), "nope").unwrap();
+
         let got = load_disk(&dir).unwrap();
-        // data (sorted: things, tiles) then visual; biome excluded.
         let names: Vec<&str> = got.iter().map(|(n, _)| n.as_str()).collect();
-        assert_eq!(names, ["data/things.rd", "data/tiles.rd", "visual/tiles.rd"]);
-        assert!(!got.iter().any(|(n, _)| n.starts_with("biome/")));
+        assert_eq!(names, ["things.toml", "tiles.toml"]);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }
