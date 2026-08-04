@@ -176,3 +176,20 @@ This makes **"same id ⇒ same behaviour"** the invariant, which is precisely wh
 statement about simulation fields, not pixels. A re-master already propagates through the texture
 manifest's per-stem content hash without touching identity, so bumping there would mint an id per
 art tweak and burn kind space for nothing.
+
+## F13 — the packed layout is FROZEN {#f13}
+
+_2026-08-04, the user's ruling after I raised the variant ceiling twice._
+
+`definition_reference` and `type_reference` keep their current bit layouts. No field widens,
+narrows, or moves, and this stream touches no data structure.
+
+I read the u8 `variant` column in the table as headroom worth spending and proposed narrowing
+subtype to widen variant. That was wrong on the premise: the u8 is a **storage artifact** —
+SpacetimeDB cannot express a u4 column — not a design choice with slack in it.
+
+What survives is a plain constraint: 16 variants per (type, subType, kind), enforced loudly at
+allocation ([P2](todo.md)). `pawn/animal/wolf` is at 15. A kind that outgrows it splits.
+
+Rejected: `subtype:12→8, variant:4→8` and every other re-spend — a wire layout change with stored
+data behind it, proposed to buy headroom nothing has yet run out of.

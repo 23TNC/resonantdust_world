@@ -3,10 +3,9 @@
 _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decisions in
 [`forks.md`](forks.md), measurements in [`issues.md`](issues.md)._
 
-**Only [B2](blockers.md#b2) is still open** — the `variant_id:4` ceiling, with one kind already at
-15 of 16. B1 was withdrawn (my misreading), B3 and B4 are answered ([F11](forks.md#f11),
-[F12](forks.md#f12)). P0 runs now and its third item is what costs B2's options; P1 waits on the
-answer, because it writes a layout that stored data then depends on.
+**Unblocked** — every blocker is answered ([blockers.md](blockers.md)). The packed layout is
+FROZEN ([F13](forks.md#f13)): this stream changes no data structure. It authors the taxonomy, moves
+numbering to the registry, and leaves `definition_reference` exactly as it is.
 
 ## P0 — freeze what a def id means today
 
@@ -17,10 +16,10 @@ answer, because it writes a layout that stored data then depends on.
       Acceptance: two runs byte-identical; the fixture is what P4 replays to prove resolution
       through the registry yields the same ids for unchanged content.
 - [ ] Grep the corpus + code for every place a def id is STORED (zone kinds, pawn defs, payload
-      `PART` words, `cold_row`). Acceptance: the list names each table/field and its width, so B2's
-      layout choice can be costed against real stored data.
+      `PART` words, `cold_row`). Acceptance: the list names each table/field, so P4's re-point can
+      be checked against every reader of a stored id.
 
-## P1 — the schema, documented before parsed _(needs [B2](blockers.md#b2))_
+## P1 — the schema, documented before parsed
 
 - [ ] Write the taxonomy + applicability arrays into `VARIABLES.md` § TOML content schema
       ([F2](forks.md#f2)): `type`/`kind` scalars, `subType`/`variant` arrays, and `texture = "white"`
@@ -29,9 +28,9 @@ answer, because it writes a layout that stored data then depends on.
 - [ ] Write the registry ROW into `TABLES.md`: `u32 id, u32 version, string type/subType/kind/
       variant`, its keys, and its readers/writers. Acceptance: the doc names the unique key
       (4 strings + version) and the lookup index (4 strings → max version).
-- [ ] Record B2's layout answer in `VARIABLES.md` + `shared/codec` docs before any code moves —
-      including `type_reference` if subtype narrows. Acceptance: the doc's packed layout matches
-      what the codec will carry, and names every stored field that must be re-stamped.
+- [ ] Document the **16 variants per (type, subType, kind)** ceiling in `VARIABLES.md` beside the
+      packed layout ([F13](forks.md#f13)). Acceptance: the doc states the limit and that the layout
+      is unchanged; `pawn/animal/wolf` is named as the kind nearest it (15 of 16).
 
 ## P2 — the registry table + allocator
 
@@ -41,9 +40,9 @@ answer, because it writes a layout that stored data then depends on.
 - [ ] Allocate ids by burning `kind_id` per version ([F5](forks.md#f5)); `subType` ids stay stable
       across versions. Acceptance: a test bumps one kind's version and asserts the sibling kinds in
       that subType keep their ids.
-- [ ] Refuse allocation past a field's width (u12 kind; variant per B2). Acceptance: the reducer
-      errors loudly at the boundary; a test asserts one-past-the-last variant of a kind fails rather
-      than wrapping — the wolf is one slot from this today.
+- [ ] Refuse allocation past a field's width — u12 kind, u4 variant ([F13](forks.md#f13)).
+      Acceptance: the reducer errors loudly at the boundary; a test asserts a 17th variant of one
+      kind fails rather than wrapping. The wolf is one slot from this today.
 
 ## P3 — the loader: taxonomy in, cross-product out
 

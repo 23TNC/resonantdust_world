@@ -37,7 +37,7 @@ the concept. And the user's objection stands independently of today's call sites
 `pawn/animal` are a real distinction, and nothing can ask it without enumerating kinds unless the
 def carries it. **Subtype stays in the def** ([F10](forks.md#f10)).
 
-## I3 — `variant_id` is u4 (16 slots) and the wolf already holds 15 {#i3}
+## I3 — 16 variants per kind is the ceiling, and the wolf holds 15 {#i3}
 
 From the live art manifest:
 
@@ -46,12 +46,12 @@ pawn/animal/wolf var_variant:
   [1, 124, 125, 555, 777, 888, 7001, 7002, 8101, 8102, 8201, 8202, 8301, 8302, 1682748910]   → 15
 ```
 
-Those are the art tree's variant **labels**, not slots — one is ten digits. The registry handles that
-(`string variant` in the row, u4 slot in the id), so labels are free. What is not free is the
-**count**: `VARIANTS_PER_DEF = 16` and one kind is at 15 of 16 **today**. This is a live ceiling, not
-a future one. With subtype STAYING in the def ([F10](forks.md#f10)), widening variant means
-narrowing another field rather than reclaiming a dead one — see [B2](blockers.md#b2), which is now
-the only open schema question.
+Those are the art tree's variant **labels**, not slots — one is ten digits. The registry handles
+that: the label lives as `string variant` in the row, the id carries the u4 slot.
+
+`variant_id` is u4, so **16 variants per (type, subType, kind)**, and the wolf has one slot left.
+Recorded as a constraint the allocator enforces ([P2](todo.md)), not as a problem to solve — the
+packed layout does not change ([B2](blockers.md#b2)). A kind that outgrows 16 splits into more kinds.
 
 ## I4 — the taxonomy IS uniform; the stems are prefixes of varying depth {#i4}
 

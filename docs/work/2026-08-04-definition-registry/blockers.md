@@ -1,37 +1,24 @@
 # Blockers — definition registry
 
-_Things that genuinely need the user. A decision I can make is a [fork](forks.md), not a blocker.
-Every row here is a call whose answer changes the SCHEMA or the WIRE LAYOUT — get one wrong and the
-cost is stored data, not a refactor._
+_Things that genuinely need the user. A decision I can make is a [fork](forks.md), not a blocker._
 
-## B2 — `variant_id` is u4 and one kind already holds 15 of 16 (OPEN) {#b2}
+**All resolved as of 2026-08-04 — the stream is unblocked.**
 
-_Opened 2026-08-04; narrowed the same day once [F10](forks.md#f10) settled subtype. Blocks P1
-(the schema). Irreversible once ids are stored._
+## B2 — the packed layout — ✅ RESOLVED: it does not change {#b2}
 
-`pawn/animal/wolf` has **15 variants today** against a `variant_id:4` field with 16 slots
-([I3](issues.md#i3)). The labels are fine — they live as `string variant` in the registry row, and
-the id carries only the slot. The **count** is the problem, and it is live rather than theoretical.
+_2026-08-04, the user, after I raised it twice._
 
-My earlier framing offered a free fix — drop the "unused" subtype half. [F10](forks.md#f10) killed
-that, correctly, so widening variant now means **narrowing another field**, and every option is a
-stored-data layout change:
+> "We are not changing our data structures. I stuffed a u4 into a u8 in our table because we cannot
+> assign a u4 table. That's it."
 
-| Option | Layout | Buys | Costs |
-|---|---|---|---|
-| leave it | `type:4 \| subtype:12 \| kind:12 \| variant:4` | nothing moves | one more wolf variant and we are stuck |
-| narrow subtype | `type:4 \| subtype:8 \| kind:12 \| variant:8` | 256 variants, kind untouched | 256 subtypes (biomes + species) instead of 4096; `type_reference` (the u16 cold-row header) changes shape |
-| narrow both | `type:4 \| subtype:8 \| kind:12 \| variant:8` … or `type:3` | more headroom | `type:3` caps types at 8 and they are structural |
-| widen the word | `u64 definition_reference` | everything | every stored def, every packed record lane, the u16 half-split |
+`definition_reference` keeps `type_id:4 | subtype_id:12 | kind_id:12 | variant_id:4`, and
+`type_reference` keeps `type_id:4 | subtype_id:12`. **No field widens, narrows, or moves.** The u8
+column in the table is a storage artifact — SpacetimeDB has no u4 — and carries no design signal.
 
-**My recommendation: narrow subtype to u8, widen variant to u8.** Versioning burns *kind*
-([F5](forks.md#f5)), so kind is the field that must stay big — subtype only ever holds real biomes
-and species, where 256 is generous and 4096 is speculative. It keeps the 32-bit word and the u16
-half-split, and it quadruples the axis that is actually full.
-
-**Why it needs you**: it changes `type_reference = type_id:4 | subtype_id:12`, the *shared* cold-row
-header, not just the def word. That is a wire layout with stored data behind it, and P0's third item
-exists to cost exactly this before it is chosen.
+The consequence, recorded as a constraint rather than a problem: **16 variants per
+(type, subType, kind)**. `pawn/animal/wolf` holds 15 ([I3](issues.md#i3)), so it has one slot left.
+That is an authoring limit the allocator enforces loudly ([P2](todo.md)); a kind that needs more art
+splits into more kinds. This stream does not touch the wire.
 
 ## B1 — the four-segment stems and `white` — ✅ RESOLVED (withdrawn, my error) {#b1}
 
