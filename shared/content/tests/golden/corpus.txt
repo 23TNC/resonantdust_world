@@ -24,7 +24,7 @@ pineneedle
 bark
 == needs ==
 thirst
-== moodlets ==
+== conditions ==
 thirsty
 dehydrated
 quenched
@@ -149,31 +149,31 @@ pawn/human/male
         deplete: 21600.0,
         bands: [
             NeedBand {
-                moodlet: "thirsty",
+                condition: "thirsty",
                 lo: 0.1,
                 hi: 0.35,
             },
             NeedBand {
-                moodlet: "dehydrated",
+                condition: "dehydrated",
                 lo: 0.0,
                 hi: 0.1,
             },
         ],
     },
 ]
-== moodlet_params ==
+== condition_params ==
 [
-    MoodletParams {
+    ConditionParams {
         label: "Thirsty",
         mood: -0.15,
         duration: 0.0,
     },
-    MoodletParams {
+    ConditionParams {
         label: "Dehydrated",
         mood: -0.4,
         duration: 0.0,
     },
-    MoodletParams {
+    ConditionParams {
         label: "Quenched",
         mood: 0.2,
         duration: 3600.0,

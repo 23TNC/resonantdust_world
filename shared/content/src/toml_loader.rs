@@ -8,7 +8,7 @@
 
 use crate::loader::{
   BiomeBody, BiomeDef, BiomeRules, Bundle, Cmp, DirFrame, LightParts, LoadError, MaterialParams,
-  MoodletParams, NeedBand, NeedParams, PackedChannel, ThingDef, TileDef, VisualPart, VisualParts,
+  ConditionParams, NeedBand, NeedParams, PackedChannel, ThingDef, TileDef, VisualPart, VisualParts,
   NEEDS_PER_KIND, ROTATIONS_PER_DEF, VARIANTS_PER_DEF,
 };
 use serde::Deserialize;
@@ -30,7 +30,7 @@ struct Corpus {
   #[serde(default)]
   need: Vec<NeedToml>,
   #[serde(default)]
-  moodlet: Vec<MoodletToml>,
+  condition: Vec<ConditionToml>,
 }
 
 #[derive(Deserialize)]
@@ -283,7 +283,7 @@ struct NeedToml {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct BandToml {
-  moodlet: String,
+  condition: String,
   #[serde(default)]
   lo: f64,
   hi: f64,
@@ -291,7 +291,7 @@ struct BandToml {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct MoodletToml {
+struct ConditionToml {
   id: u16,
   name: String,
   #[serde(default)]
@@ -317,7 +317,7 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
         all.biome.extend(c.biome);
         all.material.extend(c.material);
         all.need.extend(c.need);
-        all.moodlet.extend(c.moodlet);
+        all.condition.extend(c.condition);
       }
       Err(e) => errors.push(LoadError { file: name.clone(), message: format!("toml: {e}") }),
     }
@@ -328,11 +328,11 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
 
   let mut b = Bundle::default();
 
-  // Registries with the id law. Materials/needs/moodlets first — visuals and
+  // Registries with the id law. Materials/needs/conditions first — visuals and
   // `needs = [...]` resolve names against them.
   let materials = place(&all.material, "material", |m| (m.id, m.name.clone()), &mut errors);
   let needs_slots = place(&all.need, "need", |n| (n.id, n.name.clone()), &mut errors);
-  let moodlet_slots = place(&all.moodlet, "moodlet", |m| (m.id, m.name.clone()), &mut errors);
+  let condition_slots = place(&all.condition, "condition", |m| (m.id, m.name.clone()), &mut errors);
   let tiles = place(&all.tile, "tile", |t| (t.id, t.name.clone()), &mut errors);
   let things = place(&all.thing, "thing", |t| (t.id, t.name.clone()), &mut errors);
   if !errors.is_empty() {
@@ -365,22 +365,22 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
         bands: n
           .band
           .iter()
-          .map(|band| NeedBand { moodlet: band.moodlet.clone(), lo: band.lo, hi: band.hi })
+          .map(|band| NeedBand { condition: band.condition.clone(), lo: band.lo, hi: band.hi })
           .collect(),
       }),
       None => (String::new(), NeedParams { label: String::new(), deplete: 0.0, bands: Vec::new() }),
     })
     .collect();
 
-  b.moodlets = moodlet_slots
+  b.conditions = condition_slots
     .iter()
     .map(|slot| match slot {
-      Some(m) => (m.name.clone(), MoodletParams {
+      Some(m) => (m.name.clone(), ConditionParams {
         label: m.label.clone().unwrap_or_else(|| m.name.clone()),
         mood: m.mood,
         duration: m.duration,
       }),
-      None => (String::new(), MoodletParams { label: String::new(), mood: 0.0, duration: 0.0 }),
+      None => (String::new(), ConditionParams { label: String::new(), mood: 0.0, duration: 0.0 }),
     })
     .collect();
 
@@ -735,9 +735,9 @@ v2 = { x = 0.6 }
 id = 1
 name = "thirst"
 deplete = 21600
-band = [ { moodlet = "thirsty", lo = 0.10, hi = 0.35 } ]
+band = [ { condition = "thirsty", lo = 0.10, hi = 0.35 } ]
 
-[[moodlet]]
+[[condition]]
 id = 1
 name = "thirsty"
 label = "Thirsty"
@@ -789,7 +789,7 @@ scatter = [ { salt = 6, p = 0.99, thing = "wolf" } ]
     // needs registry
     assert_eq!(b.need_id("thirst"), Some(1));
     assert_eq!(b.need_params("thirst").unwrap().bands.len(), 1);
-    assert_eq!(b.moodlet_params("thirsty").unwrap().mood, -0.15);
+    assert_eq!(b.condition_params("thirsty").unwrap().mood, -0.15);
   }
 
   #[test]

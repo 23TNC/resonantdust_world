@@ -2,10 +2,11 @@
 //! serves — every registry, every flat table, a worldgen sweep, the needs probes —
 //! committed as `tests/golden/corpus.txt` and compared on every test run.
 //!
-//! The TOML loader must reproduce this file BYTE-IDENTICALLY from the translated corpus
-//! before any consumer swaps (F5); until then this test also pins the `.rd` corpus so the
-//! migration target cannot drift while the work is in flight. Migration-scoped: it dies
-//! with the old loader in P6.
+//! It began as a MIGRATION gate (the TOML loader had to reproduce the `.rd` fixture
+//! byte-identically before any consumer swapped). The `.rd` side died with the DSL in
+//! toml-content P6; the fixture outlived it as the standing guard that a corpus or loader
+//! edit changes exactly what the author intended. The `.rd` half of this file went with it
+//! (conditions I2 — it had taken the `BLESS_GOLDEN` branch down with it).
 //!
 //! Regenerate deliberately (never as a side effect): `BLESS_GOLDEN=1 cargo test -p
 //! resonantdust-content --test golden`.
@@ -18,37 +19,28 @@ fn fixture_path() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/corpus.txt")
 }
 
+/// The repo's authored TOML corpus, or `None` in a packaged build without it.
 fn corpus() -> Option<Bundle> {
-    // The `.rd` corpus EXPLICITLY (read_content_dir now prefers TOML — P5): the oracle's
-    // whole point is comparing the two dialects, so each side names its own files.
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
     if !root.exists() {
         return None; // packaged build without the repo corpus — the oracle only runs in-repo
     }
-    let mut sources = Vec::new();
-    for facet in ["data", "visual", "biome", "material"] {
-        let dir = root.join(facet);
-        if !dir.is_dir() {
-            continue;
-        }
-        let mut files: Vec<_> = std::fs::read_dir(&dir)
-            .expect("read facet dir")
-            .flatten()
-            .map(|e| e.path())
-            .filter(|p| p.extension().is_some_and(|x| x == "rd"))
-            .collect();
-        files.sort();
-        for p in files {
-            sources.push((
-                format!("{facet}/{}", p.file_name().unwrap().to_string_lossy()),
-                std::fs::read_to_string(&p).expect("read .rd"),
-            ));
-        }
-    }
+    let mut sources: Vec<(String, String)> = std::fs::read_dir(&root)
+        .expect("read content/")
+        .flatten()
+        .filter(|e| e.path().extension().is_some_and(|x| x == "toml"))
+        .map(|e| {
+            (
+                e.file_name().to_string_lossy().to_string(),
+                std::fs::read_to_string(e.path()).expect("read .toml"),
+            )
+        })
+        .collect();
     if sources.is_empty() {
-        return None; // post-deletion checkout — the oracle retired with the DSL
+        return None;
     }
-    Some(load(&sources).expect("the repo corpus loads clean"))
+    sources.sort();
+    Some(load(&sources).expect("the TOML corpus loads clean"))
 }
 
 /// Serialize floats via `{:?}` (shortest round-trip form — deterministic and exact).
@@ -78,7 +70,7 @@ fn dump(b: &Bundle) -> String {
     sec("things", b.thing_names().join("\n"), &mut out);
     sec("materials", b.material_names().join("\n"), &mut out);
     sec("needs", b.need_names().join("\n"), &mut out);
-    sec("moodlets", b.moodlet_names().join("\n"), &mut out);
+    sec("conditions", b.condition_names().join("\n"), &mut out);
     sec(
         "biomes (name subtype, evaluation order)",
         b.biome_names()
@@ -136,7 +128,7 @@ fn dump(b: &Bundle) -> String {
     );
     sec("material_params", format!("{:#?}", b.material_params_all()), &mut out);
     sec("need_params", format!("{:#?}", b.need_params_all()), &mut out);
-    sec("moodlet_params", format!("{:#?}", b.moodlet_params_all()), &mut out);
+    sec("condition_params", format!("{:#?}", b.condition_params_all()), &mut out);
 
     // ── the visual PARTS skeletons (per thing — the human's body+head, the wolf's one) ──
     sec(
@@ -195,11 +187,11 @@ fn dump(b: &Bundle) -> String {
     ];
     let mut needs = String::new();
     for (name, rows, grants, now) in &probes {
-        let active = needs_eval::active_moodlets(b, rows, grants, *now);
+        let active = needs_eval::active_conditions(b, rows, grants, *now);
         let _ = writeln!(
             needs,
             "{name}: active={:?} mood={:?} next={:?}",
-            active.iter().map(|m| (m.moodlet_id, m.mood, m.remaining)).collect::<Vec<_>>(),
+            active.iter().map(|m| (m.condition_id, m.mood, m.remaining)).collect::<Vec<_>>(),
             needs_eval::mood(&active),
             needs_eval::next_crossing_tic(b, rows, grants, *now),
         );
@@ -231,49 +223,6 @@ fn the_golden_fixture_matches_the_corpus() {
         }
         panic!(
             "golden mismatch: lengths differ (fixture {} lines, corpus {} lines)",
-            want.lines().count(),
-            now.lines().count()
-        );
-    }
-}
-
-/// THE GATE (P4/F5): the TOML corpus must reproduce the `.rd` fixture byte-identically.
-/// Nothing swaps until this is green; the `.rd` corpus + loader die one commit after.
-#[test]
-fn the_toml_corpus_matches_the_same_fixture() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
-    if !root.exists() {
-        return;
-    }
-    let mut sources: Vec<(String, String)> = std::fs::read_dir(&root)
-        .expect("read content/")
-        .flatten()
-        .filter(|e| e.path().extension().is_some_and(|x| x == "toml"))
-        .map(|e| {
-            (
-                e.file_name().to_string_lossy().to_string(),
-                std::fs::read_to_string(e.path()).expect("read .toml"),
-            )
-        })
-        .collect();
-    if sources.is_empty() {
-        return; // pre-conversion checkout
-    }
-    sources.sort();
-    let b = load(&sources).expect("the TOML corpus loads clean");
-    let now = dump(&b);
-    let want = std::fs::read_to_string(fixture_path()).expect("fixture exists");
-    if want != now {
-        for (i, (w, n)) in want.lines().zip(now.lines()).enumerate() {
-            if w != n {
-                panic!(
-                    "TOML corpus diverges from the .rd fixture at line {}:\n  .rd:  {w}\n  toml: {n}",
-                    i + 1
-                );
-            }
-        }
-        panic!(
-            "TOML corpus diverges: lengths differ (fixture {} lines, toml {} lines)",
             want.lines().count(),
             now.lines().count()
         );

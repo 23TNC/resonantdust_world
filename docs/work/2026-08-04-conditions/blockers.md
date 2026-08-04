@@ -1,6 +1,6 @@
 # Blockers — conditions
 
-## B1 — a panel's content CANNOT exceed the panel's width {#b1}
+## B1 — a panel's content CANNOT exceed the panel's width ✅ RESOLVED {#b1}
 
 _2026-08-04. **RESOLVED 2026-08-04** — the user chose method **#4**, the detached sibling overlay:
 "Please make the cards a sibling of the details panel so that it can actually draw past the

@@ -158,14 +158,14 @@ pub const VARIANTS_PER_DEF: usize = 16;
 pub const NEED_BANDS: usize = 4;
 pub const NEEDS_PER_KIND: usize = 8;
 
-/// One BAND on a need's satisfaction — the conditional moodlet active while
-/// `lo <= satisfaction < hi` (needs-moodlets F2: band moodlets are DERIVED by every
+/// One BAND on a need's satisfaction — the DERIVED condition active while
+/// `lo <= satisfaction < hi` (needs-moodlets F2: band conditions are computed by every
 /// observer from `(need row, tic, corpus)`; no grant events exist for them). Bands are
-/// authored EXCLUSIVE, so at most one band moodlet per need is active.
+/// authored EXCLUSIVE, so at most one band condition per need is active.
 #[derive(Debug, Clone, PartialEq)]
 pub struct NeedBand {
-  /// The `<moodlet>` name this band activates (resolved via [`Bundle::moodlet_id`]).
-  pub moodlet: String,
+  /// The `<condition>` name this band activates (resolved via [`Bundle::condition_id`]).
+  pub condition: String,
   /// Band start (inclusive), `0..1` satisfaction. Default `0`.
   pub lo: f64,
   /// Band end (exclusive), `0..1` satisfaction.
@@ -181,19 +181,23 @@ pub struct NeedParams {
   pub label: String,
   /// TICS from full (`1.0`) to empty (`0.0`). `0` = unauthored (the need never drains).
   pub deplete: f64,
-  /// The conditional-moodlet bands, in authored slot order.
+  /// The derived-condition bands, in authored slot order.
   pub bands: Vec<NeedBand>,
 }
 
-/// A `<moodlet>` def's parameters — the DISPLAYED consequence of hidden state.
-/// `duration == 0` marks a CONDITIONAL moodlet (alive exactly while its band holds);
+/// A `<condition>` def's parameters — the DISPLAYED consequence of hidden state.
+/// `duration == 0` marks a DERIVED condition (alive exactly while its band holds);
 /// `> 0` a TIMED one (a stored grant expiring `duration` tics after its `grant_tic`).
+///
+/// `mood` is ONE effect, not the definition (conditions F6): a condition acts on pawn
+/// state, and mood is simply the first such effect we carry. The open effect set — need
+/// rates, later stats — is the successor stream's charter; add fields beside `mood`.
 #[derive(Debug, Clone, PartialEq)]
-pub struct MoodletParams {
+pub struct ConditionParams {
   pub label: String,
   /// Mood offset while active, `-1..1` (mood = clamp(base + Σ offsets), F5).
   pub mood: f64,
-  /// Lifetime in TICS for a stored grant; `0` = conditional (band-derived).
+  /// Lifetime in TICS for a stored grant; `0` = DERIVED (band-computed).
   pub duration: f64,
 }
 
@@ -323,14 +327,14 @@ pub struct Bundle {
   pub(crate) biomes: Vec<BiomeDef>,
   pub(crate) materials: Vec<(String, MaterialParams)>,
   pub(crate) needs: Vec<(String, NeedParams)>,
-  pub(crate) moodlets: Vec<(String, MoodletParams)>,
+  pub(crate) conditions: Vec<(String, ConditionParams)>,
   /// Registry name caches (id order) — what the slice-returning accessors serve.
   tile_names: Vec<String>,
   thing_names: Vec<String>,
   biome_names: Vec<String>,
   material_names: Vec<String>,
   need_names: Vec<String>,
-  moodlet_names: Vec<String>,
+  condition_names: Vec<String>,
 }
 
 impl Bundle {
@@ -341,7 +345,7 @@ impl Bundle {
     self.biome_names = self.biomes.iter().map(|d| d.name.clone()).collect();
     self.material_names = self.materials.iter().map(|(n, _)| n.clone()).collect();
     self.need_names = self.needs.iter().map(|(n, _)| n.clone()).collect();
-    self.moodlet_names = self.moodlets.iter().map(|(n, _)| n.clone()).collect();
+    self.condition_names = self.conditions.iter().map(|(n, _)| n.clone()).collect();
     self
   }
 
@@ -633,7 +637,7 @@ impl Bundle {
     self.materials.iter().map(|(_, p)| p.clone()).collect()
   }
 
-  // ---------- needs & moodlets (needs-moodlets P1) ----------
+  // ---------- needs & conditions (needs-moodlets P1) ----------
 
   /// Every need name in `need_id` order (index 0 → id 1).
   pub fn need_names(&self) -> &[String] {
@@ -656,25 +660,25 @@ impl Bundle {
     self.needs.iter().map(|(_, p)| p.clone()).collect()
   }
 
-  /// Every moodlet name in `moodlet_id` order (index 0 → id 1).
-  pub fn moodlet_names(&self) -> &[String] {
-    &self.moodlet_names
+  /// Every condition name in `condition_id` order (index 0 → id 1).
+  pub fn condition_names(&self) -> &[String] {
+    &self.condition_names
   }
-  /// The 1-based `moodlet_id` for a name (`None` if unknown).
-  pub fn moodlet_id(&self, name: &str) -> Option<u16> {
-    Self::id_of(&self.moodlet_names, name)
+  /// The 1-based `condition_id` for a name (`None` if unknown).
+  pub fn condition_id(&self, name: &str) -> Option<u16> {
+    Self::id_of(&self.condition_names, name)
   }
-  /// The moodlet name for a `moodlet_id` (`0` is the empty sentinel).
-  pub fn moodlet_name(&self, id: u16) -> Option<&str> {
-    Self::name_of(&self.moodlet_names, id)
+  /// The condition name for a `condition_id` (`0` is the empty sentinel).
+  pub fn condition_name(&self, id: u16) -> Option<&str> {
+    Self::name_of(&self.condition_names, id)
   }
-  /// A moodlet's [`MoodletParams`], or `None` if unknown.
-  pub fn moodlet_params(&self, name: &str) -> Option<MoodletParams> {
-    self.moodlets.iter().find(|(n, _)| n == name).map(|(_, p)| p.clone())
+  /// A condition's [`ConditionParams`], or `None` if unknown.
+  pub fn condition_params(&self, name: &str) -> Option<ConditionParams> {
+    self.conditions.iter().find(|(n, _)| n == name).map(|(_, p)| p.clone())
   }
-  /// The whole moodlet registry in `moodlet_id` order.
-  pub fn moodlet_params_all(&self) -> Vec<MoodletParams> {
-    self.moodlets.iter().map(|(_, p)| p.clone()).collect()
+  /// The whole condition registry in `condition_id` order.
+  pub fn condition_params_all(&self) -> Vec<ConditionParams> {
+    self.conditions.iter().map(|(_, p)| p.clone()).collect()
   }
 }
 

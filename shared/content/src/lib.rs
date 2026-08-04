@@ -11,7 +11,7 @@
 //!   - [`toml_loader`] — parse the per-category TOML tables (id law enforced).
 //!   - [`loader`] — the materialized [`Bundle`]: every registry + flat table the
 //!     consumers query, plus the declarative biome classifier (`generate`).
-//!   - [`needs_eval`] — THE needs→moodlets→mood evaluation (npc + client share it).
+//!   - [`needs_eval`] — THE needs→conditions→mood evaluation (npc + client share it).
 //!   - [`content`] — read the on-disk `content/` tree into loader sources
 //!     (native/server only).
 

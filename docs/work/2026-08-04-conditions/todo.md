@@ -5,23 +5,23 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P0 — the corpus and the shared crate speak "condition"
 
-- [ ] Rename `[[moodlet]]` → `[[condition]]` and each band's `moodlet = ` key → `condition = ` in
+- [x] Rename `[[moodlet]]` → `[[condition]]` and each band's `moodlet = ` key → `condition = ` in
       `content/needs.toml`, ids untouched. Acceptance: `grep -in moodlet content/` is empty; ids
       1/2/3 still map to thirsty/dehydrated/quenched.
-- [ ] Rename `MoodletParams` → `ConditionParams`, `NeedBand.moodlet` → `.condition`, and every
+- [x] Rename `MoodletParams` → `ConditionParams`, `NeedBand.moodlet` → `.condition`, and every
       `moodlet_*` accessor on `Bundle` to `condition_*` in `shared/content/src/loader.rs`.
       Acceptance: `cargo check -p resonantdust-content` green; no `moodlet` identifier remains in
       the file.
-- [ ] Rewrite the loader's "conditional vs stored" doc comments as **derived vs timed**
+- [x] Rewrite the loader's "conditional vs stored" doc comments as **derived vs timed**
       ([F4](forks.md#f4)). Acceptance: `grep -in conditional shared/content/src` returns nothing
       outside the biome-rule code; `duration == 0` is documented as DERIVED.
-- [ ] Rename the TOML structs + registry wiring (`MoodletToml`, `all.moodlet`, `moodlet_slots`)
+- [x] Rename the TOML structs + registry wiring (`MoodletToml`, `all.moodlet`, `moodlet_slots`)
       in `shared/content/src/toml_loader.rs` to the `condition` spelling. Acceptance:
       `cargo test -p resonantdust-content` green including its inline corpus test.
-- [ ] Rename `active_moodlets` → `active_conditions` and its `ActiveMoodlet` / `moodlet_id` types
+- [x] Rename `active_moodlets` → `active_conditions` and its `ActiveMoodlet` / `moodlet_id` types
       in `shared/content/src/needs_eval.rs`. Acceptance: `cargo test -p resonantdust-content`
       green; band + timed-grant unit tests pass unchanged in value.
-- [ ] Re-bless the golden fixture under the new names (`BLESS_GOLDEN=1 cargo test -p
+- [x] Re-bless the golden fixture under the new names (`BLESS_GOLDEN=1 cargo test -p
       resonantdust-content --test golden`). Acceptance: the fixture diff is name-only — every
       number and id in `tests/golden/corpus.txt` is unchanged; the un-blessed test then passes.
 

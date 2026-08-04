@@ -1,13 +1,13 @@
-# Needs & moodlets — the pawn's hidden state and its DISPLAYED consequences
-# (work 2026-08-03-needs-moodlets; schema docs/VARIABLES.md).
+# Needs & conditions — the pawn's hidden state and its DISPLAYED consequences
+# (work 2026-08-04-conditions; schema docs/VARIABLES.md).
 #
 # A need is a 0..1 SATISFACTION depleting toward zero (`deplete` = TICS
 # full→empty). Nothing ticks it: a pawn's shard row stores (satisfaction,
 # set_tic) and every observer computes the current value + the exact band
 # crossings lazily. Bands are EXCLUSIVE ranges (lo <= sat < hi) — at most one
-# band moodlet per need is active; the player sees MOODLETS, never the scalar.
-# `duration 0` = conditional (derived while its band holds); `> 0` = a stored
-# grant expiring that many tics after it lands (the drink action's kind).
+# band condition per need is active; the player sees CONDITIONS, never the
+# scalar. `duration 0` = DERIVED (alive while its band holds); `> 0` = TIMED,
+# a stored grant expiring that many tics after it lands (the drink action's).
 #
 # Ids ride inside pawn PAYLOAD words — never renumber, never reuse (F1).
 # Numbers are PROVISIONAL and authored here precisely so tuning is a data edit.
@@ -19,23 +19,23 @@ name = "thirst"
 label = "Thirst"
 deplete = 21600.0
 band = [
-  { moodlet = "thirsty", lo = 0.1, hi = 0.35 },
-  { moodlet = "dehydrated", lo = 0.0, hi = 0.1 },
+  { condition = "thirsty", lo = 0.1, hi = 0.35 },
+  { condition = "dehydrated", lo = 0.0, hi = 0.1 },
 ]
 
-[[moodlet]]
+[[condition]]
 id = 1
 name = "thirsty"
 label = "Thirsty"
 mood = -0.15
 
-[[moodlet]]
+[[condition]]
 id = 2
 name = "dehydrated"
 label = "Dehydrated"
 mood = -0.4
 
-[[moodlet]]
+[[condition]]
 id = 3
 name = "quenched"
 label = "Quenched"
