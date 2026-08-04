@@ -5,14 +5,21 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P0 — freeze the truth (the equivalence oracle)
 
-- [ ] Inventory every DSL feature the corpus uses + every Bundle consumer, recorded in
+- [x] Inventory every DSL feature the corpus uses + every Bundle consumer, recorded in
       `issues.md` (the four features + the dead `@on_destroy` stubs are the README's claim —
       verify by grep, list call sites). Acceptance: the list names file:line for each consumer's
-      load entry; anything unexpected becomes its own issue before code.
-- [ ] A golden-dump tool (test-side): serialize EVERY Bundle registry + flat table + a worldgen
+      load entry; anything unexpected becomes its own issue before code. → [I1](issues.md#i1):
+      comment-stripped op counts (the earlier `or`/`not` sightings were PROSE); consumers =
+      wasm:84, worldgen:62–82, worker:97, npc:210, bin/dsl, subframe.py; core/gateway/sim-trio
+      confirmed non-consumers; the destroy stubs confirmed dead (zero `tile_has_hook` callers).
+- [x] A golden-dump tool (test-side): serialize EVERY Bundle registry + flat table + a worldgen
       sample grid (4 zones of `generate()` output) + the needs-eval probe values to one canonical
       fixture file, committed. Acceptance: the dump is deterministic (two runs byte-identical)
-      and fails the build if the corpus and fixture disagree.
+      and fails the build if the corpus and fixture disagree. → `shared/dsl/tests/golden.rs` +
+      297 KB `tests/golden/corpus.txt`: registries, every flat table, visual parts, a 9,261-cell
+      worldgen SWEEP (every 0.05 of t/h/e × per-cell seeds — stronger than 4 zones: covers every
+      band edge + scatter rand path), the 4 needs probes. Blessed via `BLESS_GOLDEN=1`; both
+      tests green; determinism test included.
 
 ## P1 — the schema, documented before parsed
 
