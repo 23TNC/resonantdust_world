@@ -553,6 +553,119 @@ events exist for them (F2); **timed moodlets (`duration > 0`)** are stored grant
 **Indexed slots are bare digits** (`band.0`, `needs.3`) — the `packed.<i>` shape. Safe because
 these nodes never hold a scalar sibling (the `rotation_key` I8 hazard); do not add one.
 
+## TOML content schema (`content/*.toml` → `shared` loader → every consumer)
+
+**The corpus is DATA** (work [`2026-08-04-toml-content`](work/2026-08-04-toml-content/README.md)):
+one record per def (F6 — the `:data`/`:visual` facet split died with the DSL hooks), organized by
+category — `content/tiles.toml`, `things.toml` (pawns included), `biomes.toml`, `materials.toml`,
+`needs.toml`. The loader produces the SAME `Bundle` accessor surface the `.rd` corpus did (F2).
+
+**The id law (F1).** Every def authors `id = N` (1-based; `0` reserved). Ids are STORED DATA —
+zone `kind_reference`s, packed pawn defs, `need_id`s inside payload words — so the loader REFUSES
+a duplicate, a missing id, or id 0 (load errors, never warnings). Holes are legal: a deleted def
+retires its id forever. Never renumber; append with a fresh id.
+
+Colours are `"#rrggbb"` strings. Fractions are `0..1`. Unstated fields keep the defaults the
+`.rd` loader used (documented per table below).
+
+```toml
+# ── tiles.toml ────────────────────────────────────────────────────────────────
+[[tile]]
+id = 1                      # def_id (the u12 packed into zone tile slots)
+name = "grass"
+texture = "white"           # stem, or "white" = the flat-fill geo tier
+tint = "#4b573e"
+height = 1.0                # world-z wall height (optional; 0 = flat ground)
+build = "wall_smooth"       # the kind the build panel places on this tile (optional)
+cast_shadow = true          # optional; default false
+receives_shadows = true     # optional; default true
+rotation = 0                # optional; fixed rotation index
+linked = { w = 4, h = 4 }   # autotile grid (optional — marks a linked kind)
+padding = 0.5               # internal padding, UNITS of the 16-unit cell (linked only)
+packed = [                  # up to 4 material channel bindings, index = RGBA channel
+  { material = "mottle", tint = "#6b6b6b" },
+]
+
+# ── things.toml — flora, walls' kinds, PAWNS (a pawn is a thing with parts) ──
+[[thing]]
+id = 7                      # object_id (packed into thing entries + pawn defs)
+name = "wolf"
+speed = 12                  # TICS per tile (optional; movement default applies)
+needs = ["thirst"]          # the needs this kind carries (optional)
+light = {                   # the kind's emitted light (optional; reach>0 = lit)
+  r = 1.0, g = 0.8, b = 0.5, intensity = 1.0, reach = 16, radius = 0.25,
+  height = 0.5, cast = true, hot = false, flicker = false }
+packed = [ { tint = "#5f6b3c" }, { tint = "#6e4a2e" } ]   # material optional per channel
+
+  # EVERY def's visual is a parts ARRAY; a single-sprite thing has one entry.
+  # Slot index = array order (body = 0, head = 1 …).
+  [[thing.part]]
+  texture = "pawn/animal/wolf"   # stem; omit for a flat tint rect
+  tint = "#ffffff"
+  geo = "#8a8f98"                # geo-tier silhouette colour (defaults to tint)
+  span = 1                       # frame world span, pow2 tiles
+  scale = 0.8                    # pre-atlas sprite_scale (uniform; or {w,h})
+  size = 2                       # legacy drawn-box tiles (superseded by span; kept)
+  anchor = { x = 0.5, y = 1.0 }          # logical anchor in the footprint
+  sprite_anchor = { x = 0.5, y = 1.0 }   # pivot on the subframe
+  part = 1                       # master file part suffix (head = 1; default 0)
+  depth = 0.1                    # per-slot draw depth (negated facing away)
+  offset = { z = 0.6 }           # elevation offset, tiles
+
+    # Subframes: keys mirror the resolver's fallback chain EXACTLY —
+    # `default` → per-rotation (`s`/`e`/`n`/`w` alias r0..r3, or `r4`..`r15`) →
+    # per-variant (`v0`..`v15`) → fully-specific (`v3.e`). Values are fractions;
+    # `ax`/`ay` optional (pivot per rect).
+    [thing.part.subframe]
+    default = { x = 0.2188, y = 0.0391, w = 0.5625, h = 0.9336, ay = 1.0 }
+    e  = { x = 0.05, y = 0.26, w = 0.90, h = 0.47 }
+    v0 = { x = 0.3359, y = 0.2109, w = 0.3359, h = 0.5898 }
+
+# ── biomes.toml — the classifier as data (F3); array order = evaluation priority ──
+[[biome]]
+name = "wetland"
+subtype = 4                 # the stored subtype_id (explicit since the DSL days)
+# every listed dimension must pass (conjunction — the corpus never used `or`);
+# keys mirror the retired ops EXACTLY: gte (≥), lt (<), lte (≤), gt (>)
+when = { humidity = { gte = 0.60 }, elevation = { lt = 0.46 } }
+tile = "dirt"
+scatter = [                 # ordered, least→most dominant; LAST hit wins the cell
+  { salt = 3, p = 0.25, thing = "reed" },
+]
+# dimensions: 0 = temperature, 1 = humidity, 2 = elevation (named keys map by
+# this fixed order); the per-tile draw is SplitMix64(seed ^ salt·φ) — the exact
+# `^rand` derivation, inherited so no scatter re-rolls.
+
+# ── materials.toml ────────────────────────────────────────────────────────────
+[[material]]
+id = 1
+name = "mottle"
+noise_field = "mottle"      # strand|mottle|speckle|vein|grain|clump
+hue_swing = 10.0            # degrees at full noise
+chroma_swing = 0.03
+warm_cool_bias = 0.2        # −1..1 cool..warm
+sample_space = "world"      # "uv" (default) | "world"
+detail = { field = "grain", amp = 0.4, scale = 1.0 }   # normal detail (optional)
+
+# ── needs.toml — needs AND moodlets (the pair is one model) ──────────────────
+[[need]]
+id = 1                      # the need_id inside NEED payload words
+name = "thirst"
+label = "Thirst"
+deplete = 21600             # TICS full→empty; 0/absent = never drains
+band = [                    # exclusive ranges; ≤1 active per need
+  { moodlet = "thirsty",    lo = 0.10, hi = 0.35 },
+  { moodlet = "dehydrated", lo = 0.00, hi = 0.10 },
+]
+
+[[moodlet]]
+id = 1                      # the moodlet_id inside MOODLET payload words
+name = "thirsty"
+label = "Thirsty"
+mood = -0.15                # offset while active; mood = clamp(0.5 + Σ)
+duration = 0                # TICS a stored grant lives; 0 = conditional (derived)
+```
+
 ## Removed
 
 `valid_at`, `cold_reference`, `hot_reference`, `reference_id`, `event_word` — see
