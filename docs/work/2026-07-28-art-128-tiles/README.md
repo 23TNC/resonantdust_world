@@ -21,7 +21,7 @@ the one thing that doesn't know about it.
 
 | the concept | where it already lives | today's value |
 |---|---|---|
-| frame span in tiles | `thing.span` in [`content/visual/things.rd`](../../../content/visual/things.rd) | conifer `2 &thing.span set` |
+| frame span in tiles | `thing.span` in [`content/visual/things.rd`](../../../content/things.toml) | conifer `2 &thing.span set` |
 | the wire field | `frame_span` — u4, pow2 tiles (1/2/4/8/16), capped at one zone ([VARIABLES](../../VARIABLES.md)) | ✅ ratified |
 | the derived square | `frame_span · SQUARE / 2^lod` ([VARIABLES](../../VARIABLES.md)) | max side `16 × 128 = 2048` |
 | the atlas sidecar | `atlas.json` (`grid`, `pad`) → [`tex_manifest.rs`](../../../server/edge/src/tex_manifest.rs) → client UV | ✅ shipping |

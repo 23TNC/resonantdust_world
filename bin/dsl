@@ -26,7 +26,10 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # The corpus folders under content/ this tool publishes, in load order (data owns
 # the def_id numbering, visual folds colours on, biome is server-side worldgen).
 # Also the set `_remote_key_for` / `_check_relpath` accept as folder args.
-CONTENT_FOLDERS=(data visual biome)
+# toml-content P6: the corpus is top-level content/*.toml (synced by
+# _upload_root_toml/_download_root_toml). The one folder left is `visual/`,
+# whose `manifest/` subtree carries the ART manifests (bin/art's output).
+CONTENT_FOLDERS=(visual)
 
 # Cloudflare R2 (S3-compatible) asset bucket — same bucket + creds as bin/art.
 # Account id / endpoint / bucket are public config; the SECRETS live in

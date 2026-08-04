@@ -1,12 +1,12 @@
 [package]
-name = "resonantdust-dsl"
+name = "resonantdust-content"
 version = "0.1.0"
 edition = "2021"
 publish = false
 description = "Resonant Dust (world) DSL — parser, VM, and tile loader that turn content/*.rd into a runnable Bundle (tile name <-> def_id <-> visual colour). Pure Rust, no wasm: the server links this directly as an rlib for the :data side; the client reaches the :visual side through the resonantdust-shared wasm bundle."
 
 [lib]
-name = "resonantdust_dsl"
+name = "resonantdust_content"
 path = "src/lib.rs"
 crate-type = ["rlib"]
 

@@ -147,7 +147,7 @@ pub struct Pool {
 /// swap is atomic. As more content-derived state appears (recipes, pawn
 /// behaviours), it joins here and rebuilds on the same reload.
 struct ContentState {
-    /// [`resonantdust_dsl::content::content_version`] of the loaded corpus (`0`
+    /// [`resonantdust_content::content::content_version`] of the loaded corpus (`0`
     /// when content failed to load).
     version: u64,
     /// The generation runtime worldgen seeds fresh zones from. `None` if the

@@ -8,10 +8,10 @@
 //! with the old loader in P6.
 //!
 //! Regenerate deliberately (never as a side effect): `BLESS_GOLDEN=1 cargo test -p
-//! resonantdust-dsl --test golden`.
+//! resonantdust-content --test golden`.
 
-use resonantdust_dsl::loader::{load, Bundle};
-use resonantdust_dsl::needs_eval;
+use resonantdust_content::loader::{load, Bundle};
+use resonantdust_content::needs_eval;
 use std::fmt::Write as _;
 
 fn fixture_path() -> std::path::PathBuf {

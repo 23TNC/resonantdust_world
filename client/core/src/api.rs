@@ -170,7 +170,7 @@ pub enum Event {
     ///
     /// `payload` is the RAW opcode stream alongside the decoded parts (needs-moodlets P4):
     /// `NEED`/`MOODLET` entries are evaluated lazily by their consumers — the npc Brain through
-    /// `resonantdust_dsl::needs_eval`, the webgl panel through the wasm `pawnMoodlets` — so the
+    /// `resonantdust_content::needs_eval`, the webgl panel through the wasm `pawnMoodlets` — so the
     /// core decodes parts (its own join) and passes everything else through untouched.
     PawnParts { macro_position: u16, entity_reference: u32, tic: u16, parts: Vec<(u8, u32)>, payload: Vec<u32> },
     /// A subscribed zone's cold **ground** — the dense 256 `kind_reference`s of one biome-row,

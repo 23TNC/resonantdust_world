@@ -29,31 +29,33 @@ import { assertLinkedCellTable } from "../world/linkedCell";
 // build-walls P0 (D1): pin the neighbor→cell formula against the authored 16-row table at
 // boot — 16 comparisons, throws on drift, so a wrong formula can never ship silently.
 assertLinkedCellTable();
-// The DSL corpus embedded as raw strings — the OFFLINE FALLBACK only (the gate is
-// the source of truth). Data facets first (they own the `def_id` numbering), then
-// visual (the colours fold on), mirroring the gate's `data` then `visual` order.
-import dataTiles from "@content/data/tiles.rd?raw";
-import dataThings from "@content/data/things.rd?raw";
-import visualTiles from "@content/visual/tiles.rd?raw";
-import visualThings from "@content/visual/things.rd?raw";
+// The TOML corpus embedded as raw strings — the OFFLINE FALLBACK only (the server's
+// `/content` is the source of truth; ids are explicit, so order is immaterial —
+// toml-content P6). `biomes.toml` is server-only worldgen and stays out, matching
+// what `/content` serves.
+import tilesToml from "@content/tiles.toml?raw";
+import thingsToml from "@content/things.toml?raw";
+import materialsToml from "@content/materials.toml?raw";
+import needsToml from "@content/needs.toml?raw";
 
-/** The gate's `/content` payload: a version fingerprint plus the ordered
- *  `[name, text]` source pairs the client feeds to `new Content(names, sources)`. */
+/** The server's `/content` payload: a version fingerprint plus the ordered
+ *  `[name, text]` source pairs the client feeds to `new Content(names, sources)`.
+ *  (`rd` is the WIRE KEY's historical name — a literal, like the `/lod/` route.) */
 interface ContentPayload {
   version: string;
   rd: [string, string][];
 }
 
-/** The build-time embed, used only when the gateway is unreachable. `version` is
- *  a sentinel distinct from any gate fingerprint, so the first successful poll
- *  always reconciles a fallback boot up to the gate's real corpus. */
+/** The build-time embed, used only when the server is unreachable. `version` is
+ *  a sentinel distinct from any served fingerprint, so the first successful poll
+ *  always reconciles a fallback boot up to the server's real corpus. */
 const EMBEDDED: ContentPayload = {
   version: "embedded",
   rd: [
-    ["data/tiles.rd", dataTiles],
-    ["data/things.rd", dataThings],
-    ["visual/tiles.rd", visualTiles],
-    ["visual/things.rd", visualThings],
+    ["materials.toml", materialsToml],
+    ["needs.toml", needsToml],
+    ["things.toml", thingsToml],
+    ["tiles.toml", tilesToml],
   ],
 };
 

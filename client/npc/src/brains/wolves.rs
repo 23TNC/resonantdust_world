@@ -14,8 +14,8 @@ use resonantdust_codec::payload::payload_needs;
 use resonantdust_codec::refs::entity_ref_type_id;
 use resonantdust_codec::speed::DEFAULT_TICS_PER_TILE;
 use resonantdust_codec::tic::TIC_HZ;
-use resonantdust_dsl::loader::Bundle;
-use resonantdust_dsl::needs_eval;
+use resonantdust_content::loader::Bundle;
+use resonantdust_content::needs_eval;
 
 use crate::{fetch_corpus, resolve_thing_in, Bot, Brain, Rng};
 

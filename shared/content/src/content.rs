@@ -1,18 +1,8 @@
 //! Reading the on-disk content tree into loader sources.
 //!
-//! The content lives under `content/`, split by facet into parallel trees:
-//!   - `content/data/*.rd`   — the `:data` facets (server-side simulation).
-//!   - `content/visual/*.rd` — the `:visual` facets (client-side rendering).
-//!   - `content/biome/*.rd`  — `<biome>` generation rules (server-side worldgen).
-//!   - `content/material/*.rd` — `<material>` render registry (client-side; the
-//!     noise-driven hue/chroma jitter a prim's packed channels reference).
-//! [`load`](crate::loader::load) wants `(name, source)` pairs and merges a tile's
-//! facets across files, so the only thing that matters here is order: **data
-//! first**, so each tile's `:data` def is indexed before its `:visual` fragment
-//! folds on (and so `def_id`s are derived from the data side, the side the server
-//! packs into zones). Biomes are their own bucket (never packed), so where they
-//! land in the order doesn't affect ids — only biome-vs-biome order matters, and
-//! that's within the single biome tree.
+//! The corpus is the top-level `content/*.toml` files (sorted; ids are EXPLICIT,
+//! so order carries no id meaning — only the biome array's order inside its one
+//! file matters, and that survives sorting by construction).
 //!
 //! Filesystem-backed, so it's native-only in practice — the server calls it; the
 //! wasm client has no disk and feeds [`crate::loader::load`] fetched strings
@@ -21,22 +11,11 @@
 use std::io;
 use std::path::Path;
 
-/// Read the corpus into the `(name, source)` pairs [`crate::loader::load`] consumes.
-///
-/// **TOML wins** (toml-content P5): top-level `content/*.toml` files (sorted) are THE
-/// corpus when any exist — ids are explicit, so order carries no id meaning (only biome
-/// array order matters, and that lives inside one file). The legacy `.rd` facet walk
-/// (`data/` → `visual/` → `biome/` → `material/`, data first so `def_id`s derive from
-/// the packed side) remains as the fallback until the cutover deletes it.
+/// Read the corpus — top-level `content/*.toml`, sorted — into the `(name, source)`
+/// pairs [`crate::loader::load`] consumes.
 pub fn read_content_dir(content_root: &Path) -> io::Result<Vec<(String, String)>> {
   let mut sources = Vec::new();
   read_files(content_root, "", "toml", &mut sources)?;
-  if !sources.is_empty() {
-    return Ok(sources);
-  }
-  for facet in ["data", "visual", "biome", "material"] {
-    read_files(&content_root.join(facet), facet, "rd", &mut sources)?;
-  }
   Ok(sources)
 }
 

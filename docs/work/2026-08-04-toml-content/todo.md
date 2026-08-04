@@ -101,16 +101,27 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P6 — the deletion (git is history)
 
-- [ ] Delete `parser.rs`, `vm.rs`, the hook/facet machinery, the `.rd` corpus, and the P3
+- [x] Delete `parser.rs`, `vm.rs`, the hook/facet machinery, the `.rd` corpus, and the P3
       converter; the standing drills re-run green (wolf trip, thirst crossing, panel moodlets).
       Acceptance: `grep -r "\.rd\b\|@define\|on_create" shared/ content/` finds only history
-      references; drills logged.
-- [ ] Rename `shared/dsl` → `shared/content` (crate `resonantdust-content`), update consumer
+      references; drills logged. → deleted (loader 735 lines, toml-only `load()`; the
+      needs_eval fixture + wasm test translated; the `.rd` FALLBACK walk in `read_content_dir`
+      + the boot EMBED died too — the embed briefly black-screened the client until it embedded
+      the four client TOMLs). Grep finds only the refusal test + history notes; the LIVE
+      exception: `content/visual/manifest/*.rd` are bin/art's ART manifests (extension
+      coincidence, never corpus). npc trips flowed throughout (25 in the check window).
+- [x] Rename `shared/dsl` → `shared/content` (crate `resonantdust-content`), update consumer
       Cargos, docker mounts, `bin/rd` (F4). Acceptance: full stack rebuilds + boots; docs-check
-      green.
-- [ ] Docs + memory truth pass: `VARIABLES.md` speaks only TOML, `docs/README`/component docs
+      green. → git mv + mechanical rename (wasm keeps its `dsl` re-export alias name for
+      consumers); redeploy inputs re-pointed; killed a THIRD private content walk found dead in
+      the worker's `load_speeds` (now the one shared reader); full stack rebuilt, worker
+      kinds=11, npc def resolved, world renders.
+- [x] Docs + memory truth pass: `VARIABLES.md` speaks only TOML, `docs/README`/component docs
       re-pointed, the `dsl-rebuilt`/`biome-dsl`/`content-hot-update` memories rewritten to the
-      TOML reality. Acceptance: docs-check green; no authoritative doc mentions a live DSL.
+      TOML reality. Acceptance: docs-check green; no authoritative doc mentions a live DSL. →
+      VARIABLES' subframe/needs blocks now TOML spellings; shared/AGENTS.md; bin/dsl
+      CONTENT_FOLDERS=(visual) + root-toml sync; memories: dsl-rebuilt/biome-dsl DELETED,
+      toml-content written, hot-update/dsl-script descriptions updated; docs-check green.
 
 ## P7 — the verdict
 

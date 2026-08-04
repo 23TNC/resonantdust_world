@@ -33,7 +33,7 @@ resonantdust-codec = { path = "../shared/codec" }
 # ("grass"/"dirt") to the packed `def_id`s it writes into a zone's terrain. The
 # `:data` side the server reads; the client reads the `:visual` side of the same
 # corpus via the wasm bundle, so a `def_id` means the same tile on both ends.
-resonantdust-dsl = { path = "../shared/dsl" }
+resonantdust-content = { path = "../shared/content" }
 # CORS for the asset routes: the browser client fetches `/content` + `/textures`
 # cross-origin, so the responses need `Access-Control-Allow-Origin` (+ ETag
 # exposed for the texture cache's revalidation). Same version as the gateway.

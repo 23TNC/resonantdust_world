@@ -69,32 +69,16 @@ enum Shard {
 }
 
 /// Per-kind tics-per-tile, `speeds[object_id - 1]`, pre-resolved through
-/// [`speed::resolve`] at load (so no zero entries). Reads `data/*.rd`, `visual/*.rd`,
-/// `material/*.rd` sorted — the edge's `load_disk` order — so `object_id`s agree.
+/// [`speed::resolve`] at load (so no zero entries). Reads the corpus through THE shared
+/// `read_content_dir` (toml-content P6 — this fn was a third private copy of the content
+/// walk, and it broke the moment the dialect moved; ids agree because the reader does).
 fn load_speeds(root: &str) -> Result<Vec<u16>, String> {
-    let mut sources: Vec<(String, String)> = Vec::new();
-    for facet in ["data", "visual", "material"] {
-        let dir = std::path::Path::new(root).join(facet);
-        if !dir.is_dir() {
-            continue;
-        }
-        let mut entries: Vec<std::path::PathBuf> = std::fs::read_dir(&dir)
-            .map_err(|e| format!("{}: {e}", dir.display()))?
-            .filter_map(Result::ok)
-            .map(|e| e.path())
-            .filter(|p| p.extension().is_some_and(|x| x == "rd"))
-            .collect();
-        entries.sort();
-        for path in entries {
-            let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-            let file = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
-            sources.push((format!("{facet}/{file}"), text));
-        }
-    }
+    let sources = resonantdust_content::content::read_content_dir(std::path::Path::new(root))
+        .map_err(|e| format!("read {root}: {e}"))?;
     if sources.is_empty() {
-        return Err(format!("no .rd sources under {root}"));
+        return Err(format!("no content sources under {root}"));
     }
-    let bundle = resonantdust_dsl::loader::load(&sources)
+    let bundle = resonantdust_content::loader::load(&sources)
         .map_err(|errs| format!("corpus load: {} error(s), first: {:?}", errs.len(), errs.first()))?;
     Ok((1..=bundle.thing_names().len() as u16)
         .map(|id| speed::resolve(bundle.thing_speed(id)))

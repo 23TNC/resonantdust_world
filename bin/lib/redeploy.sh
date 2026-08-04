@@ -44,7 +44,7 @@ rd_init_units() {
     # the new wire (movement-hardening: MOVE_STEP was silently unpublishable).
     RD_INPUTS[$mod]="$MODULES_DIR/$mod $SHARED_DIR/codec"
   done
-  RD_INPUTS[edge]="$EDGE_DIR/src $EDGE_DIR/Cargo.toml $SHARED_DIR/codec $SHARED_DIR/dsl"
+  RD_INPUTS[edge]="$EDGE_DIR/src $EDGE_DIR/Cargo.toml $SHARED_DIR/codec $SHARED_DIR/content"
   RD_INPUTS[gateway]="$GATEWAY_DIR/src $GATEWAY_DIR/Cargo.toml $GATEWAY_DIR/../uplink/src"
   RD_INPUTS[shared]="$SHARED_DIR"
   RD_INPUTS[webgl]="$WEBGL_DIR/src $WEBGL_DIR/index.html $WEBGL_DIR/package.json $WEBGL_DIR/vite.config.ts $WEBGL_DIR/tsconfig.json"

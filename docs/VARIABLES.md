@@ -474,7 +474,7 @@ by `pmod`, which lands them on the WORLD-adjacent tile — the torus makes the s
 `lightFalloff(d, reach, I)` in `LIGHT_LANES_GLSL` — d₀ = reach/2 with a linear feather to exactly
 0 AT the stored reach, so the registration boundary and the visible pool edge are one line.
 
-## Sprite subframes — the atlas crop (`shared/dsl` → `client/webgl`)
+## Sprite subframes — the atlas crop (`shared/content` → `client/webgl`)
 
 **One rect, authored once, cropped at ingest, shared by all four maps.** Work stream:
 [`work/2026-08-02-subframe-ingest`](work/2026-08-02-subframe-ingest/README.md).
@@ -486,13 +486,13 @@ layers — so they are registered with each other **by construction** rather tha
 agreeing.
 
 ```
-&thing.subframe.x | .y | .w | .h            fractions 0..1, default (0, 0, 1, 1) = the whole frame
-&thing.subframe.<e|s|n>.x | .y | .w | .h    per-DIRECTION override, falling back to the above
-&thing.sprite_anchor.x | .y                 the pivot ON the subframe, default (0.5, 0.5)
-&thing.sprite_anchor.<e|s|n>.x | .y         per-DIRECTION override
-
-&prim.subframe.…  /  &prim.sprite_anchor.…  the same, PER PART SLOT (a head is its own master)
+[thing.part.subframe]                       per PART SLOT (a head is its own master)
+default = { x, y, w, h, ax?, ay? }          fractions 0..1; default = the whole frame
+e / s / n / rN = { … }                      per-ROTATION override (aliases r0..r3)
+vN = { … } / "vN.e" = { … }                 per-VARIANT / fully-specific overrides
+sprite_anchor = { x, y }                    the flat pivot the chain's ax/ay tail falls back to
 ```
+(TOML spellings — § TOML content schema; the retired `&thing.subframe.*` DSL forms are in git.)
 
 Exposed as `thingSubframe()` — **stride 18** per def, `[e, s, n] × [x, y, w, h, anchor.x, anchor.y]`
 — and on each `moverParts()` slot as `subframes` (the same 18 floats, so one decoder serves both).
@@ -518,7 +518,7 @@ variants is taken, so no variant is clipped.
 **`internal_padding` was deleted into this** — a uniform inset *is* a uniform subframe, so a linked
 tile grid authors its inset as a subframe like everything else.
 
-## Needs & moodlets (`shared/dsl` → shard / npc / `client/webgl`)
+## Needs & moodlets (`shared/content` → shard / npc / `client/webgl`)
 
 **The pawn's hidden state and its displayed consequences.** Work stream:
 [`work/2026-08-03-needs-moodlets`](work/2026-08-03-needs-moodlets/README.md). A **need** is a 0..1
@@ -527,19 +527,12 @@ player never sees the scalar). A **moodlet** is what displays: a label + a mood 
 `clamp(0.5 + Σ active offsets, 0..1)` (F5).
 
 ```
-<need> ::name> @define>                     registry def — 1-based need_id, append-stable
-&need.label                                 display/debug label (the need itself is never shown)
-&need.deplete                               TICS full→empty; 0 = never drains (unauthored)
-&need.band.<0..3>.moodlet                   the <moodlet> active while lo <= satisfaction < hi
-&need.band.<0..3>.lo | .hi                  the band, 0..1 — authored EXCLUSIVE, ≤1 active/need
-
-<moodlet> ::name> @define>                  registry def — 1-based moodlet_id, append-stable
-&moodlet.label                              the displayed name
-&moodlet.mood                               mood offset while active, -1..1
-&moodlet.duration                           TICS a STORED grant lives; 0 = conditional (derived)
-
-&thing.needs.<0..7>                         the needs a kind carries (:data @define, sym slots)
+[[need]]     id/name/label · deplete (TICS full→empty; 0 = never drains) ·
+             band = [{ moodlet, lo, hi }]   exclusive ranges, ≤1 active per need
+[[moodlet]]  id/name/label · mood (-1..1) · duration (TICS a STORED grant lives; 0 = conditional)
+[[thing]]    needs = ["thirst", …]          the needs a kind carries
 ```
+(TOML spellings — § TOML content schema; ids are explicit and never renumber.)
 
 Exposed as `need_params_all()` / `moodlet_params_all()` (registry order) and
 `thing_needs_table()` — **stride 8** per kind of 1-based need ids, `0` = empty slot.

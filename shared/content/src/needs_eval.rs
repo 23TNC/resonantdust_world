@@ -161,34 +161,33 @@ mod tests {
     /// thirst: deplete 1000 tics, Thirsty [0.10, 0.35) −0.15, Dehydrated [0, 0.10) −0.40;
     /// quenched: +0.20 timed 100 tics.
     fn fixture() -> Bundle {
-        let src = "\
-<need>
-  ::thirst>
-    @define>
-      1000 &need.deplete set
-      \"thirsty &need.band.0.moodlet set
-      0.10 &need.band.0.lo set
-      0.35 &need.band.0.hi set
-      \"dehydrated &need.band.1.moodlet set
-      0 &need.band.1.lo set
-      0.10 &need.band.1.hi set
-      0 return
-<moodlet>
-  ::thirsty>
-    @define>
-      -0.15 &moodlet.mood set
-      0 return
-  ::dehydrated>
-    @define>
-      -0.40 &moodlet.mood set
-      0 return
-  ::quenched>
-    @define>
-      0.20 &moodlet.mood set
-      100 &moodlet.duration set
-      0 return
-";
-        load(&[("needs.rd".into(), src.into())]).expect("fixture loads")
+        let src = r#"
+[[need]]
+id = 1
+name = "thirst"
+deplete = 1000
+band = [
+  { moodlet = "thirsty", lo = 0.10, hi = 0.35 },
+  { moodlet = "dehydrated", lo = 0.0, hi = 0.10 },
+]
+
+[[moodlet]]
+id = 1
+name = "thirsty"
+mood = -0.15
+
+[[moodlet]]
+id = 2
+name = "dehydrated"
+mood = -0.40
+
+[[moodlet]]
+id = 3
+name = "quenched"
+mood = 0.20
+duration = 100
+"#;
+        load(&[("needs.toml".into(), src.into())]).expect("fixture loads")
     }
 
     #[test]

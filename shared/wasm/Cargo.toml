@@ -26,7 +26,7 @@ resonantdust-codec = { path = "../codec" }
 # The DSL — the client reaches the `:visual` side here (def_id → tile colour) to
 # paint zones. Loaded from fetched `.rd` strings at runtime, the same corpus the
 # server loads from disk: one content set, identical ids on both sides.
-resonantdust-dsl = { path = "../dsl" }
+resonantdust-content = { path = "../content" }
 # The headless client core in its browser (`web`) skin — login + the
 # anchor-driven zone subscription engine. The `WorldClient` surface wraps it;
 # `default-features = false` drops the native (tokio) transport.

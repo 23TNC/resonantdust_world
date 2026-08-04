@@ -15,7 +15,7 @@
 pub use resonantdust_core::greeting;
 // The DSL — re-exported so native rlib consumers reach it through this one crate
 // too. The browser surface ([`Content`]) wraps it behind the `js` feature.
-pub use resonantdust_dsl as dsl;
+pub use resonantdust_content as dsl;
 
 #[cfg(feature = "js")]
 use wasm_bindgen::prelude::*;
@@ -239,7 +239,7 @@ impl Content {
     pub fn pawn_moodlets(&self, payload: Vec<u32>, now_tic: u16) -> Vec<f64> {
         let needs = resonantdust_codec::payload::payload_needs(&payload);
         let grants = resonantdust_codec::payload::payload_moodlets(&payload);
-        let active = resonantdust_dsl::needs_eval::active_moodlets(&self.bundle, &needs, &grants, now_tic);
+        let active = resonantdust_content::needs_eval::active_moodlets(&self.bundle, &needs, &grants, now_tic);
         let mut out = Vec::with_capacity(active.len() * 3);
         for m in &active {
             out.extend_from_slice(&[f64::from(m.moodlet_id), m.mood, f64::from(m.remaining)]);
@@ -252,8 +252,8 @@ impl Content {
     pub fn pawn_mood(&self, payload: Vec<u32>, now_tic: u16) -> f64 {
         let needs = resonantdust_codec::payload::payload_needs(&payload);
         let grants = resonantdust_codec::payload::payload_moodlets(&payload);
-        let active = resonantdust_dsl::needs_eval::active_moodlets(&self.bundle, &needs, &grants, now_tic);
-        resonantdust_dsl::needs_eval::mood(&active)
+        let active = resonantdust_content::needs_eval::active_moodlets(&self.bundle, &needs, &grants, now_tic);
+        resonantdust_content::needs_eval::mood(&active)
     }
 
     /// The next FUTURE tic the pawn's active-moodlet set can change WITHOUT a new write
@@ -263,7 +263,7 @@ impl Content {
     pub fn pawn_next_crossing(&self, payload: Vec<u32>, now_tic: u16) -> f64 {
         let needs = resonantdust_codec::payload::payload_needs(&payload);
         let grants = resonantdust_codec::payload::payload_moodlets(&payload);
-        resonantdust_dsl::needs_eval::next_crossing_tic(&self.bundle, &needs, &grants, now_tic)
+        resonantdust_content::needs_eval::next_crossing_tic(&self.bundle, &needs, &grants, now_tic)
             .map_or(-1.0, f64::from)
     }
 
@@ -425,7 +425,7 @@ impl Content {
     #[wasm_bindgen(js_name = moverParts)]
     pub fn mover_parts(&self, kind: u16) -> JsValue {
         let arr = js_sys::Array::new();
-        let push = |arr: &js_sys::Array, p: &resonantdust_dsl::loader::VisualPart| {
+        let push = |arr: &js_sys::Array, p: &resonantdust_content::loader::VisualPart| {
             let o = js_sys::Object::new();
             let set = |k: &str, v: &JsValue| {
                 let _ = js_sys::Reflect::set(&o, &JsValue::from_str(k), v);
@@ -473,7 +473,7 @@ impl Content {
             }
             v => {
                 // No visual (or a pre-parts one): a single default slot from the flat fields.
-                let d = resonantdust_dsl::loader::VisualPart {
+                let d = resonantdust_content::loader::VisualPart {
                     tint: v.as_ref().map(|v| v.tint).unwrap_or(0x00FF_FFFF),
                     geo_color: v.as_ref().map(|v| v.geo_color).unwrap_or(0x00FF_FFFF),
                     texture: v.as_ref().and_then(|v| v.texture.clone()),
@@ -916,13 +916,8 @@ mod tests {
     #[test]
     fn loads_content_and_maps_def_to_colour() {
         // Native exercise of the same Bundle the `Content` surface wraps.
-        let data = "<tile>\n  ::grass>\n    :data>\n      @define>\n        0 return\n";
-        let visual = "<tile>\n  ::grass>\n    :visual>\n      @define>\n        #4b573e &visual.color.bg set\n        0 return\n";
-        let bundle = dsl::load(&[
-            ("data/tiles.rd".into(), data.into()),
-            ("visual/tiles.rd".into(), visual.into()),
-        ])
-        .expect("load");
+        let toml = "[[tile]]\nid = 1\nname = \"grass\"\ntexture = \"white\"\ntint = \"#4b573e\"\n";
+        let bundle = dsl::load(&[("tiles.toml".into(), toml.into())]).expect("load");
         let id = bundle.tile_def_id("grass").unwrap();
         assert_eq!(bundle.color_bg_for_def(id), Some(0x4b573e));
     }

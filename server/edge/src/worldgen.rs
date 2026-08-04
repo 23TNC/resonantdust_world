@@ -31,7 +31,7 @@ use resonantdust_codec::object::{
     macro_world_origin, pack_kind_pos_reference, pack_kind_reference, pack_tile_reference, ZONE_DIM,
     ZONE_TILES,
 };
-use resonantdust_dsl::Bundle;
+use resonantdust_content::Bundle;
 
 /// The tile a cell falls back to when its biome named no ground (or an unknown
 /// one). Grass is the neutral floor; the corpus must define it.
@@ -48,7 +48,7 @@ pub struct Worldgen {
 /// content hot-reload works with, so a poll can skip rebuilding when the
 /// fingerprint hasn't moved (see [`Worldgen::load_versioned`]).
 pub struct LoadedWorldgen {
-    /// [`resonantdust_dsl::content::content_version`] of the loaded corpus.
+    /// [`resonantdust_content::content::content_version`] of the loaded corpus.
     pub version: u64,
     pub worldgen: Worldgen,
 }
@@ -59,9 +59,9 @@ impl Worldgen {
     /// joined string) if the corpus won't parse, defines no biomes, or is missing
     /// the default tile.
     pub fn load_versioned(content_dir: &Path) -> Result<LoadedWorldgen, String> {
-        let sources = resonantdust_dsl::content::read_content_dir(content_dir)
+        let sources = resonantdust_content::content::read_content_dir(content_dir)
             .map_err(|e| format!("read content {}: {e}", content_dir.display()))?;
-        let version = resonantdust_dsl::content::content_version(&sources);
+        let version = resonantdust_content::content::content_version(&sources);
         let worldgen = Self::from_sources(&sources)?;
         Ok(LoadedWorldgen { version, worldgen })
     }
@@ -79,7 +79,7 @@ impl Worldgen {
     /// Build worldgen from already-read `(name, source)` pairs — the core of
     /// [`load`], split out so it's testable without touching the filesystem.
     pub fn from_sources(sources: &[(String, String)]) -> Result<Worldgen, String> {
-        let bundle = resonantdust_dsl::load(sources).map_err(|errs| {
+        let bundle = resonantdust_content::load(sources).map_err(|errs| {
             errs.iter().map(|e| format!("{}: {}", e.file, e.message)).collect::<Vec<_>>().join("; ")
         })?;
         if bundle.biome_names().is_empty() {

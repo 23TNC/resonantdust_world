@@ -14,8 +14,10 @@ protocol / rules …) gets its own folder crate; add it to `members` in
 
 - **`core/` — `resonantdust-core`.** Hello-world placeholder for the foundational
   shared logic. Pure Rust, no wasm — the gateway and modules link it directly.
-- **`dsl/` — `resonantdust-dsl`.** Hello-world placeholder for the shared
-  domain-specific language logic. Pure Rust, no wasm, same as `core`.
+- **`content/` — `resonantdust-content`.** The content loader: `content/*.toml`
+  → the materialized `Bundle` every consumer queries (schema in
+  `docs/VARIABLES.md`; the `.rd` DSL it replaced is deleted — git has it).
+  Pure Rust, no wasm, same as `core`.
 - **`wasm/` — `resonantdust-shared` (cdylib + rlib).** The browser bundle: thin
   `wasm-bindgen` wrappers that re-export the piece crates, gated on the `js`
   feature so `cargo test` / `check` exercise the logic natively. This is the one

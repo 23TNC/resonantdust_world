@@ -6,7 +6,7 @@ the user's._
 ## F1 — Where the tile footprint is authored, and where it is cached {#f1}
 _2026-07-28 · resolved at plan time · **the corpus authors it, the leaf caches it**_
 
-**Chosen.** `thing.span` in [`content/visual/things.rd`](../../../content/visual/things.rd) stays the
+**Chosen.** `thing.span` in [`content/visual/things.rd`](../../../content/things.toml) stays the
 one place a footprint is *authored*. Remaster **reads** it and writes a resolved
 `tiles: [w, h]` + `span` into the leaf `meta.json` as a clearly-labelled cache, regenerated every run.
 

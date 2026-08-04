@@ -1,5 +1,27 @@
 # Completed — TOML content
 
+## 2026-08-04 · P6 — the deletion + the rename (3/3)
+
+parser.rs, vm.rs, the hook/facet machinery, the `.rd` corpus, the converter, the `.rd`
+fallback walk AND the client's boot embed — all deleted (git holds them). The embed bit
+back: the webgl client imports its offline-fallback corpus via `?raw` at BUILD time, so
+deleting the `.rd` files black-screened the boot until the embed became the four client
+TOMLs. `load()` refuses non-TOML sources by name. The needs_eval fixture + the wasm crate
+test were translated. Live exception, deliberate: `content/visual/manifest/*.rd` are
+bin/art's ART manifests — same extension, never corpus.
+
+The rename (F4): `shared/dsl` → `shared/content`, crate `resonantdust-content` (the wasm
+re-export keeps its `dsl` alias for the TS surface). En route the deletion flushed out a
+THIRD private copy of the content walk — the worker's `load_speeds` — which broke the
+moment the dialect moved and is now the one shared `read_content_dir`. Full stack rebuilt
++ redeployed: worker `kinds=11`, npc `def 0x30010070 speed 12 thirst 1`, `/content` = 4
+TOMLs, the world renders, trips flowed throughout.
+
+Docs + memory: VARIABLES.md speaks TOML in every authored-spelling block; shared/AGENTS;
+bin/dsl syncs root `*.toml` + `visual/` (manifests); memories `dsl-rebuilt`/`biome-dsl`
+deleted, `toml-content` written, two descriptions updated. The golden fixture STAYS as
+the table-drift guard (a deliberate content tune re-blesses via `BLESS_GOLDEN=1`).
+
 ## 2026-08-04 · P5 — every consumer on TOML, live (4/4)
 
 The swap concentrated in TWO seams: `read_content_dir` (shared — TOML-wins-else-`.rd`;

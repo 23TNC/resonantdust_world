@@ -172,7 +172,7 @@ with [I2](#i2) and is what [P3](todo.md) exists to fix.
 _2026-07-28 · P0.2 · read from `shared/dsl/src/loader.rs` — **[F2](forks.md#f2) was wrong**_
 
 `footprint` already exists and is **not** the field that sizes a texture. Both are in
-[`VisualParts`](../../../shared/dsl/src/loader.rs) and they are independent:
+[`VisualParts`](../../../shared/content/src/loader.rs) and they are independent:
 
 | field | is | conifer | default |
 |---|---|---|---|

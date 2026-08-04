@@ -207,7 +207,7 @@ pub async fn resolve_thing(server_url: &str, name: &str) -> Result<(u32, u16), S
 /// Fetch + load the world server's `/content` corpus into a [`Bundle`] — the def-id, speed
 /// AND needs authority (needs-moodlets P4: the Brain keeps the bundle to run `needs_eval`
 /// on its pawn's payload, the same eval the client reaches through wasm — F3).
-pub async fn fetch_corpus(server_url: &str) -> Result<resonantdust_dsl::loader::Bundle, String> {
+pub async fn fetch_corpus(server_url: &str) -> Result<resonantdust_content::loader::Bundle, String> {
     // The login hands back the WS endpoint (`ws://host:port/ws`); the corpus lives on the same
     // server's HTTP side. Swap the scheme and drop the `/ws` path.
     let base = server_url
@@ -228,14 +228,14 @@ pub async fn fetch_corpus(server_url: &str) -> Result<resonantdust_dsl::loader::
             Some((pair.get(0)?.as_str()?.to_string(), pair.get(1)?.as_str()?.to_string()))
         })
         .collect();
-    resonantdust_dsl::loader::load(&sources)
+    resonantdust_content::loader::load(&sources)
         .map_err(|errs| format!("corpus load: {} error(s), first: {:?}", errs.len(), errs.first()))
 }
 
 /// Resolve a pawn kind's `(packed definition_reference, tics-per-tile)` from an already-loaded
 /// corpus — [`resolve_thing`]'s body, split so a brain that keeps the [`Bundle`] resolves
 /// through the one it holds.
-pub fn resolve_thing_in(bundle: &resonantdust_dsl::loader::Bundle, name: &str) -> Result<(u32, u16), String> {
+pub fn resolve_thing_in(bundle: &resonantdust_content::loader::Bundle, name: &str) -> Result<(u32, u16), String> {
     let kind = bundle
         .thing_object_id(name)
         .ok_or_else(|| format!("thing `{name}` not in the corpus"))?;
