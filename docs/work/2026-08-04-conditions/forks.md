@@ -88,3 +88,31 @@ Rejected: **building the effect system now** — the user asked for a rename and
 an effect table is a wire + eval + npc-decision change that deserves its own stream and its own
 exit. **Leaving the docs saying "a condition is a label + a mood offset"** — that is the sentence
 the next session would build against, and it is now known to be wrong.
+
+## F7 — the card strip is a SIBLING of the details panel, in both states {#f7}
+
+_2026-08-04. Resolves [B1](blockers.md#b1) — the user's call: "Please make the cards a sibling of
+the details panel so that it can actually draw past the details."_
+
+A panel root is `overflow: hidden`, so nothing parented inside `DetailsPanel` can paint past its
+border. The strip therefore lives in its own `position: fixed` element appended to the panel's
+HOST (`host.appendChild(this.panel)` at [DomPanel.ts:1233](../../../client/webgl/src/ui/dom/DomPanel.ts)),
+making it a sibling — outside the clip, free to extend right across the world.
+
+**Chosen**: the strip lives in the overlay in **both** states — collapsed (4 maximized + the
+minimized remainder) and expanded (all maximized). It is positioned against the panel's bottom-left
+with the authored padding, so it *looks* like it is inside the panel's bottom edge and simply keeps
+going when it outgrows it. The panel already fires `rectChange` on construction, drag, resize,
+window resize, anchor flip and minimize toggle — the overlay re-anchors off that one event, and
+mirrors the panel's visibility (close / minimize / hide / nothing-selected all hide it).
+
+Rejected: **strip inside the body until expanded, then reparent to an overlay** — two layouts, two
+code paths and a visible jump at the exact moment the user clicks; the collapsed strip would also
+inherit the body's scroll, so it would slide away from the bottom edge as the text rows scroll.
+**Overlay only when it overflows** — same reparent, just triggered by a measurement instead of a
+click, which makes the jump intermittent and therefore harder to see in testing.
+
+Consequences carried into P6: the overlay needs a z-index above the panel band, must not swallow
+world input outside its own bounds, must clamp at the **viewport** edge (scroll inside the overlay
+past that — [B1](blockers.md#b1) method #1 as the inner fallback), and must be torn down with the
+panel.

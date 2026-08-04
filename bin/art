@@ -2707,21 +2707,22 @@ cmd_remaster() {
 
   # ── Publish: STUBBED in this repo ────────────────────────────────────────────
   # In the old game `--publish 1` shipped the change end-to-end: master → R2
-  # (dropping the kind's now-stale LODs), regenerate the manifest, push the
-  # visuals corpus, and reindex if the manifest file set changed. The new repo
-  # has no R2 creds (bin/keys), no `bin/dsl` corpus/reindex tooling, and a
-  # different deploy story (`rd`), so that tail isn't wired up here yet.
+  # (dropping the kind's now-stale LODs), then regenerate + push the existence
+  # index. The new repo has no R2 creds (bin/keys) and a different deploy story
+  # (`rd`), so that tail isn't wired up here yet.
   #
-  # TODO: re-wire the publish pipeline once the new deploy path exists. The
-  # original sequence (kept for reference) was:
-  #   cmd_upload_master "$SPLIT_TARGET"                 # master → R2
-  #   local mdir="$REPO_ROOT/content/visual/manifest"   # was content/visual/manifest
-  #   before=$(ls "$mdir"/*.rd 2>/dev/null | xargs -rn1 basename | sort)
-  #   cmd_manifest
-  #   after=$(ls "$mdir"/*.rd 2>/dev/null | xargs -rn1 basename | sort)
-  #   "$SCRIPT_DIR/dsl" upload visuals                  # push visuals corpus
-  #   [[ "$before" != "$after" ]] && "$SCRIPT_DIR/dsl" reindex
-  echo "art: --publish is not wired up in this repo yet (R2 + dsl deploy tail TODO)." >&2
+  # The index half is now simpler than it was. It used to route through the
+  # CONTENT publish path — pushing `content/visual/` and reindexing a manifest.json
+  # when the file set changed — which was a category error: the index describes the
+  # TEXTURE tree, not the corpus. It lives in `textures/manifest/` now
+  # (content-toml-only F1), so it ships with the masters and `bin/dsl` is not in
+  # this sequence at all.
+  #
+  # TODO: re-wire the publish pipeline once the new deploy path exists:
+  #   cmd_upload_master "$SPLIT_TARGET"        # master → R2
+  #   cmd_manifest                             # regenerate textures/manifest/*.json
+  #   <upload textures/manifest/ alongside the masters>
+  echo "art: --publish is not wired up in this repo yet (R2 upload tail TODO)." >&2
   echo "art: masters are local under $MASTER_DIR/$SPLIT_TARGET/; run 'art manifest' to reindex." >&2
   return 0
 }
@@ -3122,13 +3123,29 @@ _kind_maps() {  # kinddir
   echo "$bits"
 }
 
-# Generate content/visual/manifest/<category>.rd from the NORMALIZED master tree
+# A JSON array literal from integer args: `_json_int_array 1 2 3` → `[1, 2, 3]`, `[]` for none.
+_json_int_array() {  # ints...
+  local out="" v
+  for v in "$@"; do out+="${out:+, }$v"; done
+  echo "[$out]"
+}
+
+# Generate textures/manifest/<type>.json from the NORMALIZED master tree
 # (master/<cat>.<subcategory>/<kind>.<subkind>/<id>.<dir>.<layer>.<variant>.<map>.png). One file
-# per base category. Carries the existence data the `^r2` resolve intrinsic reads
-# (it can't probe R2 mid-draw): per category `&subcategories` (override ints); per base
-# kind `&variant` (variations), `&layers` (layer count), `&subkinds` (override ints).
-# Counts/subkinds are read from the base subcategory dir (<cat>.0); the `.0` base of
-# every axis is implicit. Do not edit by hand — re-run `bin/art manifest`.
+# per base type. Carries the existence data the `^r2` resolve intrinsic reads
+# (it can't probe R2 mid-draw): per type `subcategories` (override ints); per base
+# kind `var_id`/`var_variant` (variations), `layers` (layer count), `part_id`/`part_variants`,
+# `subkinds` (override ints), `hash` (master version) and `maps` (bit0 albedo|bit1 normal|
+# bit2 emissive). Counts/subkinds are read from the base subcategory dir (<cat>.0); the `.0`
+# base of every axis is implicit. Do not edit by hand — re-run `bin/art manifest`.
+#
+# WHERE IT LANDS (content-toml-only F1/F2). This used to write `.rd` files into
+# `content/visual/manifest/`, which was wrong twice over: `content/` is the AUTHORED TOML
+# corpus, and nothing has parsed the `.rd` dialect since it was deleted. A generated index
+# belongs beside the tree it indexes, so it lands in `textures/` — gitignored exactly like the
+# masters, because a tracked index of an untracked tree is stale in every fresh checkout. The
+# format is JSON: machine-written, machine-read, and converging with the edge's
+# `/textures-manifest` (F5), which is the destination single index.
 #
 # LOCAL in this repo: the old game gated this on R2 (only kinds whose master
 # was actually uploaded got indexed, since the client fetches masters from R2).
@@ -3136,7 +3153,7 @@ _kind_maps() {  # kinddir
 # master tree directly. TODO: re-add the R2 "uploaded" gate when the deploy/
 # upload pipeline returns (see the stubbed publish tail in `cmd_remaster`).
 cmd_manifest() {
-  local out_dir="$REPO_ROOT/content/visual/manifest"
+  local out_dir="$REPO_ROOT/textures/manifest"
   mkdir -p "$out_dir"
 
   # Index the LOCAL master tree (no R2 gate in this repo — see the function header). ONE
@@ -3153,27 +3170,20 @@ cmd_manifest() {
     local -a leaves=(); local kd
     while IFS= read -r -d '' kd; do leaves+=( "$kd" ); done < <(_find_kind_dirs "$typedir")
     (( ${#leaves[@]} == 0 )) && continue
-    local out="$out_dir/${type}.rd"
+    local out="$out_dir/${type}.json"
     local subcategories; subcategories=$(_override_ints "$MASTER_DIR" "$type")
     {
-      echo "; content/visual/manifest/${type}.rd"
-      echo "; GENERATED by \`bin/art manifest\` from $MASTER_DIR/$type/ (all kind leaves, any depth)."
-      echo "; Existence index for the (future) \`^r2\` resolver: per type &subcategories; per KIND"
-      echo "; LEAF a :<key> (leaf path below the type, so <type>/<key> = the client stem) carrying"
-      echo "; &variant (variations), &layers (layer count), &subkinds (override ints), &hash"
-      echo "; (master version), &maps (bit0 albedo|bit1 normal|bit2 emissive). The filename"
-      echo "; layer/variant default to 0/1. Do not edit by hand — re-run \`bin/art manifest\`."
-      echo
-      echo "<manifest>"
-      echo "  ::${type}>"
-      echo "    @define>"
-      _emit_int_array subcategories $subcategories
-      local key parent base n p facs
+      echo "{"
+      echo "  \"_comment\": \"GENERATED by 'bin/art manifest' from $MASTER_DIR/$type/ (all kind leaves, any depth). Existence index for the (future) ^r2 resolver. Do not edit by hand.\","
+      echo "  \"type\": \"${type}\","
+      echo "  \"subcategories\": $(_json_int_array $subcategories),"
+      echo "  \"kinds\": {"
+      local key parent base n p facs first=1
       for kd in "${leaves[@]}"; do
         kd=${kd%/}
         key=${kd#"${typedir%/}/"}                    # leaf path below the type (stem tail)
         [[ "$key" == "$kd" || -z "$key" ]] && key=$(basename "$kd")
-        # variation list = (id,variant) pairs → parallel &var_id / &var_variant arrays.
+        # variation list = (id,variant) pairs → parallel var_id / var_variant arrays.
         local ids=() cnts=()
         while IFS=' ' read -r vi vc; do [[ -n "$vi" ]] && { ids+=("$vi"); cnts+=("$vc"); }; done < <(_var_pairs "$kd")
         n=${#ids[@]}
@@ -3187,24 +3197,30 @@ cmd_manifest() {
         p=$(_layer_count "$kd")
         parent=$(dirname "$kd"); base=$(basename "$kd")
         facs=$(_override_ints "$parent" "$base")     # int-suffixed subkind siblings (empty for named)
-        echo "    :${key}>"
-        echo "      @define>"
-        echo "        ${p} &layers set"
-        echo "        $(_kind_hash "$kd") &hash set"
-        echo "        $(_kind_maps "$kd") &maps set"
-        _emit_int_array var_id "${ids[@]}"
-        _emit_int_array var_variant "${cnts[@]}"
-        # Per-PART variant counts (human-pawns P1): parallel &part_id / &part_variants —
-        # e.g. female → parts [0, 1], counts [9, 16] (9 bodies, 16 heads).
+        (( first )) || echo ","
+        first=0
+        printf '    "%s": {\n' "$key"
+        printf '      "layers": %s,\n' "$p"
+        printf '      "hash": %s,\n' "$(_kind_hash "$kd")"
+        printf '      "maps": %s,\n' "$(_kind_maps "$kd")"
+        printf '      "var_id": %s,\n' "$(_json_int_array "${ids[@]}")"
+        printf '      "var_variant": %s,\n' "$(_json_int_array "${cnts[@]}")"
+        # Per-PART variant counts (human-pawns P1): parallel part_id / part_variants —
+        # e.g. female → parts [0, 1], counts [9, 16] (9 bodies, 16 heads). Omitted entirely
+        # when the kind has no parts, so "absent" stays distinct from "empty".
         local pids=() pcnts=()
         while IFS=' ' read -r pi pc; do [[ -n "$pi" ]] && { pids+=("$pi"); pcnts+=("$pc"); }; done < <(_part_pairs "$kd")
         if (( ${#pids[@]} > 0 )); then
-          _emit_int_array part_id "${pids[@]}"
-          _emit_int_array part_variants "${pcnts[@]}"
+          printf '      "part_id": %s,\n' "$(_json_int_array "${pids[@]}")"
+          printf '      "part_variants": %s,\n' "$(_json_int_array "${pcnts[@]}")"
         fi
-        _emit_int_array subkinds $facs
+        printf '      "subkinds": %s\n' "$(_json_int_array $facs)"
+        printf '    }'
         kinds=$((kinds + 1)); total=$((total + n))
       done
+      (( first )) || echo
+      echo "  }"
+      echo "}"
     } > "$out"
     files=$((files + 1))
   done
@@ -3587,7 +3603,7 @@ commands:
                            This world's assets live under the resonantdust_world/
                            prefix so they never clobber the old game's textures/.
                            Needs S3 creds in bin/keys/r2.env (gitignored).
-  manifest                 Generate content/visual/manifest/<kind>.rd from
+  manifest                 Generate textures/manifest/<type>.json from
                            master/<kind>/<subkind>/: one file per kind,
                            each a ::kind with one :subkind per subfolder and
                            a texture array of that folder's sprite filenames.

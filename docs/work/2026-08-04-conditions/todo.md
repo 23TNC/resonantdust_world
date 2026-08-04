@@ -77,21 +77,26 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 - [ ] Document `priority` in `docs/VARIABLES.md`'s conditions block. Acceptance: `bin/rd
       docs-check` green; the block states the three-key sort and that priority is corpus-tunable.
 
-## P4 — conditions render as cards
+## P4 — the strip is a sibling that draws past the panel ([F7](forks.md#f7))
 
-- [ ] Split `DetailsPanel.render` so the text rows live in one `<pre>` child and the conditions get
-      their own container element. Acceptance: the panel looks identical to today (text conditions
-      still listed), with the conditions emitted from the new container.
-- [ ] Build a `ConditionCard` element factory (label, signed mood, remaining-tics timer) styled
-      from the panel chrome constants. Acceptance: one card renders with all three fields legible
-      at the panel's 12px monospace.
-- [ ] Lay the cards out as a horizontal flex strip pinned to the bottom of the body, with padding
-      from the bottom edge, from the left edge, and between cards. Acceptance: measured in the
-      browser, the gaps match the authored constants and the first card's left gap equals the
-      body's left padding.
-- [ ] Raise the details panel's `minWidth` so 4 maximized cards plus all padding fit at minimum
-      size. Acceptance: dragging the panel to its smallest width still shows 4 whole cards, no
-      clipping.
+- [ ] Drop the condition rows out of `DetailsPanel.render`'s text and give the remaining rows their
+      own `<pre>` child. Acceptance: the panel body shows the text rows only; `grep` finds no
+      condition row emitted into the body.
+- [ ] Create the strip as a `position: fixed` element appended to the panel's HOST — a SIBLING of
+      the panel root, z-index above the panel band. Acceptance: the DOM inspector shows it as a
+      sibling, and a test-wide strip paints over the world past the panel's right edge.
+- [ ] Anchor the strip to the panel's bottom-left with the authored bottom + left padding,
+      re-anchoring off the panel's `rectChange`. Acceptance: drag, corner-resize, snap-flip and a
+      window resize each keep the strip glued to the panel's bottom-left corner.
+- [ ] Mirror the panel's lifecycle: hide on minimize / hide / close / empty selection, and remove
+      the element in `destroy()`. Acceptance: minimizing the panel hides the strip; closing it
+      leaves no orphan node in the DOM.
+- [ ] Build a card element factory (label, signed mood, remaining-tics timer) styled from the panel
+      chrome constants. Acceptance: one card renders with all three fields legible at the panel's
+      12px monospace.
+- [ ] Lay the cards out as a horizontal flex row with the authored gap between cards, sized so 4
+      maximized cards fit the panel's default width. Acceptance: measured in the browser, the gaps
+      match the constants and 4 cards span the default panel width minus its padding.
 - [ ] Render the top 4 by priority maximized and the remainder minimized at the authored width
       fraction. Acceptance: with 6 conditions forced onto a wolf, cards 1–4 are full width in
       priority order and 5–6 are the narrow form.
@@ -106,11 +111,16 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 - [ ] Give the cards a cursor + hover affordance so the click target reads as clickable.
       Acceptance: hovering a card changes the cursor and the card's chrome.
 
-## P6 — the overflow method — BLOCKED on [B1](blockers.md#b1)
+## P6 — the strip behaves at the screen edge ([B1](blockers.md#b1) resolved)
 
-- [ ] Implement the user's chosen overflow method for the expanded strip. Acceptance: with 8
-      conditions expanded, every card is reachable and the chosen behaviour matches what
-      [B1](blockers.md#b1) records as decided.
+- [ ] Clamp the strip at the VIEWPORT edge — past it, scroll inside the strip
+      ([B1](blockers.md#b1) method #1 as the inner fallback). Acceptance: 12 conditions expanded in
+      an 800px window — every card reachable, and `document.body` never scrolls horizontally.
+- [ ] Make the strip's empty area pointer-transparent so it does not steal world input. Acceptance:
+      a right-click on world tiles under the strip's gaps still issues a move; a click on a card
+      does not.
+- [ ] Verify the strip against a panel snapped to the RIGHT edge of the screen. Acceptance: the
+      cards extend past the panel and stay on-screen (clamped), not off the right of the viewport.
 - [ ] Run the wolf drill end to end on the TOML corpus with the cards live. Acceptance: a wolf runs
       full → Dehydrated, cards appear/disappear at the computed crossing tics, and the user's eyes
       close the stream.

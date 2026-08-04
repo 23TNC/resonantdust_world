@@ -54,16 +54,21 @@ but urgent", it is not tunable without changing what the player feels, and it st
 anything the moment a condition's effect is a need rather than a mood. The ordering is computed in
 the ONE shared eval ([F3](forks.md#f3)), not in TS — same reason the band comparison lives there.
 
-## The panel cannot be exceeded — [B1](blockers.md#b1)
+## The strip is a SIBLING of the panel — [B1](blockers.md#b1) → [F7](forks.md#f7)
 
 `PANEL_CSS.overflow = "hidden"` on the panel root ([DomPanelStyles.ts:30](../../../client/webgl/src/ui/dom/DomPanelStyles.ts))
 clips every child at the panel's border; the body is `overflow: auto`
 ([DomPanelStyles.ts:177](../../../client/webgl/src/ui/dom/DomPanelStyles.ts)), so a card strip
-wider than the panel scrolls **inside** it rather than spilling past the frame. Nothing parented to
-the panel can paint outside it. `blockers.md` lays out the four ways to get the maximize-all
-behaviour anyway — in-panel horizontal scroll, auto-widening the panel, wrapping to rows, or a
-detached overlay strip that is not a child of the clipped root (the only one that literally exceeds
-the panel width). **The user reserved this call**; every phase before it is executable without it.
+*inside* the panel would scroll rather than spill. Nothing parented to the panel can paint outside
+it — raised as [B1](blockers.md#b1), and the user resolved it: **the strip is a sibling of the
+details panel, so it can actually draw past it.**
+
+So the strip is a `position: fixed` element appended to the panel's HOST, anchored to the panel's
+bottom-left off the panel's existing `rectChange` event, in **both** states — collapsed and
+expanded ([F7](forks.md#f7)): one layout, one code path, no reparent at the moment of the click.
+It looks like it sits inside the panel's bottom edge and simply keeps going when it outgrows it.
+The clamp moves outward with it — the strip scrolls internally only once it reaches the **viewport**
+edge, not the panel edge.
 
 ## Non-goals
 

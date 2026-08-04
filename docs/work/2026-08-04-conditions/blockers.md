@@ -2,8 +2,12 @@
 
 ## B1 — a panel's content CANNOT exceed the panel's width {#b1}
 
-_2026-08-04. Open — the user reserved this call ("If we cannot exceed a panel's width please let me
-know and I'll determine another method to handle this")._
+_2026-08-04. **RESOLVED 2026-08-04** — the user chose method **#4**, the detached sibling overlay:
+"Please make the cards a sibling of the details panel so that it can actually draw past the
+details." The design that follows from it is [F7](forks.md#f7); P6 is unblocked._
+
+_Raised 2026-08-04 because the user reserved the call ("If we cannot exceed a panel's width please
+let me know and I'll determine another method to handle this")._
 
 **What was asked.** Clicking a minimized condition card maximizes all of them, "which will cause
 conditions to exceed the details width."
@@ -30,10 +34,11 @@ clip is deliberate: it is what keeps overlapping panels reading as distinct rect
 | 3 | **Wrap to rows** — expanded strip becomes a wrapping flex, growing downward | Cards stack into 2–3 rows; the body scrolls vertically | Cheap and safe, but abandons the single horizontal row the user described |
 | 4 | **Detached overlay strip** — expanded cards render into a `position: fixed` element that is a SIBLING of the panel, not a child, anchored to the panel's bottom-left | Cards genuinely paint past the panel's right edge, over the world | The only option that does literally what was asked. Needs anchoring on every drag/resize/anchor-flip (`rectChange` already fires for these), a z-index above the panel band, and a dismiss rule when the panel closes/minimizes/streams out |
 
-**Suggested path: #4**, with #1 as the fallback inside it — the overlay is what the request
-describes, and if the expanded strip is wider than the *viewport* it needs a scroll anyway, so the
-overflow rule from #1 is the natural clamp. #2 is the cheapest thing that looks close, at the cost
-of touching geometry the user owns.
+**Chosen: #4** (user, 2026-08-04), with #1 as the fallback *inside* it — if the expanded strip is
+wider than the **viewport** it still needs a scroll, so the overflow rule from #1 is the natural
+clamp at the screen edge rather than at the panel edge. Design in [F7](forks.md#f7); the strip
+lives in the overlay in BOTH states, so there is no reparent on click.
 
-**Why it blocks.** Only P6 — the overflow behaviour itself. P0–P5 (the rename, priority, the card
-layout, the 4-maximized rule, the click toggle) are executable now and land the same either way.
+**What it blocked.** Only P6 — the overflow behaviour itself. P0–P5 (the rename, priority, the card
+layout, the 4-maximized rule, the click toggle) were executable throughout and land the same either
+way.
