@@ -2723,7 +2723,7 @@ cmd_remaster() {
   #   cmd_manifest                             # regenerate textures/manifest/*.json
   #   <upload textures/manifest/ alongside the masters>
   echo "art: --publish is not wired up in this repo yet (R2 upload tail TODO)." >&2
-  echo "art: masters are local under $MASTER_DIR/$SPLIT_TARGET/; run 'art manifest' to reindex." >&2
+  echo "art: masters are local under $MASTER_DIR/$SPLIT_TARGET/; run 'art manifest' to re-index." >&2
   return 0
 }
 
@@ -3067,11 +3067,11 @@ cmd_upload() {
   cmd_upload_master "$@"
 }
 
-# Generate the texture manifests for the content language. Walks the master
-# tree (master/<category[.subcategory]>/<kind[.subkind]>/<N>.<map>.png) and emits
-# ONE FILE PER BASE CATEGORY under content/visual/manifest/<category>.rd: a
-# single ::category record holding one :kind facet per BASE kind, each with
-# `&variant` = its variation count (the cascade FLOOR — see _count_variations).
+# Generate the texture manifests. Walks the master tree
+# (master/<category[.subcategory]>/<kind[.subkind]>/<N>.<map>.png) and emits
+# ONE FILE PER BASE CATEGORY at textures/manifest/<category>.json: a single object
+# holding one entry per BASE kind, each with its variation count (the cascade
+# FLOOR — see _count_variations).
 #
 # The manifest is deliberately DUMB: it carries no filenames and no subkind/
 # subcategory enumeration. Variations are numbered, so `<N>.<map>.png` is fully
@@ -3407,8 +3407,8 @@ commands:
                            depth is NOT generated (the client integrates it from the
                            normal at render time).
                            [publish] default 0 — stops at local masters. The deploy
-                           tail (master→R2, visuals corpus push, reindex) isn't wired
-                           up in this repo yet; --publish 1 just prints a TODO notice.
+                           tail (master→R2 + index push) isn't wired up in this
+                           repo yet; --publish 1 just prints a TODO notice.
                            Run \`art manifest\` to regenerate the existence index.
                            --force regenerates leaves LOCKED by \`art lock\` (see below).
                            Without it, ONE locked leaf anywhere under <path> aborts
@@ -3603,11 +3603,12 @@ commands:
                            This world's assets live under the resonantdust_world/
                            prefix so they never clobber the old game's textures/.
                            Needs S3 creds in bin/keys/r2.env (gitignored).
-  manifest                 Generate textures/manifest/<type>.json from
-                           master/<kind>/<subkind>/: one file per kind,
-                           each a ::kind with one :subkind per subfolder and
-                           a texture array of that folder's sprite filenames.
-                           Regenerates the whole manifest/ dir each run.
+  manifest                 Generate textures/manifest/<type>.json — the existence
+                           index of the LOCAL master tree: one file per top-level
+                           type, holding every kind leaf found at any depth with its
+                           variations, layers, parts, subkinds, maps and hash.
+                           Untracked, like the tree it indexes. Regenerates the
+                           whole manifest/ dir each run.
   gc                       Sweep stale cached LODs/geo from R2: delete every
                            version dir whose hash no longer matches the kind's
                            current master hash (same hash recipe as 'manifest').

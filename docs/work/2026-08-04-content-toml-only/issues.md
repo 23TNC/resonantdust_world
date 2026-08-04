@@ -57,6 +57,24 @@ Consequence: `_def_span` ([bin/art:142](../../../bin/art)) swallows the failure 
 freshly mastered leaf silently gets `span: None`. The span is authored in `things.toml` now; the
 port is one item in P1, and it must keep the module's documented span≠size≠footprint distinctions.
 
+## I6 — the committed art manifest was four days stale, and that is the whole argument {#i6}
+
+_2026-08-04, closed by P2._ The move's acceptance was "the JSON decodes to the same map as the
+`.rd`". It did — for 7 kinds and every field but one. `biome-thing/default/flora` carried
+`hash = 3890346443754983` in the committed `.rd`; regenerating produced `3703297076635248`.
+
+Not a converter bug. `_kind_hash` is untouched code (sha256 over the kind's master PNGs), and
+running it directly against the current tree gives the new value. The flora masters were rewritten
+**2026-08-01**; the `.rd` was last committed **2026-07-30**. Nobody re-ran `bin/art manifest`, and
+nothing could tell — the index was tracked, the tree it indexes is not, so git showed a clean
+file describing textures that had since changed underneath it.
+
+This is [F1](forks.md#f1)'s argument arriving as evidence rather than reasoning: a tracked index
+of an untracked tree is stale by default and silent about it. In `textures/manifest/` the index
+shares its subject's lifetime — regenerated when the masters are, absent when they are. Verified
+as: every field except that one hash identical, and that hash equal to what the unchanged hash
+function computes today.
+
 ## I5 — a fourth private copy of the content walk, still speaking `.rd` {#i5}
 
 _2026-08-04, open until P1._ `2026-08-04-toml-content` P6 flushed out a third private content walk

@@ -1,5 +1,34 @@
 # Forks — conditions
 
+## F0 — the word is "condition"; the UI element is the "card" {#f0}
+
+_2026-08-04. The user landed here in three steps: moodlet → feeling → condition → (considered)
+card. Recorded in full so nobody re-opens it._
+
+**feeling** was rejected by the user themselves: "moodlets can affect more than feelings, for
+example needs" — the word names one effect and the thing has an open set of them ([F6](#f6)).
+
+**card** was proposed to avoid a conflict with "conditions", on the belief that the game has no
+cards yet. It does: a **card** is the renderer's billboard quad — the vertical plane every sprite
+is drawn on — in `game/viewport/worldTilt.ts`, `game/viewport/records.ts` and `game/world/MoverLayer.ts`,
+and it is authoritative vocabulary in [`VARIABLES.md`](../../VARIABLES.md) ("the caster's card top",
+"the n/s perpendicular caster card"). `debug/index.ts` also registers a `"cards"` channel and
+`game/layout/LayoutNode.ts` reserves the word for a future UI system. Taking it would mean renaming
+the billboard card across the whole render path first — a larger rename than this stream's.
+
+**Chosen (user, 2026-08-04)**: **condition**. Its only code collision is one biome-rule predicate
+([`loader.rs:575`](../../../shared/content/src/loader.rs), a local `condition` on a biome rule — a
+different domain, not an exported name), plus the "conditional moodlet" sub-vocabulary that
+[F4](#f4) retires to derived/timed anyway.
+
+**effect** was the runner-up: zero identifier collisions today and a good fit for [F6](#f6)'s open
+effect set. Rejected because a renderer with lighting and shaders will plausibly want "effect" for
+VFX, trading a present collision for a likely future one.
+
+The **UI element keeps the name "card"** — the details panel draws each condition as a card. That
+is a DOM widget in `game/panels/details/`, far from the render path, and it is the user's own word
+for the visual. The pawn HAS conditions; the panel SHOWS cards.
+
 ## F1 — the rename goes all the way down, not just to the label {#f1}
 
 _2026-08-04._ "Rename moodlets to conditions" could be satisfied by changing one display string in

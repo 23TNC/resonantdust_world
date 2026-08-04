@@ -93,6 +93,23 @@ authoritative name may not lie, and a wire field is as authoritative as names ge
 compatibility window accepting both keys** — there is one server and one client, deployed
 together; a dual-read path would outlive its reason.
 
+## F7 — `bin/dsl` renames to `bin/content`, in P4 {#f7}
+
+_2026-08-04, found while executing P2._ The tool now publishes a flat TOML corpus and has no
+folder concept, no index, and no connection to the dialect it is named after. `docs-authority`
+says an authoritative name may not lie, and a CLI's name is as authoritative as it gets.
+
+**Chosen**: rename in P4's truth pass, alongside `bin/art`'s reference, `docs/CONVENTIONS.md`'s
+`dev/` component list, and the `dsl-script-ported` memory — one commit, so the name and everything
+that cites it move together. A pointer sits in the script's own header until then, so anyone
+reading it learns the name is a fossil.
+
+Rejected: **renaming inside P2** (P2's claim is about where the manifests live; a rename of a
+different tool touches docs and memories and would blur that). **Keeping `dsl`** — the previous
+stream already deleted a crate for exactly this reason ([toml-content F4](../2026-08-04-toml-content/forks.md#f4)),
+and leaving the CLI named after the deleted thing re-opens the question every time someone reads
+`bin/`.
+
 ## F5 — one texture index is the destination {#f5}
 
 _2026-08-04._ Two indexes scan the same master tree. The edge's `tex_manifest` carries hash,

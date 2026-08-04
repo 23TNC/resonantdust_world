@@ -21,7 +21,9 @@ _Components: [`shared/content`](../../components/shared/), `shared/codec`, `shar
 
 ## Two things, in order
 
-**1. The word.** `moodlet` → `condition`, everywhere it is written: the authored corpus
+**1. The word.** `moodlet` → `condition` — chosen over *feeling* (names one effect of many) and
+over *card* (already the renderer's billboard quad, [F0](forks.md#f0)); the **UI element** stays
+the card. The pawn HAS conditions, the panel SHOWS cards. Renamed everywhere it is written: the authored corpus
 (`content/needs.toml`), the loader types, the ONE eval, the codec payload op and action name, the
 pawn module's reducer, the regenerated bindings, the npc, the client, and the authoritative docs
 (`VARIABLES.md`, `TABLES.md`, `ACTIONS.md`). Not a UI relabel ([F1](forks.md#f1)) — two vocabularies

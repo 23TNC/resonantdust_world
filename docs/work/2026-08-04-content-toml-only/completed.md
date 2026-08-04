@@ -2,6 +2,33 @@
 
 _Dated evidence: what landed and how it was checked. Append chronologically._
 
+## 2026-08-04 · P2 — the art manifests leave `content/` (4/4)
+
+**The move is proven, not asserted.** Before touching the generator I decoded all three `.rd`
+manifests into a canonical `{type: {subcategories, kinds: {key: fields}}}` dict, then decoded the
+regenerated JSON the same way and diffed. 7 kinds, 82 variations, every field identical — except
+`biome-thing/default/flora`'s content hash, which turned out to be the committed `.rd` being four
+days stale rather than a converter bug ([I6](issues.md#i6), and the cleanest possible argument for
+[F1](forks.md#f1)). Regeneration is byte-deterministic across runs and every file is valid JSON.
+
+`content/visual/` is deleted. `git ls-files content` now returns the five corpus TOMLs plus
+`servers/*`, and `textures/manifest/*.json` is untracked by inheritance — the gitignore already
+covered `/textures/`, which is exactly the property F1 wanted.
+
+**`bin/dsl` lost the folder concept entirely**, not just the `visual` entry: `_remote_key_for`,
+`_upload_folder`, `_download_folder` and the now-orphaned `_r2_sync` / `_r2_pull` are all gone,
+and `_check_relpath` went from "must start with `data/`, `visual/` or `biome/`" to "a flat
+`*.toml` name" — both rejection paths checked by hand. What is left is a tool that syncs
+`content/*.toml` and copies single files, which is all the corpus can be now.
+
+`bin/art`'s stubbed publish tail no longer routes the texture index through the *content* publish
+path — a category error that had it pushing `content/visual/` and reindexing `manifest.json` when
+the file set changed. The reference sequence is now master→R2, regenerate, upload the index with
+the masters; `bin/dsl` is not in it.
+
+One fork logged, not built: [F7](forks.md#f7) — `bin/dsl` is now named after a deleted dialect,
+and the rename to `bin/content` belongs with the docs and memory that cite it, in P4.
+
 ## 2026-08-04 · P1 — the dead die first (5/5)
 
 **The R2 index is gone, and with it the class of bug.** `load_r2` now calls `r2_list_keys` —

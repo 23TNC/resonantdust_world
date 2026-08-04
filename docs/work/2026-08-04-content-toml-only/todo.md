@@ -41,18 +41,24 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P2 — the art manifests leave `content/`
 
-- [ ] Make `bin/art manifest` emit `textures/manifest/<type>.json` ([F1](forks.md#f1),
+- [x] Make `bin/art manifest` emit `textures/manifest/<type>.json` ([F1](forks.md#f1),
       [F2](forks.md#f2)). Acceptance: regenerating all 3 types yields JSON whose decoded
       kind → {var_id, var_variant, layers, parts, subkinds, maps, hash} map equals today's `.rd`
-      for every leaf.
-- [ ] Delete `content/visual/manifest/*.rd` and the emptied `content/visual/`. Acceptance:
-      `git ls-files content` lists only `*.toml` and `servers/*`.
-- [ ] Drop `CONTENT_FOLDERS=(visual)` from `bin/dsl` so the art index rides the texture upload,
+      for every leaf. → 7 kinds / 82 variations, every field identical but one hash, which the
+      unchanged `_kind_hash` reproduces from today's tree — the committed `.rd` was stale
+      ([I6](issues.md#i6)). Regeneration is deterministic.
+- [x] Delete `content/visual/manifest/*.rd` and the emptied `content/visual/`. Acceptance:
+      `git ls-files content` lists only `*.toml` and `servers/*`. → confirmed;
+      `textures/manifest/*.json` is untracked, as `textures/` already is.
+- [x] Drop `CONTENT_FOLDERS=(visual)` from `bin/dsl` so the art index rides the texture upload,
       not the corpus one. Acceptance: `bin/dsl upload` syncs root `*.toml` only; its usage text
-      names no folder argument.
-- [ ] Re-point `bin/art`'s stubbed publish tail ([bin/art:2700](../../../bin/art)) at
+      names no folder argument. → the folder concept is gone entirely: `_remote_key_for`,
+      `_upload_folder`, `_download_folder`, `_r2_sync`, `_r2_pull` deleted; `_check_relpath` now
+      demands a flat `*.toml` name (both rejections verified).
+- [x] Re-point `bin/art`'s stubbed publish tail ([bin/art:2700](../../../bin/art)) at
       `textures/manifest/`. Acceptance: the reference sequence in that comment names no `content/`
-      path and no `dsl` corpus call.
+      path and no `dsl` corpus call. → rewritten; `bin/art`'s `manifest` usage text and the
+      `cmd_manifest` header follow. [F7](forks.md#f7) logged: `bin/dsl` is itself a fossil name.
 
 ## P3 — the deploy topology leaves `content/`
 
@@ -71,6 +77,9 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 - [ ] Call `content-check` from `.git/hooks/pre-commit` beside `docs-check`, sharing the
       `SKIP_DOCS_CHECK=1` escape hatch. Acceptance: a commit staging `content/x.json` is refused
       with the check's message; the same commit succeeds under the skip var.
+- [ ] Rename `bin/dsl` → `bin/content` with its `bin/art` reference, the `dev/` list in
+      `docs/CONVENTIONS.md`, and the `dsl-script-ported` memory ([F7](forks.md#f7)). Acceptance:
+      `grep -rn 'bin/dsl' . --exclude-dir=.git` finds nothing; `bin/content --help` runs.
 - [ ] Rename the `/content` payload key `"rd"` → `"toml"` in `server/edge`, `contentBoot.ts` and
       `client/npc/src/lib.rs` in one commit ([F6](forks.md#f6)). Acceptance: edge redeployed, the
       webgl client boots and renders the world, `rd-npc` resolves a def.
