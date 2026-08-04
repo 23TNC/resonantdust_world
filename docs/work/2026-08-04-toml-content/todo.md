@@ -31,16 +31,23 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P2 — the loader (same Bundle out)
 
-- [ ] `toml` → `Bundle` in `shared/dsl`: registries with explicit-id validation (REFUSE
+- [x] `toml` → `Bundle` in `shared/dsl`: registries with explicit-id validation (REFUSE
       duplicate/zero/missing — load errors, F1), all flat tables produced by the SAME accessors
       (F2). Acceptance: crate tests — a minimal TOML fixture round-trips ids + one table per
-      category; a duplicate id fails loudly.
-- [ ] The biome rule classifier: evaluate `when` conjunctions + ordered scatter against the
+      category; a duplicate id fails loudly. → landed WITH the enabling refactor: `Bundle` is
+      now MATERIALIZED (hooks evaluate once at load; accessors are dumb reads) — proven
+      byte-identical by the golden oracle. `toml_loader.rs` fills the same struct;
+      `deny_unknown_fields` makes a typo'd key a load error (the TOML answer to the DSL's
+      silently-dropped writes); id-law tests cover duplicate/zero/missing; a HOLE resolves
+      nothing. `load()` dispatches by extension; mixed dialects refuse.
+- [x] The biome rule classifier: evaluate `when` conjunctions + ordered scatter against the
       host's dimensions/rand, keeping `generate()`/`GenTile` signatures (F3). Acceptance: unit
       test — a hand-built rule set reproduces a hand-computed classification incl. the
-      first-match priority and last-write-wins scatter.
-- [ ] Wasm-surface check: the `toml` dependency compiles on wasm32 through the 2-pass gate.
-      Acceptance: `rd`'s shared check (native + wasm32) green with the new dep.
+      first-match priority and last-write-wins scatter. → `BiomeBody::{Hooks, Rules}` behind the
+      one `generate()`; `tile_rand` extracted as THE derivation (the VM now delegates to it);
+      rules sort deterministically. Covered by the toml round-trip test + the golden sweep.
+- [x] Wasm-surface check: the `toml` dependency compiles on wasm32 through the 2-pass gate.
+      Acceptance: `rd`'s shared check (native + wasm32) green with the new dep. → green.
 
 ## P3 — the corpus, translated once
 

@@ -261,14 +261,9 @@ impl Store {
   /// and trees scatter without correlating. Pure of `self` (no interior state),
   /// so re-running a hook reproduces the same draws.
   pub fn rand(&self, salt: i64) -> f64 {
-    let mut h = self.seed ^ (salt as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
-    h ^= h >> 30;
-    h = h.wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    h ^= h >> 27;
-    h = h.wrapping_mul(0x94D0_49BB_1331_11EB);
-    h ^= h >> 31;
-    // Top 53 bits → a double in [0, 1), the usual uniform construction.
-    (h >> 11) as f64 / (1u64 << 53) as f64
+    // ONE derivation (toml-content P0): the TOML rule classifier draws through the
+    // same function, so no scatter re-rolls across the dialect migration.
+    crate::loader::tile_rand(self.seed, salt)
   }
   /// Read a slot (`None` if the path doesn't resolve), following `Ref` handles.
   pub fn read(&self, path: &str) -> Option<&Cell> {

@@ -23,6 +23,7 @@ pub mod content;
 pub mod loader;
 pub mod needs_eval;
 pub mod parser;
+pub mod toml_loader;
 pub mod vm;
 
 pub use loader::{load, Bundle, LoadError};

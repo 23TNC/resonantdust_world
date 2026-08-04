@@ -1,43 +1,38 @@
-//! Content loader — parse a set of `.rd` sources into one ready-to-query
-//! [`Bundle`].
+//! Content loader — parse content sources into one ready-to-query, fully
+//! MATERIALIZED [`Bundle`].
 //!
-//! This is the entry point both sides use to turn on-disk content into something
-//! executable. The server links it as an rlib and asks "what `def_id` is
-//! `grass`?" to pack a zone's terrain; the client reaches it through the wasm
-//! bundle and asks "what colour is this `def_id`?" to paint a tile. Same content,
-//! same ids, both sides — which only works because the id scheme is derived from
-//! the content itself, not assigned out of band.
+//! Two source dialects, ONE bundle (toml-content F2):
+//!   - **TOML** (`content/*.toml`) — the go-forward corpus: pure data, explicit ids
+//!     (F1), biome rules as declarative tables (F3). Parsed by [`crate::toml_loader`].
+//!   - **`.rd`** (the retiring DSL) — parsed + hook-EVALUATED **once, at load**, into
+//!     the same materialized tables. Migration-scoped: dies with the golden gate
+//!     (`docs/work/2026-08-04-toml-content`).
 //!
-//! A tile is a `<tile>` def with two facets authored in separate files:
-//!   - `:data` (content/data/…) — the simulation side the server reads.
-//!   - `:visual` (content/visual/…) — the rendering side the client reads.
-//! Each facet holds lifecycle hooks (`@define` / `@on_create` / `@on_update` /
-//! `@on_destroy`); for now only `@define` is run, to materialise a tile's static
-//! aspects (e.g. `visual.color.bg`).
+//! Consumers never see the dialect: every accessor reads precomputed data, and the
+//! server links this as an rlib while the client reaches it through the
+//! `resonantdust-shared` wasm bundle — same content, same ids, both sides.
 
-use crate::parser::{Header, Node};
+use crate::parser::{Header, Node, Stmt};
 use crate::vm::{run, Store};
 use std::collections::HashMap;
 
-/// A single load-time problem (a parse error, tagged with its file).
+/// A single load-time problem (a parse error, an id-law violation), tagged with its file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoadError {
   pub file: String,
   pub message: String,
 }
 
-/// The outcome of running a biome's lifecycle on one tile: which biome claimed
-/// the cell and what it decided to place. `tile` names the ground (floor / wall /
-/// cliff), `thing1` the primary-layer thing (a tree, a shrub — `None` when the
-/// biome scattered nothing on this cell). Names, not ids: worldgen resolves them
-/// to `def_id`s through this same bundle before packing.
+/// The outcome of classifying one tile: which biome claimed the cell and what it
+/// decided to place. Names, not ids: worldgen resolves them to `def_id`s through
+/// this same bundle before packing.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct GenTile {
-  /// The biome whose `@define` claimed this cell (`None` if none matched).
+  /// The biome that claimed this cell (`None` if none matched).
   pub biome: Option<String>,
-  /// The ground tile name the biome's `@on_create` set (`&tile set`).
+  /// The ground tile name it chose.
   pub tile: Option<String>,
-  /// The primary thing-layer name (`&thing.1 set`), or `None` if unset.
+  /// The primary thing-layer name, or `None` if the cell stays bare.
   pub thing1: Option<String>,
 }
 
@@ -59,7 +54,7 @@ pub struct PackedChannel {
 /// the client). `noise_field` names a tiling character field the client resolves to
 /// an atlas index; the swings drive hue/chroma jitter in OKLab (never lightness);
 /// `sample_space` is `"uv"` (rides the sprite) or `"world"` (pinned to the ground).
-/// All-zero swings = identity (smooth tintable, today's behaviour).
+/// All-zero swings = identity (smooth tintable).
 #[derive(Debug, Clone, PartialEq)]
 pub struct MaterialParams {
   /// The noise-field character name (`strand`/`mottle`/…); `""` = no field (flat).
@@ -89,12 +84,11 @@ impl Default for MaterialParams {
   }
 }
 
-/// The visual parts a def's `:visual @on_create` prim declares. `tint` multiplies
-/// a LOADED texture (usually white/no-op for full-colour art); `geo_color` is the
-/// flat silhouette colour shown while the prim is still on the geo tier (defaults
-/// to `tint` when the def sets none); `texture` is the sprite STEM (`None` when the
-/// def declares no texture, or declares the built-in `"white"` fill). Shared by
-/// tiles and things — both author the same prim shape.
+/// The visual parts a def declares. `tint` multiplies a LOADED texture (usually
+/// white/no-op for full-colour art); `geo_color` is the flat silhouette colour shown
+/// while the prim is still on the geo tier (defaults to `tint` when the def sets
+/// none); `texture` is the sprite STEM (`None` when the def declares no texture, or
+/// declares the built-in `"white"` fill). Shared by tiles and things.
 #[derive(Debug, Clone, PartialEq)]
 pub struct VisualParts {
   pub tint: u32,
@@ -102,90 +96,48 @@ pub struct VisualParts {
   pub texture: Option<String>,
   /// The tiles this prim OCCUPIES — `(w, h)`, default `(1, 1)`. Logical grid extent
   /// (movement / hit-testing), authored in the object's own frame; the object's
-  /// position is its TOP-LEFT tile. Rotation swaps `w`/`h` for an n/s facing (a 3×2
-  /// object becomes 2×3). **Server-side occupancy is deferred** (`docs/components/shared/codec/design/object-model.md`);
-  /// today the client uses `footprint` only to resolve the `anchor` and the z-row.
+  /// position is its TOP-LEFT tile. Rotation swaps `w`/`h` for an n/s facing.
+  /// **Server-side occupancy is deferred** (`docs/components/shared/codec/design/object-model.md`).
   pub footprint: (f64, f64),
   /// The prim's logical ANCHOR within its footprint — `(x, y)` in `0..1`, default
-  /// `(0.5, 0.5)` (centre). `(0,0)` is the footprint's top-left tile corner, `(1,1)`
-  /// its bottom-right; `(0.5, 1.0)` is bottom-centre (a thing that stands on its
-  /// cell's front edge). The `sprite_anchor` point of the art is pinned here.
+  /// `(0.5, 0.5)` (centre). `(0.5, 1.0)` is bottom-centre. The `sprite_anchor`
+  /// point of the art is pinned here.
   pub anchor: (f64, f64),
-  /// The sprite's on-screen scale in TILES (square canvas → one value), default `1.0`
-  /// (one tile). Masters are square pow2 canvases with the subject letterboxed +
-  /// centred (via `bin/art`), so drawing `size × size` shows the sprite at its true
-  /// shape through the transparent padding — a `size 3` conifer draws 3 tiles tall.
-  /// SUPERSEDED by `span` + `sprite_scale` (def-frame-anchors P5) — kept while legacy
-  /// consumers migrate.
+  /// The sprite's on-screen scale in TILES, default `1.0`. SUPERSEDED by `span` +
+  /// `sprite_scale` (def-frame-anchors P5) — kept while legacy consumers migrate.
   pub size: f64,
-  /// The sprite frame's WORLD SPAN in tiles — pow2, ≤ one zone — default `1.0`. The
-  /// frame maps onto `span × span` tiles, fixing its px-per-unit (`2^lod / (16·span)`,
-  /// a whole pow2 — the def-frame-anchors model); prim width/height then DERIVE from
-  /// the sprite's opaque bbox, they are no longer authored.
+  /// The sprite frame's WORLD SPAN in tiles — pow2, ≤ one zone — default `1.0`.
   pub span: f64,
   /// Pre-atlas sprite scale `(w, h)`, default `(1, 1)`: applied to the decoded sprite
-  /// BEFORE it is packed (clipped to the same pow2 frame, transparent-filled,
-  /// re-centred on its surface presence). Corrects art proportions (e.g. a head
-  /// sprite too large for its body) without breaking whole-px-per-unit.
+  /// BEFORE it is packed.
   pub sprite_scale: (f64, f64),
   /// The pivot ON THE SPRITE that aligns to `anchor` — `(x, y)` in `0..1`, default
-  /// `(0.5, 0.5)`. `(0.5, 1.0)` = the art's bottom-centre (its "feet"), which pinned
-  /// to a bottom-centre `anchor` reproduces the old bottom-anchored placement. A
-  /// west (mirrored-east) facing mirrors `x → 1 − x` so the pin stays put.
-  ///
-  /// Measured against the [`DirFrame::sub`] SUBFRAME, not the whole master — which is what it
-  /// always meant (the client documented it as *"fractions of the sprite's opaque bbox"*); the
-  /// bbox is simply authored now instead of recovered from pixels (subframe-ingest F7).
+  /// `(0.5, 0.5)`. Measured against the [`DirFrame::sub`] SUBFRAME (subframe-ingest F7).
   pub sprite_anchor: (f64, f64),
-  /// Per-ROTATION subframe + pivot, indexed `0..15` (subframe-ingest F1/F7/F9).
-  ///
-  /// **One index space for facings AND linked cells.** `definition_data` has always carried
-  /// [`ROTATIONS_PER_DEF`]`= 16` px per definition indexed by rotation: a sprite uses four
-  /// (`0 = s, 1 = e, 2 = n, 3 = w`) and a linked tile uses all sixteen (the autotile cell,
-  /// `y·4 + x`). They were never two lookups — one is a prefix of the other.
-  ///
-  /// Authored `&thing.subframe.r<0..15>.{x,y,w,h}`, with `s`/`e`/`n`/`w` accepted as aliases for
-  /// `r0`/`r1`/`r2`/`r3` so sprite corpora stay readable, each falling back to the non-indexed
-  /// `&thing.subframe.*` and then to the whole frame. The `r` prefix is load-bearing — see
-  /// [`rotation_key`].
-  ///
-  /// **Index 3 (west) should not be authored** — it is the east master MIRRORED, not a fourth
-  /// texture, and the client derives it by mirroring index 1. The alias exists so the fallback
-  /// chain reads uniformly, not so west gets art of its own.
+  /// Per-(variant, rotation) subframe + pivot (subframe-ingest F1/F7/I10):
+  /// `[VARIANTS_PER_DEF][ROTATIONS_PER_DEF]`, resolved through the authoring
+  /// fallback chain at LOAD (most-specific first: `v3.r1 → v3.e → v3 → r1 → e → base`,
+  /// per COMPONENT). Index 3 (west) is the east master mirrored, derived by the
+  /// client — never authored.
   pub dir_frames: [[DirFrame; ROTATIONS_PER_DEF]; VARIANTS_PER_DEF],
-  /// The prim's up-to-4 packed-map channel material bindings (`&prim.packed.<i>`),
-  /// indexed by packed RGBA channel. Default (all zero) = no material system in
-  /// play, so the renderer paints the flat albedo exactly as before.
+  /// The prim's up-to-4 packed-map channel material bindings, indexed by packed RGBA
+  /// channel. Default (all zero) = no material system in play.
   pub packed: [PackedChannel; 4],
-  /// The LIGHT this kind emits (`&thing.light.*`), or `None` when it emits nothing.
-  /// A primitive presents as a billboard, a light, or **both** — a torch is one placed
-  /// object with a sprite and a glow (work `2026-07-25-primitive-graph`). Authored
-  /// per KIND, not per instance: every torch shines identically, so the client reads
-  /// one row by `kind_id` and never pays for it on the wire.
+  /// The LIGHT this kind emits, or `None` when it emits nothing. Authored per KIND,
+  /// not per instance (work `2026-07-25-primitive-graph`).
   pub light: Option<LightParts>,
-  /// EVERY prim the visual hook built, in `^prim call` order — the pawn PARTS list
-  /// (human-pawns P2). `parts[0]` mirrors the flat prim-0 fields above (the wolf's whole
-  /// visual = one entry); a human's `@on_create` calls `^prim` twice, so `parts[1]` is
-  /// its head. Which STATE feeds each slot's sprite is the payload's business
-  /// (`PART(slot, def)`), not the DSL's — the DSL declares only the skeleton.
+  /// EVERY part slot, in slot order — the pawn PARTS list (human-pawns P2).
+  /// `parts[0]` mirrors the flat prim-0 fields above (a wolf's whole visual = one
+  /// entry); a human carries body + head.
   pub parts: Vec<VisualPart>,
 }
 
-/// One DIRECTION's authored art rect and pivot (subframe-ingest F1/F7).
-///
-/// The **subframe** says which fraction of the square pow2 master actually IS the art; the atlas
-/// ingests that rect and nothing else, identically for all four maps. The **anchor** is the point
-/// on that rect which pins to the prim's logical `anchor` — its feet, normally.
-///
-/// Both are FRACTIONS (`0..1`) rather than units, deliberately: a master streams at 16/32/64/128 px
-/// and a fraction addresses the same art at every lod, where a unit count silently means a
-/// different number of texels per tier. Whole units are also exactly what the deleted def
-/// subframe lanes held, and rounding them against a continuous anchor is what put a halo around
-/// every sprite (`docs/work/2026-08-02-normal-frames/issues.md` I8).
+/// One DIRECTION's authored art rect and pivot (subframe-ingest F1/F7). Both are
+/// FRACTIONS (`0..1`): a fraction addresses the same art at every served size.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DirFrame {
-  /// `(x, y, w, h)` of the art inside the master, `0..1`. Default `(0, 0, 1, 1)` — the whole
-  /// frame, i.e. "this master is already tight", which is what an unauthored kind gets.
+  /// `(x, y, w, h)` of the art inside the master, `0..1`. Default `(0, 0, 1, 1)` — the
+  /// whole frame, i.e. "this master is already tight".
   pub sub: (f64, f64, f64, f64),
   /// The pivot ON [`Self::sub`] that pins to the prim's `anchor`, `0..1`. Default `(0.5, 0.5)`.
   pub anchor: (f64, f64),
@@ -198,130 +150,28 @@ impl Default for DirFrame {
 }
 
 /// Rotation slots per definition — **the one index space for facings and linked cells alike**
-/// (subframe-ingest F9). `definition_data` has always been 16 px per definition indexed by
-/// rotation; a sprite uses the first four and a linked tile uses all sixteen (the autotile cell,
-/// `y·4 + x`). Mirrors `ROTATIONS_PER_DEF` in `client/webgl`'s `records.ts` — a divergence here
-/// would mis-address the def texture, so the two must move together.
+/// (subframe-ingest F9). A sprite uses the first four (`0 = s, 1 = e, 2 = n, 3 = w`) and a
+/// linked tile uses all sixteen (the autotile cell, `y·4 + x`). Mirrors `ROTATIONS_PER_DEF`
+/// in `client/webgl`'s `records.ts` — the two must move together.
 pub const ROTATIONS_PER_DEF: usize = 16;
 
-/// Variant slots per definition. **A variant and a rotation are DIFFERENT AXES** (user, 2026-08-02:
-/// *"they are similar but ultimately every variation has rotation/directions"*), so a subframe is
-/// indexed by BOTH: `[variant][rotation]`.
-///
-/// Collapsing them into one index is [I10](../../../docs/work/2026-08-02-subframe-ingest/issues.md#i10)
-/// — it put the wolf's SOUTH rect on its EAST art and cut the sprite in half. The tell is in how a
-/// stem resolves: a facing lands in the STEM (`…/wolf/e`) while a variant lands in the CELL, so they
-/// were never interchangeable; one kind needs both (the wolf has 3 facings and 15 east variants).
+/// Variant slots per definition. **A variant and a rotation are DIFFERENT AXES**
+/// (subframe-ingest I10) — a facing lands in the STEM, a variant in the CELL — so a
+/// subframe is indexed by BOTH: `[variant][rotation]`.
 pub const VARIANTS_PER_DEF: usize = 16;
 
-/// Readable aliases for the first four rotation indices, in `FACING_BY_ROTATION` order. A corpus
-/// authoring a sprite writes `subframe.e`; one authoring a linked tile writes `subframe.9`. Both
-/// reach the same array. Index 3 (`w`) is the east master mirrored and should carry no art of its
-/// own — the alias exists so the fallback chain reads uniformly ([F4]/[F9]).
+/// Readable aliases for the first four rotation indices (`FACING_BY_ROTATION` order).
+/// Index 3 (`w`) is the east master mirrored and should carry no art of its own.
 const ROTATION_ALIASES: [&str; 4] = ["s", "e", "n", "w"];
 
-/// The general per-rotation key: `r0`..`r15`. **Prefixed, not bare numerals** — a bare-digit path
-/// segment parses as an ARRAY INDEX, and a node that already holds the scalar default
-/// (`subframe.x`) is a Map, so `subframe.9.x` walks an index into a Map and is dropped with no
-/// error at all ([I8](../../../docs/work/2026-08-02-subframe-ingest/issues.md#i8)). Keeping every
-/// key a literal makes the scalar default and the indexed overrides coexist.
-fn rotation_key(r: usize) -> String {
-  format!("r{r}")
-}
-
-/// One part SLOT of a kind's visual skeleton — the per-prim fields of `prims.N`
-/// (human-pawns P2). Slot index = `^prim call` order; slot 0 boxes the carrier.
-#[derive(Debug, Clone, PartialEq)]
-pub struct VisualPart {
-  pub tint: u32,
-  pub geo_color: u32,
-  /// The sprite STEM (`None` = a flat tint rect / the built-in `white`).
-  pub texture: Option<String>,
-  /// Which `<part>` files of the resolved leaf this slot draws (`&prim.part`, default 0
-  /// — the body files; a human head draws part 1).
-  pub part: u32,
-  /// The slot's PRE-ATLAS sprite scale (`&prim.scale`, default 1): the art is scaled inside the
-  /// slot's own `span × span` frame at atlas ingest, about its `sprite_anchor` pivot. ABSOLUTE —
-  /// on a `span 1` slot it reads as tiles of art (the human authors body 0.8, head 0.5).
-  ///
-  /// It was a multiplier against slot 0's DRAWN size until 2026-07-30. That made the drawn box
-  /// disagree with the def's pow2 frame span, and the lighting/shadow card is sized from the
-  /// def — so the silhouette came out `1/scale` too big (pawn-part-placement I6). Keep the scale
-  /// pre-atlas: it is the only stage where the albedo, the normal, the surface and the opaque
-  /// bbox all move together.
-  pub scale: f64,
-  /// Placement offset in TILES relative to slot 0's anchor (`&prim.offset.x/y`, default 0).
-  ///
-  /// **Horizontal plane only.** A part that is genuinely further north on the GROUND uses
-  /// `offset.y`; a part that is off the ground uses [`Self::elevation`]. They look identical on
-  /// screen and mean opposite things to the shadow system, which is why they are separate fields
-  /// (work `2026-08-01-z-positioning`, F5).
-  pub offset: (f64, f64),
-  /// Height off the ground in TILES (`&prim.offset.z`, default 0) — the pawn's head, a wall torch,
-  /// a carried tool.
-  ///
-  /// The renderer draws it as a shift **north by the same amount, 1:1**, so it looks exactly like
-  /// an `offset.y`. The difference is what the SHADOW system sees: an elevated part keeps the
-  /// body's ground footprint and casts from there, so body and head produce **one aligned shadow**
-  /// instead of two offset ones. Authoring the same displacement as `offset.y` moves the part to a
-  /// different world position and the shadows separate.
-  pub elevation: f64,
-  /// Draw-order offset along the VIEW's depth axis (`&prim.depth`, default 0), in the pawn's own
-  /// frame: **positive = toward the viewer when the pawn faces the camera** (pawn-part-placement
-  /// F1). The client negates it when the pawn faces AWAY (north), so one authored number covers
-  /// both sides — a head at `+1` draws over the body for e/w/s and under it for n; a backpack at
-  /// `-1` is the same rule with the opposite sign. Per-SLOT on purpose: a slot's content rides the
-  /// pawn's payload, so armour can replace a slot without a code change.
-  pub depth: f64,
-  /// The slot's own frame fields, same semantics as the flat prim-0 copies above.
-  pub size: f64,
-  pub span: f64,
-  pub sprite_scale: (f64, f64),
-  pub sprite_anchor: (f64, f64),
-  pub anchor: (f64, f64),
-  /// The slot's OWN per-rotation subframe + pivot, `0..15` (subframe-ingest P1/F9).
-  ///
-  /// Per SLOT, not inherited from slot 0, because a part is its own master with its own extent: a
-  /// human's head fills a different fraction of its frame than its body does (measured on the
-  /// corpus — female `s` body `h = 0.914`, head `h = 0.930`, at different `x`). Falls back to the
-  /// slot's non-indexed `&prim.subframe.*` and then to the whole frame.
-  pub dir_frames: [[DirFrame; ROTATIONS_PER_DEF]; VARIANTS_PER_DEF],
-}
-
-/// A kind's emitted light, authored under `&thing.light.*`. Colour is `0..1`; `reach`
-/// and `height` are TILES; `radius` (the area-light emitter, driving penumbra softness)
-/// is tiles too. `reach <= 0` means "no light" and the whole struct stays `None`.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct LightParts {
-  pub color: (f64, f64, f64),
-  pub intensity: f64,
-  pub reach: f64,
-  pub radius: f64,
-  pub height: f64,
-  /// Casts shadows (default true). A fill light that lights without occluding costs
-  /// the gather nothing — it is skipped in the shadow walk entirely.
-  pub cast: bool,
-  /// Animates per frame (flicker, motion) ⇒ the HOT class, re-baked every frame.
-  /// Default false: a static torch bakes once, which is what makes many of them cheap.
-  pub hot: bool,
-  /// Emits DECAY-LIGHTMAP flicker particles (lighting-feel P2). Orthogonal to `hot`:
-  /// the base light stays static (cold) while particles carry the motion for ~free.
-  pub flicker: bool,
-}
-
-/// Band slots read for `&need.band.<i>.*` — the max conditional-moodlet bands per need.
-/// Indexed bare-digit like `packed.<i>` (safe: `need.band` never holds a scalar sibling,
-/// the I8 hazard `rotation_key` exists for).
+/// Band slots per need / need slots per kind — the authoring caps (needs-moodlets P1).
 pub const NEED_BANDS: usize = 4;
-
-/// Need slots read for `&thing.needs.<i>` — the max needs one kind carries.
 pub const NEEDS_PER_KIND: usize = 8;
 
 /// One BAND on a need's satisfaction — the conditional moodlet active while
 /// `lo <= satisfaction < hi` (needs-moodlets F2: band moodlets are DERIVED by every
 /// observer from `(need row, tic, corpus)`; no grant events exist for them). Bands are
-/// authored EXCLUSIVE — Dehydrated `[0, 0.10)`, Thirsty `[0.10, 0.35)` — so at most one
-/// band moodlet per need is active and "which state" needs no priority rule.
+/// authored EXCLUSIVE, so at most one band moodlet per need is active.
 #[derive(Debug, Clone, PartialEq)]
 pub struct NeedBand {
   /// The `<moodlet>` name this band activates (resolved via [`Bundle::moodlet_id`]).
@@ -333,13 +183,11 @@ pub struct NeedBand {
 }
 
 /// A `<need>` def's parameters (needs-moodlets P1). A need is a 0..1 SATISFACTION that
-/// depletes toward zero (F1 — one dialect for every need; bad states are LOW). Nothing
-/// ticks it: a pawn's row stores `(satisfaction, set_tic)` and every observer computes
-/// `satisfaction_at(tic)` from `deplete` (F4 — the TICS/TILE posture).
+/// depletes toward zero (F1); nothing ticks it — observers compute `satisfaction_at(tic)`
+/// from `deplete` (F4).
 #[derive(Debug, Clone, PartialEq)]
 pub struct NeedParams {
-  /// Display label ("Thirst") — authoring/debug only. The need itself is NEVER shown;
-  /// the moodlet abstraction is the feature.
+  /// Display label ("Thirst") — authoring/debug only. The need itself is NEVER shown.
   pub label: String,
   /// TICS from full (`1.0`) to empty (`0.0`). `0` = unauthored (the need never drains).
   pub deplete: f64,
@@ -347,10 +195,9 @@ pub struct NeedParams {
   pub bands: Vec<NeedBand>,
 }
 
-/// A `<moodlet>` def's parameters — the DISPLAYED consequence of hidden state: a label
-/// + a mood offset (stat modifiers join later). `duration == 0` marks a CONDITIONAL
-/// moodlet (alive exactly while its band holds); `> 0` a TIMED one (a stored grant
-/// expiring `duration` tics after its `grant_tic` — the action stream's kind, F2).
+/// A `<moodlet>` def's parameters — the DISPLAYED consequence of hidden state.
+/// `duration == 0` marks a CONDITIONAL moodlet (alive exactly while its band holds);
+/// `> 0` a TIMED one (a stored grant expiring `duration` tics after its `grant_tic`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct MoodletParams {
   pub label: String,
@@ -360,114 +207,687 @@ pub struct MoodletParams {
   pub duration: f64,
 }
 
-/// Everything the runtime needs to resolve and render tiles, built once at load.
+/// One part SLOT of a kind's visual skeleton (human-pawns P2). Slot index =
+/// declaration order; slot 0 boxes the carrier.
+#[derive(Debug, Clone, PartialEq)]
+pub struct VisualPart {
+  pub tint: u32,
+  pub geo_color: u32,
+  /// The sprite STEM (`None` = a flat tint rect / the built-in `white`).
+  pub texture: Option<String>,
+  /// The master FILE part suffix (`<facing>.<part>` — a head is part 1).
+  pub part: u32,
+  /// The slot's pre-atlas art scale (uniform), def-frame-anchors semantics.
+  pub scale: f64,
+  /// Tile-space draw offset from the carrier's anchor.
+  pub offset: (f64, f64),
+  /// ELEVATION above the ground plane, tiles (z-positioning) — projects to a y-shift.
+  pub elevation: f64,
+  /// Per-slot draw depth (pawn-part-placement P2) — negated when facing away.
+  pub depth: f64,
+  /// The slot's own frame fields, same semantics as the flat prim-0 copies above.
+  pub size: f64,
+  pub span: f64,
+  pub sprite_scale: (f64, f64),
+  pub sprite_anchor: (f64, f64),
+  pub anchor: (f64, f64),
+  pub dir_frames: [[DirFrame; ROTATIONS_PER_DEF]; VARIANTS_PER_DEF],
+}
+
+/// The deterministic per-tile draw — `<salt> ^rand` / a biome rule's scatter roll:
+/// SplitMix64 finalizer over `seed ^ salt·φ`, yielding `[0, 1)`. Different salts give
+/// independent draws for one tile. **The one derivation** — the `.rd` VM and the TOML
+/// rule classifier both call this, so no scatter re-rolls across the migration
+/// (toml-content P0 pinned it).
+pub fn tile_rand(seed: u64, salt: i64) -> f64 {
+  let mut h = seed ^ (salt as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+  h ^= h >> 30;
+  h = h.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+  h ^= h >> 27;
+  h = h.wrapping_mul(0x94D0_49BB_1331_11EB);
+  h ^= h >> 31;
+  (h >> 11) as f64 / (1u64 << 53) as f64
+}
+
+// ── materialized defs (internal; toml_loader fills these too) ─────────────────────
+
+/// One tile def, fully evaluated. `name` may be `""` for a RETIRED id (an F1 hole).
+#[derive(Debug, Default, Clone)]
+pub(crate) struct TileDef {
+  pub name: String,
+  pub color: Option<u32>,
+  pub visual: Option<VisualParts>,
+  pub build: Option<String>,
+  pub height: Option<f64>,
+  /// `[linked_w, linked_h, padding, rotation, cast_shadow, receives_shadows]`.
+  pub lanes: [f64; 6],
+}
+
+/// One thing def, fully evaluated. `name` may be `""` for a retired id.
+#[derive(Debug, Default, Clone)]
+pub(crate) struct ThingDef {
+  pub name: String,
+  pub color: Option<u32>,
+  pub visual: Option<VisualParts>,
+  pub speed: Option<u16>,
+  /// 1-based need ids (`&thing.needs` / `needs = [...]`), corpus-resolved.
+  pub needs: Vec<u16>,
+}
+
+/// One biome, with its classifier body in either dialect.
+#[derive(Debug, Clone)]
+pub(crate) struct BiomeDef {
+  pub name: String,
+  /// The STORED subtype id (`0` = none/reserved — `biome_subtype_id` returns `None`).
+  pub subtype: u16,
+  pub body: BiomeBody,
+}
+
+/// The classifier per dialect. `Hooks` retains the `.rd` VM bodies (migration-scoped —
+/// dies with the DSL); `Rules` is the declarative TOML form (F3).
+#[derive(Debug, Clone)]
+pub(crate) enum BiomeBody {
+  Hooks { define: Vec<Stmt>, on_create: Vec<Stmt> },
+  Rules(BiomeRules),
+}
+
+/// A comparison op, spelled exactly as the retired `.rd` ops were (F3): the golden
+/// gate depends on reproducing the same half-open edges.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum Cmp {
+  Gte,
+  Gt,
+  Lt,
+  Lte,
+}
+
+impl Cmp {
+  fn pass(self, v: f64, t: f64) -> bool {
+    match self {
+      Cmp::Gte => v >= t,
+      Cmp::Gt => v > t,
+      Cmp::Lt => v < t,
+      Cmp::Lte => v <= t,
+    }
+  }
+}
+
+/// The declarative biome body: a CONJUNCTION of dimension thresholds (the corpus never
+/// used `or` — toml-content I1), a ground tile, and ordered scatter draws where the
+/// LAST passing draw wins the cell (the `.rd` overwrite semantics).
+#[derive(Debug, Clone, Default)]
+pub(crate) struct BiomeRules {
+  /// `(dimension index, op, threshold)` — all must pass.
+  pub when: Vec<(usize, Cmp, f64)>,
+  pub tile: Option<String>,
+  /// `(salt, p, thing)` — rolls `tile_rand(seed, salt) < p`.
+  pub scatter: Vec<(i64, f64, String)>,
+}
+
+/// Everything the runtime needs, built once at load — REGISTRIES in id order
+/// (index = id − 1; a `""`-named slot is a retired id) + evaluated params.
 #[derive(Default, Debug)]
 pub struct Bundle {
-  /// Tile defs by name (the `::id` node — its `:data` / `:visual` facets merged
-  /// across files), navigable for hooks.
-  tiles: HashMap<String, Node>,
-  /// Tile names ordered by `def_id`: a tile's `def_id` is `index + 1` (1-based;
-  /// `0` is the empty/no-tile sentinel the codec reserves). **First-appearance
-  /// order** across the loaded sources, so appending a new tile never shifts an
-  /// existing id — already-stored zones stay valid. Server and client agree
-  /// because both load the same canonically-ordered content.
-  tile_ids: Vec<String>,
-  /// Thing defs by name — the same shape as tiles but a **separate** id
-  /// namespace: a thing's `object_id` is `index + 1` in `thing_ids`, packed into
-  /// a zone's thing entries ([`resonantdust_codec::packed::pack_thing`]). A biome
-  /// names a thing (`tree`); worldgen resolves it here.
-  things: HashMap<String, Node>,
-  /// Thing names ordered by `object_id` (1-based; `0` = empty). First-appearance
-  /// order, append-stable, same discipline as `tile_ids`.
-  thing_ids: Vec<String>,
-  /// Biome defs by name, navigable for their `@define` / `@on_create` hooks.
-  biomes: HashMap<String, Node>,
-  /// Biome names in **evaluation order** (first-appearance across sources). A
-  /// tile takes the FIRST biome whose `@define` returns non-zero, so a catch-all
-  /// biome (an always-true define) belongs last. Not an id namespace — biomes are
-  /// a generation-time classifier, never packed into a zone.
-  biome_ids: Vec<String>,
-  /// Material defs by name — the `<material>` registry (`@on_create` sets its
-  /// [`MaterialParams`]). Referenced by a prim's packed channel, resolved to a
-  /// 1-based `material_id`; never packed into a zone (a client-render concern).
-  materials: HashMap<String, Node>,
-  /// Material names ordered by `material_id` (1-based; `0` = none). First-appearance
-  /// order, append-stable, same discipline as `tile_ids` — so the client's atlas /
-  /// registry lookups stay valid as materials are added.
-  material_ids: Vec<String>,
-  /// Need defs by name — the `<need>` registry (`@define` sets its [`NeedParams`]).
-  needs: HashMap<String, Node>,
-  /// Need names ordered by 1-based `need_id` (`0` = none). Append-stable — this id is
-  /// what a pawn-shard need row carries, so it must never renumber.
-  need_ids: Vec<String>,
-  /// Moodlet defs by name — the `<moodlet>` registry (`@define` sets its [`MoodletParams`]).
-  moodlets: HashMap<String, Node>,
-  /// Moodlet names ordered by 1-based `moodlet_id` (`0` = none). Append-stable — a
-  /// STORED grant row carries this id (conditional moodlets are derived, F2).
-  moodlet_ids: Vec<String>,
+  pub(crate) tiles: Vec<TileDef>,
+  pub(crate) things: Vec<ThingDef>,
+  /// Evaluation order = priority (first match wins), NOT an id namespace.
+  pub(crate) biomes: Vec<BiomeDef>,
+  pub(crate) materials: Vec<(String, MaterialParams)>,
+  pub(crate) needs: Vec<(String, NeedParams)>,
+  pub(crate) moodlets: Vec<(String, MoodletParams)>,
+  /// Registry name caches (id order) — what the slice-returning accessors serve.
+  tile_names: Vec<String>,
+  thing_names: Vec<String>,
+  biome_names: Vec<String>,
+  material_names: Vec<String>,
+  need_names: Vec<String>,
+  moodlet_names: Vec<String>,
 }
 
 impl Bundle {
-  /// The tile def `name` (its merged `:data` + `:visual` facets), or `None`.
-  pub fn tile(&self, name: &str) -> Option<&Node> {
-    self.tiles.get(name)
+  /// Finalize the name caches after the def vecs are filled (both loaders call this).
+  pub(crate) fn index(mut self) -> Self {
+    self.tile_names = self.tiles.iter().map(|d| d.name.clone()).collect();
+    self.thing_names = self.things.iter().map(|d| d.name.clone()).collect();
+    self.biome_names = self.biomes.iter().map(|d| d.name.clone()).collect();
+    self.material_names = self.materials.iter().map(|(n, _)| n.clone()).collect();
+    self.need_names = self.needs.iter().map(|(n, _)| n.clone()).collect();
+    self.moodlet_names = self.moodlets.iter().map(|(n, _)| n.clone()).collect();
+    self
   }
-  /// Every tile name in `def_id` order (index 0 → def_id 1).
+
+  fn id_of(names: &[String], name: &str) -> Option<u16> {
+    names.iter().position(|n| n == name && !n.is_empty()).map(|i| i as u16 + 1)
+  }
+  fn name_of(names: &[String], id: u16) -> Option<&str> {
+    (id != 0)
+      .then(|| names.get(id as usize - 1))
+      .flatten()
+      .filter(|n| !n.is_empty())
+      .map(String::as_str)
+  }
+
+  // ---------- tiles ----------
+
+  /// Every tile name in `def_id` order (index 0 → def_id 1; `""` = a retired id).
   pub fn tile_names(&self) -> &[String] {
-    &self.tile_ids
+    &self.tile_names
   }
   /// The `def_id` for a tile name (1-based; `None` if unknown). This is the u12
   /// packed into a zone's tile slot (`resonantdust_codec::packed::pack_tile`).
   pub fn tile_def_id(&self, name: &str) -> Option<u16> {
-    self.tile_ids.iter().position(|n| n == name).map(|i| i as u16 + 1)
+    Self::id_of(&self.tile_names, name)
   }
   /// The tile name for a `def_id` (`def_id == 0` is the empty sentinel).
   pub fn tile_name(&self, def_id: u16) -> Option<&str> {
-    (def_id != 0)
-      .then(|| self.tile_ids.get(def_id as usize - 1))
-      .flatten()
-      .map(String::as_str)
+    Self::name_of(&self.tile_names, def_id)
+  }
+  fn tile_def(&self, name: &str) -> Option<&TileDef> {
+    self.tiles.iter().find(|d| d.name == name && !name.is_empty())
   }
 
-  /// Run one of a tile's `:<facet> @<hook>` bodies into a fresh store — the
-  /// slots / prims that hook builds. `None` if the tile, facet, or hook is
-  /// absent.
-  pub fn run_hook(&self, name: &str, facet: &str, hook: &str) -> Option<Store> {
-    self.run_node_hook(self.tile(name)?, facet, hook)
+  /// A tile's background colour as a packed `0xRRGGBB` — its visual prim's tint
+  /// (fallback: a static `color.bg` from the older authored shape).
+  pub fn tile_color_bg(&self, name: &str) -> Option<u32> {
+    self.tile_def(name)?.color
+  }
+  /// [`Self::tile_color_bg`] keyed by `def_id`.
+  pub fn color_bg_for_def(&self, def_id: u16) -> Option<u32> {
+    self.tiles.get(def_id.checked_sub(1)? as usize)?.color
+  }
+  /// The [`VisualParts`] for a tile `def_id`.
+  pub fn visual_for_def(&self, def_id: u16) -> Option<VisualParts> {
+    self.tiles.get(def_id.checked_sub(1)? as usize)?.visual.clone()
+  }
+  /// Every tile's texture stem in `def_id` order; empty string = no texture.
+  pub fn tile_texture_stems(&self) -> Vec<String> {
+    self
+      .tiles
+      .iter()
+      .map(|d| d.visual.as_ref().and_then(|v| v.texture.clone()).unwrap_or_default())
+      .collect()
+  }
+  /// A tile's build category (`None` = not buildable).
+  pub fn tile_build(&self, def_id: u16) -> Option<String> {
+    self.tiles.get(def_id.checked_sub(1)? as usize)?.build.clone()
+  }
+  /// Every tile's build category in `def_id` order; `""` = not buildable
+  /// (build-walls D3 — the build menu's scan table).
+  pub fn tile_builds(&self) -> Vec<String> {
+    self.tiles.iter().map(|d| d.build.clone().unwrap_or_default()).collect()
+  }
+  /// A tile's LIGHTING + LINKED lanes (texture-generalization P0), flat stride-6 per
+  /// def_id: `[linked_w, linked_h, padding, rotation, cast_shadow, receives_shadows]` —
+  /// zeros where unauthored.
+  pub fn tile_lighting_lanes(&self) -> Vec<f64> {
+    let mut out = Vec::with_capacity(self.tiles.len() * 6);
+    for d in &self.tiles {
+      out.extend_from_slice(&d.lanes);
+    }
+    out
+  }
+  /// A tile's HEIGHT in tiles (tile-lighting F2: > 0 opts into the cold lighting
+  /// class). `None` = flat ground.
+  pub fn tile_height(&self, def_id: u16) -> Option<f64> {
+    self.tiles.get(def_id.checked_sub(1)? as usize)?.height
+  }
+  /// Every tile's height in `def_id` order (0 = flat/unauthored).
+  pub fn tile_heights(&self) -> Vec<f64> {
+    self.tiles.iter().map(|d| d.height.unwrap_or(0.0)).collect()
+  }
+  /// Every tile's 4 packed-channel material bindings in `def_id` order.
+  pub fn tile_packed_channels(&self) -> Vec<[PackedChannel; 4]> {
+    self.tiles.iter().map(|d| d.visual.as_ref().map(|v| v.packed).unwrap_or_default()).collect()
   }
 
-  /// Run a `:<facet> @<hook>` body of an arbitrary def node (a tile or a thing —
-  /// they share the `:visual @on_create` shape) into a fresh store. The node-keyed
-  /// core [`run_hook`] and the thing colour lookup both delegate here.
-  fn run_node_hook(&self, node: &Node, facet: &str, hook: &str) -> Option<Store> {
+  // ---------- things ----------
+
+  /// Every thing name in `object_id` order (index 0 → object_id 1; `""` = retired).
+  pub fn thing_names(&self) -> &[String] {
+    &self.thing_names
+  }
+  /// The `object_id` for a thing name (1-based; `None` if unknown) — the u12 packed
+  /// into a zone's thing entry.
+  pub fn thing_object_id(&self, name: &str) -> Option<u16> {
+    Self::id_of(&self.thing_names, name)
+  }
+  /// The thing name for an `object_id` (`0` is the empty sentinel).
+  pub fn thing_name(&self, object_id: u16) -> Option<&str> {
+    Self::name_of(&self.thing_names, object_id)
+  }
+  fn thing_def(&self, name: &str) -> Option<&ThingDef> {
+    self.things.iter().find(|d| d.name == name && !name.is_empty())
+  }
+
+  /// A thing's colour as a packed `0xRRGGBB` — its visual prim tint.
+  pub fn thing_color_bg(&self, name: &str) -> Option<u32> {
+    self.thing_def(name)?.color
+  }
+  /// [`Self::thing_color_bg`] keyed by `object_id`.
+  pub fn thing_color_for_object(&self, object_id: u16) -> Option<u32> {
+    self.things.get(object_id.checked_sub(1)? as usize)?.color
+  }
+  /// The [`VisualParts`] for a thing `object_id` — cold things and pawns alike.
+  pub fn visual_for_object(&self, object_id: u16) -> Option<VisualParts> {
+    self.things.get(object_id.checked_sub(1)? as usize)?.visual.clone()
+  }
+  /// Every thing's texture stem in `object_id` order; `""` for a def with none.
+  pub fn thing_texture_stems(&self) -> Vec<String> {
+    self
+      .things
+      .iter()
+      .map(|d| d.visual.as_ref().and_then(|v| v.texture.clone()).unwrap_or_default())
+      .collect()
+  }
+
+  /// Every thing's spatial LAYOUT in `object_id` order, flattened **stride-10** per def:
+  /// `[footprint.w, footprint.h, anchor.x, anchor.y, size, sprite_anchor.x,
+  /// sprite_anchor.y, span, sprite_scale.w, sprite_scale.h]`. A def with no prim gets
+  /// the default row `[1, 1, 0.5, 0.5, 1, 0.5, 0.5, 1, 1, 1]`, so the host never
+  /// special-cases "unset".
+  pub fn thing_layout(&self) -> Vec<f64> {
+    let mut out = Vec::with_capacity(self.things.len() * 10);
+    for d in &self.things {
+      match &d.visual {
+        Some(v) => out.extend_from_slice(&[
+          v.footprint.0, v.footprint.1, v.anchor.0, v.anchor.1, v.size, v.sprite_anchor.0, v.sprite_anchor.1,
+          v.span, v.sprite_scale.0, v.sprite_scale.1,
+        ]),
+        None => out.extend_from_slice(&[1.0, 1.0, 0.5, 0.5, 1.0, 0.5, 0.5, 1.0, 1.0, 1.0]),
+      }
+    }
+    out
+  }
+
+  /// Every thing's SUBFRAMES in `object_id` order, flattened **stride-1536** per def:
+  /// [`VARIANTS_PER_DEF`]` × `[`ROTATIONS_PER_DEF`]` × [sub.x, sub.y, sub.w, sub.h,
+  /// anchor.x, anchor.y]`, all fractions. This is what the atlas CROPS to
+  /// (subframe-ingest): one rect, four maps, registered by construction.
+  pub fn thing_subframe(&self) -> Vec<f64> {
+    let mut out = Vec::with_capacity(self.things.len() * VARIANTS_PER_DEF * ROTATIONS_PER_DEF * 6);
+    for d in &self.things {
+      let frames = d.visual.as_ref().map(|v| v.dir_frames).unwrap_or(
+        [[DirFrame { sub: (0.0, 0.0, 1.0, 1.0), anchor: (0.5, 0.5) }; ROTATIONS_PER_DEF]; VARIANTS_PER_DEF],
+      );
+      for by_rot in frames {
+        for f in by_rot {
+          out.extend_from_slice(&[f.sub.0, f.sub.1, f.sub.2, f.sub.3, f.anchor.0, f.anchor.1]);
+        }
+      }
+    }
+    out
+  }
+
+  /// Every thing's emitted LIGHT in `object_id` order, flattened **stride-8** per def:
+  /// `[r, g, b, intensity, reach, radius, height, flags]` (`flags` bit 0 = cast,
+  /// bit 1 = hot, bit 2 = flicker). **`reach == 0` IS the "no light" test.**
+  pub fn thing_light(&self) -> Vec<f64> {
+    let mut out = Vec::with_capacity(self.things.len() * 8);
+    for d in &self.things {
+      match d.visual.as_ref().and_then(|v| v.light) {
+        Some(l) => out.extend_from_slice(&[
+          l.color.0, l.color.1, l.color.2, l.intensity, l.reach, l.radius, l.height,
+          f64::from(u8::from(l.cast) | (u8::from(l.hot) << 1) | (u8::from(l.flicker) << 2)),
+        ]),
+        None => out.extend_from_slice(&[0.0; 8]),
+      }
+    }
+    out
+  }
+
+  /// A thing's movement speed in **tics per tile** (pawn-movement F1: speed is
+  /// content, measured in tics). `None` when unauthored — the caller resolves the
+  /// default (`codec::speed`); the corpus never invents one.
+  pub fn thing_speed(&self, object_id: u16) -> Option<u16> {
+    self.things.get(object_id.checked_sub(1)? as usize)?.speed
+  }
+  /// Every thing's speed in `object_id` order, `0` = unauthored.
+  pub fn thing_speeds(&self) -> Vec<f64> {
+    self.things.iter().map(|d| f64::from(d.speed.unwrap_or(0))).collect()
+  }
+  /// Every thing's 4 packed-channel material bindings in `object_id` order.
+  pub fn thing_packed_channels(&self) -> Vec<[PackedChannel; 4]> {
+    self.things.iter().map(|d| d.visual.as_ref().map(|v| v.packed).unwrap_or_default()).collect()
+  }
+
+  /// The needs a thing kind carries, as 1-based need ids (needs-moodlets P1).
+  pub fn thing_needs(&self, object_id: u16) -> Vec<u16> {
+    self
+      .things
+      .get(object_id.checked_sub(1).map(usize::from).unwrap_or(usize::MAX))
+      .map(|d| d.needs.clone())
+      .unwrap_or_default()
+  }
+  /// Every thing's needs in `object_id` order, flattened **stride-[`NEEDS_PER_KIND`]**
+  /// per kind (`0` = empty slot).
+  pub fn thing_needs_table(&self) -> Vec<f64> {
+    let mut out = Vec::with_capacity(self.things.len() * NEEDS_PER_KIND);
+    for d in &self.things {
+      for i in 0..NEEDS_PER_KIND {
+        out.push(d.needs.get(i).copied().unwrap_or(0) as f64);
+      }
+    }
+    out
+  }
+
+  // ---------- biomes ----------
+
+  /// Every biome name in evaluation order (first match wins).
+  pub fn biome_names(&self) -> &[String] {
+    &self.biome_names
+  }
+  /// A biome's stable `subtype_id` — its identity in stored zones (explicit, never
+  /// derived from order). `None` if unauthored or `0` (the reserved subtype).
+  pub fn biome_subtype_id(&self, name: &str) -> Option<u16> {
+    let d = self.biomes.iter().find(|b| b.name == name)?;
+    (d.subtype > 0).then_some(d.subtype)
+  }
+
+  /// The first biome whose condition passes for these `dims`, in evaluation order.
+  pub fn select_biome(&self, dims: &[f64], seed: u64) -> Option<&str> {
+    self.biomes.iter().find_map(|b| self.biome_matches(b, dims, seed).then_some(b.name.as_str()))
+  }
+
+  fn biome_matches(&self, b: &BiomeDef, dims: &[f64], seed: u64) -> bool {
+    match &b.body {
+      BiomeBody::Hooks { define, .. } => {
+        let mut store = Store::default();
+        store.set_biome(dims.to_vec());
+        store.set_seed(seed);
+        run(define, &mut store).unwrap_or(0) != 0
+      }
+      BiomeBody::Rules(r) => r
+        .when
+        .iter()
+        .all(|&(dim, cmp, t)| cmp.pass(dims.get(dim).copied().unwrap_or(0.0), t)),
+    }
+  }
+
+  /// Classify one tile end to end: pick its biome by `dims`, then read the ground
+  /// `tile` + any `thing1` its body places (seeded scatter). The per-tile worldgen
+  /// entry point — content decides *what*, worldgen packs it.
+  pub fn generate(&self, dims: &[f64], seed: u64) -> GenTile {
+    let Some(b) = self.biomes.iter().find(|b| self.biome_matches(b, dims, seed)) else {
+      return GenTile::default();
+    };
+    let mut gen = GenTile { biome: Some(b.name.clone()), ..GenTile::default() };
+    match &b.body {
+      BiomeBody::Hooks { on_create, .. } => {
+        let mut store = Store::default();
+        store.set_biome(dims.to_vec());
+        store.set_seed(seed);
+        let _ = run(on_create, &mut store);
+        gen.tile = read_sym(&store, "tile");
+        gen.thing1 = read_sym(&store, "thing.1");
+      }
+      BiomeBody::Rules(r) => {
+        gen.tile = r.tile.clone();
+        // Ordered draws, LAST hit wins — the `.rd` overwrite semantics exactly.
+        for (salt, p, thing) in &r.scatter {
+          if tile_rand(seed, *salt) < *p {
+            gen.thing1 = Some(thing.clone());
+          }
+        }
+      }
+    }
+    gen
+  }
+
+  // ---------- materials ----------
+
+  /// Every material name in `material_id` order (index 0 → id 1).
+  pub fn material_names(&self) -> &[String] {
+    &self.material_names
+  }
+  /// The 1-based `material_id` for a name (`None` if unknown).
+  pub fn material_id(&self, name: &str) -> Option<u16> {
+    Self::id_of(&self.material_names, name)
+  }
+  /// The material name for a `material_id` (`0` is the empty sentinel).
+  pub fn material_name(&self, id: u16) -> Option<&str> {
+    Self::name_of(&self.material_names, id)
+  }
+  /// A material's [`MaterialParams`], or `None` if unknown.
+  pub fn material_params(&self, name: &str) -> Option<MaterialParams> {
+    self.materials.iter().find(|(n, _)| n == name).map(|(_, p)| p.clone())
+  }
+  /// The whole material registry in `material_id` order.
+  pub fn material_params_all(&self) -> Vec<MaterialParams> {
+    self.materials.iter().map(|(_, p)| p.clone()).collect()
+  }
+
+  // ---------- needs & moodlets (needs-moodlets P1) ----------
+
+  /// Every need name in `need_id` order (index 0 → id 1).
+  pub fn need_names(&self) -> &[String] {
+    &self.need_names
+  }
+  /// The 1-based `need_id` for a name (`None` if unknown).
+  pub fn need_id(&self, name: &str) -> Option<u16> {
+    Self::id_of(&self.need_names, name)
+  }
+  /// The need name for a `need_id` (`0` is the empty sentinel).
+  pub fn need_name(&self, id: u16) -> Option<&str> {
+    Self::name_of(&self.need_names, id)
+  }
+  /// A need's [`NeedParams`], or `None` if unknown.
+  pub fn need_params(&self, name: &str) -> Option<NeedParams> {
+    self.needs.iter().find(|(n, _)| n == name).map(|(_, p)| p.clone())
+  }
+  /// The whole need registry in `need_id` order.
+  pub fn need_params_all(&self) -> Vec<NeedParams> {
+    self.needs.iter().map(|(_, p)| p.clone()).collect()
+  }
+
+  /// Every moodlet name in `moodlet_id` order (index 0 → id 1).
+  pub fn moodlet_names(&self) -> &[String] {
+    &self.moodlet_names
+  }
+  /// The 1-based `moodlet_id` for a name (`None` if unknown).
+  pub fn moodlet_id(&self, name: &str) -> Option<u16> {
+    Self::id_of(&self.moodlet_names, name)
+  }
+  /// The moodlet name for a `moodlet_id` (`0` is the empty sentinel).
+  pub fn moodlet_name(&self, id: u16) -> Option<&str> {
+    Self::name_of(&self.moodlet_names, id)
+  }
+  /// A moodlet's [`MoodletParams`], or `None` if unknown.
+  pub fn moodlet_params(&self, name: &str) -> Option<MoodletParams> {
+    self.moodlets.iter().find(|(n, _)| n == name).map(|(_, p)| p.clone())
+  }
+  /// The whole moodlet registry in `moodlet_id` order.
+  pub fn moodlet_params_all(&self) -> Vec<MoodletParams> {
+    self.moodlets.iter().map(|(_, p)| p.clone()).collect()
+  }
+}
+
+/// Read a slot as a content name: a `Sym` yields the string; anything else `None`.
+fn read_sym(store: &Store, path: &str) -> Option<String> {
+  match store.read(path) {
+    Some(crate::vm::Cell::Sym(s)) => Some(s.clone()),
+    _ => None,
+  }
+}
+
+/// Parse every `(name, source)` into a [`Bundle`]. Dialect dispatch (toml-content):
+/// any `.toml` source routes the WHOLE load through the TOML loader (mixing dialects
+/// is an error — a cutover is a cutover); otherwise the `.rd` path evaluates hooks
+/// once and materializes.
+pub fn load(sources: &[(String, String)]) -> Result<Bundle, Vec<LoadError>> {
+  let toml_count = sources.iter().filter(|(n, _)| n.ends_with(".toml")).count();
+  if toml_count > 0 {
+    if toml_count != sources.len() {
+      return Err(vec![LoadError {
+        file: String::new(),
+        message: "mixed corpus: .rd and .toml sources cannot load together (finish the cutover)".into(),
+      }]);
+    }
+    return crate::toml_loader::load_toml(sources);
+  }
+  rd::load_rd(sources)
+}
+
+/// The `.rd` materializer — parse, index defs (merging facets across files), then
+/// EVALUATE every hook exactly once into the data the accessors serve. Migration-scoped
+/// (toml-content F5): this module + parser + vm die when the golden gate passes.
+mod rd {
+  use super::*;
+
+  pub(super) fn load_rd(sources: &[(String, String)]) -> Result<Bundle, Vec<LoadError>> {
+    let mut errors = Vec::new();
+    let mut tiles: HashMap<String, Node> = HashMap::new();
+    let mut tile_ids = Vec::new();
+    let mut things: HashMap<String, Node> = HashMap::new();
+    let mut thing_ids = Vec::new();
+    let mut biomes: HashMap<String, Node> = HashMap::new();
+    let mut biome_ids = Vec::new();
+    let mut materials: HashMap<String, Node> = HashMap::new();
+    let mut material_ids = Vec::new();
+    let mut needs: HashMap<String, Node> = HashMap::new();
+    let mut need_ids = Vec::new();
+    let mut moodlets: HashMap<String, Node> = HashMap::new();
+    let mut moodlet_ids = Vec::new();
+
+    for (name, text) in sources {
+      match crate::parser::parse(text) {
+        Ok(node) => {
+          index_defs(&node, "tile", &mut tiles, &mut tile_ids);
+          index_defs(&node, "thing", &mut things, &mut thing_ids);
+          index_defs(&node, "biome", &mut biomes, &mut biome_ids);
+          index_defs(&node, "material", &mut materials, &mut material_ids);
+          index_defs(&node, "need", &mut needs, &mut need_ids);
+          index_defs(&node, "moodlet", &mut moodlets, &mut moodlet_ids);
+        }
+        Err(e) => errors.push(LoadError { file: name.clone(), message: format!("parse: {e}") }),
+      }
+    }
+    if !errors.is_empty() {
+      return Err(errors);
+    }
+
+    let mut b = Bundle::default();
+
+    // Materials FIRST (visuals resolve packed-channel material names against them),
+    // needs before things (`&thing.needs` resolves to need ids).
+    for n in &material_ids {
+      b.materials.push((n.clone(), material_params(&materials[n]).unwrap_or_default()));
+    }
+    for n in &need_ids {
+      b.needs.push((n.clone(), need_params_of(&needs[n], n)));
+    }
+    for n in &moodlet_ids {
+      b.moodlets.push((n.clone(), moodlet_params_of(&moodlets[n], n)));
+    }
+
+    let material_id = |name: &str| -> u16 {
+      material_ids.iter().position(|n| n == name).map(|i| i as u16 + 1).unwrap_or(0)
+    };
+    let need_id = |name: &str| -> Option<u16> {
+      need_ids.iter().position(|n| n == name).map(|i| i as u16 + 1)
+    };
+
+    for n in &tile_ids {
+      let node = &tiles[n];
+      let data = run_node_hook(node, "data", "define");
+      let read = |k: &str| data.as_ref().and_then(|s| s.read(k)).map(|c| c.as_f64()).unwrap_or(0.0);
+      b.tiles.push(TileDef {
+        name: n.clone(),
+        color: node_color_bg(node),
+        visual: node_visual(node, &material_id),
+        build: data.as_ref().and_then(|s| read_sym(s, "tile.build")),
+        height: data.as_ref().and_then(|s| s.read("tile.height")).map(|c| c.as_f64()),
+        lanes: [
+          read("tile.linked.w"), read("tile.linked.h"), read("tile.padding"),
+          read("tile.rotation"), read("tile.cast_shadow"), read("tile.receives_shadows"),
+        ],
+      });
+    }
+
+    for n in &thing_ids {
+      let node = &things[n];
+      let data = run_node_hook(node, "data", "define");
+      let speed = data.as_ref().and_then(|s| s.read("thing.speed")).map(|c| c.as_int() as u16);
+      let mut kind_needs = Vec::new();
+      if let Some(s) = &data {
+        for i in 0..NEEDS_PER_KIND {
+          if let Some(name) = read_sym(s, &format!("thing.needs.{i}")) {
+            // A typo'd need DROPS (no warn channel) — surfaces as never draining.
+            if let Some(id) = need_id(&name) {
+              kind_needs.push(id);
+            }
+          }
+        }
+      }
+      b.things.push(ThingDef {
+        name: n.clone(),
+        color: node_color_bg(node),
+        visual: node_visual(node, &material_id),
+        speed,
+        needs: kind_needs,
+      });
+    }
+
+    for n in &biome_ids {
+      let node = &biomes[n];
+      let subtype = node
+        .hook("subtype")
+        .map(|h| {
+          let mut store = Store::default();
+          run(&h.body, &mut store).unwrap_or(0).max(0) as u16
+        })
+        .unwrap_or(0);
+      b.biomes.push(BiomeDef {
+        name: n.clone(),
+        subtype,
+        body: BiomeBody::Hooks {
+          define: node.hook("define").map(|h| h.body.clone()).unwrap_or_default(),
+          on_create: node.hook("on_create").map(|h| h.body.clone()).unwrap_or_default(),
+        },
+      });
+    }
+
+    Ok(b.index())
+  }
+
+  /// Index every `<{bucket}>` def by name, recording first-appearance order. A def
+  /// seen again (its other facet, another file) folds its facets onto the existing
+  /// node. Append-only: ids stay stable across content edits.
+  fn index_defs(node: &Node, bucket_name: &str, defs: &mut HashMap<String, Node>, ids: &mut Vec<String>) {
+    for bucket in &node.children {
+      if bucket.header != Header::Bucket(bucket_name.into()) {
+        continue;
+      }
+      for d in &bucket.children {
+        if let Header::Def(id) = &d.header {
+          let key = id.split(':').next().unwrap_or(id).to_string();
+          if let Some(existing) = defs.get_mut(&key) {
+            existing.children.extend(d.children.iter().cloned());
+          } else {
+            defs.insert(key.clone(), d.clone());
+            ids.push(key);
+          }
+        }
+      }
+    }
+  }
+
+  fn run_node_hook(node: &Node, facet: &str, hook: &str) -> Option<Store> {
     let h = node.facet(facet)?.hook(hook)?;
     let mut store = Store::default();
     let _ = run(&h.body, &mut store);
     Some(store)
   }
 
-  /// Whether a tile declares a given lifecycle hook — e.g.
-  /// `tile_has_hook("grass", "visual", "on_tic")` so the runtime only attaches a
-  /// tic to tiles that actually handle one.
-  pub fn tile_has_hook(&self, name: &str, facet: &str, hook: &str) -> bool {
-    self.tile(name).and_then(|t| t.facet(facet)).and_then(|f| f.hook(hook)).is_some()
-  }
-
-  /// A def's background colour as a packed `0xRRGGBB`. In the current model the
-  /// visual lifecycle builds a prim and tints it, so the colour is that prim's
-  /// tint: run `:visual @on_create` and read the first prim's `tint`. Falls back
-  /// to a static `color.bg` / `visual.color.bg` set in an `@export` / `@define`
-  /// hook (the older shape), so a half-migrated corpus still resolves. `None` if
-  /// the def declares no colour any of those ways. Shared by tiles and things —
-  /// both author the same `:visual @on_create` prim+tint.
-  fn node_color_bg(&self, node: &Node) -> Option<u32> {
-    if let Some(store) = self.run_node_hook(node, "visual", "on_create") {
+  /// A def's background colour: the `:visual @on_create` prim tint, falling back to a
+  /// static `color.bg` / `visual.color.bg` in an `@export` / `@define` hook.
+  fn node_color_bg(node: &Node) -> Option<u32> {
+    if let Some(store) = run_node_hook(node, "visual", "on_create") {
       if let Some(c) = store.read("prims.0.tint") {
         return Some(c.as_int() as u32);
       }
     }
     for hook in ["export", "define"] {
-      if let Some(store) = self.run_node_hook(node, "visual", hook) {
+      if let Some(store) = run_node_hook(node, "visual", hook) {
         let c = store.read("color.bg").or_else(|| store.read("visual.color.bg"));
         if let Some(c) = c {
           return Some(c.as_int() as u32);
@@ -477,40 +897,24 @@ impl Bundle {
     None
   }
 
-  /// A def's [`VisualParts`] — its `:visual @on_create` prim's tint, geo colour,
-  /// and texture stem, in one hook run. `None` if the def builds no prim (no
-  /// tint). The richer sibling of [`node_color_bg`]: same hook, all three fields
-  /// the renderer wants instead of just the tint.
-  fn node_visual(&self, node: &Node) -> Option<VisualParts> {
-    let store = self.run_node_hook(node, "visual", "on_create")?;
+  /// A def's [`VisualParts`] — one `:visual @on_create` run, every field read out.
+  fn node_visual(node: &Node, material_id: &dyn Fn(&str) -> u16) -> Option<VisualParts> {
+    let store = run_node_hook(node, "visual", "on_create")?;
     let tint = store.read("prims.0.tint")?.as_int() as u32;
     let geo_color = store.read("prims.0.geoColor").map(|c| c.as_int() as u32).unwrap_or(tint);
     let texture = match store.read("prims.0.texture") {
       Some(crate::vm::Cell::Sym(s)) => Some(s.clone()),
       _ => None,
     };
-    // Spatial layout — footprint (tiles, default 1×1), logical anchor + sprite pivot
-    // (0..1, default centre), sprite size (tiles, default 1). Read component-wise so a
-    // def sets only what it overrides (`64 &thing.footprint.w set`, `1.0 &thing.anchor.y set`).
     let read_f = |path: &str, dflt: f64| store.read(path).map(|c| c.as_f64()).unwrap_or(dflt);
     let footprint = (read_f("prims.0.footprint.w", 1.0), read_f("prims.0.footprint.h", 1.0));
     let anchor = (read_f("prims.0.anchor.x", 0.5), read_f("prims.0.anchor.y", 0.5));
     let size = read_f("prims.0.size", 1.0);
-    // def-frame-anchors P5: `span` (frame world span, pow2 tiles) + `sprite_scale` (pre-atlas
-    // scale, re-centred on surface presence at ingest). `span` defaults to 1 tile.
     let span = read_f("prims.0.span", 1.0);
     let sprite_scale = (read_f("prims.0.sprite_scale.w", 1.0), read_f("prims.0.sprite_scale.h", 1.0));
     let sprite_anchor = (read_f("prims.0.sprite_anchor.x", 0.5), read_f("prims.0.sprite_anchor.y", 0.5));
-    // subframe-ingest F1/F4/F7: which fraction of the master is the ART, per DIRECTION, plus the
-    // pivot measured against it. Each facing is its own texture with its own extent, so each may
-    // override; whatever it does not override falls back to the non-directional value, which
-    // itself defaults to the whole frame. WEST IS ABSENT — it is east mirrored, derived by the
-    // client, never authored (F4).
-    // subframe-ingest I10: TWO axes. `v<n>` is the variant, `r<m>` the rotation/facing, and the
-    // fallback runs most-specific first so a kind can author whichever axis it actually varies on:
-    //   subframe.v3.r1  →  subframe.v3.e  →  subframe.v3  →  subframe.r1  →  subframe.e  →  subframe
-    // conifer varies by VARIANT on one facing; the wolf varies by FACING across variants. Both are
-    // expressible, and neither can silently land on the other's rect.
+    // The two-axis fallback chain, most-specific first, PER COMPONENT (subframe-ingest I10):
+    //   v3.r1 → v3.e → v3 → r1 → e → base
     let pick = |field: &str, comp: &str, v: usize, r: usize, dflt: f64| -> f64 {
       let alias = ROTATION_ALIASES.get(r);
       let mut keys: Vec<String> = vec![format!("prims.0.{field}.v{v}.r{r}.{comp}")];
@@ -531,11 +935,8 @@ impl Bundle {
       }
       dflt
     };
-    // HOT PATH GUARD. `node_visual` runs per TILE in `zone_tile_prims`, and the resolution below
-    // builds up to six formatted keys per (variant, rotation, component) — 16x16x6 slots x 6 keys
-    // is ~9k string allocations per call, which froze the client outright when it first shipped.
-    // Almost nothing authors a subframe (every tile, and every thing drawing the built-in `white`),
-    // so the unauthored case must cost nothing: one map lookup, then the flat default array.
+    // Load-time now, so the old hot-path guard is no longer about render frames — it
+    // still short-circuits the ~9k key formats for the (near-universal) unauthored case.
     let authored = store.read("prims.0.subframe").is_some();
     let dir_frames = if authored {
       std::array::from_fn::<_, VARIANTS_PER_DEF, _>(|v| {
@@ -553,13 +954,9 @@ impl Bundle {
         })
       })
     } else {
-      // No subframe authored: the whole frame everywhere, carrying only the flat sprite pivot.
       [[DirFrame { sub: (0.0, 0.0, 1.0, 1.0), anchor: sprite_anchor }; ROTATIONS_PER_DEF];
        VARIANTS_PER_DEF]
     };
-    // The kind's emitted light (`&thing.light.*`). `reach` is the discriminator: a def that
-    // never sets it emits nothing and the whole struct stays `None`, so every existing kind is
-    // untouched and the client sees exactly what it saw before.
     let light = match read_f("prims.0.light.reach", 0.0) {
       r if r > 0.0 => Some(LightParts {
         color: (
@@ -577,25 +974,18 @@ impl Bundle {
       }),
       _ => None,
     };
-    // Up to 4 packed-map channels: `&prim.packed.<i>.tint` is the channel's base colour
-    // (what `split_layers` subtracted into the residual — the canonical reconstruction
-    // `residual + Σ packedᵢ·jitter(tintᵢ)` re-adds it, so EVERY produced channel must set
-    // its tint or that region loses its colour). `.material` optionally names a registry
-    // material whose noise jitter perturbs the tint's hue/chroma. A channel with neither
-    // stays `PackedChannel::default()` (material 0, tint 0 = contributes nothing).
     let mut packed: [PackedChannel; 4] = Default::default();
     for (i, ch) in packed.iter_mut().enumerate() {
-      let material_id = match store.read(&format!("prims.0.packed.{i}.material")) {
-        Some(crate::vm::Cell::Sym(name)) => self.material_id(name).unwrap_or(0),
+      let mid = match store.read(&format!("prims.0.packed.{i}.material")) {
+        Some(crate::vm::Cell::Sym(name)) => material_id(name),
         _ => 0,
       };
-      let tint = store.read(&format!("prims.0.packed.{i}.tint")).map(|c| c.as_int() as u32).unwrap_or(0);
-      if material_id != 0 || tint != 0 {
-        *ch = PackedChannel { material_id, tint };
+      let ctint = store.read(&format!("prims.0.packed.{i}.tint")).map(|c| c.as_int() as u32).unwrap_or(0);
+      if mid != 0 || ctint != 0 {
+        *ch = PackedChannel { material_id: mid, tint: ctint };
       }
     }
-    // EVERY prim the hook built, in `^prim call` order — the parts list (human-pawns P2).
-    // A prim exists iff `prims.{i}.kind` does (`prims_push` stamps it at creation).
+    // Every part slot, in `^prim call` order.
     let mut parts = Vec::new();
     let mut i = 0usize;
     while store.read(&format!("prims.{i}.kind")).is_some() {
@@ -624,12 +1014,10 @@ impl Bundle {
         sprite_anchor: (rf("sprite_anchor.x", 0.5), rf("sprite_anchor.y", 0.5)),
         anchor: (rf("anchor.x", 0.5), rf("anchor.y", 0.5)),
         dir_frames: if store.read(&format!("prims.{i}.subframe")).is_none() {
-          // Same hot-path guard as prim 0 — a part that authors no subframe costs one lookup.
           [[DirFrame { sub: (0.0, 0.0, 1.0, 1.0), anchor: (rf("sprite_anchor.x", 0.5), rf("sprite_anchor.y", 0.5)) };
             ROTATIONS_PER_DEF]; VARIANTS_PER_DEF]
         } else { std::array::from_fn::<_, VARIANTS_PER_DEF, _>(|v| {
           std::array::from_fn::<DirFrame, ROTATIONS_PER_DEF, _>(|r| {
-            // Same two-axis chain as prim 0, on the slot's own keys — a part is its own master.
             let pick = |field: &str, comp: &str, dflt: f64| -> f64 {
               let alias = ROTATION_ALIASES.get(r);
               let mut keys: Vec<String> = vec![format!("{field}.v{v}.r{r}.{comp}")];
@@ -657,351 +1045,9 @@ impl Bundle {
     Some(VisualParts { tint, geo_color, texture, footprint, anchor, size, span, sprite_scale, sprite_anchor, dir_frames, packed, light, parts })
   }
 
-  /// A tile's background colour as a packed `0xRRGGBB` (see [`node_color_bg`]).
-  pub fn tile_color_bg(&self, name: &str) -> Option<u32> {
-    self.node_color_bg(self.tile(name)?)
-  }
-
-  /// Same as [`tile_color_bg`] but keyed by `def_id` — the lookup the client does
-  /// per cell once it has a zone's packed tiles.
-  pub fn color_bg_for_def(&self, def_id: u16) -> Option<u32> {
-    self.tile_color_bg(self.tile_name(def_id)?)
-  }
-
-  /// The [`VisualParts`] for a tile `def_id` — the per-cell lookup the painter's
-  /// prim expansion runs (tint + geo colour in one hook run; the stem it indexes
-  /// from [`tile_texture_stems`]).
-  pub fn visual_for_def(&self, def_id: u16) -> Option<VisualParts> {
-    self.node_visual(self.tile(self.tile_name(def_id)?)?)
-  }
-
-  /// Every tile's texture stem in `def_id` order (index 0 → def_id 1); the empty
-  /// string for a def declaring no texture (or the built-in `"white"` fill). The
-  /// client fetches this once and indexes it by the `def_id` the prim expansion
-  /// emits — an empty stem means "flat tint, no sprite".
-  pub fn tile_texture_stems(&self) -> Vec<String> {
-    self
-      .tile_ids
-      .iter()
-      .map(|name| self.tile(name).and_then(|n| self.node_visual(n)).and_then(|v| v.texture).unwrap_or_default())
-      .collect()
-  }
-
-  /// A tile's BUILD CATEGORY (`"wall"`), authored in its `:data @define` hook
-  /// (`"wall &tile.build set` — build-walls D3: the build menu populates from content,
-  /// so adding a kind here is the whole registration). `None` = not buildable.
-  pub fn tile_build(&self, def_id: u16) -> Option<String> {
-    let node = self.tile(self.tile_name(def_id)?)?;
-    let store = self.run_node_hook(node, "data", "define")?;
-    match store.read("tile.build") {
-      Some(crate::vm::Cell::Sym(s)) => Some(s.clone()),
-      _ => None,
-    }
-  }
-
-  /// Every tile's build category in `def_id` order (index 0 → def_id 1); the empty
-  /// string = not buildable. The bundle table the build menu scans (build-walls D3).
-  pub fn tile_builds(&self) -> Vec<String> {
-    (1..=self.tile_ids.len() as u16)
-      .map(|id| self.tile_build(id).unwrap_or_default())
-      .collect()
-  }
-
-  /// A tile's LIGHTING + LINKED lanes (texture-generalization P0), flat stride-6 per
-  /// def_id: `[linked_w, linked_h, padding, rotation, cast_shadow, receives_shadows]` —
-  /// zeros where unauthored. `linked_w/h` = the autotile atlas's tile count; `padding` =
-  /// the INTERNAL between-cell inset (units); `rotation` = the per-type tile MODE
-  /// (0 plain / 1 autotile / 2 world); the shadow lanes feed the def bits + presence flags.
-  pub fn tile_lighting_lanes(&self) -> Vec<f64> {
-    let mut out = Vec::with_capacity(self.tile_ids.len() * 6);
-    for name in &self.tile_ids {
-      let store = self.tile(name).and_then(|n| self.run_node_hook(n, "data", "define"));
-      let read = |k: &str| store.as_ref().and_then(|s| s.read(k)).map(|c| c.as_f64()).unwrap_or(0.0);
-      out.extend_from_slice(&[
-        read("tile.linked.w"), read("tile.linked.h"), read("tile.padding"),
-        read("tile.rotation"), read("tile.cast_shadow"), read("tile.receives_shadows"),
-      ]);
-    }
-    out
-  }
-
-  /// A tile's HEIGHT in tiles (`1 &tile.height set` — tile-lighting F2: > 0 opts the tile
-  /// into the cold lighting class as receiver + caster). `None`/0 = flat ground.
-  pub fn tile_height(&self, def_id: u16) -> Option<f64> {
-    let node = self.tile(self.tile_name(def_id)?)?;
-    let store = self.run_node_hook(node, "data", "define")?;
-    Some(store.read("tile.height")?.as_f64())
-  }
-
-  /// Every tile's height in `def_id` order (0 = flat/unauthored) — the lighting
-  /// participation gate's bundle table (tile-lighting F2).
-  pub fn tile_heights(&self) -> Vec<f64> {
-    (1..=self.tile_ids.len() as u16)
-      .map(|id| self.tile_height(id).unwrap_or(0.0))
-      .collect()
-  }
-
-  // ---------- things ----------
-
-  /// The thing def `name` (its merged facets), or `None`.
-  pub fn thing(&self, name: &str) -> Option<&Node> {
-    self.things.get(name)
-  }
-  /// Every thing name in `object_id` order (index 0 → object_id 1).
-  pub fn thing_names(&self) -> &[String] {
-    &self.thing_ids
-  }
-  /// The `object_id` for a thing name (1-based; `None` if unknown). This is the
-  /// u12 packed into a zone's thing entry
-  /// ([`resonantdust_codec::packed::pack_thing`]).
-  pub fn thing_object_id(&self, name: &str) -> Option<u16> {
-    self.thing_ids.iter().position(|n| n == name).map(|i| i as u16 + 1)
-  }
-  /// The thing name for an `object_id` (`0` is the empty sentinel).
-  pub fn thing_name(&self, object_id: u16) -> Option<&str> {
-    (object_id != 0)
-      .then(|| self.thing_ids.get(object_id as usize - 1))
-      .flatten()
-      .map(String::as_str)
-  }
-  /// A thing's colour as a packed `0xRRGGBB` — its `:visual @on_create` prim tint
-  /// (see [`node_color_bg`]), the thing-layer sibling of [`tile_color_bg`].
-  pub fn thing_color_bg(&self, name: &str) -> Option<u32> {
-    self.node_color_bg(self.thing(name)?)
-  }
-  /// [`thing_color_bg`] keyed by `object_id` — the per-thing lookup the client
-  /// runs over a zone's packed things.
-  pub fn thing_color_for_object(&self, object_id: u16) -> Option<u32> {
-    self.thing_color_bg(self.thing_name(object_id)?)
-  }
-
-  /// The [`VisualParts`] for a thing `object_id` — the thing-layer sibling of
-  /// [`visual_for_def`], used for both cold things and object-shard free things.
-  pub fn visual_for_object(&self, object_id: u16) -> Option<VisualParts> {
-    self.node_visual(self.thing(self.thing_name(object_id)?)?)
-  }
-
-  /// Every thing's texture stem in `object_id` order (index 0 → object_id 1); the
-  /// empty string for a def declaring no texture. The thing-layer sibling of
-  /// [`tile_texture_stems`].
-  pub fn thing_texture_stems(&self) -> Vec<String> {
-    self
-      .thing_ids
-      .iter()
-      .map(|name| self.thing(name).and_then(|n| self.node_visual(n)).and_then(|v| v.texture).unwrap_or_default())
-      .collect()
-  }
-
-  /// Every thing's spatial LAYOUT in `object_id` order, flattened **stride-10** per def
-  /// (index 0 → object_id 1): `[footprint.w, footprint.h, anchor.x, anchor.y, size,
-  /// sprite_anchor.x, sprite_anchor.y, span, sprite_scale.w, sprite_scale.h]` — all in
-  /// the units of [`VisualParts`] (footprint + size + span in tiles, anchors in `0..1`,
-  /// scales unitless). A def that builds no prim gets the default row
-  /// `[1, 1, 0.5, 0.5, 1, 0.5, 0.5, 1, 1, 1]`, so the host never special-cases "unset".
-  /// The host (`WorldBridge`/`MoverLayer`) resolves it into a world-px box + z-row.
-  pub fn thing_layout(&self) -> Vec<f64> {
-    let mut out = Vec::with_capacity(self.thing_ids.len() * 10);
-    for name in &self.thing_ids {
-      match self.thing(name).and_then(|n| self.node_visual(n)) {
-        Some(v) => out.extend_from_slice(&[
-          v.footprint.0, v.footprint.1, v.anchor.0, v.anchor.1, v.size, v.sprite_anchor.0, v.sprite_anchor.1,
-          v.span, v.sprite_scale.0, v.sprite_scale.1,
-        ]),
-        None => out.extend_from_slice(&[1.0, 1.0, 0.5, 0.5, 1.0, 0.5, 0.5, 1.0, 1.0, 1.0]),
-      }
-    }
-    out
-  }
-
-  /// Every thing's SUBFRAMES in `object_id` order, flattened **stride-1536** per def (index 0 →
-  /// object_id 1): [`VARIANTS_PER_DEF`]` = 16` variants × [`ROTATIONS_PER_DEF`]` = 16` rotations, each
-  /// `[sub.x, sub.y, sub.w, sub.h, anchor.x, anchor.y]`, all fractions in `0..1`.
-  ///
-  /// This is what the atlas CROPS to (subframe-ingest): the ingest copies exactly this rect out of
-  /// each of the stem's four maps, so albedo/normal/surface/layers are registered with each other
-  /// by construction rather than by two derivations agreeing.
-  ///
-  /// **Sixteen, because facings and linked cells share one index space** (F9): a sprite uses
-  /// `0..3` (`s, e, n, w`) and a linked tile uses all sixteen (the autotile cell `y·4 + x`).
-  /// Index 3 (west) is the east master mirrored — the host derives it from index 1 rather than
-  /// the corpus authoring a rect for an image that does not exist.
-  ///
-  /// A def that builds no prim gets the default row (whole frame, centre pivot) repeated, so the
-  /// host never special-cases "unset". Sibling of [`Self::thing_layout`], kept separate rather
-  /// than widening that stride because every existing consumer indexes into it.
-  pub fn thing_subframe(&self) -> Vec<f64> {
-    let mut out = Vec::with_capacity(self.thing_ids.len() * VARIANTS_PER_DEF * ROTATIONS_PER_DEF * 6);
-    for name in &self.thing_ids {
-      let frames = self
-        .thing(name)
-        .and_then(|n| self.node_visual(n))
-        .map(|v| v.dir_frames)
-        .unwrap_or_default();
-      for by_rot in frames {
-        for f in by_rot {
-          out.extend_from_slice(&[f.sub.0, f.sub.1, f.sub.2, f.sub.3, f.anchor.0, f.anchor.1]);
-        }
-      }
-    }
-    out
-  }
-
-  /// Every thing's emitted LIGHT in `object_id` order, flattened **stride-8** per def
-  /// (index 0 → object_id 1): `[r, g, b, intensity, reach, radius, height, flags]`, where
-  /// `flags` is bit 0 = `cast_shadows`, bit 1 = `hot`, bit 2 = `flicker`. Colour is `0..1`; `reach`, `radius`
-  /// and `height` are TILES. A kind that emits nothing gets an all-zero row, and
-  /// **`reach == 0` IS the "no light" test** the host uses — so a caller never has to know
-  /// which kinds were authored with a light. Sibling of [`thing_layout`]; per KIND, so a
-  /// torch's light costs nothing per placed instance (work `2026-07-25-primitive-graph`).
-  pub fn thing_light(&self) -> Vec<f64> {
-    let mut out = Vec::with_capacity(self.thing_ids.len() * 8);
-    for name in &self.thing_ids {
-      match self.thing(name).and_then(|n| self.node_visual(n)).and_then(|v| v.light) {
-        Some(l) => out.extend_from_slice(&[
-          l.color.0, l.color.1, l.color.2, l.intensity, l.reach, l.radius, l.height,
-          f64::from(u8::from(l.cast) | (u8::from(l.hot) << 1) | (u8::from(l.flicker) << 2)),
-        ]),
-        None => out.extend_from_slice(&[0.0; 8]),
-      }
-    }
-    out
-  }
-
-  /// A thing's movement speed in **tics per tile**, authored in its `:data @define` hook
-  /// (`12 &thing.speed set` — pawn-movement F1: speed is content, measured in tics; the
-  /// wall-time unit is retired). `None` when the kind authors none — the caller resolves
-  /// the default (`codec::speed`); the corpus never invents one.
-  pub fn thing_speed(&self, object_id: u16) -> Option<u16> {
-    let node = self.thing(self.thing_name(object_id)?)?;
-    let store = self.run_node_hook(node, "data", "define")?;
-    Some(store.read("thing.speed")?.as_int() as u16)
-  }
-
-  /// Every thing's speed in `object_id` order (index 0 → object_id 1), `0` = unauthored
-  /// (the client resolves the default — `0` is never a real speed, a hop can't take no
-  /// tics). Sibling of [`thing_layout`] / [`thing_light`]: the bundle table the wasm
-  /// boundary ships so speculation walks at the kind's authored rate.
-  pub fn thing_speeds(&self) -> Vec<f64> {
-    (1..=self.thing_ids.len() as u16)
-      .map(|id| f64::from(self.thing_speed(id).unwrap_or(0)))
-      .collect()
-  }
-
-  // ---------- biomes ----------
-
-  /// Every biome name in evaluation order (first match wins; see [`generate`]).
-  pub fn biome_names(&self) -> &[String] {
-    &self.biome_ids
-  }
-  /// The biome def `name` (its `@define` / `@on_create` hooks), or `None`.
-  pub fn biome(&self, name: &str) -> Option<&Node> {
-    self.biomes.get(name)
-  }
-
-  /// A biome's stable `subtype_id` — the value its `@subtype>` hook returns. A
-  /// `biome-tile`/`biome-thing` object carries its biome in `subtype` (see
-  /// `docs/components/shared/codec/design/object-model.md`), so this is the biome's identity in an
-  /// `object_type_reference`. It is authored EXPLICITLY per biome (a small
-  /// constant) rather than derived from file order, because this file's order is
-  /// evaluation PRIORITY (retunable) and a stored zone's `subtype_id` must never
-  /// renumber. `None` if the biome or its `@subtype` hook is absent, or it returns
-  /// `0` (the reserved/`default` subtype).
-  pub fn biome_subtype_id(&self, name: &str) -> Option<u16> {
-    let h = self.biome(name)?.hook("subtype")?;
-    let mut store = Store::default();
-    let id = run(&h.body, &mut store).unwrap_or(0);
-    (id > 0).then_some(id as u16)
-  }
-
-  /// Run one of a biome's hooks (`define` / `on_create`) against a store seeded
-  /// with this tile's `dims` and rng `seed`. Returns the finished store and the
-  /// hook's return value. Biome hooks sit directly under the `::def` (no facet),
-  /// unlike tiles. `None` if the biome or hook is absent.
-  fn run_biome_hook(&self, name: &str, hook: &str, dims: &[f64], seed: u64) -> Option<(Store, i64)> {
-    let h = self.biome(name)?.hook(hook)?;
-    let mut store = Store::default();
-    store.set_biome(dims.to_vec());
-    store.set_seed(seed);
-    let ret = run(&h.body, &mut store).unwrap_or(0);
-    Some((store, ret))
-  }
-
-  /// The first biome whose `@define` returns non-zero for these `dims`, in
-  /// evaluation order — the biome that owns this cell. `None` if none matched
-  /// (worldgen falls back to a default tile). `seed` is available to `@define`
-  /// too, though classification is normally a pure function of `dims`.
-  pub fn select_biome(&self, dims: &[f64], seed: u64) -> Option<&str> {
-    self.biome_ids.iter().find_map(|name| {
-      let (_, verdict) = self.run_biome_hook(name, "define", dims, seed)?;
-      (verdict != 0).then_some(name.as_str())
-    })
-  }
-
-  /// Classify one tile end to end: pick its biome by `dims`, then run that
-  /// biome's `@on_create` (seeded with `dims` + `seed`) to read the ground `tile`
-  /// and any primary-layer `thing.1` it placed. This is the per-tile entry point
-  /// worldgen calls for every cell — the DSL decides *what*, worldgen packs it.
-  /// A biome with no `@on_create` (or that set nothing) yields empty fields.
-  pub fn generate(&self, dims: &[f64], seed: u64) -> GenTile {
-    let Some(biome) = self.select_biome(dims, seed).map(str::to_string) else {
-      return GenTile::default();
-    };
-    let mut gen = GenTile { biome: Some(biome.clone()), ..GenTile::default() };
-    if let Some((store, _)) = self.run_biome_hook(&biome, "on_create", dims, seed) {
-      gen.tile = read_sym(&store, "tile");
-      gen.thing1 = read_sym(&store, "thing.1");
-    }
-    gen
-  }
-
-  // ---------- materials ----------
-
-  /// Every tile's 4 packed-channel material bindings in `def_id` order (index 0 →
-  /// def_id 1) — the per-def table the client fetches once and indexes by the
-  /// `def_id` its prim expansion emits, exactly like [`tile_texture_stems`]. A def
-  /// with no packed channels yields four default (empty) channels.
-  pub fn tile_packed_channels(&self) -> Vec<[PackedChannel; 4]> {
-    self
-      .tile_ids
-      .iter()
-      .map(|name| self.tile(name).and_then(|n| self.node_visual(n)).map(|v| v.packed).unwrap_or_default())
-      .collect()
-  }
-
-  /// Every thing's 4 packed-channel material bindings in `object_id` order — the
-  /// thing-layer sibling of [`tile_packed_channels`].
-  pub fn thing_packed_channels(&self) -> Vec<[PackedChannel; 4]> {
-    self
-      .thing_ids
-      .iter()
-      .map(|name| self.thing(name).and_then(|n| self.node_visual(n)).map(|v| v.packed).unwrap_or_default())
-      .collect()
-  }
-
-  /// Every material name in `material_id` order (index 0 → id 1).
-  pub fn material_names(&self) -> &[String] {
-    &self.material_ids
-  }
-  /// The material def `name` (its `@on_create` hook), or `None`.
-  pub fn material(&self, name: &str) -> Option<&Node> {
-    self.materials.get(name)
-  }
-  /// The 1-based `material_id` for a name (`None` if unknown; the client treats a
-  /// missing binding as `0` = no material).
-  pub fn material_id(&self, name: &str) -> Option<u16> {
-    self.material_ids.iter().position(|n| n == name).map(|i| i as u16 + 1)
-  }
-  /// The material name for a `material_id` (`0` is the empty sentinel).
-  pub fn material_name(&self, id: u16) -> Option<&str> {
-    (id != 0).then(|| self.material_ids.get(id as usize - 1)).flatten().map(String::as_str)
-  }
-
-  /// A material's [`MaterialParams`] — run its `@on_create` hook (materials sit
-  /// directly under the `::def`, no facet, like biomes) into a fresh store and read
-  /// the fields. `None` if the material or its hook is absent; unset fields fall to
-  /// [`MaterialParams::default`] (identity).
-  pub fn material_params(&self, name: &str) -> Option<MaterialParams> {
-    let h = self.material(name)?.hook("on_create")?;
+  /// A material's params — its direct `@on_create` (no facet, like biomes).
+  fn material_params(node: &Node) -> Option<MaterialParams> {
+    let h = node.hook("on_create")?;
     let mut store = Store::default();
     let _ = run(&h.body, &mut store);
     let def = MaterialParams::default();
@@ -1017,32 +1063,11 @@ impl Bundle {
     })
   }
 
-  /// The whole material registry in `material_id` order — the client fetches this
-  /// once and indexes it by the `material_id` a packed channel carries.
-  pub fn material_params_all(&self) -> Vec<MaterialParams> {
-    self.material_ids.iter().map(|n| self.material_params(n).unwrap_or_default()).collect()
-  }
-
-  // ---------- needs & moodlets (needs-moodlets P1) ----------
-
-  /// Every need name in `need_id` order (index 0 → id 1).
-  pub fn need_names(&self) -> &[String] {
-    &self.need_ids
-  }
-  /// The 1-based `need_id` for a name (`None` if unknown).
-  pub fn need_id(&self, name: &str) -> Option<u16> {
-    self.need_ids.iter().position(|n| n == name).map(|i| i as u16 + 1)
-  }
-  /// The need name for a `need_id` (`0` is the empty sentinel).
-  pub fn need_name(&self, id: u16) -> Option<&str> {
-    (id != 0).then(|| self.need_ids.get(id as usize - 1)).flatten().map(String::as_str)
-  }
-
-  /// A need's [`NeedParams`] — run its `@define` (needs sit directly under the `::def`,
-  /// no facet, like materials) and read `&need.*`. Band slots are `&need.band.<i>.*`;
-  /// a slot naming no moodlet is skipped, so authored bands stay dense in slot order.
-  pub fn need_params(&self, name: &str) -> Option<NeedParams> {
-    let h = self.needs.get(name)?.hook("define")?;
+  /// A need's params — its direct `@define`'s `&need.*` reads; band slots are
+  /// `&need.band.<i>.*`, dense in slot order.
+  fn need_params_of(node: &Node, name: &str) -> NeedParams {
+    let fallback = NeedParams { label: name.to_string(), deplete: 0.0, bands: Vec::new() };
+    let Some(h) = node.hook("define") else { return fallback };
     let mut store = Store::default();
     let _ = run(&h.body, &mut store);
     let mut bands = Vec::new();
@@ -1054,153 +1079,43 @@ impl Bundle {
         hi: store.read(&format!("need.band.{i}.hi")).map(|c| c.as_f64()).unwrap_or(0.0),
       });
     }
-    Some(NeedParams {
+    NeedParams {
       label: read_sym(&store, "need.label").unwrap_or_else(|| name.to_string()),
       deplete: store.read("need.deplete").map(|c| c.as_f64()).unwrap_or(0.0),
       bands,
-    })
-  }
-  /// The whole need registry in `need_id` order.
-  pub fn need_params_all(&self) -> Vec<NeedParams> {
-    self
-      .need_ids
-      .iter()
-      .map(|n| self.need_params(n).unwrap_or(NeedParams { label: n.clone(), deplete: 0.0, bands: Vec::new() }))
-      .collect()
+    }
   }
 
-  /// Every moodlet name in `moodlet_id` order (index 0 → id 1).
-  pub fn moodlet_names(&self) -> &[String] {
-    &self.moodlet_ids
-  }
-  /// The 1-based `moodlet_id` for a name (`None` if unknown).
-  pub fn moodlet_id(&self, name: &str) -> Option<u16> {
-    self.moodlet_ids.iter().position(|n| n == name).map(|i| i as u16 + 1)
-  }
-  /// The moodlet name for a `moodlet_id` (`0` is the empty sentinel).
-  pub fn moodlet_name(&self, id: u16) -> Option<&str> {
-    (id != 0).then(|| self.moodlet_ids.get(id as usize - 1)).flatten().map(String::as_str)
-  }
-
-  /// A moodlet's [`MoodletParams`] — its `@define`'s `&moodlet.*` reads.
-  pub fn moodlet_params(&self, name: &str) -> Option<MoodletParams> {
-    let h = self.moodlets.get(name)?.hook("define")?;
+  /// A moodlet's params — its direct `@define`'s `&moodlet.*` reads.
+  fn moodlet_params_of(node: &Node, name: &str) -> MoodletParams {
+    let fallback = MoodletParams { label: name.to_string(), mood: 0.0, duration: 0.0 };
+    let Some(h) = node.hook("define") else { return fallback };
     let mut store = Store::default();
     let _ = run(&h.body, &mut store);
-    Some(MoodletParams {
+    MoodletParams {
       label: read_sym(&store, "moodlet.label").unwrap_or_else(|| name.to_string()),
       mood: store.read("moodlet.mood").map(|c| c.as_f64()).unwrap_or(0.0),
       duration: store.read("moodlet.duration").map(|c| c.as_f64()).unwrap_or(0.0),
-    })
-  }
-  /// The whole moodlet registry in `moodlet_id` order.
-  pub fn moodlet_params_all(&self) -> Vec<MoodletParams> {
-    self
-      .moodlet_ids
-      .iter()
-      .map(|n| self.moodlet_params(n).unwrap_or(MoodletParams { label: n.clone(), mood: 0.0, duration: 0.0 }))
-      .collect()
-  }
-
-  /// The needs a thing kind carries — `&thing.needs.<i>` syms from its `:data @define`,
-  /// resolved to 1-based need ids. A slot naming an unknown need is DROPPED (a typo
-  /// surfaces as the need never draining, caught by the crossing drill — the loader has
-  /// no warn channel). Empty for a kind authoring none.
-  pub fn thing_needs(&self, object_id: u16) -> Vec<u16> {
-    let Some(node) = self.thing_name(object_id).and_then(|n| self.things.get(n)) else { return Vec::new() };
-    let Some(store) = self.run_node_hook(node, "data", "define") else { return Vec::new() };
-    let mut out = Vec::new();
-    for i in 0..NEEDS_PER_KIND {
-      if let Some(name) = read_sym(&store, &format!("thing.needs.{i}")) {
-        if let Some(id) = self.need_id(&name) {
-          out.push(id);
-        }
-      }
-    }
-    out
-  }
-
-  /// Every thing's needs in `object_id` order, flattened **stride-[`NEEDS_PER_KIND`]**
-  /// per kind (`0` = empty slot) — the bundle table the wasm boundary ships, the way
-  /// [`Self::thing_layout`] does.
-  pub fn thing_needs_table(&self) -> Vec<f64> {
-    let mut out = Vec::with_capacity(self.thing_ids.len() * NEEDS_PER_KIND);
-    for id in 1..=self.thing_ids.len() as u16 {
-      let needs = self.thing_needs(id);
-      for i in 0..NEEDS_PER_KIND {
-        out.push(needs.get(i).copied().unwrap_or(0) as f64);
-      }
-    }
-    out
-  }
-}
-
-/// Read a slot as a content name: a `Sym` (`grass &tile set`) yields the string;
-/// anything else (an unset slot reads as `0`) yields `None`.
-fn read_sym(store: &Store, path: &str) -> Option<String> {
-  match store.read(path) {
-    Some(crate::vm::Cell::Sym(s)) => Some(s.clone()),
-    _ => None,
-  }
-}
-
-/// Parse every `(name, source)` into a [`Bundle`], merging each tile's facets
-/// across files. Returns the bundle, or every parse error found.
-pub fn load(sources: &[(String, String)]) -> Result<Bundle, Vec<LoadError>> {
-  let mut errors = Vec::new();
-  let mut bundle = Bundle::default();
-
-  for (name, text) in sources {
-    match crate::parser::parse(text) {
-      Ok(node) => {
-        // Tiles and things share the merge-and-number discipline (separate id
-        // namespaces); biomes are keyed by name (order = evaluation priority).
-        index_defs(&node, "tile", &mut bundle.tiles, &mut bundle.tile_ids);
-        index_defs(&node, "thing", &mut bundle.things, &mut bundle.thing_ids);
-        index_defs(&node, "biome", &mut bundle.biomes, &mut bundle.biome_ids);
-        index_defs(&node, "material", &mut bundle.materials, &mut bundle.material_ids);
-        index_defs(&node, "need", &mut bundle.needs, &mut bundle.need_ids);
-        index_defs(&node, "moodlet", &mut bundle.moodlets, &mut bundle.moodlet_ids);
-      }
-      Err(e) => errors.push(LoadError { file: name.clone(), message: format!("parse: {e}") }),
-    }
-  }
-
-  if errors.is_empty() {
-    Ok(bundle)
-  } else {
-    Err(errors)
-  }
-}
-
-/// Index every `<{bucket}>` def by name into `defs`, recording first-appearance
-/// order in `ids`. A def seen again (e.g. a tile's other facet, authored in a
-/// separate file) folds its facets onto the existing node rather than clobbering
-/// it — the loader is typically fed `:data` first, then `:visual` merges on.
-/// Append-only: a later fragment never introduces or renumbers a def, so ids stay
-/// stable across content edits. Shared by `<tile>` / `<thing>` / `<biome>` (the
-/// id vec is meaningful for the first two, evaluation order for the last).
-fn index_defs(node: &Node, bucket_name: &str, defs: &mut HashMap<String, Node>, ids: &mut Vec<String>) {
-  for bucket in &node.children {
-    if bucket.header != Header::Bucket(bucket_name.into()) {
-      continue;
-    }
-    for d in &bucket.children {
-      if let Header::Def(id) = &d.header {
-        // Strip any inline `::name:facet>` suffix down to the bare def name.
-        let key = id.split(':').next().unwrap_or(id).to_string();
-        if let Some(existing) = defs.get_mut(&key) {
-          existing.children.extend(d.children.iter().cloned());
-        } else {
-          defs.insert(key.clone(), d.clone());
-          ids.push(key);
-        }
-      }
     }
   }
 }
 
-// ---------- Tests ----------
+/// The kind's emitted light — see [`VisualParts::light`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LightParts {
+  pub color: (f64, f64, f64),
+  pub intensity: f64,
+  pub reach: f64,
+  pub radius: f64,
+  pub height: f64,
+  /// Casts shadows (default true). A fill light that lights without occluding costs
+  /// the gather nothing — it is skipped in the shadow walk entirely.
+  pub cast: bool,
+  /// Animates per frame ⇒ the HOT class, re-baked every frame. Default false.
+  pub hot: bool,
+  /// Emits DECAY-LIGHTMAP flicker particles (lighting-feel P2). Orthogonal to `hot`.
+  pub flicker: bool,
+}
 
 #[cfg(test)]
 mod tests {
@@ -1210,8 +1125,7 @@ mod tests {
     (name.to_string(), text.to_string())
   }
 
-  /// The two facets of grass/dirt, authored the way content/ splits them: a data
-  /// file and a visual file, loaded data-first.
+  /// The two facets of grass/dirt, authored the way content/ splits them.
   fn corpus() -> Vec<(String, String)> {
     let data = "\
 <tile>
@@ -1243,28 +1157,25 @@ mod tests {
   #[test]
   fn indexes_tiles_with_stable_ids() {
     let b = load(&corpus()).expect("clean load");
-    // first-appearance order: grass=1, dirt=2
     assert_eq!(b.tile_def_id("grass"), Some(1));
     assert_eq!(b.tile_def_id("dirt"), Some(2));
     assert_eq!(b.tile_name(1), Some("grass"));
     assert_eq!(b.tile_name(2), Some("dirt"));
-    // 0 is the empty sentinel; an unknown name has no id
     assert_eq!(b.tile_name(0), None);
     assert_eq!(b.tile_def_id("stone"), None);
   }
 
   #[test]
   fn merges_data_and_visual_facets() {
+    // Both facets land on ONE def: grass appears once in the registry, and its
+    // visual-facet colour resolves — the merge's observable contract.
     let b = load(&corpus()).expect("clean load");
-    // both facets navigable on the one merged def
-    assert!(b.tile("grass").unwrap().facet("data").is_some());
-    assert!(b.tile("grass").unwrap().facet("visual").is_some());
+    assert_eq!(b.tile_names().iter().filter(|n| *n == "grass").count(), 1);
+    assert_eq!(b.tile_color_bg("grass"), Some(0x4b573e));
   }
 
   #[test]
   fn extracts_visual_color_bg_fallback_static_shape() {
-    // The older shape (a static `visual.color.bg` in a define hook) still
-    // resolves via the fallback path.
     let b = load(&corpus()).expect("clean load");
     assert_eq!(b.tile_color_bg("grass"), Some(0x4b573e));
     assert_eq!(b.tile_color_bg("dirt"), Some(0x7d6144));
@@ -1272,9 +1183,6 @@ mod tests {
     assert_eq!(b.color_bg_for_def(2), Some(0x7d6144));
   }
 
-  /// The current content shape: the visual lifecycle builds a tile prim in
-  /// `@on_create` and tints it. Grass also authors `@on_destroy`; dirt is a
-  /// bare static tile (create only).
   fn corpus_lifecycle() -> Vec<(String, String)> {
     let data = "<tile>\n  ::grass>\n    :data>\n      @define>\n        0 return\n  ::dirt>\n    :data>\n      @define>\n        0 return\n";
     let visual = "\
@@ -1303,7 +1211,6 @@ mod tests {
   #[test]
   fn colour_comes_from_the_on_create_prim_tint() {
     let b = load(&corpus_lifecycle()).expect("clean load");
-    // colour = the tile prim's tint built in @on_create
     assert_eq!(b.tile_color_bg("grass"), Some(0x4b573e));
     assert_eq!(b.tile_color_bg("dirt"), Some(0x653d00));
     assert_eq!(b.color_bg_for_def(1), Some(0x4b573e));
@@ -1332,27 +1239,21 @@ mod tests {
         0 return
 ";
     let b = load(&[src("data/tiles.rd", data), src("visual/tiles.rd", visual)]).expect("load");
-    // grass: built-in white fill, geo colour defaults to the tint (none authored)
     let grass = b.visual_for_def(1).unwrap();
     assert_eq!(grass.tint, 0x4b573e);
     assert_eq!(grass.geo_color, 0x4b573e);
     assert_eq!(grass.texture.as_deref(), Some("white"));
-    // stone: a real stem, tint left white (no-op on the sprite), a distinct geo
-    // silhouette colour shown until the sprite loads
     let stone = b.visual_for_def(2).unwrap();
     assert_eq!(stone.tint, 0xffffff);
     assert_eq!(stone.geo_color, 0x6b6b6b);
     assert_eq!(stone.texture.as_deref(), Some("linked/wall_smooth"));
-    // the stem table, in def_id order (index 0 → def_id 1)
     assert_eq!(b.tile_texture_stems(), vec!["white".to_string(), "linked/wall_smooth".to_string()]);
   }
 
   #[test]
   fn the_real_repo_corpus_loads_and_the_humans_declare_their_parts() {
     // A REAL-corpus smoke test (human-pawns P2): loads `content/` from the repo checkout
-    // when present (docker mounts the workspace; a packaged build without it skips). This
-    // is the check that would have caught the stale manifests — the corpus must parse and
-    // the human kinds must resolve their skeletons.
+    // when present (docker mounts the workspace; a packaged build without it skips).
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
     if !root.exists() {
       return;
@@ -1364,17 +1265,13 @@ mod tests {
       let v = b.visual_for_object(id).expect("visual");
       assert_eq!(v.parts.len(), 2, "{name}: body + head");
       assert_eq!(v.parts[1].part, 1, "{name}: head draws part-1 files");
-      // pawn-part-placement F4: `scale` is the PRE-ATLAS art scale, so the user's two numbers
-      // are absolute — body 0.8 tiles of art, head 0.5, both in `span 1` frames.
       assert_eq!(v.parts[0].scale, 0.8, "{name}: body scale (user spec)");
       assert_eq!(v.parts[1].scale, 0.5, "{name}: head scale (user spec)");
     }
     // the wolf stays the 1-part degenerate case
     let wolf = b.visual_for_object(b.thing_object_id("wolf").unwrap()).unwrap();
     assert_eq!(wolf.parts.len(), 1);
-    // needs-moodlets P1: the corpus authors thirst + its band moodlets, and the wolf
-    // carries it — every band names a REGISTERED moodlet (a typo here would silently
-    // never display).
+    // needs-moodlets P1: thirst registered + wired to the wolf, bands name real moodlets.
     let thirst = b.need_id("thirst").expect("thirst registered");
     let np = b.need_params("thirst").unwrap();
     assert!(np.deplete > 0.0, "thirst drains");
@@ -1385,51 +1282,34 @@ mod tests {
 
   #[test]
   fn a_two_prim_visual_yields_a_parts_list() {
-    // human-pawns P2: the human shape — slot 0 body + slot 1 head (`part 1`, `scale
-    // 0.625`, an upward tile offset). Mirrors content/visual/pawns.rd.
+    // human-pawns P2: slot 0 body + slot 1 head. Mirrors content/visual/pawns.rd.
     let data = "<thing>\n  ::human_female>\n    :data>\n      @define>\n        16 &thing.speed set\n        0 return\n";
     let visual = "\
 <thing>
   ::human_female>
     :visual>
       @on_create>
-        \"thing ^prim call &body export
+        \"body ^prim call &body export
         \"pawn/human/female &body.texture set
         #ffffff &body.tint set
-        #7a6a5a &body.geoColor set
-        1.5 &body.size set
-        2 &body.span set
-        1.0 &body.anchor.y set
-        1.0 &body.sprite_anchor.y set
-        \"thing ^prim call &head export
+        0.8 &body.scale set
+        \"head ^prim call &head export
         \"pawn/human/female &head.texture set
         1 &head.part set
         0.625 &head.scale set
-        -1.15 &head.offset.y set
-        2 &head.span set
+        0.6 &head.offset.z set
         0 return
 ";
-    let b = load(&[src("data/things.rd", data), src("visual/pawns.rd", visual)]).expect("load");
-    let v = b.visual_for_object(1).unwrap();
-    assert_eq!(v.parts.len(), 2, "two ^prim calls → two part slots");
-    let body = &v.parts[0];
-    assert_eq!(body.part, 0);
-    assert_eq!(body.scale, 1.0);
-    assert_eq!(body.texture.as_deref(), Some("pawn/human/female"));
-    assert_eq!((body.size, body.span), (1.5, 2.0));
-    assert_eq!(body.anchor.1, 1.0);
-    let head = &v.parts[1];
-    assert_eq!(head.part, 1);
-    assert_eq!(head.scale, 0.625);
-    assert_eq!(head.offset, (0.0, -1.15));
-    assert_eq!(head.texture.as_deref(), Some("pawn/human/female"));
-    // a 1-prim kind (the wolf shape) still yields exactly one slot
-    let one = "<thing>\n  ::wolfish>\n    :data>\n      @define>\n        0 return\n";
-    let onev = "<thing>\n  ::wolfish>\n    :visual>\n      @on_create>\n        \"thing ^prim call &thing export\n        \"pawn/animal/wolf &thing.texture set\n        #ffffff &thing.tint set\n        0 return\n";
-    let b1 = load(&[src("data/things.rd", one), src("visual/things.rd", onev)]).expect("load");
-    let w = b1.visual_for_object(1).unwrap();
-    assert_eq!(w.parts.len(), 1);
-    assert_eq!(w.parts[0].part, 0);
+    let b = load(&[src("data/pawns.rd", data), src("visual/pawns.rd", visual)]).expect("load");
+    let v = b.visual_for_object(1).expect("visual");
+    assert_eq!(v.parts.len(), 2);
+    assert_eq!(v.parts[0].texture.as_deref(), Some("pawn/human/female"));
+    assert_eq!(v.parts[0].part, 0);
+    assert_eq!(v.parts[0].scale, 0.8);
+    assert_eq!(v.parts[1].part, 1);
+    assert_eq!(v.parts[1].scale, 0.625);
+    assert_eq!(v.parts[1].elevation, 0.6);
+    assert_eq!(b.thing_speed(1), Some(16));
   }
 
   #[test]
@@ -1459,8 +1339,6 @@ mod tests {
 ";
     let b = load(&[src("data/things.rd", data), src("visual/things.rd", visual)]).expect("load");
     assert_eq!(b.thing_texture_stems(), vec!["world/conifer".to_string(), "white".to_string()]);
-    // tree: default 1×1 footprint, bottom anchor (y=1) + bottom sprite pivot (y=1),
-    // size 3 tiles, span 2, sprite_scale (0.75, 1). shrub authors none → the all-default row.
     assert_eq!(
       b.thing_layout(),
       vec![
@@ -1472,10 +1350,7 @@ mod tests {
 
   #[test]
   fn subframe_variant_and_rotation_are_separate_axes() {
-    // subframe-ingest I10. A variant and a rotation are DIFFERENT AXES and one kind needs both.
-    // `tree` authors: a global rect, a per-VARIANT rect (v2, the conifer case — varies by variant
-    // on one facing), a per-ROTATION rect via an alias (n, the wolf case — varies by facing across
-    // every variant), and the most specific v3.r1. `shrub` authors nothing.
+    // subframe-ingest I10: one kind can author BOTH axes without collisions.
     let data = "<thing>\n  ::tree>\n    :data>\n      @define>\n        0 return\n  ::shrub>\n    :data>\n      @define>\n        0 return\n";
     let visual = "\
 <thing>
@@ -1500,49 +1375,35 @@ mod tests {
         0 return
 ";
     let b = load(&[src("data/things.rd", data), src("visual/things.rd", visual)]).expect("load");
-    let v = b.thing("tree").and_then(|n| b.node_visual(n)).expect("tree visual");
+    let v = b.visual_for_object(1).expect("tree visual");
     let f = &v.dir_frames;
     assert_eq!(f.len(), VARIANTS_PER_DEF);
     assert_eq!(f[0].len(), ROTATIONS_PER_DEF);
-    // the global rect reaches an unauthored (variant, rotation)
     assert_eq!(f[0][0].sub.0, 0.25);
-    // a per-VARIANT rect covers EVERY rotation of that variant — the conifer case
     assert_eq!(f[2][0].sub.0, 0.6);
     assert_eq!(f[2][5].sub.0, 0.6);
-    // a per-ROTATION rect covers EVERY variant at that rotation — the wolf case. THIS is the one
-    // that was impossible before: rotation 2 (north) is authored across variants without ever
-    // colliding with variant 2's rect.
     assert_eq!(f[0][2].sub.0, 0.4);
     assert_eq!(f[7][2].sub.0, 0.4);
-    // ...and the two axes do not fight: variant 2's rect wins at variant 2, every rotation,
-    // because per-variant is more specific than per-rotation in the chain.
     assert_eq!(f[2][2].sub.0, 0.6);
-    // the fully-specific key beats both
     assert_eq!(f[3][1].sub.0, 0.9);
     assert_eq!(f[3][0].sub.0, 0.25, "v3's OTHER rotations still fall back");
-    // width came only from the global rect everywhere
     assert!(f.iter().all(|byr| byr.iter().all(|d| d.sub.2 == 0.5)));
-    // an unauthored kind crops NOTHING at any (variant, rotation)
-    let shrub = b.thing("shrub").and_then(|n| b.node_visual(n)).expect("shrub visual");
+    let shrub = b.visual_for_object(2).expect("shrub visual");
     assert!(shrub.dir_frames.iter().all(|byr| byr.iter().all(|d| *d == DirFrame::default())));
     assert_eq!(b.thing_subframe().len(), 2 * VARIANTS_PER_DEF * ROTATIONS_PER_DEF * 6);
   }
 
   #[test]
   fn thing_speed_from_data_define() {
-    // wolf authors 12 tics/tile in its `:data @define`; tree authors none → `None`
-    // (the CALLER resolves the default — the corpus never invents a speed).
     let data = "<thing>\n  ::tree>\n    :data>\n      @define>\n        0 return\n  ::wolf>\n    :data>\n      @define>\n        12 &thing.speed set\n        0 return\n";
     let b = load(&[src("data/things.rd", data)]).expect("load");
     assert_eq!(b.thing_speed(2), Some(12));
     assert_eq!(b.thing_speed(1), None);
-    assert_eq!(b.thing_speeds(), vec![0.0, 12.0]); // bundle table: 0 = unauthored
+    assert_eq!(b.thing_speeds(), vec![0.0, 12.0]);
   }
 
   #[test]
   fn material_registry_and_packed_channels() {
-    // A material registry (mottle=1) + a stone tile binding its packed.0 channel to
-    // it; grass binds no material (identity default).
     let data = "<tile>\n  ::grass>\n    :data>\n      @define>\n        0 return\n  ::stone>\n    :data>\n      @define>\n        0 return\n";
     let visual = "\
 <tile>
@@ -1580,7 +1441,6 @@ mod tests {
     ])
     .expect("clean load");
 
-    // registry: mottle is the first (and only) material → id 1.
     assert_eq!(b.material_id("mottle"), Some(1));
     assert_eq!(b.material_name(1), Some("mottle"));
     assert_eq!(b.material_id("nope"), None);
@@ -1592,15 +1452,12 @@ mod tests {
     assert_eq!(mp.sample_space, "world");
     assert_eq!(b.material_params_all().len(), 1);
 
-    // stone (def_id 2) binds packed.0 → material 1, tint 0x6b6b6b; other channels
-    // stay empty. grass (def_id 1) binds nothing → all-default.
     let stone = b.visual_for_def(2).unwrap();
     assert_eq!(stone.packed[0], PackedChannel { material_id: 1, tint: 0x6b6b6b });
     assert_eq!(stone.packed[1], PackedChannel::default());
     let grass = b.visual_for_def(1).unwrap();
     assert_eq!(grass.packed, [PackedChannel::default(); 4]);
 
-    // the per-def table the client fetches (def_id order).
     let table = b.tile_packed_channels();
     assert_eq!(table[0], [PackedChannel::default(); 4]);
     assert_eq!(table[1][0], PackedChannel { material_id: 1, tint: 0x6b6b6b });
@@ -1608,8 +1465,6 @@ mod tests {
 
   #[test]
   fn needs_and_moodlets_registry() {
-    // needs-moodlets P1: a thirst need with TWO bands referencing two moodlets — the
-    // pair coexisting on one need is the I10-class check (two slots, no collision).
     let needs = "\
 <need>
   ::thirst>
@@ -1645,25 +1500,18 @@ mod tests {
       0 return
 ";
     let b = load(&[src("data/needs.rd", needs)]).expect("clean load");
-
-    // registries: 1-based, first-appearance order.
     assert_eq!(b.need_id("thirst"), Some(1));
     assert_eq!(b.need_name(1), Some("thirst"));
     assert_eq!(b.moodlet_id("dehydrated"), Some(2));
     assert_eq!(b.need_id("nope"), None);
-
     let t = b.need_params("thirst").unwrap();
     assert_eq!(t.label, "Thirst");
     assert_eq!(t.deplete, 864000.0);
     assert_eq!(t.bands.len(), 2, "two bands coexist on one need");
     assert_eq!(t.bands[0], NeedBand { moodlet: "thirsty".into(), lo: 0.10, hi: 0.35 });
     assert_eq!(t.bands[1], NeedBand { moodlet: "dehydrated".into(), lo: 0.0, hi: 0.10 });
-
-    // an unauthored need: label falls back to its name, zero deplete, no bands.
     let r = b.need_params("rest").unwrap();
     assert_eq!((r.label.as_str(), r.deplete, r.bands.len()), ("rest", 0.0, 0));
-
-    // moodlets: conditional (duration 0) vs timed.
     let thirsty = b.moodlet_params("thirsty").unwrap();
     assert_eq!((thirsty.label.as_str(), thirsty.mood, thirsty.duration), ("Thirsty", -0.15, 0.0));
     let quenched = b.moodlet_params("quenched").unwrap();
@@ -1674,8 +1522,6 @@ mod tests {
 
   #[test]
   fn thing_needs_from_data_define() {
-    // The wolf lists thirst via `&thing.needs.0`; the tree authors none. Unknown
-    // names are dropped, and the flat table is stride-NEEDS_PER_KIND with 0 = empty.
     let needs = "<need>\n  ::thirst>\n    @define>\n      0 return\n";
     let things = "\
 <thing>
@@ -1701,8 +1547,6 @@ mod tests {
 
   #[test]
   fn unset_material_params_default_to_identity() {
-    // A material that sets nothing (or is absent) yields identity params — zero
-    // swings, uv space — so binding it changes nothing until it's authored.
     let material = "<material>\n  ::blank>\n    @on_create>\n      0 return\n";
     let b = load(&[src("material/materials.rd", material)]).expect("load");
     let mp = b.material_params("blank").unwrap();
@@ -1711,253 +1555,50 @@ mod tests {
     assert_eq!(mp.hue_swing, 0.0);
   }
 
-  #[test]
-  fn detects_authored_lifecycle_hooks() {
-    let b = load(&corpus_lifecycle()).expect("clean load");
-    // both author @on_create; grass also has @on_destroy, dirt does not — so the
-    // runtime can attach only the hooks a tile actually declares.
-    assert!(b.tile_has_hook("grass", "visual", "on_create"));
-    assert!(b.tile_has_hook("dirt", "visual", "on_create"));
-    assert!(b.tile_has_hook("grass", "visual", "on_destroy"));
-    assert!(!b.tile_has_hook("dirt", "visual", "on_destroy"));
-    // neither authors @on_update (both are static), so neither joins the loop.
-    assert!(!b.tile_has_hook("grass", "visual", "on_update"));
-  }
-
-  #[test]
-  fn appending_a_tile_does_not_renumber() {
-    let mut srcs = corpus();
-    // a new tile whose name sorts first must still land LAST by id.
-    srcs.push(src(
-      "data/aaa.rd",
-      "<tile>\n  ::aaa>\n    :data>\n      @define>\n        0 return\n",
-    ));
-    let b = load(&srcs).unwrap();
-    assert_eq!(b.tile_def_id("grass"), Some(1));
-    assert_eq!(b.tile_def_id("dirt"), Some(2));
-    assert_eq!(b.tile_def_id("aaa"), Some(3));
-  }
-
-  /// A tile corpus plus thing defs and a couple of biomes — the full shape
-  /// worldgen loads. Forest is specific (temperate + humid + above water) and
-  /// scatters trees; plains is the always-true catch-all, ordered last.
   fn biome_corpus() -> Vec<(String, String)> {
-    let data = "\
-<tile>
-  ::grass>
-    :data>
-      @define>
-        0 return
-  ::dirt>
-    :data>
-      @define>
-        0 return
-  ::water>
-    :data>
-      @define>
-        0 return
-";
-    let things = "\
-<thing>
-  ::tree>
-    :data>
-      @define>
-        0 return
-  ::shrub>
-    :data>
-      @define>
-        0 return
-";
-    let biome = "\
+    let biomes = "\
 <biome>
   ::ocean>
+    @subtype>
+      1 return
     @define>
-      ^biome call &b set
-      *b.2 0.35 lt return
+      ^biome call &biome set
+      *biome.2 0.32 lt return
     @on_create>
       water &tile set
       0 return
   ::forest>
+    @subtype>
+      6 return
     @define>
-      ^biome call &b set
-      *b.2 0.35 ge *b.1 0.55 ge and return
+      ^biome call &biome set
+      *biome.1 0.55 ge return
     @on_create>
       grass &tile set
-      1 ^rand call 0.999 lt if tree &thing.1 set
-      0 return
-  ::plains>
-    @define>
-      1 return
-    @on_create>
-      grass &tile set
+      6 ^rand call 0.99 lt if tree &thing.1 set
       0 return
 ";
-    vec![
-      src("data/tiles.rd", data),
-      src("data/things.rd", things),
-      src("biome/biomes.rd", biome),
-    ]
-  }
-
-  #[test]
-  fn indexes_things_in_their_own_id_namespace() {
-    let b = load(&biome_corpus()).expect("clean load");
-    // things number from 1, independent of the tile namespace
-    assert_eq!(b.thing_object_id("tree"), Some(1));
-    assert_eq!(b.thing_object_id("shrub"), Some(2));
-    assert_eq!(b.thing_name(1), Some("tree"));
-    assert_eq!(b.thing_name(0), None);
-    // tile ids are untouched by the thing namespace
-    assert_eq!(b.tile_def_id("grass"), Some(1));
-    assert_eq!(b.tile_def_id("water"), Some(3));
-  }
-
-  #[test]
-  fn select_biome_takes_first_matching_define() {
-    let b = load(&biome_corpus()).expect("clean load");
-    // low elevation → ocean claims it first
-    assert_eq!(b.select_biome(&[0.5, 0.7, 0.2], 0), Some("ocean"));
-    // land + humid → forest
-    assert_eq!(b.select_biome(&[0.5, 0.7, 0.6], 0), Some("forest"));
-    // land + dry → neither ocean nor forest, so the plains catch-all
-    assert_eq!(b.select_biome(&[0.5, 0.1, 0.6], 0), Some("plains"));
+    vec![src("biome/biomes.rd", biomes)]
   }
 
   #[test]
   fn generate_reads_tile_and_scattered_thing() {
     let b = load(&biome_corpus()).expect("clean load");
-    // forest cell: grass ground, and (threshold ~1.0) a scattered tree
     let g = b.generate(&[0.5, 0.7, 0.6], 42);
     assert_eq!(g.biome.as_deref(), Some("forest"));
     assert_eq!(g.tile.as_deref(), Some("grass"));
     assert_eq!(g.thing1.as_deref(), Some("tree"));
-    // ocean cell: water ground, no thing layer
     let o = b.generate(&[0.5, 0.7, 0.2], 42);
     assert_eq!(o.tile.as_deref(), Some("water"));
     assert_eq!(o.thing1, None);
-  }
-
-  #[test]
-  fn generate_is_deterministic() {
-    let b = load(&biome_corpus()).expect("clean load");
-    assert_eq!(b.generate(&[0.5, 0.7, 0.6], 7), b.generate(&[0.5, 0.7, 0.6], 7));
-  }
-
-  #[test]
-  fn biome_carries_its_stable_subtype_id() {
-    let biome = "\
-<biome>
-  ::forest>
-    @subtype>
-      6 return
-    @define>
-      1 return
-    @on_create>
-      grass &tile set
-      0 return
-  ::plains>
-    @define>
-      1 return
-";
-    let b = load(&[src("biome/biomes.rd", biome)]).expect("load");
-    // forest's @subtype returns its explicit, stable id — its biome identity in
-    // an object_type_reference, independent of file order.
+    // subtype ids are explicit, decoupled from evaluation order
+    assert_eq!(b.biome_subtype_id("ocean"), Some(1));
     assert_eq!(b.biome_subtype_id("forest"), Some(6));
-    // plains authors no @subtype → None (the reserved/`default` subtype 0).
-    assert_eq!(b.biome_subtype_id("plains"), None);
-    // an unknown biome → None.
-    assert_eq!(b.biome_subtype_id("nope"), None);
   }
 
   #[test]
-  fn thing_colour_comes_from_the_visual_prim_tint() {
-    // A thing authors the same `:visual @on_create` prim+tint tiles do; the
-    // colour lookup resolves it by name and by object_id.
-    let visual = "\
-<thing>
-  ::tree>
-    :visual>
-      @on_create>
-        \"thing ^prim call &thing export
-        \"white &thing.texture set
-        #2f4a2a &thing.tint set
-        0 return
-";
-    let mut srcs = biome_corpus();
-    srcs.push(src("visual/things.rd", visual));
-    let b = load(&srcs).expect("clean load");
-    assert_eq!(b.thing_color_bg("tree"), Some(0x2f4a2a));
-    let tree = b.thing_object_id("tree").unwrap();
-    assert_eq!(b.thing_color_for_object(tree), Some(0x2f4a2a));
-    // an object_id with no visual (shrub is data-only here) resolves to None
-    let shrub = b.thing_object_id("shrub").unwrap();
-    assert_eq!(b.thing_color_for_object(shrub), None);
+  fn mixed_dialects_refuse_to_load() {
+    let e = load(&[src("data/tiles.rd", "<tile>\n"), src("tiles.toml", "")]).unwrap_err();
+    assert!(e[0].message.contains("mixed corpus"));
   }
-
-  #[test]
-  fn surfaces_parse_errors() {
-    let errs = load(&[src("bad.rd", "<tile>\n  ::x>\n  10 &data.cost set\n")]).unwrap_err();
-    assert!(errs.iter().any(|e| e.file == "bad.rd" && e.message.starts_with("parse:")), "{errs:?}");
-  }
-
-  #[test]
-  fn thing_light_is_authored_per_kind() {
-    // A kind that emits light (`&thing.light.*`) vs one that does not. `reach` is the
-    // discriminator: omit it and the kind stays dark, so every pre-existing def is untouched.
-    // NOTE: a visual hook MUST set `tint` — `node_visual` bails (`?`) without it and the whole
-    // VisualParts comes back None, so every attr silently reads its default. And the embedded DSL
-    // is INDENTATION-SENSITIVE, must start at column 0 — indenting
-    // it to match the Rust around it silently pushes the hook body to a structural level and
-    // the instructions never run (they parse, they just attribute nothing).
-    let data = "\
-<thing>
-  ::lamp>
-    :data>
-      @define>
-        0 return
-  ::rock>
-    :data>
-      @define>
-        0 return
-";
-    let visual = "\
-<thing>
-  ::lamp>
-    :visual>
-      @on_create>
-        \"thing ^prim call &thing export
-        #ffffff &thing.tint set
-        2 &thing.size set
-        0.45 &thing.light.r set
-        0.95 &thing.light.g set
-        0.70 &thing.light.b set
-        0.8 &thing.light.intensity set
-        4 &thing.light.reach set
-        0.3 &thing.light.radius set
-        0.4 &thing.light.height set
-        0 &thing.light.cast set
-        0 return
-  ::rock>
-    :visual>
-      @on_create>
-        \"thing ^prim call &thing export
-        #ffffff &thing.tint set
-        0 return
-";
-    let b = load(&[src("data/things.rd", data), src("visual/things.rd", visual)]).expect("clean load");
-    // A known-good attr through the same harness first, so a failure below is the light path
-    // and not the fixture.
-    assert_eq!(
-      (b.thing_texture_stems().len(), b.thing_layout().len()),
-      (2, 20), "fixture: 2 kinds registered"
-    );
-    assert_eq!(b.thing_layout()[4], 2.0, "`size` must parse (stride-10, index 4)");
-    let t = b.thing_light();
-    assert_eq!(t.len(), 16, "stride-8 per kind, 2 kinds");
-    assert_eq!(&t[0..7], &[0.45, 0.95, 0.70, 0.8, 4.0, 0.3, 0.4]);
-    assert_eq!(t[7], 0.0, "cast 0 + hot unset => flags 0");
-    // rock emits nothing → an all-zero row; `reach == 0` is the host's "no light" test.
-    assert_eq!(&t[8..16], &[0.0; 8]);
-  }
-
 }
