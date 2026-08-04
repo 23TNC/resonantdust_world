@@ -54,12 +54,16 @@ export const CARD_W_MIN = Math.round(CARD_W * MINIMIZED_FRACTION);
 const CARD_BG = "rgba(28, 31, 42, 0.96)";
 const CARD_BG_HOVER = "rgba(44, 48, 64, 0.98)";
 const CARD_BORDER = "#3a3a4a";
+const CARD_BORDER_HOVER = "#6b6b86";
 const GOOD = "#8fce7a";
 const BAD = "#e08a7a";
 
 /** What `ConditionCards` needs from the panel it hangs off — passed in rather than reached for,
  *  so this file never imports `DomPanel` and stays testable in isolation. */
 export interface CardsHost {
+  /** The panel's `storageKey`, so the expanded flag persists beside its other prefs
+   *  (`<key>.conditionsExpanded`). `null` disables persistence, as it does on the panel. */
+  storageKey: string | null;
   /** The panel root's CURRENT viewport rect. */
   rect(): DOMRect;
   /** The panel root's current z-index, so the strip can sit exactly one above it. */
@@ -80,12 +84,17 @@ export class ConditionCards {
   private readonly el = document.createElement("div");
   private readonly unsubs: (() => void)[] = [];
   private cards: ConditionCard[] = [];
-  /** All cards maximized (P5's click target). Collapsed = top `MAXIMIZED` only. */
-  private expanded = false;
+  /** All cards maximized. Collapsed = top `MAXIMIZED` maximized, the rest minimized.
+   *
+   *  PANEL state, not selection state (F5): the user set it deliberately, so selecting a
+   *  different pawn must not silently re-collapse it and make them click again. Persisted with
+   *  the panel's other prefs. */
+  private expanded: boolean;
   /** A debug pin owns the strip — see [`pin`]. */
   private pinned = false;
 
   constructor(private readonly host: CardsHost) {
+    this.expanded = this.loadExpanded();
     this.el.dataset.rdConditionStrip = "1";
     this.el.style.cssText = [
       "position:fixed",
@@ -181,9 +190,11 @@ export class ConditionCards {
       "color:#ecd6aa",
       "overflow:hidden",
       "pointer-events:auto",
+      "cursor:pointer",
       "display:flex",
       "flex-direction:column",
       "justify-content:space-between",
+      "transition:background 90ms linear, border-color 90ms linear",
     ].join(";");
 
     const label = document.createElement("div");
@@ -196,9 +207,49 @@ export class ConditionCards {
       `white-space:nowrap;overflow:hidden;color:${c.mood >= 0 ? GOOD : BAD};font-size:11px`;
 
     el.append(label, stat);
-    el.addEventListener("pointerenter", () => { el.style.background = CARD_BG_HOVER; });
-    el.addEventListener("pointerleave", () => { el.style.background = CARD_BG; });
+    el.addEventListener("pointerenter", () => {
+      el.style.background = CARD_BG_HOVER;
+      el.style.borderColor = CARD_BORDER_HOVER;
+    });
+    el.addEventListener("pointerleave", () => {
+      el.style.background = CARD_BG;
+      el.style.borderColor = CARD_BORDER;
+    });
+    // The user's rule: clicking a MINIMIZED card maximizes them all. It is a TOGGLE (F5) —
+    // clicking any card while expanded collapses back — because a state with no exit is a trap,
+    // and the card is already the obvious hit target so no extra chrome is needed.
+    el.addEventListener("click", (ev) => {
+      ev.stopPropagation(); // never let a card click fall through to a world select
+      this.setExpanded(!this.expanded);
+    });
     return el;
+  }
+
+  /** Flip the expanded state, persist it, and re-lay the strip. */
+  private setExpanded(next: boolean): void {
+    if (this.expanded === next) return;
+    this.expanded = next;
+    this.saveExpanded(next);
+    this.rebuild();
+    this.reflow();
+  }
+
+  private storageName(): string | null {
+    return this.host.storageKey ? `${this.host.storageKey}.conditionsExpanded` : null;
+  }
+
+  private loadExpanded(): boolean {
+    const key = this.storageName();
+    if (!key) return false;
+    // Guarded like the panel's own persistence — a private-browsing context throws here, and
+    // "forgets the preference" must never mean "no cards".
+    try { return localStorage.getItem(key) === "1"; } catch { return false; }
+  }
+
+  private saveExpanded(v: boolean): void {
+    const key = this.storageName();
+    if (!key) return;
+    try { localStorage.setItem(key, v ? "1" : "0"); } catch { /* no persistence available */ }
   }
 
   /** Re-anchor to the panel's bottom-left and mirror its visibility. Cheap enough to run on

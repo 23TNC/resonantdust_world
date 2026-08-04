@@ -103,12 +103,12 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P5 — click to maximize all
 
-- [ ] Add a panel-scoped `conditionsExpanded` flag, default off, persisted with the panel's other
+- [x] Add a panel-scoped `conditionsExpanded` flag, default off, persisted with the panel's other
       prefs. Acceptance: toggling it and reloading the client restores the chosen state.
-- [ ] Wire a click on any minimized card to set the flag (all cards maximize) and a click on any
+- [x] Wire a click on any minimized card to set the flag (all cards maximize) and a click on any
       card while expanded to clear it ([F5](forks.md#f5)). Acceptance: click a narrow card → every
       card is full width; click again → back to 4-maximized.
-- [ ] Give the cards a cursor + hover affordance so the click target reads as clickable.
+- [x] Give the cards a cursor + hover affordance so the click target reads as clickable.
       Acceptance: hovering a card changes the cursor and the card's chrome.
 
 ## P6 — the strip behaves at the screen edge ([B1](blockers.md#b1) resolved)

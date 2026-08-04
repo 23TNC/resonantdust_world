@@ -65,6 +65,7 @@ export class DetailsPanel extends DomPanel {
       `box-sizing:border-box;padding-bottom:${CARD_H + PAD_BOTTOM * 2}px;`;
     this.setBody(this.bodyEl);
     this.cards = new ConditionCards({
+      storageKey: "details",
       rect: () => this.panel.getBoundingClientRect(),
       zIndex: () => Number.parseInt(this.panel.style.zIndex, 10) || 0,
       // `display: none` covers the taskbar-hide path, which has no public flag of its own.
