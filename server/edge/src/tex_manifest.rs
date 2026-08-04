@@ -36,7 +36,7 @@ struct Entry {
     pad: Option<[f32; 2]>,
     /// The stem's frame SPAN in tiles, and the pow2 square it therefore packs into
     /// (`span * tile_px`). Read from the leaf's `meta.json`, where `bin/art leaf-span` caches it
-    /// — the value is AUTHORED in the DSL corpus (`thing.span`) and only mirrored here, so this
+    /// — the value is AUTHORED in the corpus (`thing.part.span`) and only mirrored here, so this
     /// is a convenience for the packer, never a second place to change it. `None` when the leaf
     /// predates the stamp. Note this is the frame's extent, NOT the prim's `footprint`: a conifer
     /// occupies 1x1 tiles and spans 2, so sizing from the footprint would halve its square.

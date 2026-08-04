@@ -1,19 +1,19 @@
 //! The gate-served content boot surface.
 //!
-//! The content (the DSL corpus under `content/`) is decoded through the `shared`
+//! The content (the TOML corpus under `content/`) is decoded through the `shared`
 //! wasm runtime into a {@link Content} bundle the renderer queries per zone
 //! (`zoneTilePrims` for ground, `zoneThingPrims` for the scattered flora).
 //!
 //! **Runtime-served, hot-swappable.** [`loadContent`] fetches the corpus from the
-//! world server's `GET /content` (`{ version, rd: [[name, text], …] }`, data facets
-//! before visual so def-ids match the server). [`startContentPolling`] then polls
+//! world server's `GET /content` (`{ version, toml: [[name, text], …] }`; def ids are
+//! explicit, so order carries no meaning). [`startContentPolling`] then polls
 //! `GET /content-version`; when the server's fingerprint moves (an author edited a
-//! `.rd` and `dsl upload`ed, or a dev edited the bind-mounted tree),
+//! corpus file and `bin/content upload`ed, or a dev edited the bind-mounted tree),
 //! [`reloadContent`] re-fetches, rebuilds the wasm `Content`, frees the old, and
 //! fires [`onContentReloaded`] — so subscribers (the world renderer) repaint with
 //! the new defs, no page reload.
 //!
-//! **Embedded fallback.** The same `.rd` files are also embedded at build time via
+//! **Embedded fallback.** The same TOML files are also embedded at build time via
 //! Vite `?raw`. The server isn't known until login, so the app BOOTS from the embed;
 //! on login the server's corpus is pulled and hot-swapped in (and it's the fallback
 //! again if the server is unreachable). The version poll reconciles either way.
@@ -39,11 +39,10 @@ import materialsToml from "@content/materials.toml?raw";
 import needsToml from "@content/needs.toml?raw";
 
 /** The server's `/content` payload: a version fingerprint plus the ordered
- *  `[name, text]` source pairs the client feeds to `new Content(names, sources)`.
- *  (`rd` is the WIRE KEY's historical name — a literal, like the `/lod/` route.) */
+ *  `[name, text]` source pairs the client feeds to `new Content(names, sources)`. */
 interface ContentPayload {
   version: string;
-  rd: [string, string][];
+  toml: [string, string][];
 }
 
 /** The build-time embed, used only when the server is unreachable. `version` is
@@ -51,7 +50,7 @@ interface ContentPayload {
  *  always reconciles a fallback boot up to the server's real corpus. */
 const EMBEDDED: ContentPayload = {
   version: "embedded",
-  rd: [
+  toml: [
     ["materials.toml", materialsToml],
     ["needs.toml", needsToml],
     ["things.toml", thingsToml],
@@ -66,11 +65,11 @@ let contentVersion = "";
 /** Listeners fired after a hot-swap (see {@link reloadContent}). */
 const reloadListeners = new Set<() => void>();
 
-/** Build a wasm {@link Content} from a payload's `rd` pairs. Throws if the corpus
+/** Build a wasm {@link Content} from a payload's `toml` pairs. Throws if the corpus
  *  fails to parse (a bad gate corpus → caller keeps the live one). */
 function buildFromPayload(payload: ContentPayload): Content {
-  const names = payload.rd.map(([name]) => name);
-  const sources = payload.rd.map(([, text]) => text);
+  const names = payload.toml.map(([name]) => name);
+  const sources = payload.toml.map(([, text]) => text);
   return new Content(names, sources);
 }
 

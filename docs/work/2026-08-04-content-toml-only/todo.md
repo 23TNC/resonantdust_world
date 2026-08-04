@@ -80,18 +80,26 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 - [ ] Call `content-check` from `.git/hooks/pre-commit` beside `docs-check`, sharing the
       `SKIP_DOCS_CHECK=1` escape hatch. Acceptance: a commit staging `content/x.json` is refused
       with the check's message; the same commit succeeds under the skip var.
-- [ ] Rename `bin/dsl` → `bin/content` with its `bin/art` reference, the `dev/` list in
+- [x] Rename `bin/dsl` → `bin/content` with its `bin/art` reference, the `dev/` list in
       `docs/CONVENTIONS.md`, and the `dsl-script-ported` memory ([F7](forks.md#f7)). Acceptance:
-      `grep -rn 'bin/dsl' . --exclude-dir=.git` finds nothing; `bin/content --help` runs.
-- [ ] Rename the `/content` payload key `"rd"` → `"toml"` in `server/edge`, `contentBoot.ts` and
+      `grep -rn 'bin/dsl' . --exclude-dir=.git` finds nothing; `bin/content --help` runs. → renamed,
+      including all 19 `dsl:` log prefixes; live references re-pointed. Past streams' `completed`/
+      `todo` logs keep the old name — they are history, and editing them would falsify the record.
+- [x] Rename the `/content` payload key `"rd"` → `"toml"` in `server/edge`, `contentBoot.ts` and
       `client/npc/src/lib.rs` in one commit ([F6](forks.md#f6)). Acceptance: edge redeployed, the
-      webgl client boots and renders the world, `rd-npc` resolves a def.
-- [ ] Purge the stale `.rd` prose comments in `client/webgl` (`WorldBridge`, `Viewport`,
+      webgl client boots and renders the world, `rd-npc` resolves a def. → all three; `/content`
+      serves `{version, toml}`; npc logs `def 0x30010070 speed 12 thirst 1`. Proved END-TO-END by
+      recolouring grass in `tiles.toml` and watching the client repaint red with no reload, then
+      revert — a broken key would have thrown in `buildFromPayload` and left it green.
+- [x] Purge the stale `.rd` prose comments in `client/webgl` (`WorldBridge`, `Viewport`,
       `worldTilt`, `material`, `contentBoot`), `shared/wasm`, `client/npc`, and
       `server/edge/src/{config,worldgen}.rs`. Acceptance: `grep -rn '\.rd\b' client/ shared/
-      server/ --include='*.rs' --include='*.ts'` names only history.
+      server/ --include='*.rs' --include='*.ts'` names only history. → done, plus every stale
+      "the DSL" in `edge/{main,ws,connections,config,tex_manifest}` and `shared/wasm`. The sweep
+      uncovered [I8](issues.md#i8): 7 edge worldgen tests dead since the dialect was deleted —
+      fixtures ported to TOML, 19/19 green.
 - [ ] Truth pass: `docs/CONVENTIONS.md`'s "`.rd` content specs" line, `docs/README.md`,
-      `bin/dsl`'s header, and the `art-script-ported` / `dsl-script-ported` / `content-hot-update`
+      `bin/content`'s header, and the `art-script-ported` / `dsl-script-ported` / `content-hot-update`
       memories. Acceptance: `bin/rd docs-check` green; no doc or memory names a live `.rd`.
 
 ## P5 — one texture index (the destination, [F5](forks.md#f5))

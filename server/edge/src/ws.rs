@@ -783,7 +783,7 @@ fn append_init_objects(worldgen: &Worldgen, zone: u16, things: &mut Vec<(u16, Ve
         if zone != *init_zone {
             continue;
         }
-        // The DSL is the ONLY authority for name→kind id. Resolved here, at the point of use, from the
+        // The corpus is the ONLY authority for name→kind id. Resolved here, at the point of use, from the
         // live (hot-reloadable) bundle — never cached and never duplicated as a server-side constant,
         // because kind ids are append-ordered and a stale copy would silently place the wrong kind.
         let Some(kind_id) = worldgen.bundle().thing_object_id(kind_name) else {

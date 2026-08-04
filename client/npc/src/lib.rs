@@ -193,12 +193,12 @@ impl Bot {
 
 /// Resolve a pawn kind's `(packed definition_reference, tics-per-tile)` from the world server's
 /// `/content` corpus — the SAME corpus the browser renders with (first-pawns F5: content is the
-/// authority; a pinned `KIND_*` constant drifts the moment `things.rd` reorders). The def is the
+/// authority; a pinned `KIND_*` constant drifts the moment `things.toml` reorders). The def is the
 /// REAL packed form (human-pawns P0): `TYPE_PAWN | species | kind | variant 0`, species read off
 /// the kind's texture stem (`pawn/<species>/…` — the folder taxonomy and the definition fields
 /// are 1:1) through the code-owned palette. Speed is content too (pawn-movement F1/F5): the
 /// authored tics-per-tile, already resolved through `codec::speed::resolve` (unauthored →
-/// default). The payload is `{ "rd": [[name, source], …] }`, loaded with the shared DSL.
+/// default). The payload is `{ "toml": [[name, source], …] }`, loaded through shared/content.
 pub async fn resolve_thing(server_url: &str, name: &str) -> Result<(u32, u16), String> {
     let bundle = fetch_corpus(server_url).await?;
     resolve_thing_in(&bundle, name)
@@ -221,8 +221,9 @@ pub async fn fetch_corpus(server_url: &str) -> Result<resonantdust_content::load
         .json()
         .await
         .map_err(|e| format!("{url}: bad JSON: {e}"))?;
-    let rd = body["rd"].as_array().ok_or_else(|| format!("{url}: no `rd` array"))?;
-    let sources: Vec<(String, String)> = rd
+    let files =
+        body["toml"].as_array().ok_or_else(|| format!("{url}: no `toml` array"))?;
+    let sources: Vec<(String, String)> = files
         .iter()
         .filter_map(|pair| {
             Some((pair.get(0)?.as_str()?.to_string(), pair.get(1)?.as_str()?.to_string()))

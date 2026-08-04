@@ -488,7 +488,7 @@ export class WorldBridge {
   }
 
   /** Swap in a hot-reloaded content bundle and repaint every live zone through
-   *  it — re-expanding the cached raw tiles / things so a `.rd` edit (a recolour, a
+   *  it — re-expanding the cached raw tiles / things so a corpus edit (a recolour, a
    *  new thing tint) shows without re-requesting anything from the server. Each
    *  `onZone*` re-run clears the old sprites and redraws from the new corpus. */
   setContent(content: Content): void {

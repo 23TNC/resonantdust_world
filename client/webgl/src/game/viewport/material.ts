@@ -2,7 +2,7 @@
 //! the material registry (params by id, from the `<material>` DSL), and the noise-field
 //! catalogue. This is the plumbing the albedo BAKE pass consumes to add hue/chroma
 //! variation to a flat albedo — never lightness, so it reads as pigment, not light. See
-//! `docs/lighting.md` and `content/material/materials.rd`.
+//! `docs/lighting.md` and `content/materials.toml`.
 //!
 //! Reconstruction (in `mrtBakeShader.ts`), per fragment, holding L fixed in OKLab:
 //!   out.rgb = albedo.rgb + Σ packedᵢ · (jitter(tintᵢ, noise, paramsᵢ) − tintᵢ)

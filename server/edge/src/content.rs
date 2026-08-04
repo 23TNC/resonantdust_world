@@ -10,7 +10,7 @@
 //! moves it swaps the cached corpus and bumps the version. The client polls
 //! `GET /content-version` (a cheap 16-hex string) and, on a change, re-fetches
 //! `/content` and hot-swaps — no reload. `POST /content/refresh` forces the poll
-//! immediately (so `dsl upload` can ping the gate).
+//! immediately (so `bin/content upload` can ping the gate).
 //!
 //! **What's served.** Every root `content/*.toml` except `biomes.toml`, sorted — the
 //! client's `Content` bundle. Biomes are server-only worldgen and are never sent to
@@ -39,7 +39,7 @@ pub enum ContentSource {
     R2(R2Config),
 }
 
-/// R2 access parameters (a subset of `bin/dsl`'s config, from the environment).
+/// R2 access parameters (a subset of `bin/content`'s config, from the environment).
 pub struct R2Config {
     pub endpoint: String,
     pub bucket: String,
@@ -231,13 +231,17 @@ struct Snapshot {
     payload_json: String,
 }
 
-/// Build the `/content` payload from sources: `{ "version": "<hex>", "rd": [[name,
-/// text], …] }`. The client feeds `rd` straight into `new Content(names, sources)`.
+/// Build the `/content` payload from sources: `{ "version": "<hex>", "toml": [[name,
+/// text], …] }`. The client feeds `toml` straight into `new Content(names, sources)`.
+///
+/// The key was `rd` until content-toml-only P4 — named after a dialect deleted two streams
+/// ago. Renamed with all three consumers in one commit (F6); there is one server and one
+/// client, deployed together, so no dual-read window was needed.
 fn build_snapshot(sources: &Sources) -> Snapshot {
     let version = content_version(sources);
     let payload = serde_json::json!({
         "version": format!("{version:016x}"),
-        "rd": sources,
+        "toml": sources,
     });
     Snapshot { version, payload_json: payload.to_string() }
 }
@@ -340,14 +344,14 @@ mod tests {
         let snap = build_snapshot(&srcs(&[("tiles.toml", "grass")]));
         let v: serde_json::Value = serde_json::from_str(&snap.payload_json).unwrap();
         assert_eq!(v["version"], format!("{:016x}", snap.version));
-        assert_eq!(v["rd"][0][0], "tiles.toml");
-        assert_eq!(v["rd"][0][1], "grass");
+        assert_eq!(v["toml"][0][0], "tiles.toml");
+        assert_eq!(v["toml"][0][1], "grass");
     }
 
     #[test]
     fn content_keys_keeps_root_toml_only() {
         // What a real bucket listing looks like after `toml-content`: the corpus, the
-        // server-only biome file, the art manifests bin/dsl used to push, and the dead
+        // server-only biome file, the art manifests bin/content used to push, and the dead
         // index. Only root `*.toml` minus `biomes.toml` is the served corpus.
         let keys: Vec<String> = [
             "rd/content/tiles.toml",

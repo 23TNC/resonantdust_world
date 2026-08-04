@@ -45,7 +45,7 @@
 //!    way up it. Converting one to a world elevation takes **`sin(θ)`**, not `tan(θ)`.
 //!
 //! The second is not a guess. The retired `shadowGather.ts` used exactly this, and
-//! `content/visual/things.rd` still records the contract in a comment written against it:
+//! `content/things.toml` still records the contract in a comment written against it:
 //!
 //! > *"`shadowCover` projects the caster's card top (elevation `Zt = H·sin(WORLD_TILT)`) from the
 //! > light onto the ground … A 2-tile tree tops out at 32·sin55° ≈ 26 units, so a light must clear
@@ -87,7 +87,7 @@ export const WORLD_TILT_DEG = 65;
 
 /** `sin(θ)` — converts a **drawn extent** (units of card, up the screen) into a world elevation.
  *  ≈ 0.9063 at 65°. This is the factor the retired `shadowGather.ts` used and the one
- *  `content/visual/things.rd` still documents. */
+ *  `content/things.toml` still documents. */
 export const TILT_SIN = Math.sin((WORLD_TILT_DEG * Math.PI) / 180);
 
 /** `tan(θ)` — **depth perpendicular to the screen**, for z-ordering only (user: *"screen.z is
@@ -136,7 +136,7 @@ const float TILT_TAN = ${TILT_TAN};
 const float UPT_TILT = ${UNITS_PER_TILE}.0;
 
 // A DRAWN extent (units up a card) -> a world elevation. The factor is sin(theta), the same one
-// the retired shadowGather.ts used and content/visual/things.rd still documents:
+// the retired shadowGather.ts used and content/things.toml still documents:
 //   "the caster's card top (elevation Zt = H*sin(WORLD_TILT))".
 // A LIGHT's stored unit.z needs no conversion -- SquareCache.height is already world px above the
 // ground plane. Two different quantities share the lane; only the drawn one converts.

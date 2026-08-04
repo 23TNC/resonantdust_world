@@ -10,7 +10,7 @@ _2026-08-04, measured._ `git ls-files content` returns twelve paths; five are th
 | `visual/manifest/pawn.rd` | `bin/art manifest` ([bin/art:3130](../../../bin/art)) | none in code; `bin/dsl:251` uploads the folder | move ([F1](forks.md#f1)) |
 | `visual/manifest/biome-tile.rd` | same | same | move |
 | `visual/manifest/biome-thing.rd` | same | same | move |
-| `manifest.json` | `bin/dsl reindex` ([bin/dsl:353](../../../bin/dsl)) | `server/edge/src/content.rs:135` `load_r2` | delete ([F4](forks.md#f4)) |
+| `manifest.json` | `bin/dsl reindex` ([bin/content](../../../bin/content), then named `bin/dsl` — [F7](forks.md#f7)) | `server/edge/src/content.rs:135` `load_r2` | delete ([F4](forks.md#f4)) |
 | `servers/alpha` | hand-authored | `bin/lib/common.sh:121` → `bin/lib/index.sh` | move ([F3](forks.md#f3)) |
 | `servers/claude` | hand-authored | same | move |
 | `servers/dev` | hand-authored | same | move |
@@ -56,6 +56,26 @@ Consequence: `_def_span` ([bin/art:142](../../../bin/art)) swallows the failure 
 `server/edge/src/tex_manifest.rs` reads that stamp to derive the pow2 `square` a stem packs into. A
 freshly mastered leaf silently gets `span: None`. The span is authored in `things.toml` now; the
 port is one item in P1, and it must keep the module's documented span≠size≠footprint distinctions.
+
+## I8 — seven edge worldgen tests had been red since the DSL was deleted {#i8}
+
+_2026-08-04, closed by P4._ Sweeping `.rd` out of the code turned up `cargo test` in
+`server/edge`: **7 of 19 failing**, every one in `worldgen::tests`. Their fixtures build corpora in
+the deleted dialect (`<tile>`, `::grass>`, `@define>`) and pass them to `Worldgen::from_sources`,
+which routes to a `load()` that refuses non-TOML **by name**. Every call returns `Err`; every
+`.expect("load content")` panics.
+
+This predates this stream — it landed with [`toml-content`](../2026-08-04-toml-content/README.md)
+P6 on 2026-08-04, whose completed log records a green gate. That gate was `rd`'s shared 2-pass
+`cargo check` plus the shared workspace's tests; **the edge's own test binary was in neither**. A
+`check` compiles a test that can never pass, and nothing in the loop ran it.
+
+Fixed by porting the fixtures: explicit ids as [F1](../2026-08-04-toml-content/forks.md#f1)
+requires, `when`/`tile`/`scatter` biome rules, and the `wg()` helper's ordinal ids kept ordinal on
+purpose — those tests are *about* what reordering does to stored ids. 19/19 green.
+
+Worth carrying forward: the repo has no single command that runs every crate's tests. That is how
+this hid for a whole stream, and it is a bigger fix than this stream should make.
 
 ## I7 — a concurrent session swept P2's work into its own commits {#i7}
 

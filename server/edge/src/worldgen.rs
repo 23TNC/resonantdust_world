@@ -1,21 +1,21 @@
-//! Worldgen — drive the biome DSL to build a zone's packed terrain.
+//! Worldgen — drive the biome rules to build a zone's packed terrain.
 //!
-//! This is the server's `:data`-side use of the DSL: load the content corpus
+//! This is the server's use of the content corpus: load it
 //! once at startup, then answer "what does a fresh zone look like?" as the dense
 //! `tiles` (`Vec<u16>`, one `kind_reference` per cell, indexed by `tile_reference`) and the sparse
 //! `things` (`Vec<u32>` of `kind_pos_reference`s, `kind:16 | tile:8 | data:8`) a zone's baseline is
 //! seeded from — held in separate cold shards, keyed by `macro_position_reference`. The edge owns
-//! generation because the DSL is pure Rust it links as an
+//! generation because the content crate is pure Rust it links as an
 //! rlib and it already reads `content/` off disk — a SpacetimeDB module is wasm
 //! with neither, so it just stores what we hand it. (The cold-zone seeding path
 //! itself is a follow-up in the merged pipeline — see docs/archive/gaps.md.)
 //!
 //! Generation is per tile and independent. For each cell we sample N **biome
 //! dimensions** (temperature / humidity / elevation) from noise at the cell's
-//! world position, then let the DSL classify it: [`Bundle::generate`] walks the
-//! biomes in content order, takes the first whose `@define` matches, and runs
-//! that biome's `@on_create` to pick the ground tile and scatter any primary-
-//! layer thing (a tree, a shrub). We resolve those names to `def_id`s through the
+//! world position, then let the content classify it: [`Bundle::generate`] walks the
+//! biomes in corpus order, takes the first whose `when` conjunction passes, and
+//! applies its `tile` plus any `scatter` draw that wins the cell (a tree, a
+//! shrub). We resolve those names to `def_id`s through the
 //! same bundle the client loads — so the terrain the server writes and the
 //! terrain the client paints agree by id — and pack them.
 //!
@@ -83,7 +83,7 @@ impl Worldgen {
             errs.iter().map(|e| format!("{}: {}", e.file, e.message)).collect::<Vec<_>>().join("; ")
         })?;
         if bundle.biome_names().is_empty() {
-            return Err("content defines no biomes (content/biome/*.rd)".into());
+            return Err("content defines no biomes (content/biomes.toml)".into());
         }
         let default_tile = bundle
             .tile_def_id(DEFAULT_TILE)
@@ -189,87 +189,67 @@ mod tests {
     }
 
     /// Hermetic worldgen over a small biome corpus shaped like the real
-    /// content/{data,visual,biome} tree — no filesystem, so it runs anywhere.
-    /// Elevation bands (ocean/mountain) plus a humid forest and a plains
-    /// catch-all, so a whole region exercises several biomes.
+    /// `content/*.toml` tree — no filesystem, so it runs anywhere. Elevation bands
+    /// (ocean/mountain) plus a humid forest and a plains catch-all, so a whole region
+    /// exercises several biomes. Ids are EXPLICIT, as the loader demands.
     fn worldgen() -> Worldgen {
-        let data = "\
-<tile>
-  ::grass>
-    :data>
-      @define>
-        0 return
-  ::dirt>
-    :data>
-      @define>
-        0 return
-  ::water>
-    :data>
-      @define>
-        0 return
-  ::stone>
-    :data>
-      @define>
-        0 return
+        let tiles = "\
+[[tile]]
+id = 1
+name = \"grass\"
+[[tile]]
+id = 2
+name = \"dirt\"
+[[tile]]
+id = 3
+name = \"water\"
+[[tile]]
+id = 4
+name = \"stone\"
 ";
         let things = "\
-<thing>
-  ::tree>
-    :data>
-      @define>
-        0 return
+[[thing]]
+id = 1
+name = \"tree\"
 ";
-        let biome = "\
-<biome>
-  ::ocean>
-    @subtype>
-      1 return
-    @define>
-      ^biome call &biome set
-      *biome.2 0.32 lt return
-    @on_create>
-      water &tile set
-      0 return
-  ::mountains>
-    @subtype>
-      3 return
-    @define>
-      ^biome call &biome set
-      *biome.2 0.82 ge return
-    @on_create>
-      stone &tile set
-      0 return
-  ::forest>
-    @subtype>
-      6 return
-    @define>
-      ^biome call &biome set
-      *biome.1 0.55 ge return
-    @on_create>
-      grass &tile set
-      1 ^rand call 0.5 lt if tree &thing.1 set
-      0 return
-  ::plains>
-    @subtype>
-      7 return
-    @define>
-      1 return
-    @on_create>
-      grass &tile set
-      0 return
+        // Order is priority — elevation bands first, plains (no `when`) last.
+        let biomes = "\
+[[biome]]
+name = \"ocean\"
+subtype = 1
+when = { elevation = { lt = 0.32 } }
+tile = \"water\"
+
+[[biome]]
+name = \"mountains\"
+subtype = 3
+when = { elevation = { gte = 0.82 } }
+tile = \"stone\"
+
+[[biome]]
+name = \"forest\"
+subtype = 6
+when = { humidity = { gte = 0.55 } }
+tile = \"grass\"
+scatter = [ { salt = 1, p = 0.5, thing = \"tree\" } ]
+
+[[biome]]
+name = \"plains\"
+subtype = 7
+tile = \"grass\"
 ";
         Worldgen::from_sources(&[
-            ("data/tiles.rd".into(), data.into()),
-            ("data/things.rd".into(), things.into()),
-            ("biome/biomes.rd".into(), biome.into()),
+            ("tiles.toml".into(), tiles.into()),
+            ("things.toml".into(), things.into()),
+            ("biomes.toml".into(), biomes.into()),
         ])
         .expect("load content")
     }
 
     #[test]
     fn rejects_a_corpus_with_no_biomes() {
-        let data = "<tile>\n  ::grass>\n    :data>\n      @define>\n        0 return\n";
-        match Worldgen::from_sources(&[("data/tiles.rd".into(), data.into())]) {
+        let data = "[[tile]]\nid = 1\nname = \"grass\"\n";
+        match Worldgen::from_sources(&[("tiles.toml".into(), data.into())]) {
             Err(err) => assert!(err.contains("no biomes"), "{err}"),
             Ok(_) => panic!("a biome-less corpus should be rejected"),
         }
@@ -277,20 +257,22 @@ mod tests {
 
     /// Build a worldgen from bare tile / thing name lists (a trivial always-true
     /// `plains` biome painting grass). `tiles` must include `grass` (the default).
+    /// Ids follow list ORDER here on purpose — these tests are about what happens to
+    /// stored ids when the corpus is reordered or trimmed.
     fn wg(tiles: &[&str], things: &[&str]) -> Worldgen {
-        let mut data = String::from("<tile>\n");
-        for t in tiles {
-            data += &format!("  ::{t}>\n    :data>\n      @define>\n        0 return\n");
+        let mut data = String::new();
+        for (i, t) in tiles.iter().enumerate() {
+            data += &format!("[[tile]]\nid = {}\nname = \"{t}\"\n", i + 1);
         }
-        let mut th = String::from("<thing>\n");
-        for t in things {
-            th += &format!("  ::{t}>\n    :data>\n      @define>\n        0 return\n");
+        let mut th = String::new();
+        for (i, t) in things.iter().enumerate() {
+            th += &format!("[[thing]]\nid = {}\nname = \"{t}\"\n", i + 1);
         }
-        let biome = "<biome>\n  ::plains>\n    @define>\n      1 return\n    @on_create>\n      grass &tile set\n      0 return\n";
+        let biome = "[[biome]]\nname = \"plains\"\nsubtype = 7\ntile = \"grass\"\n";
         Worldgen::from_sources(&[
-            ("data/tiles.rd".into(), data),
-            ("data/things.rd".into(), th),
-            ("biome/biomes.rd".into(), biome.into()),
+            ("tiles.toml".into(), data),
+            ("things.toml".into(), th),
+            ("biomes.toml".into(), biome.into()),
         ])
         .expect("load content")
     }

@@ -82,7 +82,7 @@ Held as components because scripts are the foundation of how we develop.
 - **dev/scripts/art** — asset generation (sprites, laigter normals). Today: `bin/art` (+
   `bin/laigter`, `bin/marigold`).
 - **dev/scripts/dsl** — publishes the content DSL to R2 for server/client consumption. Today:
-  `bin/dsl`.
+  `bin/content`.
 - **dev/dsl** — the `.rd` content-DSL *specifications* (data + visual). Today: `content/`.
 - **dev/textures/sprites**, **dev/textures/templates** — sprite art + generation templates.
   Today: `textures/` (gitignored) + templates.

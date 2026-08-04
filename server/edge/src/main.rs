@@ -103,7 +103,7 @@ async fn main() {
     pool.spawn_content_poll(pool.cfg.content_poll_secs);
 
     // The server is also the ASSET host the client fetches from once it logs in:
-    // the DSL corpus (`/content`) it renders with, and the texture masters/previews
+    // the content corpus (`/content`) it renders with, and the texture masters/previews
     // (`/textures`). Best-effort — a failed content load disables `/content*` but
     // leaves the game (`/ws`) serving. (Ported from the gateway: assets belong to
     // the world server, not the thin routing gateway.)
@@ -222,7 +222,7 @@ fn r2_config(r2: &R2Settings) -> R2Config {
     }
 }
 
-/// `GET /content` — the DSL corpus JSON the client renders with.
+/// `GET /content` — the content corpus JSON the client renders with.
 async fn serve_content(State(state): State<AppState>) -> impl IntoResponse {
     match &state.content {
         Some(store) => (
@@ -244,7 +244,7 @@ async fn serve_content_version(State(state): State<AppState>) -> impl IntoRespon
 }
 
 /// `POST /content/refresh` — force an immediate source re-poll (e.g. right after
-/// `dsl upload`), rather than waiting for the background tick.
+/// `bin/content upload`), rather than waiting for the background tick.
 async fn refresh_content(State(state): State<AppState>) -> impl IntoResponse {
     let Some(store) = &state.content else {
         return (StatusCode::SERVICE_UNAVAILABLE, "content unavailable").into_response();

@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# dsl — publish the TOML content corpus to the Cloudflare R2 asset bucket so a
-# deployed client can fetch it, instead of embedding it at build time.
+# content — publish the TOML content corpus to the Cloudflare R2 asset bucket so
+# a deployed client can fetch it, instead of embedding it at build time.
 #
-# (The NAME is a fossil — the DSL it was written for was deleted on 2026-08-04.
-# content-toml-only F7 renames this to bin/content in that stream's truth pass.)
-#
-# Ported from the old game's bin/dsl. Two adaptations for this world:
+# Ported from the old game's bin/dsl (renamed here: the DSL it was named after was
+# deleted on 2026-08-04 — content-toml-only F7). Two adaptations for this world:
 #   - Layout: the corpus is FLAT — content/*.toml and nothing else (the old game
 #     used data/visuals/locales folders; this world's folders died with the DSL).
 #   - Namespace: every R2 key is under $R2_PREFIX/ (as bin/art does for
@@ -49,13 +47,13 @@ R2_AWSCLI_IMAGE="${R2_AWSCLI_IMAGE:-amazon/aws-cli:latest}"
 # the R2 helpers. Fails clearly if the file is missing or the keys are blank.
 _r2_preflight() {
   if [[ ! -f "$R2_KEYS" ]]; then
-    echo "dsl: missing credentials file $R2_KEYS — populate it (see comments inside)" >&2
+    echo "content: missing credentials file $R2_KEYS — populate it (see comments inside)" >&2
     return 1
   fi
   # shellcheck source=/dev/null
   source "$R2_KEYS"
   if [[ -z "${R2_ACCESS_KEY_ID:-}" || -z "${R2_SECRET_ACCESS_KEY:-}" ]]; then
-    echo "dsl: R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY not set in $R2_KEYS" >&2
+    echo "content: R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY not set in $R2_KEYS" >&2
     return 1
   fi
 }
@@ -104,9 +102,9 @@ _refresh_server() {
   [[ -n "$sv" ]] || return 0
   command -v curl >/dev/null 2>&1 || return 0
   sv="${sv%/}"
-  echo "dsl: pinging $sv/content/refresh ..."
-  if ! curl -fsS -X POST "$sv/content/refresh" 2>/dev/null | sed 's/^/dsl: server: /'; then
-    echo "dsl: server refresh ping failed (it'll re-poll on its own)" >&2
+  echo "content: pinging $sv/content/refresh ..."
+  if ! curl -fsS -X POST "$sv/content/refresh" 2>/dev/null | sed 's/^/content: server: /'; then
+    echo "content: server refresh ping failed (it'll re-poll on its own)" >&2
   fi
 }
 
@@ -115,10 +113,10 @@ _refresh_server() {
 _check_relpath() {  # name
   local rel=$1
   case "$rel" in
-    */*) echo "dsl: the corpus is flat — pass a file name, not a path ('$rel')" >&2; return 1 ;;
-    *..*) echo "dsl: name must not contain '..' ('$rel')" >&2; return 1 ;;
+    */*) echo "content: the corpus is flat — pass a file name, not a path ('$rel')" >&2; return 1 ;;
+    *..*) echo "content: name must not contain '..' ('$rel')" >&2; return 1 ;;
     *.toml) ;;
-    *) echo "dsl: the corpus is TOML — '$rel' is not a *.toml file" >&2; return 1 ;;
+    *) echo "content: the corpus is TOML — '$rel' is not a *.toml file" >&2; return 1 ;;
   esac
   echo "$rel"
 }
@@ -126,7 +124,7 @@ _check_relpath() {  # name
 # Sync the corpus — every top-level content/*.toml — up to R2 under
 # $R2_PREFIX/content/. Incremental. The `--exclude "*/*"` keeps it to the root.
 _upload_root_toml() {
-  echo "dsl: uploading content/*.toml -> s3://$R2_BUCKET/$R2_PREFIX/content/ ..."
+  echo "content: uploading content/*.toml -> s3://$R2_BUCKET/$R2_PREFIX/content/ ..."
   docker run --rm \
     -e AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID" \
     -e AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY" \
@@ -142,7 +140,7 @@ _upload_root_toml() {
 # Mirror the corpus down from R2. No --delete: a local file absent from the bucket
 # is more likely new work than a stale leftover, and losing it silently is worse.
 _download_root_toml() {
-  echo "dsl: downloading s3://$R2_BUCKET/$R2_PREFIX/content/*.toml -> content/ ..."
+  echo "content: downloading s3://$R2_BUCKET/$R2_PREFIX/content/*.toml -> content/ ..."
   docker run --rm \
     --user "$(id -u):$(id -g)" \
     -e HOME=/tmp \
@@ -165,7 +163,7 @@ cmd_upload() {
   _r2_preflight || return 1
   if [[ $# -eq 0 ]]; then
     _upload_root_toml || return 1
-    echo "dsl: uploaded *.toml to s3://$R2_BUCKET/$R2_PREFIX/content/"
+    echo "content: uploaded *.toml to s3://$R2_BUCKET/$R2_PREFIX/content/"
     # No index to rewrite: the server LISTS the bucket prefix to learn its corpus
     # (content-toml-only F4), so a new or renamed file registers itself and there
     # is no second place to go stale. Deletions still need a manual R2 prune —
@@ -186,7 +184,7 @@ cmd_download() {
   _r2_preflight || return 1
   if [[ $# -eq 0 ]]; then
     _download_root_toml || return 1
-    echo "dsl: downloaded *.toml from s3://$R2_BUCKET/$R2_PREFIX/content/ into content/"
+    echo "content: downloaded *.toml from s3://$R2_BUCKET/$R2_PREFIX/content/ into content/"
     return
   fi
   local arg
@@ -199,40 +197,40 @@ cmd_download() {
 # s3://<bucket>/$R2_PREFIX/content/tiles.toml.
 cmd_upload_file() {  # name
   if [[ $# -ne 1 ]]; then
-    echo "dsl: upload_file needs exactly one file name (e.g. tiles.toml)" >&2
+    echo "content: upload_file needs exactly one file name (e.g. tiles.toml)" >&2
     return 1
   fi
   local rel; rel=$(_check_relpath "$1") || return 1
   local local_file="$REPO_ROOT/content/$rel"
   if [[ ! -f "$local_file" ]]; then
-    echo "dsl: no such file content/$rel" >&2
+    echo "content: no such file content/$rel" >&2
     return 1
   fi
   _r2_preflight || return 1
-  echo "dsl: uploading content/$rel -> s3://$R2_BUCKET/$R2_PREFIX/content/$rel ..."
+  echo "content: uploading content/$rel -> s3://$R2_BUCKET/$R2_PREFIX/content/$rel ..."
   _r2_cp_up "$local_file" "$R2_PREFIX/content/$rel" || return 1
-  echo "dsl: uploaded content/$rel"
+  echo "content: uploaded content/$rel"
   _refresh_server
 }
 
 # Download ONE corpus file from R2, OVERWRITING the local copy, e.g. `tiles.toml`.
 cmd_download_file() {  # name
   if [[ $# -ne 1 ]]; then
-    echo "dsl: download_file needs exactly one file name (e.g. tiles.toml)" >&2
+    echo "content: download_file needs exactly one file name (e.g. tiles.toml)" >&2
     return 1
   fi
   local rel; rel=$(_check_relpath "$1") || return 1
   local local_file="$REPO_ROOT/content/$rel"
   _r2_preflight || return 1
   mkdir -p "$(dirname "$local_file")"
-  echo "dsl: downloading s3://$R2_BUCKET/$R2_PREFIX/content/$rel -> content/$rel (overwrite) ..."
+  echo "content: downloading s3://$R2_BUCKET/$R2_PREFIX/content/$rel -> content/$rel (overwrite) ..."
   _r2_cp_down "$R2_PREFIX/content/$rel" "$local_file" || return 1
-  echo "dsl: downloaded content/$rel"
+  echo "content: downloaded content/$rel"
 }
 
 usage() {
   cat >&2 <<EOF
-usage: dsl <command>
+usage: content <command>
 
 commands:
   upload [name…]      Sync the corpus up to the Cloudflare R2 asset bucket via a
@@ -270,7 +268,7 @@ main() {
     upload_file) cmd_upload_file "$@" ;;
     download_file) cmd_download_file "$@" ;;
     -h|--help|help|"") usage ;;
-    *) echo "dsl: unknown command '$cmd'" >&2; usage; exit 1 ;;
+    *) echo "content: unknown command '$cmd'" >&2; usage; exit 1 ;;
   esac
 }
 

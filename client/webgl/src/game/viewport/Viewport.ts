@@ -31,7 +31,7 @@ import { ZOOM_MAX, ZOOM_MIN } from "../../textures/urls";
 import { WORLD_TILT_DEG, TILT_SIN, worldHeightForDrawn, drawnForWorldHeight } from "./worldTilt";
 
 /** Height for debug-placed lights, in units — **the corpus's own contract**, not a taste call.
- *  `content/visual/things.rd` authors `2.5 &thing.light.height set` for torches and states in a
+ *  `content/things.toml` authors `height = 2.5` on the torch light and states in a
  *  comment that 2.5 tiles = 40 units is what a flame must clear to cast against anything. A debug
  *  light below that models a lamp buried in the floor (z-positioning P0).
  *

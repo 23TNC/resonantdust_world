@@ -13,7 +13,7 @@
 const DEFAULT_STDB_URI: &str = "http://start:3000";
 const DEFAULT_ENV: &str = "dev";
 
-/// Where the DSL content tree (`content/{data,visual,biome}/*.rd`) lives, relative
+/// Where the content corpus (`content/*.toml`) lives, relative
 /// to the server's working directory (`/workspace` in the container, so the repo's
 /// `content/`). Override with `RD_CONTENT_DIR`. Worldgen reads this to map tile
 /// names to the `def_id`s it packs into a zone, re-reading it on the content poll.
@@ -33,7 +33,7 @@ const DEFAULT_SERVER_ID: u16 = 0;
 /// envs pass their own via `SERVER_PUBLIC_URL`.
 const DEFAULT_PUBLIC_URL: &str = "ws://localhost:8473/ws";
 
-/// Where the server reads the DSL corpus it SERVES at `/content` (distinct from
+/// Where the server reads the corpus it SERVES at `/content` (distinct from
 /// worldgen, which always reads `content_dir` off disk). `disk` (default) serves
 /// the bind-mounted `content_dir`; `r2` pulls the corpus from the asset bucket
 /// (deployed). Any other value falls back to `disk`. `CONTENT_SOURCE`.
@@ -54,7 +54,7 @@ const DEFAULT_TEXTURE_DIR: &str = "textures";
 const DEFAULT_TEXTURE_CACHE_SUBDIR: &str = "resonantdust-texture-cache";
 
 /// R2 asset-bucket defaults — the bucket + this game's namespace, mirroring
-/// `bin/dsl`. Shared by the content (`<prefix>/content/`) and texture
+/// `bin/content`. Shared by the content (`<prefix>/content/`) and texture
 /// (`<prefix>/textures/`) R2 sources. Keys have no default (empty ⇒ that R2
 /// source fails at load / per request).
 const DEFAULT_R2_ENDPOINT: &str = "https://0d47d810e5fcfd344f83d3e2d80c62f8.r2.cloudflarestorage.com";
@@ -105,7 +105,7 @@ pub struct ServerConfig {
     /// Advertised verbatim to clients, so it must be reachable *from the client*
     /// (the host-facing published port), not the in-container listen addr.
     pub public_url: String,
-    /// Path to the DSL content tree worldgen loads at startup (see
+    /// Path to the content corpus worldgen loads at startup (see
     /// [`DEFAULT_CONTENT_DIR`]).
     pub content_dir: String,
     /// How often (seconds) to re-read `content_dir` and hot-reload worldgen on a

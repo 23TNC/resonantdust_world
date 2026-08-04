@@ -197,7 +197,7 @@ impl Pool {
         std::mem::forget(sub); // lives for the whole process; Pool stays Send + Sync
         tracing::info!(routes = index.db().cold_shards().count(), "index ready");
 
-        // Load the DSL content tree worldgen seeds zones from. Non-fatal: a
+        // Load the content corpus worldgen seeds zones from. Non-fatal: a
         // server with no content can still route + relay zones that already
         // exist; it just can't generate new terrain, so warn loudly.
         let content = load_content_state(&cfg.content_dir);

@@ -13,7 +13,7 @@
 // Re-export the native API so server-side rlib consumers can depend on
 // `resonantdust-shared` and get the underlying crates' surface in one place.
 pub use resonantdust_core::greeting;
-// The DSL — re-exported so native rlib consumers reach it through this one crate
+// The content crate — re-exported so native rlib consumers reach it through this one crate
 // too. The browser surface ([`Content`]) wraps it behind the `js` feature.
 pub use resonantdust_content as dsl;
 
@@ -57,14 +57,14 @@ pub fn tile_to_position_js(tile_x: i32, tile_y: i32) -> u32 {
 
 // ---------- content runtime (js feature) ----------
 //
-// The client's view of the DSL: load the fetched `.rd` corpus once, then answer
+// The client's view of the content: load the fetched TOML corpus once, then answer
 // the per-tile queries the renderer makes. `def_id` is what arrives in a zone's
 // packed tile slots (`tileDef` off the codec); `Content` turns it back into the
 // `visual.color.bg` the painter fills with. The server loads the SAME corpus from
 // disk and derives the SAME ids, so a `def_id` means one tile on both sides.
 
-/// A loaded content corpus — the client's handle to the DSL. Built from the
-/// fetched `.rd` sources; queried per tile while painting a zone.
+/// A loaded content corpus — the client's handle to the content bundle. Built from
+/// the fetched TOML sources; queried per tile while painting a zone.
 #[cfg(feature = "js")]
 #[wasm_bindgen]
 pub struct Content {
@@ -75,9 +75,9 @@ pub struct Content {
 #[wasm_bindgen]
 impl Content {
     /// Load a corpus from parallel `names` / `sources` arrays — one entry per
-    /// fetched `.rd` file (`names` are for error messages; pass the `:data`
-    /// sources before the `:visual` ones, the order the server uses so ids
-    /// agree). Throws a string of every parse error if the corpus is bad.
+    /// fetched `*.toml` file (`names` are for error messages only; def ids are
+    /// explicit in the TOML, so order carries no meaning). Throws a string of
+    /// every parse error if the corpus is bad.
     #[wasm_bindgen(constructor)]
     pub fn new(names: Vec<String>, sources: Vec<String>) -> Result<Content, JsValue> {
         let pairs: Vec<(String, String)> = names.into_iter().zip(sources).collect();
@@ -122,7 +122,7 @@ impl Content {
     }
 
     /// Expand a zone's packed tile slots into renderable prims — the painter's
-    /// per-zone call. Runs the codec (cell → coords, slot → `def_id`) and the DSL
+    /// per-zone call. Runs the codec (cell → coords, slot → `def_id`) and the content
     /// (`def_id` → its `:visual @on_create` [`VisualParts`]) for every non-empty
     /// cell, returning a flat **stride-5** array `[tileX, tileY, tint, geoColor,
     /// defId, …]` in *global tile coordinates*. `tint` multiplies a loaded sprite;
@@ -146,7 +146,7 @@ impl Content {
             let location = i as u8;
             let tile_x = origin_x + object::ref_hi(location) as i64;
             let tile_y = origin_y + object::ref_lo(location) as i64;
-            // The DSL on_create resolves the tint + geo colour; unknown defs fall
+            // The corpus resolves the tint + geo colour; unknown defs fall
             // back to a white tint (and geo = tint).
             let visual = self.bundle.visual_for_def(def_id);
             let tint = visual.as_ref().map(|v| v.tint).unwrap_or(0x00FF_FFFF);
@@ -415,7 +415,7 @@ impl Content {
         resonantdust_codec::object::TYPE_BIOME_THING
     }
 
-    /// A pawn KIND's part SLOTS (human-pawns P2) — the DSL skeleton MoverLayer renders,
+    /// A pawn KIND's part SLOTS (human-pawns P2) — the authored skeleton MoverLayer renders,
     /// one JS object per `^prim call` in the kind's visual: `{stem, part, scale, offsetX,
     /// offsetY, offsetZ, depth, size, span, anchorX, anchorY, spriteAnchorX, spriteAnchorY,
     /// tint, geoColor}`.
