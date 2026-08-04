@@ -11,6 +11,7 @@ set -euo pipefail
 #   rd deploy <edge|gateway|module …>    build + run one component now
 #   rd redeploy [--run|--force|...]      detect changes, rebuild + redeploy
 #   rd index <seed|show>                 seed/inspect index from deploy/servers/<env>
+#   rd content-check                     refuse a non-TOML file tracked under content/
 #   rd logs <target> [-f]   /  rd ps     tail a component's log / show stack status
 #
 # A leading `--env <p>` runs ONE invocation against profile <p> (dev|claude|
@@ -99,6 +100,7 @@ commands:
   logs <spacetime|edge|gateway> [-f]    tail a component's log
   ps                                container status across all three stacks
   docs-check [--quiet|--list|--items]  audit docs/ invariants (see docs/README.md)
+  content-check [--quiet]           refuse a non-TOML file tracked under content/
   work-check [--quiet|--doctor]     flag a premature pause in the active work stream
   work <sub>                        arm|disarm|status|brief|doctor — drive a work stream:
                                     `arm <stream>` turns the continuation hook ON for this
@@ -126,6 +128,7 @@ case "$cmd" in
   redeploy) source "$RD_LIB/build.sh"; source "$RD_LIB/redeploy.sh"; source "$RD_LIB/index.sh"; rd_redeploy "$@" ;;
   index)    source "$RD_LIB/index.sh";   rd_index "$@" ;;
   docs-check) source "$RD_LIB/docs.sh";  rd_docs_check "$@" ;;
+  content-check) source "$RD_LIB/content.sh"; rd_content_check "$@" ;;
   work-check) source "$RD_LIB/docs.sh";  rd_work_check "$@" ;;
   work)       source "$RD_LIB/docs.sh";  rd_work "$@" ;;
   -h|--help|help|"") usage ;;
