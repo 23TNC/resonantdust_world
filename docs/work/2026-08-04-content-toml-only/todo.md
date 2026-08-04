@@ -74,12 +74,14 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P4 — the gate, so it stays true
 
-- [ ] Add `rd content-check`: fail on any tracked file under `content/` not matching `*.toml`.
+- [x] Add `rd content-check`: fail on any tracked file under `content/` not matching `*.toml`.
       Acceptance: exits 0 on the clean tree; exits 1 naming the path when `content/x.json` is
-      staged.
-- [ ] Call `content-check` from `.git/hooks/pre-commit` beside `docs-check`, sharing the
+      staged. → `bin/lib/content.sh`, reading the git INDEX (the loader can't see a stray, so it
+      would never fail a build). Both directions checked.
+- [x] Call `content-check` from `.git/hooks/pre-commit` beside `docs-check`, sharing the
       `SKIP_DOCS_CHECK=1` escape hatch. Acceptance: a commit staging `content/x.json` is refused
-      with the check's message; the same commit succeeds under the skip var.
+      with the check's message; the same commit succeeds under the skip var. → refused with HEAD
+      unmoved; the skip var short-circuits both checks.
 - [x] Rename `bin/dsl` → `bin/content` with its `bin/art` reference, the `dev/` list in
       `docs/CONVENTIONS.md`, and the `dsl-script-ported` memory ([F7](forks.md#f7)). Acceptance:
       `grep -rn 'bin/dsl' . --exclude-dir=.git` finds nothing; `bin/content --help` runs. → renamed,
@@ -108,12 +110,19 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P5 — one texture index (the destination, [F5](forks.md#f5))
 
-- [ ] Write the merge into `docs/components/server/edge/intent/`: `/textures-manifest` is the
+- [x] Write the merge into `docs/components/server/edge/intent/`: `/textures-manifest` is the
       single index, and which 4 fields the art manifest still carries alone. Acceptance: the doc
-      names each field, where it is generated, and who will read it.
-- [ ] Extend the edge's `tex_manifest` scan with per-stem variant ids, layer count, part ids and
-      subkinds. Acceptance: `/textures-manifest` reports the wolf's 15 variants and
-      `biome-thing/default/conifer`'s parts; every existing field is byte-unchanged.
-- [ ] Retire `bin/art manifest`'s standalone output once the edge index carries everything.
-      Acceptance: `textures/manifest/` is gone, `bin/art manifest` is deleted from the dispatch,
-      and no field listed in the P5 intent doc lost its reader.
+      names each field, where it is generated, and who will read it. →
+      [`texture-index.md`](../../components/server/edge/intent/texture-index.md). Measuring the
+      four fields REFUTED the premise ([I9](issues.md#i9)) — the doc records what is actually
+      missing (nothing) and what actually blocks the merge (R2 mode).
+- [x] Extend the edge's `tex_manifest` scan with per-stem variant ids, layer count, part ids and
+      subkinds. → **CLOSED NOT BUILT: the premise was wrong** ([I9](issues.md#i9),
+      [F8](forks.md#f8)). Variants and parts are ALREADY stems (`pawn/human/female/0/e.1`),
+      `layers` IS the part count, `subkinds` is `[]` for every kind in the tree. Building these
+      would add schema nothing reads.
+- [x] Retire `bin/art manifest`'s standalone output once the edge index carries everything. →
+      **CLOSED NOT BUILT: it is the only planned index for R2 mode**, where `tex_manifest` serves
+      an empty manifest by design. Both survive and do not conflict (one producer per deployment
+      mode). The merge, and the design call it needs, belong to the stream that makes R2 mode
+      real ([F8](forks.md#f8)).

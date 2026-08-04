@@ -110,6 +110,38 @@ stream already deleted a crate for exactly this reason ([toml-content F4](../202
 and leaving the CLI named after the deleted thing re-opens the question every time someone reads
 `bin/`.
 
+## F8 — the texture-index merge waits for R2 mode to be real {#f8}
+
+_2026-08-04, supersedes [F5](#f5)'s plan (not its goal), on the evidence in
+[I9](issues.md#i9)._ The merge as planned would port four fields that are already served (variants
+and parts as stem keys, `layers` as the part count) or empty everywhere (`subkinds`). Building it
+would add schema nothing reads.
+
+The reason the generator can't just be deleted instead is the opposite of what F5 assumed:
+`tex_manifest` is **disk-only**, and in R2 mode the edge serves an empty manifest. The offline
+generator is the documented answer for that mode.
+
+**Chosen: stop here, structurally.** `bin/art manifest` keeps producing
+`textures/manifest/<type>.json` — right home, right format, [P2](todo.md) settled that — and
+`/textures-manifest` stays the live index. The two do not conflict today because only one runs in
+any given mode. The merge is recorded in
+[`components/server/edge/intent/texture-index.md`](../../components/server/edge/intent/texture-index.md)
+and executes when R2 mode is real enough to test.
+
+Rejected, and why each is worse than waiting:
+
+- **Make `bin/art` emit the edge's exact schema.** The rows differ where it is expensive: the edge
+  hashes **per stem** (16 hex, from the leaf's own bytes), `bin/art` hashes **per kind** (52-bit
+  decimal over the kind's PNGs — the same recipe `art gc` compares against, so it cannot simply
+  change). Reimplementing per-stem hashing and image-dimension reading in bash, unverifiable
+  against a bucket this repo has no credentials for, buys a schema match nothing consumes yet.
+- **Delete `bin/art manifest` outright.** Removes the only planned index for R2 mode to satisfy a
+  tidiness rule. `preserve-future-intent` cuts the other way here.
+- **Have the edge generate the R2 index too** (scan masters pre-upload, or list the bucket). This
+  is probably the right end state — it keeps ONE scanner and ONE hash recipe — but it is a design
+  call about a mode that has never run, and deciding it now would be speculative architecture with
+  no way to verify it. It belongs in the stream that makes R2 mode real.
+
 ## F5 — one texture index is the destination {#f5}
 
 _2026-08-04._ Two indexes scan the same master tree. The edge's `tex_manifest` carries hash,

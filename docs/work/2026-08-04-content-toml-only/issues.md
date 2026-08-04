@@ -57,6 +57,32 @@ Consequence: `_def_span` ([bin/art:142](../../../bin/art)) swallows the failure 
 freshly mastered leaf silently gets `span: None`. The span is authored in `things.toml` now; the
 port is one item in P1, and it must keep the module's documented span≠size≠footprint distinctions.
 
+## I9 — P5's premise was wrong: the art manifest carries almost nothing new {#i9}
+
+_2026-08-04, plan error — P5 re-planned, see [F8](forks.md#f8)._ [F5](forks.md#f5) said the art
+manifest survives deletion because it carries four things `/textures-manifest` lacks: variant ids,
+layer count, part ids, subkinds. I measured the live endpoint before building the merge. Three of
+the four are already there:
+
+- **Variants and parts are already STEMS, not arrays.** `/textures-manifest` serves 228 stems
+  including `pawn/human/female/0/e` *and* `pawn/human/female/0/e.1` — variant 0, facing e, part 1.
+  The wolf's 14 variant folders are keys (`124`, `125`, `555`, `777`, `8101`, …). "Which variants
+  exist" is the key set; a resolver reads it without a speculative 404, which is the entire point
+  of the field.
+- **`layers` is the part count** (`_layer_count` counts distinct `<part>` across diffuse leaves:
+  wolf 1, female 2, male 2) — the same fact the `.N` stem suffix already encodes.
+- **`subkinds` is `[]` for every kind in the tree.** The axis is authored nowhere. It is pure
+  future intent with no data behind it.
+
+So the merge is not "port four fields into `tex_manifest`". The art manifest is ~redundant with a
+live, richer index, and P5 as written would have built five fields nothing needs.
+
+**But it does not simply die**, and this is the part the fork missed: `tex_manifest` is
+**disk-only** — "an R2 source yields an empty manifest — its manifest is future work, generated
+offline by `bin/art` alongside the master upload." In R2 mode the edge serves *nothing*, and the
+offline generator is the documented filler. Deleting it would remove the only planned answer for
+a deployment mode this repo cannot yet run.
+
 ## I8 — seven edge worldgen tests had been red since the DSL was deleted {#i8}
 
 _2026-08-04, closed by P4._ Sweeping `.rd` out of the code turned up `cargo test` in

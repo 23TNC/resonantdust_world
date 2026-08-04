@@ -2,6 +2,31 @@
 
 _Dated evidence: what landed and how it was checked. Append chronologically._
 
+## 2026-08-04 · P5 — the destination documented; the merge deliberately NOT built (3/3)
+
+I measured the four fields [F5](forks.md#f5) said the art manifest carries alone, before building
+the merge on them. **Three of the four are already served, and the fourth is empty**
+([I9](issues.md#i9)): variants and parts are already their own stems in `/textures-manifest`
+(`pawn/human/female/0/e` and `…/e.1`; the wolf's 14 variant folders are keys), `layers` *is* the
+part count, and `subkinds` is `[]` for every kind because the axis is authored nowhere. Porting
+them would have added schema nothing reads.
+
+The same measurement found why the generator can't just be deleted instead — the opposite of what
+F5 assumed. `tex_manifest` is **disk-only**: in R2 mode the edge serves an empty manifest, and its
+own header names the offline `bin/art` generator as the planned filler. Deleting it would remove
+the only planned index for that mode.
+
+So P5 lands as a **documented destination, not a build**
+([`components/server/edge/intent/texture-index.md`](../../components/server/edge/intent/texture-index.md),
+[F8](forks.md#f8)): both producers survive, they never run in the same mode, and the merge waits
+for R2 mode to be real enough to test. The likely end state — the edge's scanner generating the R2
+index too, so there is one scanner and one hash recipe — is written down but deliberately not
+decided, because R2 has never run here and the choice would be untestable architecture. The hash
+detail that makes it non-trivial is recorded: the edge hashes per stem, `bin/art` per kind, and
+the kind hash is what `art gc` compares against.
+
+Two items closed as **not built, with reasons**, rather than quietly dropped or built anyway.
+
 ## 2026-08-04 · P4 — the gate, and the dialect stops being named (5/5)
 
 **`rd content-check`** reads the git INDEX rather than the loader, because `read_content_dir` is
