@@ -61,7 +61,7 @@ strings and a new id. Resolution: match the four strings, take `max(version)`.
 Rejected: **per-axis versions** (`subTypeVersion` + `kindVersion`, the first sketch) — two columns to
 express one fact, and it invites versioning a subType, which [F5](#f5) rules out anyway.
 
-Open: **what counts as a change** — see [B3](blockers.md#b3). Data-only, or art too?
+The boundary — what counts as a change — is [F12](#f12): simulation-visible fields only.
 
 ## F5 — a version bump burns KIND id space, not subType {#f5}
 
@@ -124,3 +124,55 @@ a packed reference; the only wire strings are `Login`/`SetAnchor` player-facing 
 
 A **stale client resolves a name to an older version** and places an old-version object. Accepted:
 that is exactly what [F6](#f6) makes safe, and it self-corrects on the next table update.
+
+## F10 — subtype STAYS in the definition {#f10}
+
+_2026-08-04, the user's call, correcting my [I2](issues.md#i2) framing._
+
+> "I highly doubt we never decode subtype, because otherwise we have zero understanding how to work
+> with our objects. If our type is pawn, and our subtype is human, that is quite different than
+> animal."
+
+**Chosen**: `definition_reference` keeps a subtype field. The measurement I offered — that
+`def_subtype_id` has no runtime reader — was true of one accessor and misleading about the axis:
+subtype is read from the cold row header at four worker sites and written from content in two
+places. More importantly the argument does not depend on today's call sites. `pawn/human` vs
+`pawn/animal` is a semantic distinction, and without it in the def, nothing can ask "is this a
+human?" except by enumerating kinds — which is the failure mode this whole stream exists to remove.
+
+Rejected: **dropping subtype to reclaim 12 bits** (my earlier suggestion) — it read a redundancy in
+one word as a dead axis, and would have bought variant headroom by deleting meaning.
+
+## F11 — the registry lives in `index`; the MASTER allocates {#f11}
+
+_2026-08-04, the user's call._
+
+> "master allocates as it is a single master. We can use index… We placed data shards in their own
+> databases so we can scale them. I don't see why our per env data cannot live together."
+
+**Chosen**: the registry table goes in the per-env `index` DB, and `server/master` — of which there
+is exactly one — owns allocation. A single writer removes the boot race that made me reach for an
+idempotent reducer; idempotence is still worth having, but as belt-and-braces rather than as the
+coordination mechanism.
+
+My objection was that `index` is a *routing* directory and content identity widens it. Rebutted on
+the facts: the module split is a **scaling** boundary (data shards grow independently), not a
+lifecycle division, so per-env global data sharing one database is the existing pattern, not a
+compromise. Recorded because I argued the other way and was wrong about why the split exists.
+
+Kept available, not chosen: a sibling `definitions` module alongside `index`, exactly as
+`chat`/`players` sit beside it — worth revisiting if reclaim ([F7](#f7)) ever needs its own reducers
+or scheduling.
+
+## F12 — a version bumps on SIMULATION-visible change only {#f12}
+
+_2026-08-04, the user accepted the recommendation ("Fine")._
+
+Bump `version` when any field the **simulation** reads changes — weight, expiry, speed, footprint,
+the data half. Do **not** bump on art, tint, comments, or reordering.
+
+This makes **"same id ⇒ same behaviour"** the invariant, which is precisely what
+[F6](#f6)'s old-apple policy needs: an old apple must behave like an old apple, and that is a
+statement about simulation fields, not pixels. A re-master already propagates through the texture
+manifest's per-stem content hash without touching identity, so bumping there would mint an id per
+art tweak and burn kind space for nothing.
