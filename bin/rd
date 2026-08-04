@@ -10,7 +10,7 @@ set -euo pipefail
 #   rd up|down [target]                  start/stop spacetime|edge|gateway|all
 #   rd deploy <edge|gateway|module …>    build + run one component now
 #   rd redeploy [--run|--force|...]      detect changes, rebuild + redeploy
-#   rd index <seed|show>                 seed/inspect index from content/servers/<env>
+#   rd index <seed|show>                 seed/inspect index from deploy/servers/<env>
 #   rd logs <target> [-f]   /  rd ps     tail a component's log / show stack status
 #
 # A leading `--env <p>` runs ONE invocation against profile <p> (dev|claude|
@@ -95,7 +95,7 @@ commands:
   redeploy [--run|--force|--no-reset|--mark]
                                     detect changed units, rebuild + redeploy
   index <seed|show>                 seed/inspect the index routing directory
-                                    from content/servers/<env>
+                                    from deploy/servers/<env>
   logs <spacetime|edge|gateway> [-f]    tail a component's log
   ps                                container status across all three stacks
   docs-check [--quiet|--list|--items]  audit docs/ invariants (see docs/README.md)

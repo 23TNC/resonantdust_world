@@ -1,5 +1,5 @@
-# content/servers/claude — index routing topology for the `claude` environment.
-# See content/servers/dev for the full format reference. The claude env is the
+# deploy/servers/claude — index routing topology for the `claude` environment.
+# See deploy/servers/dev for the full format reference. The claude env is the
 # agent's local stack: gateway :9474, server :8474 (8xxx = server, 9xxx = gateway).
 
 # One world server, the local claude game server on :8474.

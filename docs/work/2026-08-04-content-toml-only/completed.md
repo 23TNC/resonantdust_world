@@ -2,6 +2,28 @@
 
 _Dated evidence: what landed and how it was checked. Append chronologically._
 
+## 2026-08-04 · P3 — the deploy topology leaves `content/` (2/2)
+
+`content/servers/{alpha,claude,dev,test}` → `deploy/servers/`, as renames git tracked as renames.
+`rd_servers_manifest` now builds from `$REPO/deploy` rather than `$CONTENT_DIR`, which is the whole
+mechanical change — every other consumer (`rd index seed`, `rd redeploy`'s input tracking) goes
+through that one function, so nothing else needed touching. Format unchanged per
+[F3](forks.md#f3): bash reads these files, and a TOML parser in bash costs more than the rule is
+worth here.
+
+The item's stated acceptance was weak and I said so rather than collecting the easy green:
+`rd index show` reads the **live DB**, so it would have printed identical rows whether or not the
+move worked. The real check is the seed — `rd index seed` logs
+`seed index resonantdust-dev-index-0 ← deploy/servers/dev` and writes the same 4 rows
+(1 server, 1 shard, 2 cold), with `show` confirming them afterwards.
+
+Path references re-pointed in `bin/rd`'s help, `bin/lib/index.sh`'s header + usage, and each of
+the four files' own headers — plus three the item hadn't listed and the grep caught:
+`docs/notes/tables.md`, the index module's `intent/README.md`, and `server/edge/src/config.rs`.
+`grep -rn 'content/servers'` across `bin/ docs/ server/ deploy/` is clean.
+
+**`content/` is now exactly the five authored corpus TOMLs.** P4 makes that a gate.
+
 ## 2026-08-04 · P2 — the art manifests leave `content/` (4/4)
 
 **The move is proven, not asserted.** Before touching the generator I decoded all three `.rd`

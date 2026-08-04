@@ -20,7 +20,7 @@ FK-enforced.
 ## The shard tier — vestigial
 
 *Which data shard holds a region.* `region_shards` → `shards`. Written by the operator
-(`rd index seed` from `content/servers/<env>`), read by nobody: the shard it routed to was deleted
+(`rd index seed` from `deploy/servers/<env>`), read by nobody: the shard it routed to was deleted
 2026-07-15, and its only reader (`edge/src/index.rs`) is `#[allow(dead_code)]`.
 
 A player's shard now rides on their own row (`players.player_shard_reference`) rather than being

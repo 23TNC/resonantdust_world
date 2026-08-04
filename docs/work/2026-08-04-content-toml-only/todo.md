@@ -62,12 +62,15 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P3 — the deploy topology leaves `content/`
 
-- [ ] `git mv content/servers deploy/servers` and re-point `rd_servers_manifest` in
+- [x] `git mv content/servers deploy/servers` and re-point `rd_servers_manifest` in
       `bin/lib/common.sh` ([F3](forks.md#f3)). Acceptance: `bin/rd index show` for `dev` prints
-      the same topology rows as before the move.
-- [ ] Update the path in `bin/rd` help, `bin/lib/index.sh` comments, and each of the four server
+      the same topology rows as before the move. → strengthened, because `show` reads the live DB
+      and would pass regardless: `rd index seed` logs `← deploy/servers/dev` and seeds the same 4
+      rows; `show` unchanged.
+- [x] Update the path in `bin/rd` help, `bin/lib/index.sh` comments, and each of the four server
       files' own headers. Acceptance: `grep -rn 'content/servers' bin/ docs/ server/` finds
-      nothing.
+      nothing. → plus three the item didn't list: `docs/notes/tables.md`, the index module's
+      `intent/README.md`, and `server/edge/src/config.rs`.
 
 ## P4 — the gate, so it stays true
 

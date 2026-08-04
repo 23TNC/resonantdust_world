@@ -29,7 +29,7 @@ const DEFAULT_SERVER_ID: u16 = 0;
 /// Default client-facing WebSocket URL advertised to the gateway when
 /// `SERVER_PUBLIC_URL` is unset. Must be reachable *from the client*, so it's
 /// the host-facing published port (dev local: `ws://localhost:8473/ws`), not the
-/// in-container listen addr. Matches the dev row in `content/servers/dev`; other
+/// in-container listen addr. Matches the dev row in `deploy/servers/dev`; other
 /// envs pass their own via `SERVER_PUBLIC_URL`.
 const DEFAULT_PUBLIC_URL: &str = "ws://localhost:8473/ws";
 

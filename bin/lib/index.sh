@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # rd index — seed / inspect the index routing directory from the env's servers
-# manifest (content/servers/<env>). Sourced by `bin/rd`; assumes common.sh is
+# manifest (deploy/servers/<env>). Sourced by `bin/rd`; assumes common.sh is
 # sourced and rd_resolve_env has run.
 #
 # The index DB (resonantdust-<env>-index-0) is the routing table the gateway and
@@ -9,7 +9,7 @@
 # yet, so this is how those rows get there — by calling the index module's
 # reducers (set_server / set_shard / assign_region) for each manifest row.
 #
-#   rd index seed     write content/servers/<env> into the env's index DB
+#   rd index seed     write deploy/servers/<env> into the env's index DB
 #   rd index show     dump the current servers / shards / region_shards rows
 #
 # Needs the spacetime daemon up (`rd up spacetime`) and the `index` module
@@ -93,7 +93,7 @@ rd_index_usage() {
   cat >&2 <<EOF
 usage: rd index <seed|show>
 
-  seed   write content/servers/$RD_ENV into the env's index DB
+  seed   write deploy/servers/$RD_ENV into the env's index DB
          (resonantdust-$RD_ENV-index-0) via the index module's reducers
   show   dump the current servers / shards / region_shards / player_servers rows
 

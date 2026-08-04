@@ -116,9 +116,12 @@ rd_resolve_env() {
 # DB name for a module + shard index (default 0): resonantdust-<env>-<mod>-<idx>.
 rd_db_for() { echo "${RD_DB_PREFIX}-${1}-${2:-0}"; }
 
-# The active env's index routing manifest (content/servers/<env>): the topology
+# The active env's index routing manifest (deploy/servers/<env>): the topology
 # `rd index seed` writes into the env's index DB. One file per env.
-rd_servers_manifest() { echo "$CONTENT_DIR/servers/$RD_ENV"; }
+#
+# Under deploy/, not content/ (content-toml-only F3): this is where SERVERS live, not
+# what the world is made of. `content/` is the authored TOML corpus and nothing else.
+rd_servers_manifest() { echo "$REPO/deploy/servers/$RD_ENV"; }
 
 # ── docker helpers ───────────────────────────────────────────────────────────
 # Ensure the external `resonantdust` network exists on the active context. All

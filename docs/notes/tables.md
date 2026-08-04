@@ -62,7 +62,7 @@ The routing itself isn't wrong — `zone_id → region → endpoint` is unchange
 why the edge's zone-routing (`resolve_zone_or_default`, now `#[allow(dead_code)]`) was kept whole
 rather than deleted and re-derived.
 Whether zone→shard routing returns at all is the rebuild's call. Written by the operator via
-`rd index seed` → `assign_region` / `set_shard`; topology source `content/servers/<env>`.
+`rd index seed` → `assign_region` / `set_shard`; topology source `deploy/servers/<env>`.
 
 ## The rebuild's tables
 

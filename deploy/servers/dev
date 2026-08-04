@@ -1,4 +1,4 @@
-# content/servers/dev — index routing topology for the `dev` environment.
+# deploy/servers/dev — index routing topology for the `dev` environment.
 #
 # `rd index seed` (and `rd redeploy --run`) reads this and writes it into the env's
 # index DB (resonantdust-dev-index-0) by calling the index module's reducers. The
