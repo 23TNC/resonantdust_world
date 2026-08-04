@@ -7,6 +7,8 @@
 //! input, so the future drag-box multi-select lands here as "N selected" without rewiring.
 
 import { DomPanel } from "../../../ui/dom/DomPanel";
+import { ConditionCards, CARD_H, PAD_BOTTOM } from "./ConditionCards";
+import type { ConditionCard } from "./ConditionCards";
 import { panelTitle, panelText } from "../panelStrings";
 import type { GameContext } from "../../../GameContext";
 import type { SelectionModel } from "../../world/SelectionModel";
@@ -40,6 +42,9 @@ export class DetailsPanel extends DomPanel {
   private readonly bodyEl = document.createElement("div");
   private readonly unsubSel: () => void;
   private readonly timer: number;
+  /** The condition strip — a SIBLING of this panel, not a child, so it can draw past the
+   *  panel's right edge (conditions F7 / B1). Owned here, destroyed here. */
+  private readonly cards: ConditionCards;
 
   constructor(ctx: GameContext, private readonly selection: SelectionModel,
               private readonly providers: DetailsProviders) {
@@ -52,8 +57,23 @@ export class DetailsPanel extends DomPanel {
       pinned: true,
       uiEditMode: ctx.uiEditMode,
     });
-    this.bodyEl.style.cssText = "padding:8px 12px;font:12px/1.7 monospace;white-space:pre;overflow:auto;height:100%;box-sizing:border-box;";
+    // The body reserves the strip's band at the bottom so a long text block scrolls to a stop
+    // ABOVE the cards instead of underneath them — the strip floats over the panel, so without
+    // the reserve the last row would hide behind it.
+    this.bodyEl.style.cssText =
+      "padding:8px 12px;font:12px/1.7 monospace;white-space:pre;overflow:auto;height:100%;" +
+      `box-sizing:border-box;padding-bottom:${CARD_H + PAD_BOTTOM * 2}px;`;
     this.setBody(this.bodyEl);
+    this.cards = new ConditionCards({
+      rect: () => this.panel.getBoundingClientRect(),
+      zIndex: () => Number.parseInt(this.panel.style.zIndex, 10) || 0,
+      // `display: none` covers the taskbar-hide path, which has no public flag of its own.
+      visible: () => this.isOpen && !this.isMinimized && this.panel.style.display !== "none",
+      onRectChange: (cb) => this.onRectChange(() => cb()),
+      onFocus: (cb) => this.onFocus(cb),
+      onMinimizeChange: (cb) => this.onMinimizeChange(() => cb()),
+      onOpenChange: (cb) => this.onOpenChange(() => cb()),
+    });
     this.unsubSel = selection.subscribe(() => this.render());
     // Pawns move while selected — refresh the live rows on a slow tick (the selection event
     // only fires on selection CHANGES, not on the pawn's motion).
@@ -65,10 +85,15 @@ export class DetailsPanel extends DomPanel {
 
   private render(): void {
     const rows: string[] = [];
+    /** The conditions this render resolved — empty for every non-pawn selection, which is what
+     *  clears the strip. Collected here and pushed ONCE at the end so there is exactly one
+     *  place the strip can be set from. */
+    let cards: ConditionCard[] = [];
     const all = this.selection.all;
     const p = this.selection.primary;
     if (!p) {
       this.bodyEl.textContent = panelText(PANEL_KEY, "empty");
+      this.cards.setCards([]);
       return;
     }
     if (all.length > 1) rows.push(`${all.length} selected — primary:`);
@@ -85,13 +110,9 @@ export class DetailsPanel extends DomPanel {
           `state     ${info.moving ? "moving" : "resting"}`,
           `mood      ${Math.round(info.mood * 100)}%`,
         );
-        // Conditions — the Sims-4 layer: consequences with names, never the need scalars.
-        // A timed grant shows its remaining tics; a band condition holds while its band does.
-        for (const m of info.conditions) {
-          const sign = m.mood >= 0 ? "+" : "−";
-          const timer = m.remaining > 0 ? `  ${m.remaining}t` : "";
-          rows.push(`  ${m.label}  ${sign}${Math.abs(m.mood).toFixed(2)}${timer}`);
-        }
+        // Conditions are NOT text rows any more — they render as cards in the sibling strip
+        // (P4). The order arrives already sorted by the shared eval; pass it through untouched.
+        cards = info.conditions;
       } else {
         rows.push("(despawned)");
       }
@@ -114,11 +135,13 @@ export class DetailsPanel extends DomPanel {
       );
     }
     this.bodyEl.textContent = rows.join("\n");
+    this.cards.setCards(cards);
   }
 
   destroy(): void {
     this.unsubSel();
     clearInterval(this.timer);
+    this.cards.destroy();
     super.destroy();
   }
 }

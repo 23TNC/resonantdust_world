@@ -1,0 +1,243 @@
+//! The details panel's CONDITION CARDS — a horizontal strip along the bottom of the panel,
+//! showing what a selected pawn is currently feeling / suffering (`2026-08-04-conditions` P4).
+//!
+//! **The strip is a SIBLING of the panel, not a child** ([F7]). `PANEL_CSS` sets
+//! `overflow: hidden` on the panel root, so anything parented inside `DetailsPanel` is clipped
+//! at the panel border and a strip wider than the panel would merely scroll inside it. The user
+//! asked for cards that "actually draw past the details", so this element is appended to the
+//! panel's HOST and positioned against the panel's rect — outside the clip, free to extend right
+//! across the world.
+//!
+//! It lives in the overlay in BOTH states — collapsed (top 4 maximized, the rest minimized) and
+//! expanded (all maximized). One layout, one code path, and no reparent at the moment the user
+//! clicks; a strip that lived in the body until expansion would also inherit the body's scroll
+//! and slide away from the bottom edge as the text rows scrolled.
+//!
+//! Ordering is NOT decided here. `needs_eval::active_conditions` has already sorted by
+//! `priority` desc, `|mood|` desc, `condition_id` asc (conditions F3) — this file renders the
+//! order it is given. A sort in TS would be a second implementation of a corpus rule.
+
+/** One condition as the panel receives it — the shared eval's row, labelled. */
+export interface ConditionCard {
+  label: string;
+  /** Mood offset while active, `-1..1`. One effect of several to come (F6) — not the identity
+   *  of the condition, which is why the card leads with the LABEL and not this number. */
+  mood: number;
+  /** Tics left on a TIMED grant; `0` = DERIVED (alive exactly while its band holds). */
+  remaining: number;
+  /** The authored sort key, carried for display. Never re-sorted here. */
+  priority: number;
+}
+
+// ── layout constants ────────────────────────────────────────────────────────────────
+// Sized so FOUR maximized cards plus their padding fit the details panel's default width
+// (~355 px): 8 + 4×80 + 3×6 = 346. Past four the strip simply keeps going — that is the whole
+// point of being a sibling.
+
+/** Maximized card width, px. */
+export const CARD_W = 80;
+/** Card height, px — two 12px monospace lines plus padding. */
+export const CARD_H = 42;
+/** Gap between cards, px. */
+export const CARD_GAP = 6;
+/** Inset from the panel's LEFT edge, px. */
+export const PAD_LEFT = 8;
+/** Inset from the panel's BOTTOM edge, px. */
+export const PAD_BOTTOM = 8;
+/** How many cards show maximized before the rest minimize (the user's number). */
+export const MAXIMIZED = 4;
+/** A minimized card's width as a FRACTION of a maximized one — the horizontal saving. */
+export const MINIMIZED_FRACTION = 0.35;
+/** Minimized card width, px (derived; kept as a constant so tests and CSS agree). */
+export const CARD_W_MIN = Math.round(CARD_W * MINIMIZED_FRACTION);
+
+const CARD_BG = "rgba(28, 31, 42, 0.96)";
+const CARD_BG_HOVER = "rgba(44, 48, 64, 0.98)";
+const CARD_BORDER = "#3a3a4a";
+const GOOD = "#8fce7a";
+const BAD = "#e08a7a";
+
+/** What `ConditionCards` needs from the panel it hangs off — passed in rather than reached for,
+ *  so this file never imports `DomPanel` and stays testable in isolation. */
+export interface CardsHost {
+  /** The panel root's CURRENT viewport rect. */
+  rect(): DOMRect;
+  /** The panel root's current z-index, so the strip can sit exactly one above it. */
+  zIndex(): number;
+  /** Whether the panel is presently on screen (open, not minimized, not taskbar-hidden). */
+  visible(): boolean;
+  /** Panel rect changed — drag, resize, snap flip, window resize, minimize toggle. */
+  onRectChange(cb: () => void): () => void;
+  /** Panel focus changed (its z-index may have moved within its band). */
+  onFocus(cb: () => void): () => void;
+  /** Panel minimized / restored. */
+  onMinimizeChange(cb: () => void): () => void;
+  /** Panel opened / closed. */
+  onOpenChange(cb: () => void): () => void;
+}
+
+export class ConditionCards {
+  private readonly el = document.createElement("div");
+  private readonly unsubs: (() => void)[] = [];
+  private cards: ConditionCard[] = [];
+  /** All cards maximized (P5's click target). Collapsed = top `MAXIMIZED` only. */
+  private expanded = false;
+  /** A debug pin owns the strip — see [`pin`]. */
+  private pinned = false;
+
+  constructor(private readonly host: CardsHost) {
+    this.el.dataset.rdConditionStrip = "1";
+    this.el.style.cssText = [
+      "position:fixed",
+      "display:none",
+      `gap:${CARD_GAP}px`,
+      "align-items:flex-end",
+      "font:12px/1.35 ui-monospace, monospace",
+      // The container is a pass-through: only the cards themselves take pointer events, so the
+      // gaps between them (and the strip's empty tail) never swallow a world click.
+      "pointer-events:none",
+    ].join(";");
+    // SIBLING of the panel — the same host element `DomPanel` mounts into. Being outside the
+    // panel root is precisely what lets the strip paint past the panel's right edge.
+    const anchor = document.getElementById("app") ?? document.body;
+    anchor.appendChild(this.el);
+
+    // Debug hook (repo convention: `window.__*`). `__cards(6)` pins six synthetic conditions,
+    // `__cards(rows)` pins a given set, `__cards(null)` releases back to the live pawn.
+    (window as unknown as Record<string, unknown>).__cards = (
+      arg: number | ConditionCard[] | null,
+    ) => {
+      this.pin(typeof arg === "number" ? synthetic(arg) : arg);
+      return this.cards.length;
+    };
+
+    const reflow = () => this.reflow();
+    this.unsubs.push(
+      this.host.onRectChange(reflow),
+      this.host.onFocus(reflow),
+      this.host.onMinimizeChange(reflow),
+      this.host.onOpenChange(reflow),
+    );
+    window.addEventListener("resize", reflow);
+    this.unsubs.push(() => window.removeEventListener("resize", reflow));
+  }
+
+  /** Replace the displayed set. Pass `[]` (or a non-pawn selection) to clear the strip. */
+  setCards(cards: ConditionCard[]): void {
+    if (this.pinned) return; // a debug pin owns the strip until it is released
+    // Cheap identity check — the panel re-renders on a 500 ms timer while a pawn is selected,
+    // and rebuilding these nodes every tick would drop a hover/click on the floor.
+    if (sameCards(this.cards, cards)) {
+      this.reflow();
+      return;
+    }
+    this.cards = cards;
+    this.rebuild();
+    this.reflow();
+  }
+
+  /** **Debug only** — hold a synthetic set on the strip, ignoring the panel's live renders,
+   *  until called with `null`. The authored corpus has three conditions and two of them are
+   *  DERIVED on one need, so a real pawn cannot carry enough at once to exercise the
+   *  4-maximized rule or the viewport clamp. Reached as `window.__cards(n | rows | null)`. */
+  pin(cards: ConditionCard[] | null): void {
+    this.pinned = cards !== null;
+    this.cards = cards ?? [];
+    this.rebuild();
+    this.reflow();
+  }
+
+  destroy(): void {
+    for (const off of this.unsubs) off();
+    this.unsubs.length = 0;
+    this.el.remove();
+  }
+
+  // ── internals ──────────────────────────────────────────────────────────────────────
+
+  private rebuild(): void {
+    this.el.replaceChildren();
+    this.cards.forEach((c, i) => this.el.appendChild(this.buildCard(c, i)));
+  }
+
+  /** One card: the label, then its mood offset and (for a timed grant) the tics it has left.
+   *  A minimized card keeps the same node and only narrows — the label ellipsises, so the strip
+   *  still reads as "there are more of these" rather than going blank. */
+  private buildCard(c: ConditionCard, index: number): HTMLElement {
+    const minimized = !this.expanded && index >= MAXIMIZED;
+    const el = document.createElement("div");
+    el.dataset.rdCondition = c.label;
+    el.dataset.rdMinimized = minimized ? "1" : "0";
+    el.title = `${c.label}  ${signed(c.mood)}${c.remaining > 0 ? `  ${c.remaining}t` : ""}`;
+    el.style.cssText = [
+      `width:${minimized ? CARD_W_MIN : CARD_W}px`,
+      `height:${CARD_H}px`,
+      "flex:0 0 auto",
+      "box-sizing:border-box",
+      "padding:5px 6px",
+      `background:${CARD_BG}`,
+      `border:1px solid ${CARD_BORDER}`,
+      "border-radius:3px",
+      "color:#ecd6aa",
+      "overflow:hidden",
+      "pointer-events:auto",
+      "display:flex",
+      "flex-direction:column",
+      "justify-content:space-between",
+    ].join(";");
+
+    const label = document.createElement("div");
+    label.textContent = c.label;
+    label.style.cssText = "overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
+
+    const stat = document.createElement("div");
+    stat.textContent = `${signed(c.mood)}${c.remaining > 0 ? `  ${c.remaining}t` : ""}`;
+    stat.style.cssText =
+      `white-space:nowrap;overflow:hidden;color:${c.mood >= 0 ? GOOD : BAD};font-size:11px`;
+
+    el.append(label, stat);
+    el.addEventListener("pointerenter", () => { el.style.background = CARD_BG_HOVER; });
+    el.addEventListener("pointerleave", () => { el.style.background = CARD_BG; });
+    return el;
+  }
+
+  /** Re-anchor to the panel's bottom-left and mirror its visibility. Cheap enough to run on
+   *  every drag frame — it reads one rect and writes three style properties. */
+  private reflow(): void {
+    if (!this.cards.length || !this.host.visible()) {
+      this.el.style.display = "none";
+      return;
+    }
+    const r = this.host.rect();
+    this.el.style.display = "flex";
+    this.el.style.left = `${r.left + PAD_LEFT}px`;
+    this.el.style.top = `${r.bottom - PAD_BOTTOM - CARD_H}px`;
+    // One above the panel it belongs to, so it draws over the panel's own bottom edge but does
+    // not leapfrog whatever the user focuses next.
+    this.el.style.zIndex = String(this.host.zIndex() + 1);
+  }
+}
+
+/** `+0.20` / `−0.40` — the minus is U+2212, matching the panel's text rows. */
+function signed(mood: number): string {
+  return `${mood >= 0 ? "+" : "−"}${Math.abs(mood).toFixed(2)}`;
+}
+
+function sameCards(a: ConditionCard[], b: ConditionCard[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((c, i) =>
+    c.label === b[i].label && c.mood === b[i].mood && c.remaining === b[i].remaining);
+}
+
+/** `n` plausible conditions for a layout drill — descending priority, alternating sign, and a
+ *  timer on every third so the minimized/maximized forms both get exercised. */
+function synthetic(n: number): ConditionCard[] {
+  const names = ["Dehydrated", "Thirsty", "Quenched", "Exhausted", "Rested", "Hungry",
+                 "Well Fed", "Cold", "Warm", "Sore", "Content", "Restless"];
+  return Array.from({ length: n }, (_, i) => ({
+    label: names[i % names.length],
+    mood: (i % 2 === 0 ? -1 : 1) * (0.4 - i * 0.03),
+    remaining: i % 3 === 0 ? 1200 - i * 7 : 0,
+    priority: (n - i) * 10,
+  }));
+}
