@@ -213,6 +213,49 @@ fn the_golden_fixture_matches_the_corpus() {
     }
 }
 
+/// THE GATE (P4/F5): the TOML corpus must reproduce the `.rd` fixture byte-identically.
+/// Nothing swaps until this is green; the `.rd` corpus + loader die one commit after.
+#[test]
+fn the_toml_corpus_matches_the_same_fixture() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
+    if !root.exists() {
+        return;
+    }
+    let mut sources: Vec<(String, String)> = std::fs::read_dir(&root)
+        .expect("read content/")
+        .flatten()
+        .filter(|e| e.path().extension().is_some_and(|x| x == "toml"))
+        .map(|e| {
+            (
+                e.file_name().to_string_lossy().to_string(),
+                std::fs::read_to_string(e.path()).expect("read .toml"),
+            )
+        })
+        .collect();
+    if sources.is_empty() {
+        return; // pre-conversion checkout
+    }
+    sources.sort();
+    let b = load(&sources).expect("the TOML corpus loads clean");
+    let now = dump(&b);
+    let want = std::fs::read_to_string(fixture_path()).expect("fixture exists");
+    if want != now {
+        for (i, (w, n)) in want.lines().zip(now.lines()).enumerate() {
+            if w != n {
+                panic!(
+                    "TOML corpus diverges from the .rd fixture at line {}:\n  .rd:  {w}\n  toml: {n}",
+                    i + 1
+                );
+            }
+        }
+        panic!(
+            "TOML corpus diverges: lengths differ (fixture {} lines, toml {} lines)",
+            want.lines().count(),
+            now.lines().count()
+        );
+    }
+}
+
 #[test]
 fn the_dump_is_deterministic() {
     let Some(b) = corpus() else { return };

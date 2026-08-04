@@ -1,0 +1,214 @@
+# Things — flora, wall kinds, PAWNS (a pawn is a thing with parts).
+# Ids are STORED DATA (thing entries + packed pawn defs) — never renumber (F1).
+
+[[thing]]
+id = 1
+name = "tree"
+packed = [ { tint = "#46d64f" }, { tint = "#b0754f" } ]
+
+  [[thing.part]]
+  texture = "biome-thing/default/conifer"
+  tint = "#ffffff"
+  geo = "#2f4a2a"
+  anchor = { x = 0.5, y = 1.0 }
+  sprite_anchor = { x = 0.5, y = 1.0 }
+  size = 2.0
+  span = 2.0
+
+  [thing.part.subframe]
+  "default" = { x = 0.2188, y = 0.0391, w = 0.5625, h = 0.9336 }
+  "v0" = { x = 0.3359, y = 0.2109, w = 0.3359, h = 0.5898 }
+  "v1" = { x = 0.2969, y = 0.1445, w = 0.4102, h = 0.7148 }
+  "v2" = { x = 0.2578, y = 0.0898, w = 0.4844, h = 0.8281 }
+  "v3" = { x = 0.2891, y = 0.1445, w = 0.4258, h = 0.7188 }
+  "v4" = { x = 0.25, y = 0.0664, w = 0.5039, h = 0.875 }
+  "v6" = { x = 0.25, y = 0.1055, w = 0.5, h = 0.8008 }
+  "v7" = { x = 0.2461, y = 0.0664, w = 0.5117, h = 0.8711 }
+  "v8" = { x = 0.2227, y = 0.082, w = 0.5547, h = 0.8438 }
+
+[[thing]]
+id = 2
+name = "shrub"
+
+  [[thing.part]]
+  texture = "white"
+  tint = "#5a6e3a"
+  anchor = { x = 0.5, y = 1.0 }
+  sprite_anchor = { x = 0.5, y = 1.0 }
+  size = 0.5
+  sprite_scale = { w = 0.5, h = 0.5 }
+
+  [thing.part.subframe]
+  "default" = { x = 0.0547, y = 0.1094, w = 0.8984, h = 0.7969 }
+  "v0" = { x = 0.0859, y = 0.1562, w = 0.8359, h = 0.7188 }
+  "v1" = { x = 0.0703, y = 0.1328, w = 0.8672, h = 0.7578 }
+  "v2" = { x = 0.0859, y = 0.125, w = 0.8281, h = 0.7656 }
+  "v3" = { x = 0.0703, y = 0.125, w = 0.8672, h = 0.7578 }
+  "v4" = { x = 0.0781, y = 0.1406, w = 0.8516, h = 0.7422 }
+  "v5" = { x = 0.0703, y = 0.1406, w = 0.875, h = 0.7344 }
+  "v6" = { x = 0.0938, y = 0.1406, w = 0.8125, h = 0.7422 }
+  "v7" = { x = 0.0781, y = 0.1641, w = 0.8438, h = 0.6875 }
+  "v8" = { x = 0.0859, y = 0.1406, w = 0.8281, h = 0.7422 }
+  "v9" = { x = 0.0547, y = 0.1094, w = 0.8906, h = 0.7969 }
+  "v10" = { x = 0.0547, y = 0.2109, w = 0.8984, h = 0.5938 }
+  "v11" = { x = 0.0703, y = 0.1641, w = 0.8594, h = 0.6719 }
+  "v12" = { x = 0.0781, y = 0.1484, w = 0.8516, h = 0.7266 }
+
+[[thing]]
+id = 3
+name = "cactus"
+
+  [[thing.part]]
+  texture = "white"
+  tint = "#3e6b3a"
+  anchor = { x = 0.5, y = 1.0 }
+  sprite_anchor = { x = 0.5, y = 1.0 }
+  size = 0.5
+  sprite_scale = { w = 0.5, h = 0.5 }
+
+[[thing]]
+id = 4
+name = "reed"
+
+  [[thing.part]]
+  texture = "white"
+  tint = "#6f7d3a"
+  anchor = { x = 0.5, y = 1.0 }
+  sprite_anchor = { x = 0.5, y = 1.0 }
+  size = 0.5
+  sprite_scale = { w = 0.5, h = 0.5 }
+
+[[thing]]
+id = 5
+name = "rock"
+
+  [[thing.part]]
+  texture = "white"
+  tint = "#7a7a7a"
+  anchor = { x = 0.5, y = 1.0 }
+  sprite_anchor = { x = 0.5, y = 1.0 }
+  size = 0.5
+  sprite_scale = { w = 0.5, h = 0.5 }
+
+[[thing]]
+id = 6
+name = "flora"
+
+  [[thing.part]]
+  texture = "biome-thing/default/flora"
+  tint = "#ffffff"
+  geo = "#4a7a3a"
+  anchor = { x = 0.5, y = 1.0 }
+  sprite_anchor = { x = 0.5, y = 1.0 }
+  size = 0.5
+  sprite_scale = { w = 0.5, h = 0.5 }
+
+[[thing]]
+id = 7
+name = "wolf"
+speed = 12
+needs = ["thirst"]
+
+  [[thing.part]]
+  texture = "pawn/animal/wolf"
+  tint = "#ffffff"
+  geo = "#6a6a6a"
+  anchor = { x = 0.5, y = 1.0 }
+  sprite_anchor = { x = 0.5, y = 1.0 }
+  size = 1.125
+  sprite_scale = { w = 1.125, h = 1.125 }
+
+  [thing.part.subframe]
+  "s" = { x = 0.2969, y = 0.0469, w = 0.3906, h = 0.8594 }
+  "e" = { x = 0.0, y = 0.2578, w = 1.0, h = 0.4688 }
+  "n" = { x = 0.3359, y = 0.0859, w = 0.3281, h = 0.8438 }
+
+[[thing]]
+id = 8
+name = "torch"
+light = { r = 1.0, g = 0.85, b = 0.55, intensity = 1.0, reach = 16.0, radius = 0.35, height = 2.5, flicker = true }
+
+  [[thing.part]]
+  texture = "white"
+  tint = "#ffd9a0"
+  anchor = { x = 0.5, y = 1.0 }
+  sprite_anchor = { x = 0.5, y = 1.0 }
+  size = 0.5
+  sprite_scale = { w = 0.5, h = 0.5 }
+
+[[thing]]
+id = 9
+name = "torch_blue"
+light = { r = 0.55, g = 0.75, b = 1.0, intensity = 1.0, reach = 16.0, radius = 0.35, height = 2.5, flicker = true }
+
+  [[thing.part]]
+  texture = "white"
+  tint = "#a0c8ff"
+  anchor = { x = 0.5, y = 1.0 }
+  sprite_anchor = { x = 0.5, y = 1.0 }
+  size = 0.5
+  sprite_scale = { w = 0.5, h = 0.5 }
+
+[[thing]]
+id = 10
+name = "human_female"
+speed = 16
+
+  [[thing.part]]
+  texture = "pawn/human/female"
+  tint = "#ffffff"
+  geo = "#7a6a5a"
+  anchor = { x = 0.5, y = 1.0 }
+  sprite_anchor = { x = 0.5, y = 1.0 }
+  scale = 0.8
+
+  [thing.part.subframe]
+  "s" = { x = 0.0703, y = 0.0469, w = 0.8594, h = 0.9141 }
+  "e" = { x = 0.1484, y = 0.0469, w = 0.7109, h = 0.9141 }
+  "n" = { x = 0.0781, y = 0.0469, w = 0.8516, h = 0.9141 }
+
+  [[thing.part]]
+  texture = "pawn/human/female"
+  tint = "#ffffff"
+  geo = "#7a6a5a"
+  scale = 0.5
+  part = 1
+  depth = 1.0
+  offset = { x = 0.0, y = 0.0, z = 0.87 }
+
+  [thing.part.subframe]
+  "s" = { x = 0.1484, y = 0.0391, w = 0.7109, h = 0.9297 }
+  "e" = { x = 0.1172, y = 0.0391, w = 0.7656, h = 0.9219 }
+  "n" = { x = 0.1328, y = 0.0391, w = 0.7344, h = 0.9297 }
+
+[[thing]]
+id = 11
+name = "human_male"
+speed = 16
+
+  [[thing.part]]
+  texture = "pawn/human/male"
+  tint = "#ffffff"
+  geo = "#7a6a5a"
+  anchor = { x = 0.5, y = 1.0 }
+  sprite_anchor = { x = 0.5, y = 1.0 }
+  scale = 0.8
+
+  [thing.part.subframe]
+  "s" = { x = 0.0391, y = 0.0469, w = 0.9219, h = 0.9062 }
+  "e" = { x = 0.1406, y = 0.0391, w = 0.7188, h = 0.9219 }
+  "n" = { x = 0.0625, y = 0.0469, w = 0.8828, h = 0.9141 }
+
+  [[thing.part]]
+  texture = "pawn/human/male"
+  tint = "#ffffff"
+  geo = "#7a6a5a"
+  scale = 0.5
+  part = 1
+  depth = 1.0
+  offset = { x = 0.0, y = 0.0, z = 0.87 }
+
+  [thing.part.subframe]
+  "s" = { x = 0.1406, y = 0.0312, w = 0.7266, h = 0.9375 }
+  "e" = { x = 0.1016, y = 0.0391, w = 0.8047, h = 0.9219 }
+  "n" = { x = 0.125, y = 0.0469, w = 0.75, h = 0.9141 }

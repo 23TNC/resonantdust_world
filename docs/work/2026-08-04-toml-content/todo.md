@@ -51,18 +51,29 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P3 — the corpus, translated once
 
-- [ ] A converter (dev tool, deleted in P6): load the `.rd` corpus through the OLD loader, emit
+- [x] A converter (dev tool, deleted in P6): load the `.rd` corpus through the OLD loader, emit
       `content/*.toml` with each def's id pinned to today's positional value. Acceptance: the
-      emitted files parse through the NEW loader; ids match the old registries 1:1.
-- [ ] Hand-carry the load-bearing comments (needs.rd's model notes, things.rd's append-rule
+      emitted files parse through the NEW loader; ids match the old registries 1:1. →
+      `tests/convert.rs` (env-gated like the bless): tiles/things/materials/needs emitted from
+      the materialized Bundle, subframes reconstructed by an exact RESIDUAL encoding against
+      the fallback chain; biomes hand-translated (`content/biomes.toml` — their bodies are
+      code; the sweep proves the translation). Two schema flaws caught EN ROUTE: part `scale`
+      vs `sprite_scale` are separate channels; `cast/receives_shadows` are numeric MODES
+      (ground authors 2), not bools.
+- [x] Hand-carry the load-bearing comments (needs.rd's model notes, things.rd's append-rule
       notes → now id-law notes, biome dimension docs) into the TOML files. Acceptance: a reader
-      of `content/needs.toml` learns what the reader of `needs.rd` learned.
+      of `content/needs.toml` learns what the reader of `needs.rd` learned. → needs.toml carries
+      the model (lazy satisfactions, exclusive bands, conditional/timed, provisional numbers);
+      biomes.toml the dimensions/priority/scatter/no-torch notes; tiles/things the id law.
 
 ## P4 — the golden gate (F5)
 
-- [ ] The equivalence test: BOTH loaders parse their corpora; every fixture section
+- [x] The equivalence test: BOTH loaders parse their corpora; every fixture section
       byte-identical (registries, tables, worldgen grid, needs probes). Acceptance: the test is
-      green in CI docker; any diff prints the first divergent section.
+      green in CI docker; any diff prints the first divergent section. →
+      `the_toml_corpus_matches_the_same_fixture` GREEN: all 297 KB byte-identical — registries,
+      every flat table, all 9,261 worldgen cells (rules + `tile_rand` exact), needs probes. The
+      divergence printer earned its keep twice on the way (lane 2.0, scale channels).
 
 ## P5 — consumers swap (one seam at a time, live-checked)
 

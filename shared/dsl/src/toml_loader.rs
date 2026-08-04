@@ -48,10 +48,12 @@ struct TileToml {
   height: Option<f64>,
   #[serde(default)]
   build: Option<String>,
+  // Numeric lighting MODES, not booleans — the corpus authors `receives_shadows = 2`
+  // (the ground mode). Passed through to the lanes untouched.
   #[serde(default)]
-  cast_shadow: Option<bool>,
+  cast_shadow: Option<f64>,
   #[serde(default)]
-  receives_shadows: Option<bool>,
+  receives_shadows: Option<f64>,
   #[serde(default)]
   rotation: Option<f64>,
   #[serde(default)]
@@ -143,14 +145,6 @@ struct WH {
   h: f64,
 }
 
-/// A part's scale is either uniform (`scale = 0.8`) or per-axis (`scale = {w,h}`).
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum ScaleToml {
-  Uniform(f64),
-  PerAxis(WH),
-}
-
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PartToml {
@@ -170,8 +164,12 @@ struct PartToml {
   size: Option<f64>,
   #[serde(default)]
   span: Option<f64>,
+  /// The PART scale (a pawn slot's art scale — `&body.scale`); distinct from
+  /// `sprite_scale`, the pre-atlas ingest pair. TWO channels, as the corpus authors them.
   #[serde(default)]
-  scale: Option<ScaleToml>,
+  scale: Option<f64>,
+  #[serde(default)]
+  sprite_scale: Option<WH>,
   #[serde(default)]
   part: Option<u32>,
   #[serde(default)]
@@ -535,24 +533,18 @@ fn visual(
     let tint = color(&p.tint, what, errors).unwrap_or(0xffffff);
     let geo = color(&p.geo, what, errors).unwrap_or(tint);
     let sprite_anchor = p.sprite_anchor.as_ref().map(|a| (a.x, a.y)).unwrap_or((0.5, 0.5));
-    let (sw, sh) = match &p.scale {
-      Some(ScaleToml::Uniform(s)) => (*s, *s),
-      Some(ScaleToml::PerAxis(wh)) => (wh.w, wh.h),
-      None => (1.0, 1.0),
-    };
     parts.push(VisualPart {
       tint,
       geo_color: geo,
       texture: p.texture.clone(),
       part: p.part.unwrap_or(0),
-      // `.rd` parts carried ONE `scale`; per-axis keeps sprite_scale.w as the scalar.
-      scale: sw,
+      scale: p.scale.unwrap_or(1.0),
       offset: (p.offset.as_ref().map(|o| o.x).unwrap_or(0.0), p.offset.as_ref().map(|o| o.y).unwrap_or(0.0)),
       elevation: p.offset.as_ref().map(|o| o.z).unwrap_or(0.0),
       depth: p.depth.unwrap_or(0.0),
       size: p.size.unwrap_or(1.0),
       span: p.span.unwrap_or(1.0),
-      sprite_scale: (sw, sh),
+      sprite_scale: p.sprite_scale.as_ref().map(|s| (s.w, s.h)).unwrap_or((1.0, 1.0)),
       sprite_anchor,
       anchor: p.anchor.as_ref().map(|a| (a.x, a.y)).unwrap_or((0.5, 0.5)),
       dir_frames: dir_frames(&p.subframe, sprite_anchor),
@@ -599,6 +591,7 @@ fn tile_def(t: &TileToml, material_id: &dyn Fn(&str) -> u16, errors: &mut Vec<Lo
     size: None,
     span: None,
     scale: None,
+    sprite_scale: None,
     part: None,
     depth: None,
     offset: None,
@@ -619,8 +612,8 @@ fn tile_def(t: &TileToml, material_id: &dyn Fn(&str) -> u16, errors: &mut Vec<Lo
       t.linked.as_ref().map(|l| l.h).unwrap_or(0.0),
       t.padding.unwrap_or(0.0),
       t.rotation.unwrap_or(0.0),
-      f64::from(u8::from(t.cast_shadow.unwrap_or(false))),
-      f64::from(u8::from(t.receives_shadows.unwrap_or(false))),
+      t.cast_shadow.unwrap_or(0.0),
+      t.receives_shadows.unwrap_or(0.0),
     ],
   }
 }

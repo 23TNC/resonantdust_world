@@ -1,0 +1,49 @@
+# Tiles — see docs/VARIABLES.md § TOML content schema.
+# Ids are STORED DATA (zone kind_references) — never renumber, never reuse (F1).
+
+[[tile]]
+id = 1
+name = "grass"
+texture = "white"
+tint = "#4b573e"
+receives_shadows = 2.0
+
+[[tile]]
+id = 2
+name = "dirt"
+texture = "white"
+tint = "#653d00"
+receives_shadows = 2.0
+
+[[tile]]
+id = 3
+name = "sand"
+texture = "white"
+tint = "#c2b280"
+receives_shadows = 2.0
+
+[[tile]]
+id = 4
+name = "water"
+texture = "white"
+tint = "#2e5a78"
+receives_shadows = 2.0
+
+[[tile]]
+id = 5
+name = "stone"
+texture = "white"
+tint = "#6b6b6b"
+receives_shadows = 2.0
+
+[[tile]]
+id = 6
+name = "wall_smooth"
+texture = "biome-tile/default/smooth/wall"
+tint = "#ffffff"
+height = 1.0
+build = "wall"
+receives_shadows = 1.0
+rotation = 1.0
+linked = { w = 4.0, h = 4.0 }
+padding = 1.0

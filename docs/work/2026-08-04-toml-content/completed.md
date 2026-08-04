@@ -1,5 +1,24 @@
 # Completed — TOML content
 
+## 2026-08-04 · P3+P4 — the corpus translated, THE GATE GREEN (3/3)
+
+The converter (`tests/convert.rs`, env-gated, throwaway) emits tiles/things/materials/
+needs from the materialized Bundle with ids pinned to today's positions; subframes come
+back out through an exact RESIDUAL encoding against the fallback chain (base ← the
+never-authored `[15][15]` slot, per-axis rows, then per-slot corrections) — the emitted
+minimal keys match what the corpus originally authored (v5 absent because it equals the
+union default, exactly as `subframe.py` computed it). Biomes were translated BY HAND
+(7 defs — their `.rd` bodies are code) into `content/biomes.toml` with the dimension/
+priority/no-torch commentary carried over; needs.toml carries the whole needs model.
+
+**The gate** (F5): `the_toml_corpus_matches_the_same_fixture` is GREEN — the TOML corpus
+reproduces the `.rd` fixture BYTE-IDENTICALLY: every registry, every flat table, all
+9,261 worldgen sweep cells (proving the hand-translated rules + the inherited
+`tile_rand` draw exactly), the needs probes. The divergence printer caught two real
+schema flaws en route: part `scale` and `sprite_scale` are SEPARATE channels (a pawn
+slot's art scale vs the pre-atlas ingest pair), and `cast/receives_shadows` are numeric
+MODE lanes (ground tiles author 2) that a boolean schema would have silently flattened.
+
 ## 2026-08-04 · P2 — the loader (3/3), riding on the materialization refactor
 
 **The enabling move**: `Bundle` stopped being a bag of parse trees with hook-running

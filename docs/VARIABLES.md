@@ -577,8 +577,8 @@ texture = "white"           # stem, or "white" = the flat-fill geo tier
 tint = "#4b573e"
 height = 1.0                # world-z wall height (optional; 0 = flat ground)
 build = "wall_smooth"       # the kind the build panel places on this tile (optional)
-cast_shadow = true          # optional; default false
-receives_shadows = true     # optional; default true
+cast_shadow = 1             # numeric lighting MODE lane (0 = off), passed through
+receives_shadows = 2        # numeric MODE (ground tiles author 2), passed through
 rotation = 0                # optional; fixed rotation index
 linked = { w = 4, h = 4 }   # autotile grid (optional — marks a linked kind)
 padding = 0.5               # internal padding, UNITS of the 16-unit cell (linked only)
@@ -604,7 +604,8 @@ packed = [ { tint = "#5f6b3c" }, { tint = "#6e4a2e" } ]   # material optional pe
   tint = "#ffffff"
   geo = "#8a8f98"                # geo-tier silhouette colour (defaults to tint)
   span = 1                       # frame world span, pow2 tiles
-  scale = 0.8                    # pre-atlas sprite_scale (uniform; or {w,h})
+  scale = 0.8                    # the PART scale (a pawn slot's art scale)
+  sprite_scale = { w = 0.5, h = 0.5 }   # the pre-atlas ingest pair — a SEPARATE channel
   size = 2                       # legacy drawn-box tiles (superseded by span; kept)
   anchor = { x = 0.5, y = 1.0 }          # logical anchor in the footprint
   sprite_anchor = { x = 0.5, y = 1.0 }   # pivot on the subframe
