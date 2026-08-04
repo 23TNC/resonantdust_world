@@ -182,3 +182,50 @@ intent (no condition rows in the body) is met and verified by grep.
 **Added:** `window.__cards(n | rows | null)` — a debug pin on the strip. The corpus authors three
 conditions and two of them are DERIVED bands on the same need, so no real pawn can carry more than
 three at once; the 4-maximized rule and the viewport clamp are untestable without it.
+
+## 2026-08-04 — P6: the screen edge, and the drill end to end
+
+**What landed.** The clamp ([F9](forks.md#f9)) — two distinct cases, because conflating them is
+what makes a right-docked panel feel broken. If the strip FITS the viewport, its origin slides left
+until it does; only a strip wider than the SCREEN becomes a scroller. Plus the pointer model: the
+container is `pointer-events: none` and only the cards are `auto`, so gaps and the strip's tail
+pass clicks through to whatever is beneath.
+
+**How it was verified.**
+
+| check | result |
+|---|---|
+| panel docked bottom-right (`left 1504`) | natural origin would be `1512`; strip **slid 168 px** to `1344`, right edge `1854` inside a `1862` viewport — all 6 cards visible, no scroll |
+| 30 expanded cards | natural `2574` > room `1846` → clamps to `1846`, `overflow-x: auto`, `pointer-events: auto` |
+| …scrolled to the end | card 30 fully on screen at `x 1774–1854` |
+| `document.body` horizontal scroll | never — `scrollWidth === clientWidth` throughout |
+| `elementFromPoint` in a card gap | the panel beneath, **not** the strip |
+| `elementFromPoint` past the strip's tail | the world `CANVAS` |
+| `elementFromPoint` on a card | the card (its label child, parent `data-rd-condition`) |
+
+**The end-to-end drill** — a wolf on the TOML corpus, `NPC_THIRST=44 NPC_GRANT=3`, with the cards
+live in the client:
+
+```
+tic= 395  conditions=["thirsty",    "quenched"]  mood=0.55  next_crossing=Some(1958)
+tic=1962  conditions=["dehydrated", "quenched"]  mood=0.30  next_crossing=Some(3990)
+```
+
+The crossing was **predicted at 1958 and observed at 1962** — the brain evaluates once per second,
+i.e. every 6 tics, so that is exact to the sampling grain. Arithmetic: `0.5 − 0.15 + 0.20 = 0.55`,
+then `0.5 − 0.40 + 0.20 = 0.30`. The panel followed independently, recomputing through the wasm
+eval: `mood 55%` / `Thirsty −0.15` + `Quenched +0.20 3263t` → `mood 30%` / `Dehydrated −0.40` +
+`Quenched +0.20 1828t`, the Quenched timer counting down on screen throughout. Card order tracked
+priority (thirsty 20 before quenched 10; dehydrated 30 first once it landed) with no TS sort
+anywhere.
+
+**Two environment fixes the drill forced.** Adding `priority` to the corpus broke every binary that
+links `shared/content` and was built before it — the npc failed with `unknown field 'priority'` and
+the edge would have too. Rebuilt and redeployed both (`bin/rd build edge`, `bin/sim build npc`,
+`redeploy --run --force`), and hit the `docker-cargo-mtime-miss` gotcha again on the way (touch the
+sources first). Worth remembering: **a corpus schema change is a redeploy of every content
+consumer**, not just a data edit.
+
+**Outstanding:** the item's criterion ends "the user's eyes close the stream". Everything mechanical
+is verified and screenshotted; the user's own look at it is the one thing this session cannot do
+for itself.

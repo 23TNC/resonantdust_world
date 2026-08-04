@@ -121,6 +121,6 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
       does not.
 - [x] Verify the strip against a panel snapped to the RIGHT edge of the screen. Acceptance: the
       cards extend past the panel and stay on-screen (clamped), not off the right of the viewport.
-- [ ] Run the wolf drill end to end on the TOML corpus with the cards live. Acceptance: a wolf runs
+- [x] Run the wolf drill end to end on the TOML corpus with the cards live. Acceptance: a wolf runs
       full → Dehydrated, cards appear/disappear at the computed crossing tics, and the user's eyes
       close the stream.
