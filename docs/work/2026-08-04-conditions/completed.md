@@ -77,3 +77,36 @@ it. Neither was caused by this stream.
 **Not verified:** no log line from the edge or worker names the accepted verb — they don't log verbs
 at INFO. The npc evidence above is stronger (the grant could not have reached the payload otherwise),
 but the literal wording of the item's criterion ("edge log shows the verb accepted") was not met.
+
+## 2026-08-04 — P2: the client and the authoritative docs
+
+**What landed.** `moodlets` → `conditions` through `WasmClient.ts`, `MoverLayer.ts`,
+`WorldScene.ts` and `DetailsPanel.ts`'s `DetailsProviders`. `docs/VARIABLES.md` §"Needs &
+conditions" rewritten (schema block, accessors, the DERIVED/TIMED pair, the TOML example),
+`docs/TABLES.md`'s payload row `MOODLET` → `CONDITION` and the payload-entry verb prose,
+`docs/ACTIONS.md` row 11 → `GRANT_CONDITION`. Both table/action rows carry an explicit "renamed;
+the VALUE is unchanged" note so a reader hitting an old dump is not left guessing.
+`VARIABLES.md` also now states the [F6](forks.md#f6) rule outright — a condition's effects are an
+OPEN set, `mood` is the first, do not write code that assumes a condition *is* a mood offset — and
+documents `priority` ahead of P3 building it.
+
+**How it was verified.** `npm run typecheck` (tsc --noEmit) clean; `bin/rd build webgl` clean;
+`grep -rin moodlet client/webgl/src` returns only historical `needs-moodlets` stream references.
+`bin/rd docs-check` green. A repo-wide `grep -rin moodlet` over code + docs, excluding
+`docs/work/` history and the `needs-moodlets` stream token, now returns **only** the two deliberate
+"renamed from" notes.
+
+**Live in the browser** (the whole point — the renamed client reading the renamed wire): selected
+the drilled wolf `0x30800001` in the running client and read the details panel back out of the DOM —
+
+```
+pawn      0x30800001
+kind      pawn/animal/wolf (#7)
+mood      30%
+  Dehydrated  −0.40
+  Quenched  +0.20  2284t
+```
+
+That is the npc's evaluation, independently recomputed by the wasm eval from the same payload:
+same two conditions, same offsets, same mood. The panel still renders them as text rows — cards are
+P4.

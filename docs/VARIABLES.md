@@ -518,30 +518,41 @@ variants is taken, so no variant is clipped.
 **`internal_padding` was deleted into this** — a uniform inset *is* a uniform subframe, so a linked
 tile grid authors its inset as a subframe like everything else.
 
-## Needs & moodlets (`shared/content` → shard / npc / `client/webgl`)
+## Needs & conditions (`shared/content` → shard / npc / `client/webgl`)
 
-**The pawn's hidden state and its displayed consequences.** Work stream:
-[`work/2026-08-03-needs-moodlets`](work/2026-08-03-needs-moodlets/README.md). A **need** is a 0..1
-SATISFACTION depleting toward zero (F1 — one dialect for every need; bad states are LOW; the
-player never sees the scalar). A **moodlet** is what displays: a label + a mood offset. Mood is
+**The pawn's hidden state and its displayed consequences.** Work streams:
+[`work/2026-08-03-needs-moodlets`](work/2026-08-03-needs-moodlets/README.md) (the model) and
+[`work/2026-08-04-conditions`](work/2026-08-04-conditions/README.md) (the word — `moodlet` was
+renamed to **condition** everywhere; no wire value moved). A **need** is a 0..1 SATISFACTION
+depleting toward zero (F1 — one dialect for every need; bad states are LOW; the player never sees
+the scalar). A **condition** is what displays: a label plus its effects. Mood is
 `clamp(0.5 + Σ active offsets, 0..1)` (F5).
 
+**A condition's effects are an OPEN set** (conditions F6) — `mood` is the FIRST of them, not the
+definition of the thing. Conditions act on pawn state, and the user's own framing is that they
+reach further than mood: a need's depletion rate, later a stat. Add fields beside `mood`; do not
+write code or docs that assume a condition *is* a mood offset. The effect table is the successor
+stream's charter, alongside the still-pending drink action.
+
 ```
-[[need]]     id/name/label · deplete (TICS full→empty; 0 = never drains) ·
-             band = [{ moodlet, lo, hi }]   exclusive ranges, ≤1 active per need
-[[moodlet]]  id/name/label · mood (-1..1) · duration (TICS a STORED grant lives; 0 = conditional)
-[[thing]]    needs = ["thirst", …]          the needs a kind carries
+[[need]]       id/name/label · deplete (TICS full→empty; 0 = never drains) ·
+               band = [{ condition, lo, hi }]  exclusive ranges, ≤1 active per need
+[[condition]]  id/name/label · mood (-1..1) · duration (TICS a TIMED grant lives; 0 = DERIVED) ·
+               priority (sort key; see below)
+[[thing]]      needs = ["thirst", …]           the needs a kind carries
 ```
 (TOML spellings — § TOML content schema; ids are explicit and never renumber.)
 
-Exposed as `need_params_all()` / `moodlet_params_all()` (registry order) and
+Exposed as `need_params_all()` / `condition_params_all()` (registry order) and
 `thing_needs_table()` — **stride 8** per kind of 1-based need ids, `0` = empty slot.
 
 **Nothing ticks a need** (F4): a pawn's shard row is `(satisfaction, set_tic)`; observers compute
-`satisfaction_at(tic)` and every band-crossing tic from `deplete`. **Conditional moodlets
-(`duration 0`) are DERIVED** from `(row, tic, corpus)` by every observer identically — no grant
-events exist for them (F2); **timed moodlets (`duration > 0`)** are stored grants
-`(pawn, moodlet_id, grant_tic)` expiring `duration` tics later (the action stream's kind).
+`satisfaction_at(tic)` and every band-crossing tic from `deplete`. The two kinds of condition:
+**DERIVED (`duration 0`)** — a band on a need's satisfaction, computed from `(row, tic, corpus)` by
+every observer identically, with no grant events at all (F2); **TIMED (`duration > 0`)** — stored
+grants `(pawn, condition_id, grant_tic)` expiring `duration` tics later (the action stream's kind).
+The word *conditional* is retired for this pair (conditions F4): it would now read as "a conditional
+condition".
 
 **Indexed slots are bare digits** (`band.0`, `needs.3`) — the `packed.<i>` shape. Safe because
 these nodes never hold a scalar sibling (the `rotation_key` I8 hazard); do not add one.
@@ -641,23 +652,24 @@ warm_cool_bias = 0.2        # −1..1 cool..warm
 sample_space = "world"      # "uv" (default) | "world"
 detail = { field = "grain", amp = 0.4, scale = 1.0 }   # normal detail (optional)
 
-# ── needs.toml — needs AND moodlets (the pair is one model) ──────────────────
+# ── needs.toml — needs AND conditions (the pair is one model) ────────────────
 [[need]]
 id = 1                      # the need_id inside NEED payload words
 name = "thirst"
 label = "Thirst"
 deplete = 21600             # TICS full→empty; 0/absent = never drains
 band = [                    # exclusive ranges; ≤1 active per need
-  { moodlet = "thirsty",    lo = 0.10, hi = 0.35 },
-  { moodlet = "dehydrated", lo = 0.00, hi = 0.10 },
+  { condition = "thirsty",    lo = 0.10, hi = 0.35 },
+  { condition = "dehydrated", lo = 0.00, hi = 0.10 },
 ]
 
-[[moodlet]]
-id = 1                      # the moodlet_id inside MOODLET payload words
+[[condition]]
+id = 1                      # the condition_id inside CONDITION payload words
 name = "thirsty"
 label = "Thirsty"
 mood = -0.15                # offset while active; mood = clamp(0.5 + Σ)
-duration = 0                # TICS a stored grant lives; 0 = conditional (derived)
+duration = 0                # TICS a TIMED grant lives; 0 = DERIVED (band-computed)
+priority = 0                # card sort key, desc; absent = 0
 ```
 
 ## Removed

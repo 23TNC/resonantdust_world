@@ -4,7 +4,8 @@ _Problems hit, candidate solutions, which we chose and why. Chronological._
 
 ## I1 — the rename crosses a deployed schema {#i1}
 
-_2026-08-04. Open (scheduled — P1)._ `grant_moodlet` is a **SpacetimeDB reducer**, not an internal
+_2026-08-04. **Resolved** in P1 — the order below was followed and nothing panicked._
+`grant_moodlet` is a **SpacetimeDB reducer**, not an internal
 function: renaming it changes the pawn module's published schema, invalidating
 `server/st-bindings/src/pawn/grant_moodlet_reducer.rs` and the edge's mirrored copy under
 `server/edge/src/bindings/pawn/`. A stale deployed module against fresh bindings is the SDK parse

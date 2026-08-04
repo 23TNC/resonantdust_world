@@ -52,14 +52,14 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 - [x] Rename `pawn_moodlets` / `moodlet_labels` → `pawn_conditions` / `condition_labels` and their
       js_names in `shared/wasm/src/lib.rs`. Acceptance: `bin/rd build shared` green (native +
       wasm32); the generated `.d.ts` exports `pawnConditions` and `conditionLabels`.
-- [ ] Rename `moodlets` → `conditions` through `WasmClient.ts`, `MoverLayer.ts`, `WorldScene.ts`
+- [x] Rename `moodlets` → `conditions` through `WasmClient.ts`, `MoverLayer.ts`, `WorldScene.ts`
       and `DetailsPanel.ts`'s `DetailsProviders`. Acceptance: `grep -rin moodlet client/webgl/src`
       is empty; the client builds and a selected wolf still lists its conditions as text rows.
-- [ ] Rename the moodlet vocabulary in `docs/VARIABLES.md` §"Needs & moodlets", `docs/TABLES.md`
+- [x] Rename the moodlet vocabulary in `docs/VARIABLES.md` §"Needs & moodlets", `docs/TABLES.md`
       (the `MOODLET` payload row + verb prose) and `docs/ACTIONS.md` row 11, adopting derived/timed
       ([F4](forks.md#f4)). Acceptance: `bin/rd docs-check` green; the three files name
       `CONDITION` / `GRANT_CONDITION` with unchanged widths, opcodes and arities.
-- [ ] State in `docs/VARIABLES.md` that a condition's effects are an OPEN set, `mood` being the
+- [x] State in `docs/VARIABLES.md` that a condition's effects are an OPEN set, `mood` being the
       first ([F6](forks.md#f6)). Acceptance: the block names mood as one effect field, not as the
       definition of a condition, and points at the successor stream.
 

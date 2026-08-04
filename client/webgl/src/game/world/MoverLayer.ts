@@ -425,7 +425,7 @@ export class MoverLayer {
   /** The payload's part slots landed/changed for an entity — join them to a live mover
    *  (either side may arrive first; a pre-mover payload just waits in the map). The RAW
    *  stream is kept too (needs-moodlets P5): the details panel feeds it verbatim to the
-   *  wasm `pawnMoodlets` eval — this layer never decodes NEED/MOODLET entries. */
+   *  wasm `pawnConditions` eval — this layer never decodes NEED/CONDITION entries. */
   private onPawnParts(p: { entityReference: number; parts: { slot: number; def: number }[]; payload: Uint32Array }): void {
     const map = new Map<number, number>();
     for (const e of p.parts) map.set(e.slot, e.def);

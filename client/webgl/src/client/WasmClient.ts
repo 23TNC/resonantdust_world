@@ -170,7 +170,7 @@ export interface PawnParts {
   tic: number;
   parts: { slot: number; def: number }[];
   /** The RAW payload opcode stream (needs-moodlets P4) — fed verbatim to the wasm
-   *  `pawnMoodlets`/`pawnMood` eval; the host never decodes NEED/MOODLET entries itself. */
+   *  `pawnConditions`/`pawnMood` eval; the host never decodes NEED/CONDITION entries itself. */
   payload: Uint32Array;
 }
 export type PawnPartsHandler = (p: PawnParts) => void;

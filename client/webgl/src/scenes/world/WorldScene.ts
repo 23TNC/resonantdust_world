@@ -112,22 +112,22 @@ export class WorldScene extends Scene {
         // needs-moodlets P5: evaluate the pawn's RAW payload through the ONE wasm eval
         // (F3) at the LEARNED now-tic — lazily, at the panel's own refresh cadence (F4:
         // nothing ticks; the row + the corpus + the tic are the whole computation).
-        let moodlets: { label: string; mood: number; remaining: number }[] = [];
+        let conditions: { label: string; mood: number; remaining: number }[] = [];
         let mood = 0.5;
         const payload = this.moverLayer.pawnPayload(e);
         const d = ctx.client.ticDelta(0); // fractional now-tic (mod 2^16 below)
         if (payload && d !== null) {
           const now = ((Math.floor(d) % 0x10000) + 0x10000) % 0x10000;
           const c = getContent();
-          const flat = c.pawnMoodlets(payload, now);
-          const labels = c.moodletLabels();
+          const flat = c.pawnConditions(payload, now);
+          const labels = c.conditionLabels();
           for (let i = 0; i + 2 < flat.length; i += 3) {
             const id = flat[i];
-            moodlets.push({ label: labels[id - 1] ?? `#${id}`, mood: flat[i + 1], remaining: flat[i + 2] });
+            conditions.push({ label: labels[id - 1] ?? `#${id}`, mood: flat[i + 1], remaining: flat[i + 2] });
           }
           mood = c.pawnMood(payload, now);
         }
-        return { ...info, moodlets, mood };
+        return { ...info, conditions, mood };
       },
       thing: (id) => {
         const t = this.panel.view.coldGetPrim(id);
