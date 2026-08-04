@@ -58,6 +58,18 @@ objects; walls/fences/rocks do **not** use it — they are biome-tile.
 
 ---
 
+**16 variants per `(type, subType, kind)`, and two different overflow behaviours — do not conflate
+them** (definition-registry [F13](work/2026-08-04-definition-registry/forks.md#f13)):
+
+- **Extra ART on disk truncates**, silently and by design (above). The art tree may hold more
+  variant folders than the id can address; the index simply stops at 16.
+- **Extra AUTHORED variants are a load error.** A corpus block whose `variant` array reaches a 17th
+  slot is refused by the allocator rather than wrapped — wrapping would alias two definitions onto
+  one id, which is the one thing the registry exists to prevent.
+
+`pawn/animal/wolf` currently holds **15** art variants, so it is one slot from the ceiling. A kind
+that outgrows it splits into more kinds; the packed layout does not move.
+
 ## Where it is
 
 ```
@@ -578,10 +590,43 @@ one record per def (F6 — the `:data`/`:visual` facet split died with the DSL h
 category — `content/tiles.toml`, `things.toml` (pawns included), `biomes.toml`, `materials.toml`,
 `needs.toml`. The loader produces the SAME `Bundle` accessor surface the `.rd` corpus did (F2).
 
-**The id law (F1).** Every def authors `id = N` (1-based; `0` reserved). Ids are STORED DATA —
-zone `kind_reference`s, packed pawn defs, `need_id`s inside payload words — so the loader REFUSES
-a duplicate, a missing id, or id 0 (load errors, never warnings). Holes are legal: a deleted def
-retires its id forever. Never renumber; append with a fresh id.
+**The corpus DESCRIBES; the server NUMBERS** (work
+[`2026-08-04-definition-registry`](work/2026-08-04-definition-registry/README.md) F1). A def authors
+its **taxonomy** as names and no numbers at all:
+
+| Field | Shape | Meaning |
+|---|---|---|
+| `type` | scalar name | the structural family — `biome-tile`, `biome-thing`, `pawn`, … (a code palette; types imply a pipeline) |
+| `kind` | scalar name | the thing itself — `conifer`, `wolf`, `smooth` |
+| `subType` | **array** of names | every subtype this def applies to — a biome for a `biome-thing`, a species for a `pawn` |
+| `variant` | **array** of names | every variant it applies to — usually `[0..15]`, or a named form like `wall` |
+
+`subType` and `variant` are **applicability arrays**, not coordinates ([F2](work/2026-08-04-definition-registry/forks.md#f2)):
+the def applies to every tuple in the cross-product, so one `conifer` block covers 48 tuples rather
+than 48 blocks. A def that exists in exactly one form still writes single-element arrays — one
+spelling, not two. Wildcards are deliberately NOT supported: `"*"` would silently capture a subtype
+added later and mint ids nobody authored.
+
+The taxonomy is also the TEXTURE PATH: `<type>/<subType>/<kind>/<variant>` is the art tree's shape,
+so the stem is derived, never authored. `texture = "white"` survives as the **no-art fill** — it is
+not a taxon and no such file exists under `textures/`.
+
+**Numbering.** At load the server expands the cross-product and allocates one `u32`
+`definition_reference` per tuple into the registry table (`TABLES.md` § definitions), keyed by the
+four names. **The packed layout does not change**
+([F13](work/2026-08-04-definition-registry/forks.md#f13)): `type_id:4 | subtype_id:12 |
+kind_id:12 | variant_id:4`, which fixes **16 variants per (type, subType, kind)** — `pawn/animal/
+wolf` holds 15 of them today. The allocator refuses a 17th rather than wrapping.
+
+**Versioning.** Change any field the SIMULATION reads and the def's `version` bumps, minting a NEW
+id and leaving the old row in place ([F12](work/2026-08-04-definition-registry/forks.md#f12)); art,
+tint and comments do not bump. Name resolution takes the highest version, so **new** placements get
+the new definition while **existing objects keep their old id forever** and keep behaving as they
+did ([F6](work/2026-08-04-definition-registry/forks.md#f6)). An old apple stays an old apple — same
+weight, same expiry — until it is spent. There is no migration sweep, deliberately.
+
+_Superseded: the explicit `id = N` law (toml-content F1) — correct while the LOADER owned identity,
+wrong once a registry does._
 
 Colours are `"#rrggbb"` strings. Fractions are `0..1`. Unstated fields keep the defaults the
 `.rd` loader used (documented per table below).
@@ -589,9 +634,12 @@ Colours are `"#rrggbb"` strings. Fractions are `0..1`. Unstated fields keep the 
 ```toml
 # ── tiles.toml ────────────────────────────────────────────────────────────────
 [[tile]]
-id = 1                      # def_id (the u12 packed into zone tile slots)
-name = "grass"
-texture = "white"           # stem, or "white" = the flat-fill geo tier
+type = "biome-tile"         # taxonomy — the id is ALLOCATED from these, never authored
+kind = "grass"
+subType = ["default"]       # applicability array
+variant = [0]               # applicability array
+name = "grass"              # the resolution name (what worldgen + the build panel ask for)
+texture = "white"           # ONLY for the no-art fill; a real stem derives from the taxonomy
 tint = "#4b573e"
 height = 1.0                # world-z wall height (optional; 0 = flat ground)
 build = "wall_smooth"       # the kind the build panel places on this tile (optional)

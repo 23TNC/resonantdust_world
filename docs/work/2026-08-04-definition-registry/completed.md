@@ -41,3 +41,33 @@ means what it meant, and the registry never has to rewrite one.
 
 Verified: 12 content tests + the blessed golden green in the shared workspace; both `def_fixture`
 tests green in `client/npc`.
+
+## 2026-08-04 · P1 — the schema, documented before parsed (3/3)
+
+`VARIABLES.md` § TOML content schema now opens with **the corpus describes; the server numbers**: a
+table of the four taxonomy fields, `subType`/`variant` as APPLICABILITY ARRAYS with the no-wildcards
+rule spelled out, the taxonomy-is-the-texture-path derivation, and the versioning policy. The old id
+law is marked superseded in place rather than deleted, with the reason — it was correct while the
+*loader* owned identity.
+
+**The corpus forced a fork the plan hadn't anticipated** ([F14](forks.md#f14)): `name` and `kind`
+are not the same string. `tree` is `biome-thing/default/conifer`, `human_female` is
+`pawn/human/female`, `wall_smooth` is `biome-tile/default/smooth/wall`, and `reed` has no art at
+all. `name` is a readable flattening of the tuple and it is what everything already asks for —
+`biomes.toml` scatters `thing = "reed"`, the npc calls `resolve_thing("wolf")`. So `name` stays in
+the corpus, the registry keys on the four strings and carries no name column (the table the user
+specified), and resolution is two local hops: `name → tuple` from the corpus, `tuple → id` from the
+registry. No caller changes signature and `biomes.toml` does not move.
+
+`TABLES.md` gains `index` § `definitions` — `id` PK, `version`, the four taxonomy strings, one btree
+over the tuple and a uniq over tuple+version. Master is the sole writer ([F11](forks.md#f11)); old
+rows are never deleted or rewritten, and reclaim is documented as not-built.
+
+**A doc conflict, caught and resolved rather than papered over.** VARIABLES already said extra
+on-disk variants "truncate out of the manifest", while this stream's plan said the allocator must
+refuse a 17th. Both are right about different things, so the doc now separates them explicitly:
+extra **art** truncates (existing behaviour, by design — the art tree may hold more folders than the
+id can address), an extra **authored** variant is a load error (wrapping would alias two definitions
+onto one id). `pawn/animal/wolf` is named as the kind sitting one slot from the ceiling.
+
+Verified: `bin/rd docs-check` clean across all three edits.

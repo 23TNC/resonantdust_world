@@ -27,16 +27,20 @@ numbering to the registry, and leaves `definition_reference` exactly as it is.
 
 ## P1 — the schema, documented before parsed
 
-- [ ] Write the taxonomy + applicability arrays into `VARIABLES.md` § TOML content schema
+- [x] Write the taxonomy + applicability arrays into `VARIABLES.md` § TOML content schema
       ([F2](forks.md#f2)): `type`/`kind` scalars, `subType`/`variant` arrays, and `texture = "white"`
       kept as the no-art fill. Acceptance: docs-check green; all 13 current defs have a spelling,
-      including `biome-tile/default/smooth/wall`.
-- [ ] Write the registry ROW into `TABLES.md`: `u32 id, u32 version, string type/subType/kind/
+      including `biome-tile/default/smooth/wall`. → the id law replaced by the taxonomy table;
+      `name` survives as the resolution key ([F14](forks.md#f14)) since it diverges from `kind`.
+- [x] Write the registry ROW into `TABLES.md`: `u32 id, u32 version, string type/subType/kind/
       variant`, its keys, and its readers/writers. Acceptance: the doc names the unique key
-      (4 strings + version) and the lookup index (4 strings → max version).
-- [ ] Document the **16 variants per (type, subType, kind)** ceiling in `VARIABLES.md` beside the
+      (4 strings + version) and the lookup index (4 strings → max version). → `index` §
+      `definitions`; master is the sole writer; old rows never deleted or rewritten.
+- [x] Document the **16 variants per (type, subType, kind)** ceiling in `VARIABLES.md` beside the
       packed layout ([F13](forks.md#f13)). Acceptance: the doc states the limit and that the layout
-      is unchanged; `pawn/animal/wolf` is named as the kind nearest it (15 of 16).
+      is unchanged; `pawn/animal/wolf` is named as the kind nearest it (15 of 16). → and separates
+      the TWO overflow behaviours: extra ART truncates (existing, by design), an extra AUTHORED
+      variant is a load error.
 
 ## P2 — the registry table + allocator
 

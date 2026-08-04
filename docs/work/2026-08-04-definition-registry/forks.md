@@ -193,3 +193,32 @@ allocation ([P2](todo.md)). `pawn/animal/wolf` is at 15. A kind that outgrows it
 
 Rejected: `subtype:12→8, variant:4→8` and every other re-spend — a wire layout change with stored
 data behind it, proposed to buy headroom nothing has yet run out of.
+
+## F14 — `name` SURVIVES as the resolution key; the tuple is the identity {#f14}
+
+_2026-08-04, resolved while writing the P1 schema — the corpus forced the question._
+
+`name` and `kind` are **not** the same string today, and the divergence is systematic:
+
+| `name` | taxonomy |
+|---|---|
+| `tree` | `biome-thing / default / conifer / 0..8` |
+| `human_female` | `pawn / human / female / 0` |
+| `wall_smooth` | `biome-tile / default / smooth / wall` |
+| `reed` | `biome-thing / … / reed` — no art at all (`white`) |
+
+`name` is a human-readable FLATTENING of the tuple, and it is what everything already asks for:
+`biomes.toml` scatters `thing = "reed"`, the build panel places by name, the npc calls
+`resolve_thing("wolf")`, worldgen resolves `tile = "water"`.
+
+**Chosen**: the corpus keeps `name`; the registry keys on the four taxonomy strings and carries **no
+name column** — exactly the table the user specified. Resolution is two hops, both local:
+`name → tuple` (authored, in the corpus) then `tuple → id` (the registry). Every existing caller
+keeps its signature and `biomes.toml` does not change.
+
+Rejected: **renaming the corpus so `name == kind`** — `tree` would become `conifer`, `human_female`
+would have to encode subType in its name, and `wall_smooth` splits across two axes. It destroys
+readable content spellings to save a field. **Adding `name` to the registry row** — it is not part of
+the identity, it would need its own uniqueness rule, and two rows of one tuple's versions would
+duplicate it. **Making callers pass the 4-tuple** — `thing = { type = "biome-thing", subType =
+"default", kind = "reed", variant = 0 }` in every biome scatter row, to express what `"reed"` says.

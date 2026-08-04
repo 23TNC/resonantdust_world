@@ -74,6 +74,34 @@ writes `claim_or_login` · reads none
 writes edge `set_server` (20s beat) · gateway `assign_player` / `touch_player` / `release_player` ·
 reads gateway · sub `SELECT * FROM servers`, `SELECT * FROM player_servers` (gateway)
 
+### `definitions` — the definition registry (public)
+
+_Work [`definition-registry`](work/2026-08-04-definition-registry/README.md). The corpus describes;
+this table numbers. One row per `(type, subType, kind, variant)` tuple the corpus applies to, per
+version._
+
+| column | type | key | notes |
+|---|---|---|---|
+| `id` | `u32` | PK | the packed `definition_reference` — layout in [`VARIABLES.md`](VARIABLES.md), UNCHANGED (F13) |
+| `version` | `u32` | | bumped on a SIMULATION-visible change only (F12); art/tint/comments do not bump |
+| `type` | `String` | idx¹ | taxonomy — the structural family |
+| `sub_type` | `String` | idx¹ | |
+| `kind` | `String` | idx¹ | |
+| `variant` | `String` | idx¹ | the LABEL (the art tree's folder name, which may be any string); the id carries the u4 SLOT |
+
+¹ one btree over `(type, sub_type, kind, variant)` — resolution is *match the four, take
+`max(version)`*. `uniq` over `(type, sub_type, kind, variant, version)`: one row per version of a
+tuple.
+
+writes **master only** — the single allocator (F11), via `ensure(…) → id` at content load ·
+reads edge (worldgen name→id), client (local string→id after the table is served), npc ·
+sub `SELECT * FROM definitions`
+
+**Old rows are never deleted or rewritten.** A version bump inserts a row with a new `id`; existing
+entities keep referencing the old one and keep behaving as it describes (F6). Reclaiming a retired
+`id` is designed but deliberately NOT built — `entity_state_log` is append-only history, so a
+reclaimed id makes replay lie (F7).
+
 ### `master_clock` — the simulation tic authority (public)
 
 | column | type | key | notes |
