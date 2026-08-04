@@ -232,3 +232,40 @@ moved, landing between two known failures.
 **Also worth keeping:** the **wolf-east** row is the closest this project has come to the corpus
 convention — pose, mass and palette right, only inflated and missing leg separation. The setup can
 reach it.
+
+## I11 — `e07` was never a clean run, and I designed three runs to be clean {#i11}
+_2026-08-03 · **the user spotted it; the evidence was in a file I had already read**_
+
+The user: *"My best guess is that you're trying to target a lora that was trained twice using a
+clean run, which I don't think we will be able to do."*
+
+They are right, and `train_quad.sh` — which I read in full when locating the training rig — says so
+in its own header:
+
+```
+# Run-3: QUADRUPED specialist, WARM-STARTED from run-2 epoch 8.
+INIT=/comfy/mnt/kohya/output_run2/rd_animal_style-000008.safetensors   # warm start
+```
+
+So the shipping model's lineage is **two-stage**: run-2 learned general animal style on the full
+701-image corpus as `rd_animal_style`, then run-3 specialised on the 459-image quadruped subset
+*starting from those weights*. `e07` is an epoch of that second stage.
+
+**Runs 6, 7 and 8 were all single clean runs**, and run-6's header states "NO WARM START" as a
+deliberate decision. That reasoning was sound for what it addressed — importing cyberrealisticXL-
+fitted weights into Animagine would be meaningless, since the weights are fitted to a specific
+UNet's activations. But having correctly rejected a *cross-base* warm start, I never asked the
+follow-up: whether the two-STAGE structure itself was load-bearing. Three runs then tried to reach
+in one pass what the only success reached in two.
+
+It also reframes [I10](#i10)'s bracket. Runs 6–8 mapped underfit-to-overshoot along alpha and LR,
+but if the missing ingredient is a pre-trained general-animal stage, that whole axis was being
+tuned to compensate for something no setting can supply.
+
+**Run-9** warm-starts from `run-8 epoch 15` — valid where run-6's would not have been: same base,
+same `dim`/`alpha` 64/64. One change from run-8, nothing else touched.
+
+Also from the user, and worth recording because it removes a constraint I was treating as hard:
+*"we can use white backgrounds and just key them as we have hard black edges anyway."* A uniform
+off-white or tan plate keys out cleanly — `lora_eval`'s `bg_uni` metric exists for exactly this
+distinction. Background TONE is not a defect; only a non-uniform background is.
