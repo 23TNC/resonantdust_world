@@ -198,3 +198,37 @@ simply wrong.
 **East is unaffected and good** — by epoch 10 the tiger is a clean single flat sprite in lying
 profile with a hard outline, which is the convention. The failure is direction-specific, not
 global.
+
+## I10 — Run-7 overshot: markings recovered, structure inflated, the white plate became an OBJECT {#i10}
+_2026-08-03 · measured at P4 · **my error, and one I had already talked myself out of**_
+
+Run-7 (`alpha 64` = 1.0×, `LR 1e-4`, 1024) is **worse than run-6**, in a specific and legible way:
+
+| | run-6 | run-7 |
+|---|---|---|
+| stripes | ~5 | **~10** — the one thing that improved |
+| legs | present, lying pose | **gone** — an unbroken curve from chin to tail |
+| background | clean white plate | **tan/grey field with a white rectangle floating in it** |
+| outline / colour | moderate | heavy, uniform, saturated; ep12 even drew a signature-like mark |
+
+That combination — markings up, forms inflated, plate lost, contrast up — is **overcooking**.
+
+**The plate finding is the diagnostic one.** Checked the training data directly: corner-median RGB
+is **255,255,255 on 60/60 sampled cells** in `quad_dataset_1024` (and 252.8 in the 768 set). The
+backgrounds are pure white *in the data*. So the tan field is **generated**, and the white
+rectangle inside it means the model started drawing the plate as a **depicted object** rather than
+treating it as background — memorisation at too-high signal, not a data or VAE fault.
+
+**How I caused it.** When the user asked about `alpha 128` I argued against stacking two
+multipliers, because a fried result would not say whether to back off alpha or LR. I then stacked
+exactly two — alpha 0.5×→1.0× *and* LR 5e-5→1e-4, a **4×** signal increase — plus a resolution
+change. The reasoning was right and I did not follow it.
+
+**What it buys us anyway:** the failure is now *bracketed*. Run-6 underfits at 0.5× / 5e-5; run-7
+overshoots at 1.0× / 1e-4. Both edges are measured rather than guessed, so run-8 takes `alpha 64`
+(which is what brought markings back) with **LR back to 5e-5** — 2× run-6's signal, one multiplier
+moved, landing between two known failures.
+
+**Also worth keeping:** the **wolf-east** row is the closest this project has come to the corpus
+convention — pose, mass and palette right, only inflated and missing leg separation. The setup can
+reach it.

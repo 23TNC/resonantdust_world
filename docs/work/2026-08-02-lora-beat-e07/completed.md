@@ -184,3 +184,10 @@ to confirm the baseline still reproduces, and that result is the first real entr
   trained on natural-variance data, so the reason to avoid pinned fill no longer holds. Every 1024
   set is ESRGAN-upscaled from 64–256 px sources regardless, so source art is the real detail
   ceiling; 1024 buys latent room (128² vs 96²) for the strokes that exist.
+- **2026-08-03 · Run-7 REJECTED, run-8 launched.** Run-7 overshot ([I10](issues.md#i10)) — markings
+  recovered but legs vanished, the white plate became a drawn object inside a tan field, and forms
+  inflated. Verified the cause was NOT the data: `quad_dataset_1024` corner-median RGB is
+  **255,255,255 on 60/60** sampled cells, so the tan background is generated. Run-8 backs off ONE
+  multiplier: `alpha 64` kept (it is what restored markings), **LR 1e-4 → 5e-5**, everything else
+  held — 1024, `quad_dataset_1024`, batch 4, AdamW, 20 epochs, samples at 1024. That is 2×
+  run-6's signal, sitting between two measured failures rather than guessed at.
