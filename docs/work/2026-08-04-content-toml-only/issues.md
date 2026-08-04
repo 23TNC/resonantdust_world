@@ -57,6 +57,28 @@ Consequence: `_def_span` ([bin/art:142](../../../bin/art)) swallows the failure 
 freshly mastered leaf silently gets `span: None`. The span is authored in `things.toml` now; the
 port is one item in P1, and it must keep the module's documented span≠size≠footprint distinctions.
 
+## I7 — a concurrent session swept P2's work into its own commits {#i7}
+
+_2026-08-04, open (history only; the tree is correct)._ P2's changes — `bin/art`, `bin/dsl`, the
+`content/visual/` deletion, and this stream's doc edits — were committed by a **different session**
+working the `2026-08-04-conditions` stream in the same worktree. It ran `git add -A`, which staged
+everything in the tree including mine, so P2 landed as `3d63eafe` and `0e76cc4d`, both titled
+`docs(conditions): …`. My own `git commit` then found nothing to commit.
+
+Nothing is lost and the tree is verified correct (`bin/art manifest` regenerates 7 kinds,
+`def_span` resolves the conifer, `CONTENT_FOLDERS` is gone, `content/` is TOML + `servers/`). What
+is wrong is the **history**: two commits claim to be about condition-card naming and actually
+carry a texture-index migration.
+
+**Not fixing it by rewriting.** The other session is still committing; a rebase or reword against
+a branch someone else is actively writing to risks losing *their* work to fix the labelling of
+mine. That trade is not worth it.
+
+**Mitigation from here**: this stream stages explicit paths (`git add <path>…`) instead of
+`git add -A` for the rest of its phases, so it cannot do to the other stream what was done to it.
+The standing "commit freely, `git add -A` is fine" habit is only safe in a worktree with one
+writer, which this is not today.
+
 ## I6 — the committed art manifest was four days stale, and that is the whole argument {#i6}
 
 _2026-08-04, closed by P2._ The move's acceptance was "the JSON decodes to the same map as the
