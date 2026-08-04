@@ -13,11 +13,35 @@ use resonantdust_dsl::loader::{
 use std::fmt::Write as _;
 
 fn corpus() -> Option<Bundle> {
+  // The `.rd` corpus EXPLICITLY — read_content_dir prefers TOML now (P5), and converting
+  // FROM the TOML output would be a no-op that overwrote the hand-carried comments.
   let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
   if !root.exists() {
     return None;
   }
-  let sources = resonantdust_dsl::content::read_content_dir(&root).expect("read content/");
+  let mut sources = Vec::new();
+  for facet in ["data", "visual", "biome", "material"] {
+    let dir = root.join(facet);
+    if !dir.is_dir() {
+      continue;
+    }
+    let mut files: Vec<_> = std::fs::read_dir(&dir)
+      .expect("read facet dir")
+      .flatten()
+      .map(|e| e.path())
+      .filter(|p| p.extension().is_some_and(|x| x == "rd"))
+      .collect();
+    files.sort();
+    for p in files {
+      sources.push((
+        format!("{facet}/{}", p.file_name().unwrap().to_string_lossy()),
+        std::fs::read_to_string(&p).expect("read .rd"),
+      ));
+    }
+  }
+  if sources.is_empty() {
+    return None;
+  }
   Some(load(&sources).expect("the repo corpus loads clean"))
 }
 

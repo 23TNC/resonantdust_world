@@ -1,5 +1,24 @@
 # Completed — TOML content
 
+## 2026-08-04 · P5 — every consumer on TOML, live (4/4)
+
+The swap concentrated in TWO seams: `read_content_dir` (shared — TOML-wins-else-`.rd`;
+serves worldgen + worker + the golden/convert tests, which now walk their `.rd` files
+explicitly) and the edge's own `load_disk` for `/content` — a SECOND content reader
+found live (the two-copies class F2 exists to kill; it had silently kept `/content` on
+`.rd` through the first restart). Everything downstream — npc, wasm client — flowed
+through `load()`'s dialect dispatch untouched.
+
+**Live evidence**: `/content` lists the 4 client `.toml`s (biomes withheld,
+server-only) and `/content-version` moves on a `.toml` edit; the worker logged
+`corpus speeds loaded kinds=11` and the npc `def 0x30010070 speed 12 thirst_need 1` —
+the SAME packed def off explicit ids (F1's whole point); the client renders the
+identical forest, the grass tint went RED on screen mid-session and reverted (content
+hot-update on TOML, no reload, wolf trotting throughout); fresh zones at (220,140)
+generated through the RULE classifier (forest scatter, a biome edge, beach sand);
+`subframe.py` now emits verbatim drop-in TOML. Honest gap: `bin/dsl`'s new root-toml
+R2 sync is code-reviewed only (no live R2 creds run here).
+
 ## 2026-08-04 · P3+P4 — the corpus translated, THE GATE GREEN (3/3)
 
 The converter (`tests/convert.rs`, env-gated, throwaway) emits tiles/things/materials/

@@ -19,11 +19,35 @@ fn fixture_path() -> std::path::PathBuf {
 }
 
 fn corpus() -> Option<Bundle> {
+    // The `.rd` corpus EXPLICITLY (read_content_dir now prefers TOML — P5): the oracle's
+    // whole point is comparing the two dialects, so each side names its own files.
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
     if !root.exists() {
         return None; // packaged build without the repo corpus — the oracle only runs in-repo
     }
-    let sources = resonantdust_dsl::content::read_content_dir(&root).expect("read content/");
+    let mut sources = Vec::new();
+    for facet in ["data", "visual", "biome", "material"] {
+        let dir = root.join(facet);
+        if !dir.is_dir() {
+            continue;
+        }
+        let mut files: Vec<_> = std::fs::read_dir(&dir)
+            .expect("read facet dir")
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x == "rd"))
+            .collect();
+        files.sort();
+        for p in files {
+            sources.push((
+                format!("{facet}/{}", p.file_name().unwrap().to_string_lossy()),
+                std::fs::read_to_string(&p).expect("read .rd"),
+            ));
+        }
+    }
+    if sources.is_empty() {
+        return None; // post-deletion checkout — the oracle retired with the DSL
+    }
     Some(load(&sources).expect("the repo corpus loads clean"))
 }
 

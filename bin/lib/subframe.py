@@ -14,7 +14,10 @@ result is committed to the corpus.
 an authored geometry number silently stops matching its art (stream I6).
 
     python3 bin/lib/subframe.py biome-thing/default/conifer
-    python3 bin/lib/subframe.py pawn/animal/wolf --handle '&thing' --by-direction
+    python3 bin/lib/subframe.py pawn/animal/wolf --by-direction
+
+Output is TOML entries for the def's `[thing.part.subframe]` table in
+content/things.toml (toml-content P5; schema in docs/VARIABLES.md).
 
 Coverage is the SURFACE map's B channel thresholded at 0.35 — the shader's own constant, so the
 authored rect describes the same silhouette the renderer silhouette-tests against.
@@ -75,28 +78,30 @@ def emit(handle, rects, indent, by_direction, direction):
     Two axes (stream I10): a rotation/facing lands in the STEM, a variant in the CELL. Emitting a
     variant as `r<n>` put the wolf's south rect on its east art.
     """
+    # TOML entries for a `[thing.part.subframe]` / `[[thing.part]]` table
+    # (toml-content P5 — the corpus is TOML now; schema in docs/VARIABLES.md).
+    def rect(r):
+        x, y, w, h = r
+        return f"{{ x = {x}, y = {y}, w = {w}, h = {h} }}"
+
     lines = []
     if by_direction:
-        # A facing set authors ONE rect per direction, under the s/e/n aliases — index 3 (west) is
-        # deliberately absent: it is the east master mirrored, derived host-side.
-        for k, v in zip("xywh", union(list(rects.values()))):
-            lines.append(f"{indent}{v} {handle}.subframe.{direction}.{k} set")
+        # A facing set authors ONE rect per direction, under the s/e/n aliases — index 3
+        # (west) is deliberately absent: it is the east master mirrored, derived host-side.
+        lines.append(f'{indent}"{direction}" = {rect(union(list(rects.values())))}')
         return lines
-    for k, v in zip("xywh", union(list(rects.values()))):
-        lines.append(f"{indent}{v} {handle}.subframe.{k} set")
+    lines.append(f'{indent}"default" = {rect(union(list(rects.values())))}')
     for idx in sorted(rects):
-        for k, v in zip("xywh", rects[idx]):
-            lines.append(f"{indent}{v} {handle}.subframe.v{idx}.{k} set")
+        lines.append(f'{indent}"v{idx}" = {rect(rects[idx])}')
     return lines
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("stem", help="texture stem, e.g. biome-thing/default/conifer")
-    ap.add_argument("--handle", default="&thing", help="the DSL handle to write to (default &thing)")
     ap.add_argument("--dir", default="e", dest="direction", help="master direction segment (default e)")
     ap.add_argument("--part", default="0", help="master part segment (default 0)")
-    ap.add_argument("--indent", type=int, default=16, help="leading spaces (default 16)")
+    ap.add_argument("--indent", type=int, default=2, help="leading spaces (default 2)")
     ap.add_argument("--by-direction", action="store_true",
                     help="emit ONE aliased rect for this direction instead of per-variant indices")
     a = ap.parse_args()
@@ -107,9 +112,9 @@ def main():
 
     areas = {i: r[2] * r[3] for i, r in rects.items()}
     lo, hi = min(areas.values()), max(areas.values())
-    print(f"; {a.stem} — {len(rects)} variant(s), opaque area {lo:.3f}..{hi:.3f}, "
+    print(f"# {a.stem} — {len(rects)} variant(s), opaque area {lo:.3f}..{hi:.3f}, "
           f"union {union(list(rects.values()))[2] * union(list(rects.values()))[3]:.3f}", file=sys.stderr)
-    print("\n".join(emit(a.handle, rects, " " * a.indent, a.by_direction, a.direction)))
+    print("\n".join(emit(None, rects, " " * a.indent, a.by_direction, a.direction)))
 
 
 if __name__ == "__main__":

@@ -70,12 +70,30 @@ impl ContentSource {
     }
 }
 
-/// Read `data/*.rd`, then `visual/*.rd`, then `material/*.rd` (top-level, sorted) from a
-/// content dir. Mirrors the world server's `read_content_dir` order (data before visual so
-/// tile/thing def-ids match; each dir sorted, non-recursive). `biome` is skipped — it's
-/// server-only worldgen — but `material` IS served: the client's albedo bake needs the
-/// `<material>` registry (materials add no id namespace, so their order can't shift ids).
+/// Read the served corpus from a content dir.
+///
+/// **TOML wins** (toml-content P5): top-level `content/*.toml` (sorted) is THE corpus
+/// when any exist — clients get everything except `biomes.toml` (server-only worldgen;
+/// ids are explicit so serving order carries no id meaning). The legacy `.rd` facet walk
+/// (`data` → `visual` → `material`, data first so def-ids match; `biome` skipped) remains
+/// as the fallback until the cutover deletes it.
 fn load_disk(root: &Path) -> io::Result<Sources> {
+    let mut toml: Vec<PathBuf> = std::fs::read_dir(root)?
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "toml"))
+        .filter(|p| p.file_name().is_some_and(|n| n != "biomes.toml"))
+        .collect();
+    if !toml.is_empty() {
+        toml.sort();
+        let mut out = Sources::new();
+        for path in toml {
+            let text = std::fs::read_to_string(&path)?;
+            let file = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
+            out.push((file.to_string(), text));
+        }
+        return Ok(out);
+    }
     let mut out = Sources::new();
     for facet in ["data", "visual", "material"] {
         let dir = root.join(facet);

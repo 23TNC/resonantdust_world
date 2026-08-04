@@ -77,18 +77,27 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P5 — consumers swap (one seam at a time, live-checked)
 
-- [ ] The edge serves + loads TOML: `/content` ships the `.toml` sources (wire key + version
+- [x] The edge serves + loads TOML: `/content` ships the `.toml` sources (wire key + version
       hash over the new files), worldgen classifies through the rule engine. Acceptance: LIVE —
-      a fresh zone generates; `/content-version` moves when a `.toml` edits.
-- [ ] npc + worker load TOML (the shared loader entry does it — verify, don't assume the disk
+      a fresh zone generates; `/content-version` moves when a `.toml` edits. → found + killed a
+      SECOND content reader (the edge's own `load_disk` for `/content`, separate from worldgen's
+      shared one — the two-copies class again); `/content` now serves the 4 client `.toml`s
+      (biomes withheld, server-only); version moved on edit; fresh zones at (220,140) generated
+      through rules (forest scatter + a biome edge + beach).
+- [x] npc + worker load TOML (the shared loader entry does it — verify, don't assume the disk
       mirror). Acceptance: LIVE — npc resolves wolf `0x30010070` speed 12 thirst 1 from the
-      TOML corpus; the worker logs corpus speeds on restart.
-- [ ] The client loads TOML through `shared/wasm`; content hot-update still swaps. Acceptance:
+      TOML corpus; the worker logs corpus speeds on restart. → both logged exactly that; the
+      wire key stays `rd` (a literal, like `/lod/` — renamed never or in P6's docs note).
+- [x] The client loads TOML through `shared/wasm`; content hot-update still swaps. Acceptance:
       LIVE — the world renders (tiles, trees, wolf, walls); a tint edit in `tiles.toml`
-      hot-swaps without reload; the details panel still shows moodlets.
-- [ ] Tooling follows: `bin/lib/subframe.py` emits TOML; the `bin/dsl` publisher ships `.toml`.
+      hot-swaps without reload; the details panel still shows moodlets. → identical forest at
+      the fixture; the grass-tint edit went RED on screen mid-session with the wolf still
+      trotting (reverted); panel shows the fresh wolf at mood 50%.
+- [x] Tooling follows: `bin/lib/subframe.py` emits TOML; the `bin/dsl` publisher ships `.toml`.
       Acceptance: `subframe.py biome-thing/default/conifer` output drops into `things.toml`
-      unchanged; the publisher round-trips the corpus to R2 naming.
+      unchanged; the publisher round-trips the corpus to R2 naming. → subframe.py output is a
+      VERBATIM drop-in (compared line-for-line); bin/dsl gains root-`*.toml` sync in
+      upload/download (UNTESTED against live R2 — no creds run here; noted honestly).
 
 ## P6 — the deletion (git is history)
 
