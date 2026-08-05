@@ -903,6 +903,31 @@ name = "dirt"
   }
 
   #[test]
+  fn an_injected_registry_wins_and_falls_back() {
+    // The P4 seam that makes P5's deletion of `id = N` safe. Today it is a no-op BY CONSTRUCTION
+    // — the registry is seeded from these same authored ids — so the test drives it with a
+    // deliberately DIFFERENT number to prove the override is actually consulted.
+    let b = load(&[src(
+      "t.toml",
+      "[[tile]]\nid = 1\nname = \"grass\"\ntint = \"#fff\"\n\
+       [[tile]]\nid = 2\nname = \"dirt\"\ntint = \"#000\"\n",
+    )])
+    .unwrap();
+    assert_eq!(b.tile_def_id("grass"), Some(1), "the authored id, with no registry");
+    assert!(!b.has_registry());
+
+    let mut map = std::collections::HashMap::new();
+    map.insert((true, "grass".to_string()), 77u16);
+    let b = b.with_registry(map);
+    assert!(b.has_registry());
+    assert_eq!(b.tile_def_id("grass"), Some(77), "the registry OVERRIDES the authored id");
+    // A name the registry does not carry falls back, so a partially seeded registry degrades to
+    // today's behaviour rather than to nothing.
+    assert_eq!(b.tile_def_id("dirt"), Some(2), "unlisted names fall back to the corpus");
+    assert_eq!(b.tile_def_id("nope"), None);
+  }
+
+  #[test]
   fn the_taxonomy_round_trips_and_derives_the_stem() {
     // The four axes as the corpus authors them, read back off the Bundle, plus the stem the
     // loader now DERIVES instead of the corpus authoring it (definition-registry P3).

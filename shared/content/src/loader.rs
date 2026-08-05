@@ -405,9 +405,38 @@ pub struct Bundle {
   material_names: Vec<String>,
   need_names: Vec<String>,
   condition_names: Vec<String>,
+  /// The REGISTRY override for `name → kind_id`, when one has been supplied
+  /// (definition-registry P4). `None` means "resolve from the corpus's authored ids", which is
+  /// what happens today and in every test.
+  ///
+  /// This is the seam that makes [P5]'s deletion of `id = N` safe. It is a **no-op right now, by
+  /// construction**: the registry is SEEDED from those same authored ids ([I9]), so injecting it
+  /// cannot move an answer. Its value is that once the corpus stops carrying numbers, the
+  /// accessors keep their signatures and every caller keeps working — resolution simply comes
+  /// from the table instead of the file.
+  registry: Option<std::collections::HashMap<(bool, String), u16>>,
 }
 
 impl Bundle {
+  /// Supply the registry's `name → kind_id` resolution, keyed `(is_tile, name)`.
+  ///
+  /// A name the registry does not carry falls back to the corpus's authored id, so a partially
+  /// seeded registry degrades to today's behaviour rather than to nothing.
+  pub fn with_registry(mut self, map: std::collections::HashMap<(bool, String), u16>) -> Self {
+    self.registry = Some(map);
+    self
+  }
+
+  /// Whether a registry has been injected — for a consumer that wants to log which authority it
+  /// is resolving through.
+  pub fn has_registry(&self) -> bool {
+    self.registry.is_some()
+  }
+
+  fn registry_id(&self, is_tile: bool, name: &str) -> Option<u16> {
+    self.registry.as_ref()?.get(&(is_tile, name.to_string())).copied()
+  }
+
   /// Finalize the name caches after the def vecs are filled (both loaders call this).
   pub(crate) fn index(mut self) -> Self {
     self.tile_names = self.tiles.iter().map(|d| d.name.clone()).collect();
@@ -439,7 +468,7 @@ impl Bundle {
   /// The `def_id` for a tile name (1-based; `None` if unknown). This is the u12
   /// packed into a zone's tile slot (`resonantdust_codec::packed::pack_tile`).
   pub fn tile_def_id(&self, name: &str) -> Option<u16> {
-    Self::id_of(&self.tile_names, name)
+    self.registry_id(true, name).or_else(|| Self::id_of(&self.tile_names, name))
   }
   /// A tile's authored TAXONOMY by `def_id`, or `None` if it has none yet ([I9]).
   pub fn tile_taxonomy(&self, def_id: u16) -> Option<&Taxonomy> {
@@ -521,7 +550,7 @@ impl Bundle {
   /// The `object_id` for a thing name (1-based; `None` if unknown) — the u12 packed
   /// into a zone's thing entry.
   pub fn thing_object_id(&self, name: &str) -> Option<u16> {
-    Self::id_of(&self.thing_names, name)
+    self.registry_id(false, name).or_else(|| Self::id_of(&self.thing_names, name))
   }
   /// The thing name for an `object_id` (`0` is the empty sentinel).
   pub fn thing_name(&self, object_id: u16) -> Option<&str> {

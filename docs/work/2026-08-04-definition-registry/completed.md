@@ -223,3 +223,19 @@ schema lives in wasm and the corpus is embedded at build time.
 (Two unrelated environment things also had to come back up mid-verification: the vite dev server and
 the gateway had both stopped, which is what made login fail with `gateway request failed` before the
 registry could load. Neither was caused by this work.)
+
+## 2026-08-04 · P4 item 3 — the resolution seam (4/4, phase complete)
+
+`Bundle::with_registry(map)` injects `name → kind_id`; `tile_def_id` / `thing_object_id` consult it
+first and **fall back to the authored id** for a name it does not carry, so a partially seeded
+registry degrades to today's behaviour rather than to nothing.
+
+Deliberately a SEAM rather than a rewrite. Today it is a **no-op by construction** — the registry is
+seeded from the same authored ids ([I9](issues.md#i9)), so injecting it cannot move an answer, and
+the golden replays unchanged. Its value is entirely for [P5](todo.md): once `id = N` leaves the
+corpus, the accessors keep their signatures and every caller keeps working, with resolution coming
+from the table instead of the file. The test drives it with a deliberately *different* number (77
+for grass) precisely because an equal one would prove nothing.
+
+**P4 is complete.** The registry is populated by the master, served by the edge, resolved locally by
+the client, and the loader has the seam it needs for the corpus to stop carrying numbers.
