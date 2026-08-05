@@ -55,6 +55,19 @@ pub fn tile_to_position_js(tile_x: i32, tile_y: i32) -> u32 {
     resonantdust_codec::object::tile_to_position(tile_x, tile_y)
 }
 
+/// A taxonomy flattened for the JS boundary: `[type, subType, kind, variant]`, taking the FIRST
+/// entry of each applicability array. Sufficient to key the registry — a def's `kind_id` is shared
+/// across every tuple it covers, so any one of them resolves to the same kind.
+#[cfg(feature = "js")]
+fn taxonomy_row(t: &dsl::loader::Taxonomy) -> Vec<String> {
+    vec![
+        t.type_name.clone(),
+        t.sub_type.first().cloned().unwrap_or_default(),
+        t.kind.clone(),
+        t.variant.first().cloned().unwrap_or_default(),
+    ]
+}
+
 // ---------- content runtime (js feature) ----------
 //
 // The client's view of the content: load the fetched TOML corpus once, then answer
@@ -94,6 +107,25 @@ impl Content {
         }
     }
 
+    /// Inject the DEFINITION REGISTRY's `name → kind_id` resolution
+    /// (definition-registry P5). Three parallel arrays because that is the cheapest thing to hand
+    /// across the wasm boundary: `isTile[i]` / `names[i]` / `kindIds[i]`.
+    ///
+    /// The registry is the authority for a NAME lookup; a name it does not carry falls back to the
+    /// corpus's own id, so a partially seeded registry degrades to today's behaviour rather than to
+    /// nothing. Today the two agree by construction (the registry is seeded from those ids) — this
+    /// exists so that when the corpus stops carrying numbers, resolution keeps working unchanged.
+    #[wasm_bindgen(js_name = withRegistry)]
+    pub fn with_registry(&mut self, is_tile: Vec<u8>, names: Vec<String>, kind_ids: Vec<u16>) {
+        let mut map = std::collections::HashMap::new();
+        for ((t, n), id) in is_tile.into_iter().zip(names).zip(kind_ids) {
+            map.insert((t != 0, n), id);
+        }
+        // `with_registry` consumes; swap through a placeholder-free take/rebuild.
+        let bundle = std::mem::take(&mut self.bundle);
+        self.bundle = bundle.with_registry(map);
+    }
+
     /// A tile's background colour as `0xRRGGBB`, by packed `def_id` — the
     /// per-cell lookup the painter runs over a zone's tile slots. `undefined`
     /// when the def is unknown or declares no `visual.color.bg`.
@@ -116,6 +148,27 @@ impl Content {
 
     /// Every tile name, in `def_id` order (index 0 → def_id 1) — for the debug
     /// HUD / a palette legend.
+    /// Every THING name, in `object_id` order (index 0 → object_id 1) — the thing-side sibling of
+    /// [`Content::tile_names`], needed to bind the definition registry by name.
+    #[wasm_bindgen(js_name = thingNames)]
+    pub fn thing_names(&self) -> Vec<String> {
+        self.bundle.thing_names().to_vec()
+    }
+
+    /// A tile's TAXONOMY as `[type, subType, kind, variant]`, or `undefined` if it authors none.
+    /// The first `subType`/`variant` of the applicability arrays — enough to key the registry,
+    /// since a def's `kind_id` is the same across every tuple it covers.
+    #[wasm_bindgen(js_name = tileTaxonomy)]
+    pub fn tile_taxonomy(&self, def_id: u16) -> Option<Vec<String>> {
+        self.bundle.tile_taxonomy(def_id).map(taxonomy_row)
+    }
+
+    /// A thing's TAXONOMY as `[type, subType, kind, variant]`, or `undefined`.
+    #[wasm_bindgen(js_name = thingTaxonomy)]
+    pub fn thing_taxonomy(&self, object_id: u16) -> Option<Vec<String>> {
+        self.bundle.thing_taxonomy(object_id).map(taxonomy_row)
+    }
+
     #[wasm_bindgen(js_name = tileNames)]
     pub fn tile_names(&self) -> Vec<String> {
         self.bundle.tile_names().to_vec()

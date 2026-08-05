@@ -74,6 +74,42 @@ export class DefinitionRegistry {
     for (const [k, v] of next) this.byTuple.set(k, v);
     for (const fn of this.listeners) fn();
   }
+
+  /** The three parallel arrays the wasm `Content.withRegistry` takes, built by pairing each
+   *  registry row with the corpus def carrying the same taxonomy.
+   *
+   *  Keyed by NAME because that is what callers ask with ([F14]): `name → tuple` is authored in
+   *  the corpus, `tuple → id` is this table, and binding them here collapses the two hops into
+   *  the one lookup `tile_def_id` already performs. A def with no taxonomy contributes nothing
+   *  and keeps resolving through its authored id. */
+  bindTo(content: {
+    tileNames(): string[];
+    thingNames(): string[];
+    tileTaxonomy(defId: number): string[] | undefined;
+    thingTaxonomy(objectId: number): string[] | undefined;
+    withRegistry(isTile: Uint8Array, names: string[], kindIds: Uint16Array): void;
+  }): number {
+    const isTile: number[] = [];
+    const names: string[] = [];
+    const kindIds: number[] = [];
+    const bind = (tile: boolean, list: string[], tax: (i: number) => string[] | undefined) => {
+      list.forEach((name, i) => {
+        if (!name) return; // a retired id — a hole stays a hole
+        const t = tax(i + 1);
+        if (!t || t.length < 4) return;
+        const id = this.resolve(t[0], t[1], t[2], t[3]);
+        if (id === null) return;
+        isTile.push(tile ? 1 : 0);
+        names.push(name);
+        // The kind half of the packed def — `kind_id:12 | variant_id:4`, so shift off the variant.
+        kindIds.push((id >>> 4) & 0xfff);
+      });
+    };
+    bind(true, content.tileNames(), (i) => content.tileTaxonomy(i));
+    bind(false, content.thingNames(), (i) => content.thingTaxonomy(i));
+    content.withRegistry(Uint8Array.from(isTile), names, Uint16Array.from(kindIds));
+    return names.length;
+  }
 }
 
 /** The process-wide registry — one numbering per client, like one corpus. */

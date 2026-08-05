@@ -270,3 +270,22 @@ id, so a reorder renumbers nothing whether the registry is injected or not. It w
 wrong reason. The drill moves to the item that deletes the seed, where the two answers finally
 differ. What is proven here is that the map is built, injected, and (by unit test, with a
 deliberately different number) actually consulted.
+
+## 2026-08-05 · P5 item 2 — the client's wasm bundle resolves through the registry
+
+`Content.withRegistry(isTile[], names[], kindIds[])` takes three parallel arrays — the cheapest
+thing to hand across the wasm boundary — and the TS `DefinitionRegistry.bindTo` builds them by
+pairing each registry row with the corpus def carrying the same taxonomy. Same shape as the edge's
+`def_registry`, same reason: [F14](forks.md#f14)'s two hops (`name → tuple` authored,
+`tuple → id` from the table) collapsed into the one lookup `tileDefId` already performs.
+
+Three accessors had to reach JS for the binding: `thingNames`, `tileTaxonomy`, `thingTaxonomy` —
+the last two flattened to `[type, subType, kind, variant]`, taking the first of each applicability
+array, which is sufficient because a def's `kind_id` is shared across every tuple it covers.
+
+Binding happens inside `swapTo`, so it re-runs on every hot-swap rather than only at boot, and it
+is wrapped: a bind failure logs and the corpus's own ids answer.
+
+Verified in the browser — `[content] 17 definitions bound from the registry`, world renders,
+`tileDefId('grass')` → `1` and `tileDefId('wall_smooth')` → `6` through the injected map, with
+`tileTaxonomy(6)` reading back `["biome-tile","default","smooth","wall"]`.

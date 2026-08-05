@@ -78,6 +78,16 @@ function buildFromPayload(payload: ContentPayload): Content {
  *  bundle. Built-before-freed, so a throw leaves the live corpus untouched. */
 function swapTo(payload: ContentPayload): void {
   const next = buildFromPayload(payload);
+  // definition-registry P5: bind the registry's numbering into the fresh bundle, so `tileDefId`
+  // and friends resolve through the TABLE rather than through whatever the corpus happens to say.
+  // A no-op today by construction (the registry is seeded from those same ids) and a no-op with an
+  // empty registry, which is what keeps a registry-less boot working exactly as before.
+  try {
+    const bound = definitionRegistry.bindTo(next as never);
+    if (bound) console.info(`[content] ${bound} definitions bound from the registry`);
+  } catch (err) {
+    console.warn("[content] registry bind failed; resolving through the corpus", err);
+  }
   content?.free();
   content = next;
   contentVersion = payload.version;

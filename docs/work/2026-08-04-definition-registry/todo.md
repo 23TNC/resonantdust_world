@@ -110,9 +110,11 @@ fallback as the only authority everywhere — the opposite of the point._
       after a corpus REORDER (positional would renumber; the registry does not). → live:
       `definitions=0` bare then `definitions=17` injected. The REORDER half is not yet meaningful —
       see [I11](issues.md#i11); it only bites once `id = N` is gone.
-- [ ] Inject it into the client's wasm `Bundle` from `DefinitionRegistry`. Acceptance: the world
+- [x] Inject it into the client's wasm `Bundle` from `DefinitionRegistry`. Acceptance: the world
       renders with the registry injected, and `tile_def_id("grass")` answers `1` from the TABLE
-      with the corpus deliberately reordered.
+      with the corpus deliberately reordered. → `Content.withRegistry` + `bindTo`; browser shows
+      `17 definitions bound`, world renders, `grass`→1 `wall_smooth`→6. The REORDER half defers
+      with [I11](issues.md#i11).
 - [ ] Inject it into `client/npc`'s `fetch_corpus`. Acceptance: `rd-npc` logs the wolf's def
       `0x30010070` with the corpus reordered.
 - [ ] DELETE `id = N` from the corpus and the explicit-id law from the loader
