@@ -241,3 +241,34 @@ Two findings left in YOUR charter:
    ground overrides are, so one painted before the manifest lands keeps the canonical stem until its
    next state update. Rare (manifest races the FIRST paint only) and self-healing, noted for
    completeness.
+
+## I11 — flora's subframes were authored onto SHRUB; tree was missing `v5` {#i11}
+
+_2026-08-05, reported by the user from a screenshot: flora drawing as a small sprite adrift in a
+large transparent box — the signature of an uncropped letterboxed master._
+
+**flora had no subframe table at all, and `shrub` had flora's.** `shrub` uses
+`texture = "white"` (the no-art fill, no texture tree, nothing to crop) yet carried a 14-row table
+byte-identical to what `bin/lib/subframe.py biome-thing/default/flora` emits. The rows were
+generated for flora and pasted onto the wrong def, so flora rendered its whole square and shrub
+carried geometry describing art it does not have.
+
+Fixed by moving them: flora now matches the generator exactly (14 rows), shrub carries none.
+
+**A second, latent one found by sweeping every def against the generator**: `tree` was missing
+`"v5"`. It renders correctly *today* purely by coincidence — v5's rect happens to equal `default`,
+which is what an absent variant falls back to. The moment conifer's v5 art changes, the fallback
+stops being right and nothing says so. Added; tree now matches at 10 rows.
+
+**The sweep is the useful artifact.** Every art-bearing def compared against
+`bin/lib/subframe.py`'s output for its stem:
+
+| def | verdict |
+|---|---|
+| `flora`, `tree` | match exactly (after this fix) |
+| `wolf`, `human_female`, `human_male` | the `e` row matches byte-for-byte; the generator emits one direction per invocation, so the 3-vs-1 count is the harness, not the corpus |
+| `shrub`, `cactus`, `reed`, `rock`, `torch`, `torch_blue` | no art (`texture = "white"`), no subframes — correct |
+
+Worth having as a check rather than a one-off: these numbers are generated, long, and easy to paste
+onto the wrong block — which is exactly what happened. The module's own header says *"regenerate, do
+not hand-edit"* ([I6]) and there is currently nothing that notices when someone does.
