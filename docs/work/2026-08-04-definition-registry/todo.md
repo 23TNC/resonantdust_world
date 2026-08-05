@@ -89,9 +89,11 @@ numbering to the registry, and leaves `definition_reference` exactly as it is.
       `("biome-thing","default","conifer","4")` locally. → `GET /definitions` off the edge's live
       index subscription; `DefinitionRegistry` client-side. Verified IN THE BROWSER: 182 rows,
       `conifer/4` → `0x20000014`, wolf → `0x30010070`, unknown → `null`.
-- [ ] Re-point `Bundle`'s `tile_def_id` / `thing_object_id` at the registry, keeping the accessor
+- [x] Re-point `Bundle`'s `tile_def_id` / `thing_object_id` at the registry, keeping the accessor
       signatures. Acceptance: P0's golden replays — every unchanged def resolves to the id it had
-      before the stream.
+      before the stream. → an INJECTION seam (`with_registry`), not a rewrite: the registry
+      overrides, an unlisted name falls back to the authored id. A no-op today by construction
+      ([I9](issues.md#i9)); the golden replays unchanged.
 - [x] Order the two updates so a client never holds content referencing ids it lacks. Acceptance: a
       drill that hot-swaps content and the registry together shows no unresolved id in the client
       console. → the registry loads BEFORE the corpus swaps, on both the boot and the hot-reload
