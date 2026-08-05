@@ -30,6 +30,22 @@ The runway is enormous. 4096 coordinates, consumed at one per kind per **simulat
 ([F12](../../../../../../work/2026-08-04-definition-registry/forks.md#f12) — art edits mint nothing).
 At the current ~17 kinds, that is thousands of content revisions before pressure is real.
 
+## Retirement has TWO clauses, and the second involves no data at all
+
+Before any of the sweeping below, a version must first leave the CORPUS
+([B6](../../../../../../work/2026-08-04-definition-registry/blockers.md#b6)) — and that is allowed
+only when **both** hold:
+
+1. **No entity holds the version.** The sweep below.
+2. **No action's band can still resolve to it**
+   ([version-predicates](version-predicates.md)). A `==2` recipe keeps apple v2 alive at ZERO
+   apples, because the next time it runs it will mint one — and it can only do that if v2 is still
+   authored. An action pinned `<=2` does the same for every version up to 2.
+
+Clause 2 is a static check over the action palette rather than a sweep over the world, so it is much
+the cheaper of the two. It is also the one that is easy to forget, *precisely because* it involves
+no data: an empty query over entities looks like permission to delete, and it is not.
+
 ## Where an id can survive — the part that makes "gone" hard
 
 "Gone from all shards" is not "gone". Every one of these must be clear before a coordinate is safe,
@@ -43,6 +59,7 @@ and they fail differently:
 | offline / unreachable shards | a shard down for maintenance answers no query, and absence of evidence reads as evidence of absence | the id is reclaimed while a whole region still uses it |
 | backups and snapshots | outside the live system entirely | a restore resurrects entities pointing at a reused id |
 | stale client registries | a client holds its table until the next fetch ([F9](../../../../../../work/2026-08-04-definition-registry/forks.md#f9)) | a client places an object using a coordinate that has changed meaning |
+| **a version-pinned ACTION** | it references the version by BAND, not by id, so no query over entities or history will ever mention it | the action mints a definition that no longer exists — or worse, one whose coordinate has been reused, so it mints the wrong thing entirely |
 
 The event log is the one that turns a leak into corruption. A leaked id costs a number; a reclaimed
 id that history still references costs the truth of the history.
