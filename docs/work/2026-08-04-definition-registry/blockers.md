@@ -50,6 +50,46 @@ boundary (data shards grow independently), not a lifecycle division. A sibling `
 stays available, exactly as `chat`/`players` sit beside `index`, if reclaim ever needs its own
 reducers.
 
+## B6 — nothing stores what an old version DID, so F6 is not implemented (OPEN) {#b6}
+
+_2026-08-05, found while explaining [B5](#b5) to the user — their question is what surfaced it._
+
+[F6](forks.md#f6) promises that an object holding an old id keeps **behaving** as that definition
+described: *"an old apple stays an old apple — same weight, same expiry — until it is spent."* That
+is the reason this entire stream exists.
+
+**It is not implemented.** A registry row is `id, version, sim, type, sub_type, kind, variant` —
+identity only. The corpus holds exactly ONE wolf: the current one. So an entity holding wolf v0
+resolves its speed, needs and layout from whatever the corpus says *today*.
+
+Bump the wolf 12 → 9 and every existing wolf silently starts moving at 9. Versioning currently
+preserves the **identity** of old definitions and not their **behaviour**, which is the precise
+failure F6 was written to prevent.
+
+My drill missed it because I checked that the npc resolved an *id*, never what that id *meant*. The
+user's reading of B5 — "something is failing to find wolf.2 in our toml" — is what prompted the
+check: there IS no wolf.2 in the corpus, and that is exactly the problem.
+
+**Options.**
+
+1. **The registry stores the definition, not just its name** — the simulation-visible fields
+   (speed, needs, height, build) live on the row, so a v0 lookup returns v0's behaviour. Heaviest,
+   and the most obviously correct: the registry is already the thing that outlives the corpus and
+   already the thing entities point at. It also makes [F7](forks.md#f7)'s reclaim coherent — a row
+   you can delete is a row that fully described something.
+2. **The corpus keeps old versions** (`[[thing]] name = "wolf" version = 0`). Cheap to read, but it
+   puts a version history into a file meant to describe the present, and it grows without bound.
+3. **Snapshot at bump time** into a side table — option 1 staged differently, with the same storage
+   and an extra moving part.
+
+**My recommendation: option 1**, and it subsumes [B5](#b5) — if the row carries the data, the
+per-def tables stop being indexed by anything and the two-masters problem dissolves rather than
+being worked around.
+
+**Why it needs you**: it changes what the registry IS — from a name↔number map to the durable home
+of definition data — which is a materially bigger thing than this stream planned, and it decides
+whether the corpus stays a description of the present.
+
 ## B5 — `kind_id` serves two masters, and versioning breaks their equivalence (OPEN) {#b5}
 
 _2026-08-05, P6. Found by the live apple drill, not by any test._
@@ -89,9 +129,13 @@ an opaque index still has to be **in range**, and F5 guarantees it eventually is
    and the packed layout is frozen ([F13](forks.md#f13)), unless version rides a field it currently
    does not.
 
-**My recommendation: option 2.** It keeps the hot path a direct index, which is the constraint that
-actually binds, and the sparseness costs nothing at this scale (a few thousand slots). Option 1 is
-cleaner on paper and I would take it if the render decode were not per-cell.
+**My recommendation: option 2** — it keeps the hot path a direct index, which is the constraint that
+actually binds, and the sparseness costs nothing at this scale.
+
+**But see [B6](#b6) first.** B5 is the symptom; B6 is the disease. If the registry row carries the
+definition's DATA rather than just its name, the per-def tables stop being indexed by a `kind_id` at
+all and this problem dissolves instead of being worked around. Deciding B5 before B6 risks building
+an indexing scheme for tables that should not exist.
 
 **State right now**: the dev registry holds wolf v0/v1/v2 from the drill and `max(version)` resolves
 to v2, so the npc reads default speed. Wiping and re-seeding `index` returns dev to one clean row
