@@ -84,15 +84,18 @@ numbering to the registry, and leaves `definition_reference` exactly as it is.
       `index` DB ends up with one row per tuple and `resolve_definition` returns the seeded id for
       every def in P0's golden. → **182 rows seeded live** on a wiped DB; wolf lands on
       `0x30010070` and `smooth/wall` on kind 6 / slot 0. Non-fatal like every other uplink.
-- [ ] Serve the registry to clients (initial table + updates on change) alongside `/content`.
+- [x] Serve the registry to clients (initial table + updates on change) alongside `/content`.
       Acceptance: a client booting with an empty cache receives the table and can resolve
-      `("biome-thing","default","conifer","4")` locally.
+      `("biome-thing","default","conifer","4")` locally. → `GET /definitions` off the edge's live
+      index subscription; `DefinitionRegistry` client-side. Verified IN THE BROWSER: 182 rows,
+      `conifer/4` → `0x20000014`, wolf → `0x30010070`, unknown → `null`.
 - [ ] Re-point `Bundle`'s `tile_def_id` / `thing_object_id` at the registry, keeping the accessor
       signatures. Acceptance: P0's golden replays — every unchanged def resolves to the id it had
       before the stream.
-- [ ] Order the two updates so a client never holds content referencing ids it lacks. Acceptance: a
+- [x] Order the two updates so a client never holds content referencing ids it lacks. Acceptance: a
       drill that hot-swaps content and the registry together shows no unresolved id in the client
-      console.
+      console. → the registry loads BEFORE the corpus swaps, on both the boot and the hot-reload
+      path; a registry failure is non-fatal (the corpus still boots, stored ids still decode).
 
 ## P5 — the consumers swap, and the workarounds die
 
