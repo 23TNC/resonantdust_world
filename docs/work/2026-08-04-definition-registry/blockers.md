@@ -114,7 +114,7 @@ Consequences, all simplifying:
 
 Remaining question — see [B7](#b7): how a version is SPELLED in the corpus.
 
-## B7 — how is a version spelled in the corpus? (OPEN) {#b7}
+## B7 — how is a version spelled in the corpus? — ✅ RESOLVED: an authored field {#b7}
 
 _2026-08-05. The one thing [B6](#b6)'s resolution leaves open, and the user has used both spellings._
 
@@ -130,12 +130,26 @@ conversation:
    at all — but it puts revisions into the ART PATH, and `pawn/animal/wolf.2/…` implies a texture
    folder that need not exist.
 
-**My recommendation: (1), the authored field.** The taxonomy answers "what is this", the version
-answers "which revision of it", and keeping them separate means a revision does not imply a new art
-folder. It is also what the `(tuple, version)` uniqueness in `TABLES.md` already assumes.
+**RESOLVED by the user, 2026-08-05 — (1), the authored field:**
 
-**Why it needs you**: it is the corpus's authoring shape — what a content author types — and you
-have used both spellings, so I will not pick for you.
+> "I suspect when we move from wolf.1 to wolf.2 we actually aren't using wolf.1 and wolf.2, but
+> rather u32 id. I suspect we then just need to bump version in our toml. So… version = 1, and
+> version = 2. … This decouples us from required 'wolf.1' and 'wolf.2' kinds, and allows us to just
+> use the alias 'wolf'."
+
+`kind` stays `"wolf"` for every revision; `version` distinguishes them; the `u32 id` is what the
+world actually stores. The taxonomy answers *what this is*, the version answers *which revision*,
+and a data-only revision implies no new art folder. The table is exactly what
+[`TABLES.md`](../../TABLES.md) already documents.
+
+Two capabilities this names that the stream had not built:
+
+- **Reverse lookup.** *"When we receive a u32 we work backwards and look the u32 up in our lut, and
+  derive version kind etc."* Today the registry only resolves tuple → id. `id → (taxonomy, version)`
+  is the other direction and is what makes a stored id self-describing.
+- **Version PREDICATES on actions** — see
+  [`components/server/spacetime/modules/index/intent/version-predicates.md`](../../components/server/spacetime/modules/index/intent/version-predicates.md).
+  Future intent, captured so it is built toward rather than around.
 
 ## B5 — `kind_id` serves two masters — ✅ RESOLVED by [B6](#b6) {#b5}
 

@@ -286,3 +286,23 @@ a working design to satisfy symmetry.
 
 The asymmetry is worth stating plainly rather than hiding: **a subtype id is authored on its own
 record where one exists, and in `subtypes.toml` where none does.**
+
+## F17 — `version` is authored, unauthored means 0, and versions of one tuple must be distinct {#f17}
+
+_2026-08-05, [B7](blockers.md#b7)'s resolution plus the details it leaves to me._
+
+`version` is an optional `u32` on a def. **Unauthored means `0`**, which is what every row the
+registry already holds carries — so introducing the field re-mints nothing and today's world keeps
+its numbering. An author writing their first revision adds `version = 1` beside the untouched
+original.
+
+Versions of one `(type, subType, kind, variant)` must be **distinct**; a duplicate is a load error,
+the same shape as the id law that guarded materials and needs. Nothing requires them to be
+contiguous or to start at any particular number — a hole is as legal here as it was there.
+
+The corpus retains a version for as long as the world runs one ([B6](blockers.md#b6)). Deleting the
+block is the deliberate act that makes its id reclaimable ([F7](#f7)).
+
+Rejected: **1-based versions** — it would re-mint every existing row to say the same thing.
+**Deriving the version from a fingerprint** — superseded at [F12](#f12); only the author knows the
+old definition is meant to survive.
