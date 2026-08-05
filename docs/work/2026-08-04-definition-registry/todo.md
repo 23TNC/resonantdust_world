@@ -163,9 +163,12 @@ fallback as the only authority everywhere — the opposite of the point._
 
 ## P7 — reclaim: designed, NOT built ([F7](forks.md#f7))
 
-- [ ] Write the reclaim design into the registry component's `intent/`: the sweep, what "gone"
+- [x] Write the reclaim design into the registry component's `intent/`: the sweep, what "gone"
       must mean, and why `entity_state_log` makes it dangerous. Acceptance: the doc names every
-      place an id can survive (shards, event log, backups, stale client tables).
-- [ ] Add a `droppedCoordinates`-style counter or query showing how much `kind_id` space versioning
+      place an id can survive (shards, event log, backups, stale client tables). →
+      [`index/intent/definition-reclaim.md`](../../components/server/spacetime/modules/index/intent/definition-reclaim.md);
+      six holders tabled with how each fails, plus the cheaper lineage-retirement alternative.
+- [x] Add a `droppedCoordinates`-style counter or query showing how much `kind_id` space versioning
       has consumed. Acceptance: a number is reportable, so the decision to build reclaim is made on
-      pressure rather than on principle.
+      pressure rather than on principle. → the master logs it every boot:
+      `kind_ids_used=11 kind_ids_free=4085 bumps_on_record=0`.

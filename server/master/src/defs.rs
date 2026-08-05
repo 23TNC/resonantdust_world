@@ -473,6 +473,24 @@ pub async fn seed_registry(
     use spacetimedb_sdk::DbContext;
     let known = known_versions(index);
     let allocs = allocations(bundle, &known)?;
+
+    // KIND-SPACE PRESSURE ([F7](../../../docs/work/2026-08-04-definition-registry/forks.md#f7)).
+    // Reclaim is designed and deliberately unbuilt; this is the number that decides when that
+    // stops being the right call. `used` counts DISTINCT kind ids the registry has ever handed
+    // out — every version of every kind, since none is ever reused — against the u12 ceiling.
+    let used: std::collections::HashSet<u16> = known
+        .values()
+        .flatten()
+        .map(|(_, _, k)| *k)
+        .chain(allocs.iter().map(|a| resonantdust_codec::object::def_kind_id(a.id)))
+        .collect();
+    let versions: usize = known.values().map(|rows| rows.len().saturating_sub(1)).sum();
+    tracing::info!(
+        kind_ids_used = used.len(),
+        kind_ids_free = KIND_ID_LIMIT as usize - used.len(),
+        bumps_on_record = versions,
+        "definition kind-space"
+    );
     for a in &allocs {
         if let Err(err) = index.reducers().ensure_definition(
             a.id,

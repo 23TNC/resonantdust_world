@@ -445,3 +445,29 @@ stored identity (which a bump must change) and an index into the corpus's positi
 
 Dev restored: `index` republished and re-seeded, wolf back to `0x30010070 speed 12 thirst 1`, trips
 flowing.
+
+## 2026-08-05 · P7 — reclaim designed, not built (2/2)
+
+[`index/intent/definition-reclaim.md`](../../components/server/spacetime/modules/index/intent/definition-reclaim.md)
+records the sweep the user sketched, and the reason it stays unbuilt: **reclaim is the only
+irreversible step in the design.** Everything else is additive — rows insert, never rewrite; a bad
+allocation is refused at the reducer; a wrong version is a new row. Reuse is the one operation that
+can make an existing, correct stored id start meaning something else, silently.
+
+Six places an id can survive are tabled with how each fails. The one that turns a leak into
+corruption is **`entity_state_log`** — append-only history, never cleaned: an event written when the
+id meant a conifer replays as moss, so the world's *past* changes retroactively. A leaked id costs a
+number; a wrongly reclaimed one costs the truth of the history.
+
+Also recorded: what building it would need (a definition of "referenced" that includes history, a
+liveness protocol where an unanswerable shard BLOCKS rather than being skipped, a quarantine tier
+before reuse), and the cheaper first move if pressure ever arrives — retiring a deleted kind's whole
+v0..vN lineage together, which is a far smaller claim than reclaiming one version of a live kind.
+
+**The counter that makes it a measured decision** ships in the master, logged every boot:
+
+```
+definition kind-space  kind_ids_used=11  kind_ids_free=4085  bumps_on_record=0
+```
+
+11 of 4096 used at ~17 kinds. Reclaim gets built when that number says so, not on principle.
