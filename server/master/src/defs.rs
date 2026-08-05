@@ -12,7 +12,11 @@
 //! would not fit rather than wrapping. Wrapping would alias two definitions onto one number, which
 //! is the single thing the registry exists to prevent.
 
-use resonantdust_codec::object::{pack_definition_from_ids, KIND_ID_LIMIT, VARIANT_ID_LIMIT};
+use resonantdust_codec::object::{
+    pack_definition_from_ids, pawn_species_subtype_id, KIND_ID_LIMIT, TYPE_BIOME_THING,
+    TYPE_BIOME_TILE, TYPE_PAWN, VARIANT_ID_LIMIT,
+};
+use resonantdust_content::loader::{Bundle, Taxonomy};
 
 /// One tuple of the cross-product, with the id it composes to.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,6 +42,11 @@ pub enum AllocError {
     VariantOverflow { kind: String, variant: String, slot: u32 },
     /// `subtype_id` past `u12`.
     SubtypeOverflow { sub_type: String, subtype_id: u32 },
+    /// A `type` name the CODE palette does not know. Types are structural — each implies a pipeline
+    /// — so an unknown one is a corpus error, never a number invented on the spot.
+    UnknownType { type_name: String },
+    /// A `subType` name with no id: an unauthored biome, or a species outside the palette.
+    UnknownSubType { type_name: String, sub_type: String },
 }
 
 impl std::fmt::Display for AllocError {
@@ -56,6 +65,14 @@ impl std::fmt::Display for AllocError {
             Self::SubtypeOverflow { sub_type, subtype_id } => write!(
                 f,
                 "subType `{sub_type}` has id {subtype_id}, past the u12 ceiling ({KIND_ID_LIMIT})"
+            ),
+            Self::UnknownType { type_name } => {
+                write!(f, "type `{type_name}` is not in the code palette (biome-tile|biome-thing|pawn)")
+            }
+            Self::UnknownSubType { type_name, sub_type } => write!(
+                f,
+                "type `{type_name}`: subType `{sub_type}` has no id — an unauthored biome, or a \
+                 species outside the palette"
             ),
         }
     }
@@ -143,6 +160,62 @@ mod tests {
         );
     }
 
+    /// The repo's authored corpus, or `None` in a packaged build without it.
+    fn corpus() -> Option<Bundle> {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
+        let sources = resonantdust_content::content::read_content_dir(&root).ok()?;
+        if sources.is_empty() {
+            return None;
+        }
+        Some(resonantdust_content::load(&sources).expect("the repo corpus loads clean"))
+    }
+
+    #[test]
+    fn the_corpus_expands_to_the_ids_it_already_has() {
+        // THE MIGRATION PROOF (I9). Seeded from the corpus's authored ids, the expansion must
+        // reproduce exactly the numbering the world already stores — every one of which P0's
+        // golden and the npc's def_fixture pin independently.
+        let Some(bundle) = corpus() else { return };
+        let allocs = allocations(&bundle).expect("the corpus expands cleanly");
+
+        // One row per tuple, no duplicates — a duplicate id would mean two definitions aliased.
+        let mut ids: Vec<u32> = allocs.iter().map(|a| a.id).collect();
+        let before = ids.len();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), before, "an id was allocated twice");
+
+        let find = |kind: &str, sub: &str, variant: &str| {
+            allocs
+                .iter()
+                .find(|a| a.kind == kind && a.sub_type == sub && a.variant == variant)
+                .unwrap_or_else(|| panic!("no allocation for {sub}/{kind}/{variant}"))
+                .id
+        };
+
+        // The wolf: TYPE_PAWN | species animal | thing_object_id 7 | variant 0. This is the exact
+        // value the live npc logs on every boot and `npc::def_fixture` pins.
+        assert_eq!(find("wolf", "animal", "0"), 0x3001_0070, "the wolf's def moved");
+        assert_eq!(find("female", "human", "0"), 0x3002_00A0);
+        assert_eq!(find("male", "human", "0"), 0x3002_00B0);
+
+        // grass is tile def_id 1 — the number every stored zone is full of.
+        assert_eq!(def_kind_id(find("grass", "default", "0")), 1);
+        assert_eq!(def_type_id(find("grass", "default", "0")), TYPE_BIOME_TILE);
+        // wall_smooth is tile 6, and its NAMED variant takes slot 0.
+        assert_eq!(def_kind_id(find("smooth", "default", "wall")), 6);
+        assert_eq!(def_variant_id(find("smooth", "default", "wall")), 0);
+
+        // The cross-product is real: a 16-variant def contributes 16 rows that differ ONLY in the
+        // variant nibble, so worldgen's per-cell roll always lands on a registered definition.
+        let conifers: Vec<u32> =
+            allocs.iter().filter(|a| a.kind == "conifer").map(|a| a.id).collect();
+        assert_eq!(conifers.len(), 16, "conifer should expand to its 16 variants");
+        for id in &conifers {
+            assert_eq!(def_kind_id(*id), 1, "every conifer variant shares one kind_id");
+        }
+    }
+
     #[test]
     fn a_kind_past_u12_is_refused() {
         assert!(compose(TYPE_BIOME_THING, 0, 4095, 0, "last", "0", "default").is_ok());
@@ -150,4 +223,112 @@ mod tests {
             .expect_err("kind 4096 must fail");
         assert!(matches!(err, AllocError::KindOverflow { .. }), "{err}");
     }
+}
+
+
+// ── the cross-product: corpus → one allocation per tuple ─────────────────────────────────────
+//
+// [F2]: a def's `subType` and `variant` are APPLICABILITY ARRAYS, so one `conifer` block covers
+// every `(subType, variant)` pair it names. Expanding them here is what turns "this definition
+// applies to 48 tuples" into 48 registry rows, each with the number that identifies it.
+//
+// The `kind_id` comes from the corpus's authored `id` — the allocation SEED ([I9]). This is the
+// migration proof, not a shortcut: a fresh registry seeded from today's authored ids reproduces
+// today's numbering exactly, and P0's golden pins every one of those numbers. A registry allocated
+// from scratch would only be a hope.
+
+/// The `type_id` a taxonomy's `type` name maps to. The type palette is CODE-owned (structural —
+/// each type implies a pipeline and a `data` decode), so an unknown name is a load error rather
+/// than a number invented on the spot.
+fn type_id_of(type_name: &str) -> Option<u8> {
+    match type_name {
+        "biome-tile" => Some(TYPE_BIOME_TILE),
+        "biome-thing" => Some(TYPE_BIOME_THING),
+        "pawn" => Some(TYPE_PAWN),
+        _ => None,
+    }
+}
+
+/// The `subtype_id` a taxonomy's `subType` name maps to, for a given type.
+///
+/// Two sources, because subtype means two different things: for a biome family it is the BIOME,
+/// authored in `biomes.toml` and stored in zones; for a pawn it is the SPECIES, still in the codec
+/// palette until [P5] moves it to content. `"default"` is the reserved biome-agnostic 0.
+fn subtype_id_of(bundle: &Bundle, type_id: u8, sub_type: &str) -> Option<u16> {
+    if type_id == TYPE_PAWN {
+        return pawn_species_subtype_id(sub_type);
+    }
+    if sub_type == "default" {
+        return Some(0);
+    }
+    bundle.biome_subtype_id(sub_type)
+}
+
+/// A variant LABEL's u4 slot. A numeric label is its own slot (an art variation index that worldgen
+/// rolls); a NAMED form (`wall`, `fence`) takes slot 0 — it is the only variant its kind has, which
+/// is exactly why it appears in the stem instead ([`Taxonomy::stem`]).
+fn variant_slot(variant: &str) -> u32 {
+    variant.parse::<u32>().unwrap_or(0)
+}
+
+/// Expand one def's taxonomy into its registry allocations.
+fn expand(
+    bundle: &Bundle,
+    tax: &Taxonomy,
+    seed_kind_id: u16,
+    version: u32,
+) -> Result<Vec<Allocation>, AllocError> {
+    let type_id = type_id_of(&tax.type_name)
+        .ok_or_else(|| AllocError::UnknownType { type_name: tax.type_name.clone() })?;
+    let mut out = Vec::new();
+    for (sub_type, variant) in tax.tuples() {
+        let subtype_id = subtype_id_of(bundle, type_id, sub_type).ok_or_else(|| {
+            AllocError::UnknownSubType { type_name: tax.type_name.clone(), sub_type: sub_type.to_string() }
+        })?;
+        let id = compose(
+            type_id,
+            subtype_id,
+            seed_kind_id,
+            variant_slot(variant),
+            &tax.kind,
+            variant,
+            sub_type,
+        )?;
+        out.push(Allocation {
+            id,
+            version,
+            type_name: tax.type_name.clone(),
+            sub_type: sub_type.to_string(),
+            kind: tax.kind.clone(),
+            variant: variant.to_string(),
+        });
+    }
+    Ok(out)
+}
+
+/// Every allocation the corpus implies — the full set the master hands to `ensure_definition`.
+///
+/// Defs with no authored taxonomy are SKIPPED, not guessed: the field is being introduced
+/// additively ([I9]) and a guessed taxonomy would mint rows nobody authored.
+pub fn allocations(bundle: &Bundle) -> Result<Vec<Allocation>, AllocError> {
+    let mut out = Vec::new();
+    for (i, name) in bundle.tile_names().iter().enumerate() {
+        let def_id = (i + 1) as u16;
+        if name.is_empty() {
+            continue; // a retired id — a hole stays a hole
+        }
+        if let Some(tax) = bundle.tile_taxonomy(def_id) {
+            out.extend(expand(bundle, tax, def_id, 0)?);
+        }
+    }
+    for (i, name) in bundle.thing_names().iter().enumerate() {
+        let object_id = (i + 1) as u16;
+        if name.is_empty() {
+            continue;
+        }
+        if let Some(tax) = bundle.thing_taxonomy(object_id) {
+            out.extend(expand(bundle, tax, object_id, 0)?);
+        }
+    }
+    Ok(out)
 }

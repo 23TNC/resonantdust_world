@@ -4,10 +4,13 @@
 [[thing]]
 id = 1
 name = "tree"
+type = "biome-thing"
+kind = "conifer"
+subType = ["default"]
+variant = ["0","1","2","3","4","5","6","7","8","9","10","11","12","13","14","15"]
 packed = [ { tint = "#46d64f" }, { tint = "#b0754f" } ]
 
   [[thing.part]]
-  texture = "biome-thing/default/conifer"
   tint = "#ffffff"
   geo = "#2f4a2a"
   anchor = { x = 0.5, y = 1.0 }
@@ -29,6 +32,10 @@ packed = [ { tint = "#46d64f" }, { tint = "#b0754f" } ]
 [[thing]]
 id = 2
 name = "shrub"
+type = "biome-thing"
+kind = "shrub"
+subType = ["default"]
+variant = ["0","1","2","3","4","5","6","7","8","9","10","11","12","13","14","15"]
 
   [[thing.part]]
   texture = "white"
@@ -57,6 +64,10 @@ name = "shrub"
 [[thing]]
 id = 3
 name = "cactus"
+type = "biome-thing"
+kind = "cactus"
+subType = ["default"]
+variant = ["0","1","2","3","4","5","6","7","8","9","10","11","12","13","14","15"]
 
   [[thing.part]]
   texture = "white"
@@ -69,6 +80,10 @@ name = "cactus"
 [[thing]]
 id = 4
 name = "reed"
+type = "biome-thing"
+kind = "reed"
+subType = ["default"]
+variant = ["0","1","2","3","4","5","6","7","8","9","10","11","12","13","14","15"]
 
   [[thing.part]]
   texture = "white"
@@ -81,6 +96,10 @@ name = "reed"
 [[thing]]
 id = 5
 name = "rock"
+type = "biome-thing"
+kind = "rock"
+subType = ["default"]
+variant = ["0","1","2","3","4","5","6","7","8","9","10","11","12","13","14","15"]
 
   [[thing.part]]
   texture = "white"
@@ -93,9 +112,12 @@ name = "rock"
 [[thing]]
 id = 6
 name = "flora"
+type = "biome-thing"
+kind = "flora"
+subType = ["default"]
+variant = ["0","1","2","3","4","5","6","7","8","9","10","11","12","13","14","15"]
 
   [[thing.part]]
-  texture = "biome-thing/default/flora"
   tint = "#ffffff"
   geo = "#4a7a3a"
   anchor = { x = 0.5, y = 1.0 }
@@ -106,11 +128,14 @@ name = "flora"
 [[thing]]
 id = 7
 name = "wolf"
+type = "pawn"
+kind = "wolf"
+subType = ["animal"]
+variant = ["0"]
 speed = 12
 needs = ["thirst"]
 
   [[thing.part]]
-  texture = "pawn/animal/wolf"
   tint = "#ffffff"
   geo = "#6a6a6a"
   anchor = { x = 0.5, y = 1.0 }
@@ -126,6 +151,10 @@ needs = ["thirst"]
 [[thing]]
 id = 8
 name = "torch"
+type = "biome-thing"
+kind = "torch"
+subType = ["default"]
+variant = ["0"]
 light = { r = 1.0, g = 0.85, b = 0.55, intensity = 1.0, reach = 16.0, radius = 0.35, height = 2.5, flicker = true }
 
   [[thing.part]]
@@ -139,6 +168,10 @@ light = { r = 1.0, g = 0.85, b = 0.55, intensity = 1.0, reach = 16.0, radius = 0
 [[thing]]
 id = 9
 name = "torch_blue"
+type = "biome-thing"
+kind = "torch_blue"
+subType = ["default"]
+variant = ["0"]
 light = { r = 0.55, g = 0.75, b = 1.0, intensity = 1.0, reach = 16.0, radius = 0.35, height = 2.5, flicker = true }
 
   [[thing.part]]
@@ -152,10 +185,13 @@ light = { r = 0.55, g = 0.75, b = 1.0, intensity = 1.0, reach = 16.0, radius = 0
 [[thing]]
 id = 10
 name = "human_female"
+type = "pawn"
+kind = "female"
+subType = ["human"]
+variant = ["0"]
 speed = 16
 
   [[thing.part]]
-  texture = "pawn/human/female"
   tint = "#ffffff"
   geo = "#7a6a5a"
   anchor = { x = 0.5, y = 1.0 }
@@ -168,7 +204,6 @@ speed = 16
   "n" = { x = 0.0781, y = 0.0469, w = 0.8516, h = 0.9141 }
 
   [[thing.part]]
-  texture = "pawn/human/female"
   tint = "#ffffff"
   geo = "#7a6a5a"
   scale = 0.5
@@ -184,10 +219,13 @@ speed = 16
 [[thing]]
 id = 11
 name = "human_male"
+type = "pawn"
+kind = "male"
+subType = ["human"]
+variant = ["0"]
 speed = 16
 
   [[thing.part]]
-  texture = "pawn/human/male"
   tint = "#ffffff"
   geo = "#7a6a5a"
   anchor = { x = 0.5, y = 1.0 }
@@ -200,7 +238,6 @@ speed = 16
   "n" = { x = 0.0625, y = 0.0469, w = 0.8828, h = 0.9141 }
 
   [[thing.part]]
-  texture = "pawn/human/male"
   tint = "#ffffff"
   geo = "#7a6a5a"
   scale = 0.5

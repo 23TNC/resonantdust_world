@@ -8,7 +8,8 @@
 
 use crate::loader::{
   BiomeBody, BiomeDef, BiomeRules, Bundle, Cmp, DirFrame, LightParts, LoadError, MaterialParams,
-  ConditionParams, NeedBand, NeedParams, PackedChannel, ThingDef, TileDef, VisualPart, VisualParts,
+  ConditionParams, NeedBand, NeedParams, PackedChannel, Taxonomy, ThingDef, TileDef, VisualPart,
+  VisualParts,
   NEEDS_PER_KIND, ROTATIONS_PER_DEF, VARIANTS_PER_DEF,
 };
 use serde::Deserialize;
@@ -38,6 +39,15 @@ struct Corpus {
 struct TileToml {
   id: u16,
   name: String,
+  // ── taxonomy (definition-registry F1) — additive; `id` remains the allocation SEED (I9) ──
+  #[serde(default, rename = "type")]
+  type_name: Option<String>,
+  #[serde(default)]
+  kind: Option<String>,
+  #[serde(default, rename = "subType")]
+  sub_type: Vec<String>,
+  #[serde(default)]
+  variant: Vec<String>,
   #[serde(default)]
   texture: Option<String>,
   #[serde(default)]
@@ -85,6 +95,15 @@ struct PackedToml {
 struct ThingToml {
   id: u16,
   name: String,
+  // ── taxonomy (definition-registry F1) — additive; `id` remains the allocation SEED (I9) ──
+  #[serde(default, rename = "type")]
+  type_name: Option<String>,
+  #[serde(default)]
+  kind: Option<String>,
+  #[serde(default, rename = "subType")]
+  sub_type: Vec<String>,
+  #[serde(default)]
+  variant: Vec<String>,
   #[serde(default)]
   speed: Option<u16>,
   #[serde(default)]
@@ -525,12 +544,17 @@ fn dir_frames(
 }
 
 /// A parts array → [`VisualParts`] (part 0 mirrors onto the flat prim-0 fields).
+/// `taxonomy` is the def's, used to DERIVE a part's texture stem when the part authors none —
+/// definition-registry F1: the taxonomy IS the art path, so authoring the stem was authoring the
+/// same fact twice. A part that authors `texture` still wins, which is how the `"white"` no-art
+/// fill survives (it is a rendering fallback, not a taxon).
 fn visual(
   parts_toml: &[PartToml],
   packed_toml: &[PackedToml],
   light_toml: &Option<LightToml>,
   material_id: &dyn Fn(&str) -> u16,
   what: &str,
+  taxonomy: Option<&Taxonomy>,
   errors: &mut Vec<LoadError>,
 ) -> Option<VisualParts> {
   let first = parts_toml.first()?;
@@ -542,7 +566,7 @@ fn visual(
     parts.push(VisualPart {
       tint,
       geo_color: geo,
-      texture: p.texture.clone(),
+      texture: p.texture.clone().or_else(|| taxonomy.map(Taxonomy::stem)),
       part: p.part.unwrap_or(0),
       scale: p.scale.unwrap_or(1.0),
       offset: (p.offset.as_ref().map(|o| o.x).unwrap_or(0.0), p.offset.as_ref().map(|o| o.y).unwrap_or(0.0)),
@@ -603,11 +627,15 @@ fn tile_def(t: &TileToml, material_id: &dyn Fn(&str) -> u16, errors: &mut Vec<Lo
     offset: None,
     subframe: HashMap::new(),
   };
-  let has_visual = t.texture.is_some() || t.tint.is_some();
+  let tax = taxonomy(&t.type_name, &t.kind, &t.sub_type, &t.variant, &format!("tile `{}`", t.name), errors);
+  // A taxonomy alone is enough to have a visual now: the stem derives from it, so a def no longer
+  // has to author `texture` to have art.
+  let has_visual = t.texture.is_some() || t.tint.is_some() || tax.is_some();
   let visual = has_visual
-    .then(|| visual(&[part], &t.packed, &None, material_id, &t.name, errors))
+    .then(|| visual(&[part], &t.packed, &None, material_id, &t.name, tax.as_ref(), errors))
     .flatten();
   TileDef {
+    taxonomy: tax,
     name: t.name.clone(),
     color: visual.as_ref().map(|v| v.tint),
     visual,
@@ -624,13 +652,57 @@ fn tile_def(t: &TileToml, material_id: &dyn Fn(&str) -> u16, errors: &mut Vec<Lo
   }
 }
 
+/// Build a def's [`Taxonomy`] from its authored fields, or `None` if it authors none.
+///
+/// Validation is deliberately strict on the PARTIAL case: `type` and `kind` together with at least
+/// one `subType` and one `variant` is a taxonomy; anything in between is a half-authored def, and a
+/// half-authored taxonomy would mint the wrong registry rows silently. Absent entirely is fine —
+/// the field is being introduced additively (I9).
+fn taxonomy(
+  type_name: &Option<String>,
+  kind: &Option<String>,
+  sub_type: &[String],
+  variant: &[String],
+  who: &str,
+  errors: &mut Vec<LoadError>,
+) -> Option<Taxonomy> {
+  let any = type_name.is_some() || kind.is_some() || !sub_type.is_empty() || !variant.is_empty();
+  if !any {
+    return None;
+  }
+  let (Some(type_name), Some(kind)) = (type_name.clone(), kind.clone()) else {
+    errors.push(LoadError {
+      file: String::new(),
+      message: format!("{who}: a taxonomy needs BOTH `type` and `kind`"),
+    });
+    return None;
+  };
+  if sub_type.is_empty() || variant.is_empty() {
+    errors.push(LoadError {
+      file: String::new(),
+      message: format!(
+        "{who}: `subType` and `variant` are applicability ARRAYS and must each name at least one \
+         entry (a def in exactly one form still writes single-element arrays)"
+      ),
+    });
+    return None;
+  }
+  Some(Taxonomy {
+    type_name,
+    kind,
+    sub_type: sub_type.to_vec(),
+    variant: variant.to_vec(),
+  })
+}
+
 fn thing_def(
   t: &ThingToml,
   material_id: &dyn Fn(&str) -> u16,
   need_id: &dyn Fn(&str) -> Option<u16>,
   errors: &mut Vec<LoadError>,
 ) -> ThingDef {
-  let visual = visual(&t.part, &t.packed, &t.light, material_id, &t.name, errors);
+  let tax = taxonomy(&t.type_name, &t.kind, &t.sub_type, &t.variant, &format!("thing `{}`", t.name), errors);
+  let visual = visual(&t.part, &t.packed, &t.light, material_id, &t.name, tax.as_ref(), errors);
   let mut needs = Vec::new();
   for n in t.needs.iter().take(NEEDS_PER_KIND) {
     match need_id(n) {
@@ -642,6 +714,7 @@ fn thing_def(
     }
   }
   ThingDef {
+    taxonomy: tax,
     name: t.name.clone(),
     color: visual.as_ref().map(|v| v.tint),
     visual,
@@ -827,6 +900,90 @@ name = "dirt"
     let missing = "[[tile]]\nname = \"grass\"\n";
     let e = load(&[src("t.toml", missing)]).unwrap_err();
     assert!(e[0].message.contains("missing field"), "{}", e[0].message);
+  }
+
+  #[test]
+  fn the_taxonomy_round_trips_and_derives_the_stem() {
+    // The four axes as the corpus authors them, read back off the Bundle, plus the stem the
+    // loader now DERIVES instead of the corpus authoring it (definition-registry P3).
+    let b = load(&[src(
+      "t.toml",
+      r##"
+[[tile]]
+id = 1
+name = "wall_smooth"
+type = "biome-tile"
+kind = "smooth"
+subType = ["default"]
+variant = ["wall"]
+tint = "#ffffff"
+"##,
+    )])
+    .unwrap();
+    let t = b.tile_taxonomy(1).expect("wall_smooth has a taxonomy");
+    assert_eq!(t.type_name, "biome-tile");
+    assert_eq!(t.sub_type, ["default"]);
+    assert_eq!(t.kind, "smooth");
+    assert_eq!(t.variant, ["wall"]);
+    // A NAMED variant is part of the address — it names a distinct art folder.
+    assert_eq!(t.stem(), "biome-tile/default/smooth/wall");
+    assert_eq!(b.tile_texture_stems()[0], "biome-tile/default/smooth/wall");
+  }
+
+  #[test]
+  fn a_numeric_variant_stops_the_stem_at_the_kind() {
+    // The other half of the rule: an art VARIATION is an index worldgen rolls per cell, so the
+    // stem stops at the kind and the resolver appends the roll (`/4/e`) at draw time.
+    let b = load(&[src(
+      "t.toml",
+      r##"
+[[thing]]
+id = 1
+name = "tree"
+type = "biome-thing"
+kind = "conifer"
+subType = ["default"]
+variant = ["0","1","2"]
+
+  [[thing.part]]
+  tint = "#ffffff"
+"##,
+    )])
+    .unwrap();
+    let t = b.thing_taxonomy(1).expect("tree has a taxonomy");
+    assert_eq!(t.stem(), "biome-thing/default/conifer");
+    // F2's cross-product: 1 subType × 3 variants = 3 registry rows.
+    assert_eq!(t.tuples(), [("default", "0"), ("default", "1"), ("default", "2")]);
+  }
+
+  #[test]
+  fn a_half_authored_taxonomy_is_a_load_error() {
+    // Absent entirely is fine (the field is additive, I9). HALF-authored is not: it would mint
+    // the wrong registry rows silently, which is the one thing the registry exists to prevent.
+    let e = load(&[src(
+      "t.toml",
+      r##"
+[[tile]]
+id = 1
+name = "g"
+type = "biome-tile"
+"##,
+    )])
+    .unwrap_err();
+    assert!(e.iter().any(|e| e.message.contains("BOTH `type` and `kind`")), "{:?}", e);
+
+    let e = load(&[src(
+      "t.toml",
+      r##"
+[[tile]]
+id = 1
+name = "g"
+type = "biome-tile"
+kind = "grass"
+"##,
+    )])
+    .unwrap_err();
+    assert!(e.iter().any(|e| e.message.contains("applicability ARRAYS")), "{:?}", e);
   }
 
   #[test]

@@ -59,31 +59,45 @@ numbering to the registry, and leaves `definition_reference` exactly as it is.
       three named arms; the test also DEMONSTRATES the wrap (slot 16 packs to variant 0), which is
       why refusing beats absorbing.
 
-## P3 — the loader: taxonomy in, cross-product out
+## P3 — the taxonomy, ADDITIVE ([I9](issues.md#i9) — `id` stays as the seed)
 
-- [ ] Parse `type`/`kind`/`subType[]`/`variant[]` in `shared/content`; DELETE `id = N` and the
-      explicit-id law it enforced ([F1](forks.md#f1)). Acceptance: crate tests — a def with arrays
-      expands to the right tuple set; an `id` key is now an unknown-field load error.
-- [ ] Derive the texture stem from the taxonomy instead of authoring it. Acceptance: the corpus has
-      no `texture` field except the `white` no-art fill; the resolver receives the same stems it does
-      today for every existing def.
-- [ ] Expand the cross-product at load and call `ensure` per tuple. Acceptance: loading today's
-      corpus mints exactly the tuple count the arrays imply, and re-loading mints nothing new.
+- [x] Author `type`/`kind`/`subType[]`/`variant[]` on all 19 defs in `tiles.toml` + `things.toml`,
+      leaving `id = N` in place. Acceptance: the golden fixture passes UNCHANGED — the taxonomy is
+      additive and moves no id. → 6 tiles + 11 things; golden byte-identical.
+- [x] Parse the four taxonomy fields in `shared/content` and expose them on the `Bundle`.
+      Acceptance: a crate test reads `wall_smooth` back as
+      `biome-tile / default / smooth / wall`; an unknown key is still a load error. → a `Taxonomy`
+      type + `tile_taxonomy`/`thing_taxonomy`; 3 tests, incl. a HALF-authored taxonomy being a load
+      error (it would mint wrong rows silently).
+- [x] Derive the texture stem from the taxonomy, keeping `texture` only for the `white` no-art
+      fill. Acceptance: `tile_texture_stems()` / `thing_texture_stems()` are byte-identical to the
+      golden's current values for all 19 defs. → 6 authored `texture` lines DELETED and the golden
+      still passes; the rule is named-variant-is-part-of-the-address, numeric-is-appended.
+- [x] Expand the cross-product into `(tuple, seed id)` pairs in `master/src/defs.rs`. Acceptance: a
+      unit test over the real corpus yields one entry per tuple, and every id matches the one P0's
+      golden pins for that def. → `allocations()`; the wolf lands on `0x30010070`, grass on kind 1,
+      conifer on 16 rows sharing one kind_id, and no id is allocated twice.
 
-## P4 — resolution moves off the corpus
+## P4 — the registry becomes the authority
 
+- [ ] Call `ensure_definition` per tuple from the master at content load. Acceptance: a fresh
+      `index` DB ends up with one row per tuple and `resolve_definition` returns the seeded id for
+      every def in P0's golden.
 - [ ] Serve the registry to clients (initial table + updates on change) alongside `/content`.
-      Acceptance: a client that boots with an empty cache receives the full table and can resolve
-      `("biome-thing","default","conifer","4") → id`.
+      Acceptance: a client booting with an empty cache receives the table and can resolve
+      `("biome-thing","default","conifer","4")` locally.
 - [ ] Re-point `Bundle`'s `tile_def_id` / `thing_object_id` at the registry, keeping the accessor
-      signatures. Acceptance: P0's golden fixture replays — every unchanged def resolves to the same
-      packed id it had before the stream.
+      signatures. Acceptance: P0's golden replays — every unchanged def resolves to the id it had
+      before the stream.
 - [ ] Order the two updates so a client never holds content referencing ids it lacks. Acceptance: a
       drill that hot-swaps content and the registry together shows no unresolved id in the client
       console.
 
 ## P5 — the consumers swap, and the workarounds die
 
+- [ ] DELETE `id = N` from the corpus and the explicit-id law from the loader
+      ([F1](forks.md#f1), [I9](issues.md#i9)) — only now, with the registry populated and
+      authoritative. Acceptance: an `id` key is an unknown-field load error; the golden replays.
 - [ ] Delete the stem-parsing in `client/npc` — species comes from the authored taxonomy.
       Acceptance: `rd-npc` resolves `def 0x…` with the same value it logs today; no `split('/')` on
       a texture stem remains in the repo.

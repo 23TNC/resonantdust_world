@@ -110,3 +110,50 @@ moved ([F13](forks.md#f13) holds).
 tests live in `#[cfg(test)]` modules inside the binary.
 
 Verified: index module builds + publishes; 4 `defs::` tests green via `bin/sim test master`.
+
+## 2026-08-04 · P3 — the taxonomy, additive (4/4)
+
+**The taxonomy is authored on all 19 defs and moved nothing.** `type`/`kind` scalars plus
+`subType`/`variant` arrays on 6 tiles and 11 things, with `id = N` left in place as the allocation
+seed ([I9](issues.md#i9)). The golden fixture passes **byte-identical** — which is the whole point
+of doing it additively: every step of this phase was verifiable against a fixture that never had to
+be re-blessed.
+
+**The stem now derives, and the derivation has a rule worth stating.** Six authored `texture` lines
+are deleted (conifer, flora, wolf, female ×2, male ×2, wall) and the golden still matches, so the
+derived stems are identical to the authored ones for all 19 defs. The rule the corpus forced:
+
+- a **named** variant is part of the address — `biome-tile/default/smooth/wall`, because a linked
+  object's form names a distinct art folder;
+- a **numeric** variant is not — `biome-thing/default/conifer`, because it is an index worldgen
+  rolls per cell and the resolver appends at draw time (`/4/e`).
+
+That is exactly the linked-vs-plain split `VARIABLES.md` already draws for `variant_id`; the loader
+now expresses it in one place. `texture = "white"` survives untouched as the no-art fill — an
+authored `texture` still wins over the derivation, which is what keeps it working.
+
+A **half-authored** taxonomy is a load error, deliberately: absent entirely is fine while the field
+is additive, but `type` without `kind`, or an empty `subType`, would mint the wrong registry rows
+silently — the one failure the registry exists to prevent.
+
+**The migration proof landed** ([`master/src/defs.rs::allocations`](../../../server/master/src/defs.rs)).
+Seeded from the corpus's authored ids, the expansion reproduces exactly the numbering the world
+already stores:
+
+- `wolf/animal/0` → **`0x30010070`**, the value the live npc logs on every boot and that
+  `npc::def_fixture` pins independently.
+- `female/human/0` → `0x300200A0`, `male/human/0` → `0x300200B0`.
+- `grass` → `kind_id` 1 under `TYPE_BIOME_TILE` — the number every stored zone is full of.
+- `smooth/default/wall` → `kind_id` 6, variant slot 0 (a named form is its kind's only variant,
+  which is why it lives in the stem instead).
+- `conifer` expands to **16 rows sharing one `kind_id`**, differing only in the variant nibble — so
+  worldgen's per-cell roll always lands on a registered definition.
+- and no id is allocated twice, checked by dedup, because a duplicate would mean two definitions
+  aliased onto one number.
+
+Two `AllocError` arms added for the expansion's own failure modes: an unknown `type` (the palette is
+code-owned and structural) and an unknown `subType` (an unauthored biome, or a species outside the
+palette). Neither invents a number.
+
+Verified: 15 `shared/content` tests + the unchanged golden; 5 `defs::` tests via `bin/sim test
+master`.

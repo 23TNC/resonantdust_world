@@ -4,6 +4,10 @@
 [[tile]]
 id = 1
 name = "grass"
+type = "biome-tile"
+kind = "grass"
+subType = ["default"]
+variant = ["0","1","2","3","4","5","6","7","8","9","10","11","12","13","14","15"]
 texture = "white"
 tint = "#4b573e"
 receives_shadows = 2.0
@@ -11,6 +15,10 @@ receives_shadows = 2.0
 [[tile]]
 id = 2
 name = "dirt"
+type = "biome-tile"
+kind = "dirt"
+subType = ["default"]
+variant = ["0","1","2","3","4","5","6","7","8","9","10","11","12","13","14","15"]
 texture = "white"
 tint = "#653d00"
 receives_shadows = 2.0
@@ -18,6 +26,10 @@ receives_shadows = 2.0
 [[tile]]
 id = 3
 name = "sand"
+type = "biome-tile"
+kind = "sand"
+subType = ["default"]
+variant = ["0","1","2","3","4","5","6","7","8","9","10","11","12","13","14","15"]
 texture = "white"
 tint = "#c2b280"
 receives_shadows = 2.0
@@ -25,6 +37,10 @@ receives_shadows = 2.0
 [[tile]]
 id = 4
 name = "water"
+type = "biome-tile"
+kind = "water"
+subType = ["default"]
+variant = ["0","1","2","3","4","5","6","7","8","9","10","11","12","13","14","15"]
 texture = "white"
 tint = "#2e5a78"
 receives_shadows = 2.0
@@ -32,6 +48,10 @@ receives_shadows = 2.0
 [[tile]]
 id = 5
 name = "stone"
+type = "biome-tile"
+kind = "stone"
+subType = ["default"]
+variant = ["0","1","2","3","4","5","6","7","8","9","10","11","12","13","14","15"]
 texture = "white"
 tint = "#6b6b6b"
 receives_shadows = 2.0
@@ -39,7 +59,10 @@ receives_shadows = 2.0
 [[tile]]
 id = 6
 name = "wall_smooth"
-texture = "biome-tile/default/smooth/wall"
+type = "biome-tile"
+kind = "smooth"
+subType = ["default"]
+variant = ["wall"]
 tint = "#ffffff"
 height = 1.0
 build = "wall"

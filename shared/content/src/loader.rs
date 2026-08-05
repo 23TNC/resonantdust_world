@@ -252,10 +252,71 @@ pub fn tile_rand(seed: u64, salt: i64) -> f64 {
 
 // ── materialized defs (internal; toml_loader fills these too) ─────────────────────
 
+/// A definition's TAXONOMY — the four names that identify it (work
+/// `2026-08-04-definition-registry` F1). The corpus authors these; the server numbers them into a
+/// `definition_reference` through the registry.
+///
+/// `sub_type` and `variant` are APPLICABILITY ARRAYS ([F2]): the def applies to every tuple in the
+/// cross-product, so one `conifer` covers `[forest, plains, grassland] × [0..15]` rather than 48
+/// blocks. They are also the TEXTURE PATH — `<type>/<sub_type>/<kind>/<variant>` is the art tree's
+/// shape, which is why the stem is derived rather than authored.
+///
+/// Absent (`None`) on a def that has not been given a taxonomy yet — the field is being introduced
+/// additively so the corpus and the golden fixture stay green throughout ([I9]).
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct Taxonomy {
+  pub type_name: String,
+  pub kind: String,
+  /// Every subType this def applies to. Never empty when a taxonomy is present.
+  pub sub_type: Vec<String>,
+  /// Every variant label it applies to — `"0".."15"` for art variations, or a named form
+  /// (`"wall"`). Never empty when a taxonomy is present.
+  pub variant: Vec<String>,
+}
+
+impl Taxonomy {
+  /// The texture stem this taxonomy addresses. The corpus used to author this string; deriving it
+  /// is the point of authoring the taxonomy at all.
+  ///
+  /// **A NAMED variant is part of the address; a NUMERIC one is not.** This is the linked-vs-plain
+  /// split `VARIABLES.md` already draws: a linked object's `variant` is its FORM (`wall`, `fence`,
+  /// `rock`) and names a distinct art folder, so it belongs in the stem —
+  /// `biome-tile/default/smooth/wall`. A plain def's `variant` is an art VARIATION index that
+  /// worldgen rolls per cell, so the stem stops at the kind and the resolver appends the roll —
+  /// `biome-thing/default/conifer`, then `/4/e` at resolve time.
+  ///
+  /// Uses the FIRST subType, which is what the single-subType defs (every one today) resolve to.
+  /// A multi-subType def's art is shared across its subTypes by construction — the stem names the
+  /// kind, and the biome only decides where it is scattered.
+  pub fn stem(&self) -> String {
+    let sub = self.sub_type.first().map(String::as_str).unwrap_or("default");
+    let base = format!("{}/{}/{}", self.type_name, sub, self.kind);
+    match self.variant.as_slice() {
+      // Exactly one variant, and it is a NAME rather than an index → part of the address.
+      [only] if only.parse::<u32>().is_err() => format!("{base}/{only}"),
+      _ => base,
+    }
+  }
+
+  /// Every `(sub_type, variant)` pair this def applies to — [F2]'s cross-product, which is one
+  /// registry row each.
+  pub fn tuples(&self) -> Vec<(&str, &str)> {
+    let mut out = Vec::with_capacity(self.sub_type.len() * self.variant.len());
+    for s in &self.sub_type {
+      for v in &self.variant {
+        out.push((s.as_str(), v.as_str()));
+      }
+    }
+    out
+  }
+}
+
 /// One tile def, fully evaluated. `name` may be `""` for a RETIRED id (an F1 hole).
 #[derive(Debug, Default, Clone)]
 pub(crate) struct TileDef {
   pub name: String,
+  /// The authored taxonomy, or `None` while the corpus is mid-migration ([I9]).
+  pub taxonomy: Option<Taxonomy>,
   pub color: Option<u32>,
   pub visual: Option<VisualParts>,
   pub build: Option<String>,
@@ -268,6 +329,8 @@ pub(crate) struct TileDef {
 #[derive(Debug, Default, Clone)]
 pub(crate) struct ThingDef {
   pub name: String,
+  /// The authored taxonomy, or `None` while the corpus is mid-migration ([I9]).
+  pub taxonomy: Option<Taxonomy>,
   pub color: Option<u32>,
   pub visual: Option<VisualParts>,
   pub speed: Option<u16>,
@@ -378,6 +441,15 @@ impl Bundle {
   pub fn tile_def_id(&self, name: &str) -> Option<u16> {
     Self::id_of(&self.tile_names, name)
   }
+  /// A tile's authored TAXONOMY by `def_id`, or `None` if it has none yet ([I9]).
+  pub fn tile_taxonomy(&self, def_id: u16) -> Option<&Taxonomy> {
+    self.tiles.get(def_id.checked_sub(1)? as usize)?.taxonomy.as_ref()
+  }
+  /// A thing's authored TAXONOMY by `object_id`, or `None` if it has none yet ([I9]).
+  pub fn thing_taxonomy(&self, object_id: u16) -> Option<&Taxonomy> {
+    self.things.get(object_id.checked_sub(1)? as usize)?.taxonomy.as_ref()
+  }
+
   /// The tile name for a `def_id` (`def_id == 0` is the empty sentinel).
   pub fn tile_name(&self, def_id: u16) -> Option<&str> {
     Self::name_of(&self.tile_names, def_id)

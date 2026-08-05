@@ -17,6 +17,38 @@ Note what is *absent*: nothing reads `def_kind_id` and expects a stable meaning 
 render decode uses it as an opaque table index, which is precisely why [F5](forks.md#f5) can burn
 kind ids for versioning without touching a consumer.
 
+## I9 — P3 and P4 as written are a circular big-bang; the corpus `id` must become a SEED first {#i9}
+
+_2026-08-04, P3. A plan-sequencing defect, caught before writing code._
+
+P3 item 1 deletes `id = N` from the corpus. P4 item 2 re-points `Bundle`'s `tile_def_id` /
+`thing_object_id` at the registry. **Each is broken without the other**: delete the ids and the
+loader has no numbers until resolution moves; move resolution first and it resolves against a
+registry nothing has populated. As written the two phases must land in one commit — a big-bang
+cutover across the loader, the corpus, the master and every consumer, with the golden fixture
+unable to run in between.
+
+There is also a harder problem underneath. **`kind_id` must not change for any existing def**, or
+every stored zone misreads — `tile_def_id("grass")` is `1` and there are zones full of `1`s. Today
+those numbers come from the corpus. Tomorrow they come from the registry. Something has to carry
+them across, and "allocate in corpus order and hope" is not a proof.
+
+**Resolution — the corpus `id` becomes the allocation SEED, then dies.** Ordering:
+
+1. Author the taxonomy **alongside** the existing `id = N`, which stays. Additive, nothing breaks,
+   the golden fixture keeps passing throughout.
+2. The master expands the cross-product and calls `ensure_definition` with ids composed **from the
+   authored seed**. A fresh DB therefore reproduces today's numbering exactly — and *provably*,
+   because P0's golden pins every one of them.
+3. Only once the registry is populated and resolution reads from it does `id = N` leave the corpus.
+   By then the numbers live in a table that persists across reorders, which is what
+   [F1](forks.md#f1) wanted all along.
+
+The seed is not a compromise: it is the migration proof. A registry seeded from the authored ids
+is verifiably the same world; a registry allocated from scratch is a hope. P3 and P4 are re-planned
+to this order, and the `id` deletion moves to [P5](todo.md) where it belongs — after the thing that
+replaces it is real.
+
 ## I8 — the registry cannot COMPOSE an id; it can only record one {#i8}
 
 _2026-08-04, P2. A plan gap, found on contact with the module._
