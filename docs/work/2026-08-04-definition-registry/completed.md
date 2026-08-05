@@ -385,3 +385,30 @@ segment of other defs' taxonomies). Adding a species is now two lines of TOML an
 Live after both deletions: edge `definitions=17`, npc `def=0x30010070 speed 12 thirst 1`, and
 `grep` finds no `split('/')` on a stem and no `pawn_species_subtype_id` anywhere. 85 tests green
 across the shared workspace, 5 `defs::`, 2 `def_fixture::`.
+
+## 2026-08-05 · P5 item 8 — the append-compat guard dies (phase complete)
+
+`is_append_compatible_with` refused a hot-reload whose corpus reordered or removed a def, because
+tile/thing ids came from corpus ORDER and a stored zone would be misread. Ids come from the registry
+now and survive both, so the guard was protecting a fragility that no longer exists.
+
+Deleted, and **proven by doing the thing it forbade**: a reordered `tiles.toml` hot-reloaded live —
+`{"changed":true}` and `worldgen content hot-reloaded` — where the guard's message was
+*"tile/thing ids changed (reorder or removal) — refusing hot-reload; restart to apply"*.
+
+**A live bug found while deleting it.** `reload_content` called the BARE `load_versioned`, so every
+hot-reload would have silently reverted the edge to positional resolution — the exact failure the
+registry exists to prevent, reintroduced on a code path nobody would have thought to check. It now
+does the same two-pass load as boot.
+
+Its tests were replaced rather than dropped, because the property is still worth pinning — just the
+opposite one:
+
+- `a_reorder_keeps_every_id_when_the_registry_answers` — with `dirt` first and a registry saying
+  `grass=1`, `grass` resolves to 1.
+- `without_a_registry_a_reorder_renumbers_positionally` — the same reorder with no registry gives
+  `grass=2`, so the first test cannot pass for the wrong reason.
+
+**P5 is complete.** Every consumer injects, the corpus carries no numbers, and all three
+workarounds the numbering had forced — the stem-parsing, the species palette, the append guard —
+are gone. 20 edge tests green, 11 shared suites green.

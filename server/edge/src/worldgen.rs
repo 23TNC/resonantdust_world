@@ -84,16 +84,6 @@ impl Worldgen {
         Ok(LoadedWorldgen { version, worldgen })
     }
 
-    /// Whether swapping to `self` is safe for zones already generated with `prev`:
-    /// tile and thing ids must be **append-compatible** — every one of `prev`'s
-    /// names still present, in the same order (new ones may follow). A reorder or
-    /// removal would renumber ids, so a stored zone's packed tiles/things would be
-    /// misread — the hot-reload refuses that and asks for a restart instead.
-    pub fn is_append_compatible_with(&self, prev: &Worldgen) -> bool {
-        is_prefix(prev.bundle().tile_names(), self.bundle().tile_names())
-            && is_prefix(prev.bundle().thing_names(), self.bundle().thing_names())
-    }
-
     /// Build worldgen from already-read `(name, source)` pairs — the core of
     /// [`load`], split out so it's testable without touching the filesystem.
     pub fn from_sources(sources: &[(String, String)]) -> Result<Worldgen, String> {
@@ -225,21 +215,16 @@ mod tests {
     fn worldgen() -> Worldgen {
         let tiles = "\
 [[tile]]
-id = 1
 name = \"grass\"
 [[tile]]
-id = 2
 name = \"dirt\"
 [[tile]]
-id = 3
 name = \"water\"
 [[tile]]
-id = 4
 name = \"stone\"
 ";
         let things = "\
 [[thing]]
-id = 1
 name = \"tree\"
 ";
         // Order is priority — elevation bands first, plains (no `when`) last.
@@ -278,7 +263,7 @@ tile = \"grass\"
 
     #[test]
     fn rejects_a_corpus_with_no_biomes() {
-        let data = "[[tile]]\nid = 1\nname = \"grass\"\n";
+        let data = "[[tile]]\nname = \"grass\"\n";
         match Worldgen::from_sources(&[("tiles.toml".into(), data.into())]) {
             Err(err) => assert!(err.contains("no biomes"), "{err}"),
             Ok(_) => panic!("a biome-less corpus should be rejected"),
@@ -290,36 +275,60 @@ tile = \"grass\"
     /// Ids follow list ORDER here on purpose — these tests are about what happens to
     /// stored ids when the corpus is reordered or trimmed.
     fn wg(tiles: &[&str], things: &[&str]) -> Worldgen {
+        wg_with(tiles, things, None)
+    }
+
+    fn wg_with(
+        tiles: &[&str],
+        things: &[&str],
+        registry: Option<std::collections::HashMap<(bool, String), u32>>,
+    ) -> Worldgen {
         let mut data = String::new();
         for (i, t) in tiles.iter().enumerate() {
-            data += &format!("[[tile]]\nid = {}\nname = \"{t}\"\n", i + 1);
+            let _ = i;
+            data += &format!("[[tile]]\nname = \"{t}\"\n");
         }
         let mut th = String::new();
         for (i, t) in things.iter().enumerate() {
-            th += &format!("[[thing]]\nid = {}\nname = \"{t}\"\n", i + 1);
+            let _ = i;
+            th += &format!("[[thing]]\nname = \"{t}\"\n");
         }
         let biome = "[[biome]]\nname = \"plains\"\nsubtype = 7\ntile = \"grass\"\n";
-        Worldgen::from_sources(&[
-            ("tiles.toml".into(), data),
-            ("things.toml".into(), th),
-            ("biomes.toml".into(), biome.into()),
-        ])
+        Worldgen::from_sources_with(
+            &[
+                ("tiles.toml".into(), data),
+                ("things.toml".into(), th),
+                ("biomes.toml".into(), biome.into()),
+            ],
+            registry,
+        )
         .expect("load content")
     }
 
     #[test]
-    fn append_compatible_allows_appends_only() {
+    fn a_reorder_keeps_every_id_when_the_registry_answers() {
+        // The guard this REPLACES (definition-registry P5) refused a reorder outright, because
+        // ids came from corpus ORDER and a stored zone would be misread. Now the registry answers
+        // and a reorder is a non-event — which is what makes the guard's deletion safe rather than
+        // merely convenient.
+        let mut registry = std::collections::HashMap::new();
+        registry.insert((true, "grass".to_string()), 0x1000_0010u32); // kind 1
+        registry.insert((true, "dirt".to_string()), 0x1000_0020u32); // kind 2
+
+        let reordered = wg_with(&["dirt", "grass"], &["tree"], Some(registry));
+        // Positionally `dirt` would be 1 and `grass` 2. The registry says otherwise, and wins.
+        assert_eq!(reordered.bundle().tile_def_id("grass"), Some(1));
+        assert_eq!(reordered.bundle().tile_def_id("dirt"), Some(2));
+    }
+
+    #[test]
+    fn without_a_registry_a_reorder_renumbers_positionally() {
+        // The other half, asserted so the previous test cannot pass for the wrong reason: with no
+        // registry, position IS the answer — which is exactly why every consumer injects one.
         let base = wg(&["grass", "dirt"], &["tree"]);
-        // appending tiles and things keeps every existing id → safe to hot-swap
-        assert!(wg(&["grass", "dirt", "sand"], &["tree", "shrub"]).is_append_compatible_with(&base));
-        // reordering renumbers existing ids → refused
-        assert!(!wg(&["dirt", "grass"], &["tree"]).is_append_compatible_with(&base));
-        // removing a tile renumbers the rest → refused
-        assert!(!wg(&["grass"], &["tree"]).is_append_compatible_with(&base));
-        // removing a thing is caught too (separate id namespace)
-        assert!(!wg(&["grass", "dirt"], &[]).is_append_compatible_with(&base));
-        // identical corpus is trivially compatible
-        assert!(wg(&["grass", "dirt"], &["tree"]).is_append_compatible_with(&base));
+        assert_eq!(base.bundle().tile_def_id("grass"), Some(1));
+        let reordered = wg(&["dirt", "grass"], &["tree"]);
+        assert_eq!(reordered.bundle().tile_def_id("grass"), Some(2));
     }
 
     #[test]

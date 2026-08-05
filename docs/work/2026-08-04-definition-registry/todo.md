@@ -140,8 +140,11 @@ fallback as the only authority everywhere — the opposite of the point._
       proven by adding one in a test corpus. → gone; species ids move to `content/subtypes.toml`
       ([F16](forks.md#f16)) with `animal=1 human=2` carried over, so every stored pawn def reads
       the same. Adding a species is now two TOML lines.
-- [ ] Delete `is_append_compatible_with` and its call site. Acceptance: a corpus REORDER hot-swaps
-      cleanly and stored zones still render the same tiles — the guard's whole premise is gone.
+- [x] Delete `is_append_compatible_with` and its call site. Acceptance: a corpus REORDER hot-swaps
+      cleanly and stored zones still render the same tiles — the guard's whole premise is gone. →
+      deleted; a REORDERED corpus hot-reloaded live (`changed:true`, `hot-reloaded`) where the
+      guard said "restart to apply". Also fixed: `reload_content` was using the bare load and would
+      have silently dropped the injection.
 
 ## P6 — versioning live
 

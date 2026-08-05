@@ -278,19 +278,24 @@ impl Pool {
     /// Parsing happens before the lock, so an unchanged or bad corpus never blocks
     /// readers. Returns whether it swapped.
     pub fn reload_content(&self) -> Result<bool, String> {
-        let loaded = Worldgen::load_versioned(std::path::Path::new(&self.cfg.content_dir))?;
+        // Load bare first to learn the taxonomy, then re-inject the registry — the same two-pass
+        // shape as boot. Without the second pass a hot-reload would silently revert to positional
+        // resolution, which is the exact failure the registry exists to prevent.
+        let bare = Worldgen::load_versioned(std::path::Path::new(&self.cfg.content_dir))?;
+        let map = def_registry(&self.index, bare.worldgen.bundle());
+        let loaded = if map.is_empty() {
+            bare
+        } else {
+            Worldgen::load_versioned_with(std::path::Path::new(&self.cfg.content_dir), Some(map))?
+        };
         let mut state = self.content.write_r();
         if loaded.version == state.version {
             return Ok(false);
         }
-        if let Some(prev) = &state.worldgen {
-            if !loaded.worldgen.is_append_compatible_with(prev) {
-                return Err(
-                    "tile/thing ids changed (reorder or removal) — refusing hot-reload; restart to apply"
-                        .to_string(),
-                );
-            }
-        }
+        // The APPEND-COMPAT GUARD is gone (definition-registry P5). It refused a reorder or removal
+        // because tile/thing ids came from corpus ORDER, so a stored zone would be misread. Ids
+        // come from the registry now and survive both, which is the whole point — the guard was
+        // protecting a fragility that no longer exists.
         state.version = loaded.version;
         state.worldgen = Some(Arc::new(loaded.worldgen));
         Ok(true)
