@@ -412,3 +412,36 @@ opposite one:
 **P5 is complete.** Every consumer injects, the corpus carries no numbers, and all three
 workarounds the numbering had forced — the stem-parsing, the species palette, the append guard —
 are gone. 20 edge tests green, 11 shared suites green.
+
+## 2026-08-05 · P6 items 1 + 2 — versioning is live (item 3 blocked)
+
+**The apple case works at the registry.** Live, against `index.definitions`:
+
+- wolf speed 12 → 9 minted **v1 beside v0** — `805372016 v0` and `805372096 v1`, the old row
+  untouched.
+- an art-only recolour (`#ffffff` → `#ff0000`) minted **nothing** — still exactly two rows. [F12](forks.md#f12)'s
+  boundary holding where it matters.
+- the npc resolved the newest version live, so `max(version)` works end to end.
+
+An existing entity keeping its old id needs no mechanism at all: [I7](issues.md#i7) established that
+every store holds a NUMBER and nothing stores a name, so a stored row already means what it meant.
+That is what makes [F6](forks.md#f6) free rather than a migration.
+
+**[I12](issues.md#i12), found by the drill's CLEANUP rather than by any test.** Reverting speed
+9 → 12 matched v0's fingerprint and resolved the wolf *back* to v0 — leaving `max(version)` (v1)
+pointing at a definition the corpus no longer described. Only the NEWEST row may match: a revert is
+a change, so 12 → 9 → 12 gives v0, v1, v2. Every unit test passed because they only ever drove one
+transition.
+
+**Two more live bugs on the way**, both on paths no test covered: the master had no subscription to
+`definitions`, so `known_versions` read an empty cache and a data edit silently failed to bump; and
+`reload_content` used the bare load, silently dropping the registry injection on every hot-reload.
+
+**Item 3 is blocked on [B5](blockers.md#b5)** — and the finding is worth more than the item. With
+v2 live the npc resolved the right id and then read **`speed=3 thirst=0`**: `kind_id` is both the
+stored identity (which a bump must change) and an index into the corpus's positional per-def tables
+(which must stay in range). v2's kind 13 against an 11-entry table falls through to defaults.
+[I1](issues.md#i1) asserted the opposite and is corrected in place.
+
+Dev restored: `index` republished and re-seeded, wolf back to `0x30010070 speed 12 thirst 1`, trips
+flowing.

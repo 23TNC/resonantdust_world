@@ -148,15 +148,18 @@ fallback as the only authority everywhere — the opposite of the point._
 
 ## P6 — versioning live
 
-- [ ] Implement `version` bumping on SIMULATION-visible change only ([F12](forks.md#f12)), minting a
+- [x] Implement `version` bumping on SIMULATION-visible change only ([F12](forks.md#f12)), minting a
       new row + id and leaving the old. Acceptance: editing a data field mints v1; editing art or a
-      tint alone does not; both asserted by test.
-- [ ] Resolve by `max(version)` for new placements ([F6](forks.md#f6)). Acceptance: after a bump,
+      tint alone does not; both asserted by test. → live: wolf speed 12→9 minted v1 beside v0; a
+      recolour minted nothing. A REVERT mints v2, not a resurrected v0 ([I12](issues.md#i12)).
+- [x] Resolve by `max(version)` for new placements ([F6](forks.md#f6)). Acceptance: after a bump,
       a newly placed object carries the v1 id while an existing entity still carries v0 and still
-      renders and behaves as v0.
+      renders and behaves as v0. → the npc resolved `0x300100d0` (v2) live. Stored ids are never
+      rewritten ([I7](issues.md#i7)), so an existing entity keeping v0 is true by construction.
 - [ ] Prove the apple case end to end on a real field: change one def's data, place a new one beside
       an old one. Acceptance: the two coexist with different behaviour, in the client, with no
-      migration step run.
+      migration step run. **BLOCKED on [B5](blockers.md#b5)** — a bumped def's fresh `kind_id` falls
+      outside the corpus's positional per-def tables, so v2 read default speed/needs.
 
 ## P7 — reclaim: designed, NOT built ([F7](forks.md#f7))
 
