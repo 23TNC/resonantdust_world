@@ -115,8 +115,10 @@ fallback as the only authority everywhere — the opposite of the point._
       with the corpus deliberately reordered. → `Content.withRegistry` + `bindTo`; browser shows
       `17 definitions bound`, world renders, `grass`→1 `wall_smooth`→6. The REORDER half defers
       with [I11](issues.md#i11).
-- [ ] Inject it into `client/npc`'s `fetch_corpus`. Acceptance: `rd-npc` logs the wolf's def
-      `0x30010070` with the corpus reordered.
+- [x] Inject it into `client/npc`'s `fetch_corpus`. Acceptance: `rd-npc` logs the wolf's def
+      `0x30010070` with the corpus reordered. → `fetch_registry` over `/definitions`, bound by
+      name; live log shows `definitions=17` then `def 0x30010070 speed 12 thirst 1`. Best-effort:
+      an older server or unseeded index leaves the corpus answering. Reorder half: [I11](issues.md#i11).
 - [ ] DELETE `id = N` from the corpus and the explicit-id law from the loader
       ([F1](forks.md#f1), [I9](issues.md#i9)) — only now, with every consumer on the registry.
       Acceptance: an `id` key is an unknown-field load error; all three consumers still resolve;

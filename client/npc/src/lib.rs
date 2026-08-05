@@ -229,8 +229,79 @@ pub async fn fetch_corpus(server_url: &str) -> Result<resonantdust_content::load
             Some((pair.get(0)?.as_str()?.to_string(), pair.get(1)?.as_str()?.to_string()))
         })
         .collect();
-    resonantdust_content::loader::load(&sources)
-        .map_err(|errs| format!("corpus load: {} error(s), first: {:?}", errs.len(), errs.first()))
+    let bundle = resonantdust_content::loader::load(&sources)
+        .map_err(|errs| format!("corpus load: {} error(s), first: {:?}", errs.len(), errs.first()))?;
+
+    // definition-registry P5: bind the registry's numbering, so a name resolves through the TABLE
+    // rather than through whatever the corpus happens to say. Best-effort — an older server with no
+    // `/definitions`, or an unseeded index, leaves the corpus's own ids answering, which is exactly
+    // today's behaviour.
+    match fetch_registry(base, &bundle).await {
+        Ok(map) if !map.is_empty() => {
+            tracing::info!(definitions = map.len(), "definitions bound from the registry");
+            Ok(bundle.with_registry(map))
+        }
+        Ok(_) => Ok(bundle),
+        Err(err) => {
+            tracing::warn!(%err, "definition registry unavailable; resolving through the corpus");
+            Ok(bundle)
+        }
+    }
+}
+
+/// Fetch `/definitions` and bind it to the corpus by NAME, the same pairing the edge and the webgl
+/// client do: `name → tuple` is authored in the corpus, `tuple → id` is the registry.
+async fn fetch_registry(
+    base: &str,
+    bundle: &resonantdust_content::loader::Bundle,
+) -> Result<std::collections::HashMap<(bool, String), u16>, String> {
+    let url = format!("{base}/definitions");
+    let body: serde_json::Value = reqwest::get(&url)
+        .await
+        .map_err(|e| format!("GET {url}: {e}"))?
+        .json()
+        .await
+        .map_err(|e| format!("{url}: bad JSON: {e}"))?;
+    let rows = body["definitions"].as_array().ok_or_else(|| format!("{url}: no `definitions`"))?;
+
+    // tuple → highest-version id (F6: newest wins for a NAME lookup).
+    let mut newest: std::collections::HashMap<(String, String, String, String), (u32, u64)> =
+        std::collections::HashMap::new();
+    for r in rows {
+        let f = |i: usize| r.get(i).and_then(|v| v.as_str()).unwrap_or_default().to_string();
+        let (Some(id), Some(version)) =
+            (r.get(0).and_then(|v| v.as_u64()), r.get(1).and_then(|v| v.as_u64()))
+        else {
+            continue;
+        };
+        let e = newest.entry((f(2), f(3), f(4), f(5))).or_insert((id as u32, version));
+        if version > e.1 {
+            *e = (id as u32, version);
+        }
+    }
+
+    let mut out = std::collections::HashMap::new();
+    let mut bind = |is_tile: bool, names: &[String], tax: &dyn Fn(u16) -> Option<resonantdust_content::loader::Taxonomy>| {
+        for (i, name) in names.iter().enumerate() {
+            if name.is_empty() {
+                continue;
+            }
+            let Some(t) = tax((i + 1) as u16) else { continue };
+            let Some((sub, variant)) =
+                t.tuples().first().map(|(s, v)| (s.to_string(), v.to_string()))
+            else {
+                continue;
+            };
+            if let Some((id, _)) = newest.get(&(t.type_name.clone(), sub, t.kind.clone(), variant)) {
+                out.insert((is_tile, name.clone()), resonantdust_codec::object::def_kind_id(*id));
+            }
+        }
+    };
+    let tiles: Vec<String> = bundle.tile_names().to_vec();
+    let things: Vec<String> = bundle.thing_names().to_vec();
+    bind(true, &tiles, &|id| bundle.tile_taxonomy(id).cloned());
+    bind(false, &things, &|id| bundle.thing_taxonomy(id).cloned());
+    Ok(out)
 }
 
 /// Resolve a pawn kind's `(packed definition_reference, tics-per-tile)` from an already-loaded

@@ -289,3 +289,22 @@ is wrapped: a bind failure logs and the corpus's own ids answer.
 Verified in the browser — `[content] 17 definitions bound from the registry`, world renders,
 `tileDefId('grass')` → `1` and `tileDefId('wall_smooth')` → `6` through the injected map, with
 `tileTaxonomy(6)` reading back `["biome-tile","default","smooth","wall"]`.
+
+## 2026-08-05 · P5 item 3 — the npc resolves through the registry (all three injections done)
+
+`fetch_corpus` now fetches `/definitions` alongside `/content` and binds it by name, the third and
+last copy of the same pairing the edge and the webgl client do. Best-effort by design: an older
+server with no `/definitions`, or an unseeded index, leaves the corpus's own ids answering — which
+is today's behaviour, and the only sane fallback for a process that must keep driving wolves.
+
+Live:
+
+```
+npc: definitions bound from the registry  definitions=17
+npc::brains::wolves: wolf def + speed + needs resolved  def="0x30010070" speed=12 thirst_need=1
+```
+
+**Every consumer now injects the registry** — the edge (17), the webgl client (17), the npc (17) —
+which is exactly the prerequisite [I10](issues.md#i10) identified before `id = N` can leave the
+corpus. The next item is the actual cutover, and it is the first point at which the reorder drill
+([I11](issues.md#i11)) means anything.
