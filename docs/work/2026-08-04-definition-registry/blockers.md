@@ -137,7 +137,7 @@ folder. It is also what the `(tuple, version)` uniqueness in `TABLES.md` already
 **Why it needs you**: it is the corpus's authoring shape — what a content author types — and you
 have used both spellings, so I will not pick for you.
 
-## B5 — `kind_id` serves two masters, and versioning breaks their equivalence (OPEN) {#b5}
+## B5 — `kind_id` serves two masters — ✅ RESOLVED by [B6](#b6) {#b5}
 
 _2026-08-05, P6. Found by the live apple drill, not by any test._
 
@@ -176,13 +176,16 @@ an opaque index still has to be **in range**, and F5 guarantees it eventually is
    and the packed layout is frozen ([F13](forks.md#f13)), unless version rides a field it currently
    does not.
 
-**My recommendation: option 2** — it keeps the hot path a direct index, which is the constraint that
-actually binds, and the sparseness costs nothing at this scale.
+**RESOLVED 2026-08-05 by [B6](#b6), without needing any of the three options.**
 
-**But see [B6](#b6) first.** B5 is the symptom; B6 is the disease. If the registry row carries the
-definition's DATA rather than just its name, the per-def tables stop being indexed by a `kind_id` at
-all and this problem dissolves instead of being worked around. Deciding B5 before B6 risks building
-an indexing scheme for tables that should not exist.
+The problem only existed because the master allocated a FRESH `kind_id` for a version the corpus did
+not contain — an id with no position to index. With the corpus retaining every live version, every
+live version HAS a position, so `kind_id = position` holds for all of them and no fresh coordinate
+is ever needed. The two numbers never diverge.
+
+Worth keeping as a record of the near miss: I recommended option 2 (sparse tables keyed by registry
+`kind_id`), which would have built an indexing scheme to work around ids that should not have been
+allocated. The symptom was real; the fix was upstream of it.
 
 **State right now**: the dev registry holds wolf v0/v1/v2 from the drill and `max(version)` resolves
 to v2, so the npc reads default speed. Wiping and re-seeding `index` returns dev to one clean row
