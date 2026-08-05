@@ -189,13 +189,23 @@ impl Pool {
                     }
                 }
             })
-            .on_error(|_ctx, err| tracing::error!(%err, "cold_shards subscription error"))
-            .subscribe(["SELECT * FROM cold_shards"]);
+            .on_error(|_ctx, err| tracing::error!(%err, "index subscription error"))
+            // `definitions` rides the SAME subscription as the routing rows: the edge serves the
+            // registry to clients at `/definitions` (definition-registry P4), and one subscription
+            // means one apply barrier — the edge is never half-ready with routes but no defs.
+            .subscribe(["SELECT * FROM cold_shards", "SELECT * FROM definitions"]);
         if !matches!(tokio::time::timeout(CONNECT_TIMEOUT, applied_rx).await, Ok(Ok(()))) {
             return Err("cold_shards subscription apply timed out".to_string());
         }
         std::mem::forget(sub); // lives for the whole process; Pool stays Send + Sync
-        tracing::info!(routes = index.db().cold_shards().count(), "index ready");
+        {
+            use crate::bindings::index::definitions_table::DefinitionsTableAccess as _;
+            tracing::info!(
+                routes = index.db().cold_shards().count(),
+                definitions = index.db().definitions().count(),
+                "index ready"
+            );
+        }
 
         // Load the content corpus worldgen seeds zones from. Non-fatal: a
         // server with no content can still route + relay zones that already

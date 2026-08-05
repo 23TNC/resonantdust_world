@@ -24,6 +24,7 @@
 //!   - `getContentVersion()` — the debug HUD's live content row.
 
 import { Content } from "../../client/wasm";
+import { definitionRegistry } from "./definitionRegistry";
 import { assertLinkedCellTable } from "../world/linkedCell";
 
 // build-walls P0 (D1): pin the neighbor→cell formula against the authored 16-row table at
@@ -98,6 +99,11 @@ async function fetchContent(gatewayUrl: string): Promise<ContentPayload> {
 export async function loadContent(gatewayUrl?: string): Promise<Content> {
   if (gatewayUrl) {
     try {
+      // ORDER MATTERS (definition-registry P4): the registry loads BEFORE the corpus swaps in, so
+      // a client is never holding content whose ids it cannot resolve. A registry failure is
+      // non-fatal — the corpus still loads and every STORED id still decodes from its own bits
+      // (I6); only NAME resolution is unavailable until the next fetch.
+      await loadDefinitions(gatewayUrl);
       swapTo(await fetchContent(gatewayUrl));
       return content!;
     } catch (err) {
@@ -108,6 +114,16 @@ export async function loadContent(gatewayUrl?: string): Promise<Content> {
   return content!;
 }
 
+/** Fetch the definition registry, logging rather than throwing: the corpus must still boot if the
+ *  registry is unavailable (an index that has not been seeded yet, an older server). */
+async function loadDefinitions(serverBase: string): Promise<void> {
+  try {
+    await definitionRegistry.load(serverBase);
+  } catch (err) {
+    console.warn("[content] definition registry unavailable; name resolution degraded", err);
+  }
+}
+
 /** Re-fetch `/content` and hot-swap if its version differs from the live one.
  *  Rebuilds the wasm `Content`, frees the old, and fires {@link onContentReloaded}.
  *  Returns whether it swapped. A parse error on the new corpus propagates with the
@@ -115,6 +131,9 @@ export async function loadContent(gatewayUrl?: string): Promise<Content> {
 export async function reloadContent(gatewayUrl: string): Promise<boolean> {
   const payload = await fetchContent(gatewayUrl);
   if (payload.version === contentVersion) return false;
+  // Same ordering as the boot path: the registry is refreshed BEFORE the new corpus goes live, so
+  // a hot-swap never leaves the client holding defs it cannot number.
+  await loadDefinitions(gatewayUrl);
   swapTo(payload);
   for (const cb of reloadListeners) cb();
   return true;

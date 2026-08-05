@@ -191,3 +191,24 @@ to confirm the baseline still reproduces, and that result is the first real entr
   multiplier: `alpha 64` kept (it is what restored markings), **LR 1e-4 → 5e-5**, everything else
   held — 1024, `quad_dataset_1024`, batch 4, AdamW, 20 epochs, samples at 1024. That is 2×
   run-6's signal, sitting between two measured failures rather than guessed at.
+- **2026-08-03 · Run-10 (stage one, full corpus) trained; five generations kept.** 701 images,
+  3520 steps, loss 0.025 → 0.0188, `TRAIN_EXIT_OK`. **The body-plan contrast works**: quadrupeds
+  render as low horizontal masses with unbroken bottom edges — the RimWorld convention, no
+  articulated limbs — while the biped stands upright and the legless coils. Runs 6–9 could not
+  express that distinction, never having seen a non-quadruped.
+
+  The user's per-subject read of the 20-generation grid: **tiger g08 · duck g10 · wolf g10 ·
+  bear g11 · snake g12**, with g07 consistently just-too-early on four of five and the wolf's
+  **tail splitting in two from g07 onward**. No single generation is best at everything; the
+  optima span a four-generation window. Notably `e07`'s lineage warm-started from **epoch 8** of
+  its own general stage.
+
+  Five checkpoints promoted to `models/loras/` under a new naming scheme —
+  `rd_full_anima_r10_g<NN>` (corpus, base, run, generation). **436 MB each, 2.2 GB total against
+  16 TB free.** Provenance in [`checkpoints.md`](checkpoints.md). The old `e07`/`quad2`/`quad3`
+  names encode only an epoch, which is how the two-stage lineage stayed invisible
+  ([I11](issues.md#i11)); the new scheme puts corpus and base on the filename.
+
+  **Open defect, new in run-10:** colour collapsed toward white/grey subjects on a tinted plate —
+  the tiger is white with black stripes rather than orange-tan. Not present in run-9. Untested
+  whether a quadruped specialist stage recovers it.

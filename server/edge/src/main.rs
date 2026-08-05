@@ -128,6 +128,7 @@ async fn main() {
         .route("/content", get(serve_content))
         .route("/content-version", get(serve_content_version))
         .route("/content/refresh", post(refresh_content))
+        .route("/definitions", get(serve_definitions))
         .route("/textures/master/{*stem}", get(serve_master))
         .route("/textures/preview/{*stem}", get(serve_preview))
         .route("/textures/meta/{*stem}", get(serve_meta))
@@ -233,6 +234,40 @@ async fn serve_content(State(state): State<AppState>) -> impl IntoResponse {
             .into_response(),
         None => (StatusCode::SERVICE_UNAVAILABLE, "content unavailable").into_response(),
     }
+}
+
+/// `GET /definitions` — the DEFINITION REGISTRY: `{ "definitions": [[id, version, type, subType,
+/// kind, variant], …] }`, sorted by id (work `2026-08-04-definition-registry` P4).
+///
+/// The corpus describes and the master numbers; this is how a client learns the numbering so it can
+/// resolve `name → tuple → id` locally, with no round-trip and no names on the action wire ([F9]).
+///
+/// Served straight off the edge's live `index` subscription, so it is current by construction —
+/// a row the master adds arrives here without a poll. Clients still re-fetch on a `/content`
+/// version change, which is the ordering that keeps a client from holding content whose ids it
+/// lacks.
+async fn serve_definitions(State(state): State<AppState>) -> impl IntoResponse {
+    use crate::bindings::index::definitions_table::DefinitionsTableAccess as _;
+    use spacetimedb_sdk::{DbContext as _, Table as _};
+    let mut rows: Vec<serde_json::Value> = state
+        .pool
+        .index
+        .db()
+        .definitions()
+        .iter()
+        .map(|d| {
+            serde_json::json!([d.id, d.version, d.type_name, d.sub_type, d.kind, d.variant])
+        })
+        .collect();
+    // Sorted by id so the payload is byte-stable for a given table state — a client can compare
+    // it cheaply and the fingerprint below means something.
+    rows.sort_by_key(|r| r[0].as_u64().unwrap_or(0));
+    (
+        StatusCode::OK,
+        [(axum::http::header::CONTENT_TYPE, "application/json")],
+        serde_json::json!({ "definitions": rows }).to_string(),
+    )
+        .into_response()
 }
 
 /// `GET /content-version` — the cheap corpus fingerprint the client polls.
