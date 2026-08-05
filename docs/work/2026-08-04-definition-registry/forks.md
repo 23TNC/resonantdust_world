@@ -222,3 +222,36 @@ readable content spellings to save a field. **Adding `name` to the registry row*
 the identity, it would need its own uniqueness rule, and two rows of one tuple's versions would
 duplicate it. **Making callers pass the 4-tuple** — `thing = { type = "biome-thing", subType =
 "default", kind = "reed", variant = 0 }` in every biome scatter row, to express what `"reed"` says.
+
+## F15 — only TILES and THINGS lose their ids; the golden's id section retires {#f15}
+
+_2026-08-05, resolved at the cutover. Two questions the plan left implicit._
+
+**Which defs lose `id = N`.** Five kinds carry explicit ids: tiles, things, materials, needs,
+conditions. **Only tiles and things are in the registry**, because only they have a taxonomy and a
+packed `definition_reference`. Materials, needs and conditions keep the id law untouched — their
+ids are stored data too (a `need_id` lives inside a payload word) but nothing numbers them but the
+corpus, so removing their ids would leave them with no authority at all rather than a better one.
+
+So [`toml-content` F1](../2026-08-04-toml-content/forks.md#f1) is not deleted, it is **narrowed**:
+still the law for materials/needs/conditions, superseded by the registry for tiles/things.
+
+**What the golden's `name → kind_id` section guards afterwards.** Nothing — so it retires.
+
+The section loads the corpus with no registry injected, so once the corpus carries no ids it can
+only pin corpus ORDER ([I10](issues.md#i10)). The same wrong-reason problem swallows the master's
+`the_corpus_expands_to_the_ids_it_already_has` test, which seeds from those ids: after the cutover
+its seed is positional, so it asserts "corpus order has not changed" while reading as "identity is
+preserved".
+
+**The real guard after the cutover is the registry itself, and it is already built.** A fresh DB
+seeded from a reordered corpus genuinely gets different numbers — and that is correct, because a
+fresh DB is a fresh world. An EXISTING registry is what must never be contradicted, and
+`ensure_definition` already refuses to: a colliding id is rejected by name, and so is a second id
+for one tuple+version. The invariant moved from a fixture to a constraint, which is the stronger
+place for it.
+
+Rejected: **giving the golden a synthetic registry to load** — it would assert that a map I wrote in
+the test matches itself. **Keeping the section as-is** — a green test that proves corpus order while
+appearing to prove identity is worse than no test, and this stream has already caught two of those
+([I11](issues.md#i11), and the reorder drills).

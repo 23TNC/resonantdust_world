@@ -26,6 +26,11 @@ stayed invisible until 2026-08-03 ([I11](issues.md#i11)).
 
 ## Kept
 
+**ALL 20 generations of run-10 are saved** (`rd_full_anima_r10_g01`…`g20`) — **8.6 GB**, against
+16 TB free on the array. Keeping the lot rather than a shortlist cost nothing and means any later
+question ("when exactly did the coil go?") is answerable without retraining. The five below are
+the ones the user singled out.
+
 ### Run-10 — stage one, full corpus
 Fresh (no warm start) · `animagine-xl-4.0` · 701 images / 6 body plans · 768 · `dim 64 / alpha 64`
 (1.0× scale) · `LR 5e-5` unet, `2.5e-5` TE · batch 4 · bf16 · AdamW · 20 generations / 3520 steps ·
@@ -51,6 +56,23 @@ having never seen a non-quadruped.
 **Open defect:** colour collapsed toward white/grey on a tinted plate — the tiger is white with
 black stripes rather than orange-tan. New in run-10; not present in run-9. Untested whether a
 quadruped specialist stage recovers it.
+
+## Run-11 — stage two, quadruped specialist
+
+Warm-started from **`rd_full_anima_r10_g08`** · `quad_dataset` (459 images → **765** after the
+direction weighting E 1× / N 2× / S 2×) · 768 · same `dim 64 / alpha 64`, `LR 5e-5` · 15
+generations / 2880 steps. Script: `train_run11.sh`. Verified at launch: `load network weights …
+<All keys matched successfully>`.
+
+**Why g08 and not g10** (the user, 2026-08-03): g08 carries the least accumulated defect — tiger,
+duck and bear all acceptable, wolf's tail only *just* beginning to diverge, wolf's head a little
+high. g10 has a better wolf head but by then the tail has diverged and the bear's body has too.
+Starting earlier leaves room to *nudge* the wolf rather than inherit a settled defect. The snake's
+coil is soft at g08 and only truly lost around g16 — deprioritised, and irrelevant to a
+quadruped-only stage.
+
+This reproduces `e07`'s real lineage for the first time: general stage → specialist warm-started
+from it, run-3 having taken run-2 **epoch 8** — the same generation the user picked independently.
 
 ## Not kept
 
