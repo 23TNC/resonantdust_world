@@ -255,3 +255,27 @@ Rejected: **giving the golden a synthetic registry to load** — it would assert
 the test matches itself. **Keeping the section as-is** — a green test that proves corpus order while
 appearing to prove identity is worse than no test, and this stream has already caught two of those
 ([I11](issues.md#i11), and the reorder drills).
+
+## F16 — non-biome subtypes get `content/subtypes.toml`; biomes keep authoring theirs inline {#f16}
+
+_2026-08-05, forced by deleting the species palette ([P5](todo.md))._
+
+Killing `pawn_species_subtype_id` leaves the master with no number for `animal` / `human`. Biomes
+have never had this problem — `biomes.toml` authors `subtype = 6` on the biome record itself,
+because a biome IS a record and its subtype id is an attribute of it. A species has no record of its
+own; it exists only as a segment of other defs' taxonomies.
+
+**Chosen**: `content/subtypes.toml`, authoring `(type, name) → id` for subtypes that have no record
+of their own. Pawn species today; any future type's subtype axis lands here too. `animal = 1` and
+`human = 2` carry the palette's numbers over unchanged, which is what keeps every stored pawn def
+reading the same.
+
+Rejected: **allocating species ids in the master** — it would have to recover the existing mapping
+by decoding `subtype_id` out of registry rows to avoid renumbering, which turns a pure function of
+the corpus into a stateful one for two numbers that change roughly never. **Moving biome subtypes
+in too** — one file for all subtype ids is tidier in the abstract, but a biome's id is already
+authored on the thing it belongs to, stored zones depend on it, and moving it would be churn against
+a working design to satisfy symmetry.
+
+The asymmetry is worth stating plainly rather than hiding: **a subtype id is authored on its own
+record where one exists, and in `subtypes.toml` where none does.**

@@ -354,3 +354,34 @@ event.**
 
 Verified: 83 tests across the shared workspace (incl. the re-blessed golden), 5 `defs::`, 2
 `def_fixture::`, and the live browser drill.
+
+## 2026-08-05 · P5 items 6 + 7 — the stem-parsing and the species palette die
+
+**The npc no longer reads taxonomy off a file path.** `resolve_thing_in` used to take the texture
+stem, `split('/')`, `nth(1)`, and look the segment up in a code-owned palette — a definition's
+identity derived from where its pictures live. It now takes the def **whole** from the registry,
+whose id already carries type, species, kind and variant, because that is what the registry numbers.
+
+That forced a shape change worth naming: the injection now carries the **full** `definition_reference`
+rather than just the kind half. Dropping the type/subtype halves at bind time was precisely what had
+made the stem-parsing necessary. `Bundle::definition_reference` hands the whole id back; the
+`*_def_id` accessors extract the kind half from it.
+
+**No registry is now a hard error for a pawn**, deliberately, and the fixture asserts both
+directions: without one, `resolve_thing_in` fails naming the registry; with one, the wolf resolves
+to `0x30010070`. A guessed subtype would be adopted and rendered wrong forever — the same stance the
+stem-parsing took, for the same reason.
+
+**The species palette is deleted**, and its own comment said when it could be: *"a content registry
+can own these only once it guarantees append-only numbering."* It does — `index.definitions` never
+renumbers a row and refuses to hand one id to two definitions.
+
+Species ids move to **`content/subtypes.toml`** ([F16](forks.md#f16)), `animal = 1` and `human = 2`
+carried over unchanged so every stored pawn def reads the same. The asymmetry is stated rather than
+hidden: **a subtype id is authored on its own record where one exists** (a biome authors its own,
+because a biome IS a record) **and in `subtypes.toml` where none does** (a species exists only as a
+segment of other defs' taxonomies). Adding a species is now two lines of TOML and no code.
+
+Live after both deletions: edge `definitions=17`, npc `def=0x30010070 speed 12 thirst 1`, and
+`grep` finds no `split('/')` on a stem and no `pawn_species_subtype_id` anywhere. 85 tests green
+across the shared workspace, 5 `defs::`, 2 `def_fixture::`.

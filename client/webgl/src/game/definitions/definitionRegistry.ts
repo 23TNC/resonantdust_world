@@ -87,11 +87,11 @@ export class DefinitionRegistry {
     thingNames(): string[];
     tileTaxonomy(defId: number): string[] | undefined;
     thingTaxonomy(objectId: number): string[] | undefined;
-    withRegistry(isTile: Uint8Array, names: string[], kindIds: Uint16Array): void;
+    withRegistry(isTile: Uint8Array, names: string[], defs: Uint32Array): void;
   }): number {
     const isTile: number[] = [];
     const names: string[] = [];
-    const kindIds: number[] = [];
+    const defs: number[] = [];
     const bind = (tile: boolean, list: string[], tax: (i: number) => string[] | undefined) => {
       list.forEach((name, i) => {
         if (!name) return; // a retired id — a hole stays a hole
@@ -101,13 +101,15 @@ export class DefinitionRegistry {
         if (id === null) return;
         isTile.push(tile ? 1 : 0);
         names.push(name);
-        // The kind half of the packed def — `kind_id:12 | variant_id:4`, so shift off the variant.
-        kindIds.push((id >>> 4) & 0xfff);
+        // The FULL packed def. The kind half is what `tileDefId` serves; the type/subtype halves
+        // are the taxonomy's numbering too, and dropping them here is what used to force a caller
+        // to recover a pawn's species from its texture path.
+        defs.push(id >>> 0);
       });
     };
     bind(true, content.tileNames(), (i) => content.tileTaxonomy(i));
     bind(false, content.thingNames(), (i) => content.thingTaxonomy(i));
-    content.withRegistry(Uint8Array.from(isTile), names, Uint16Array.from(kindIds));
+    content.withRegistry(Uint8Array.from(isTile), names, Uint32Array.from(defs));
     return names.length;
   }
 }

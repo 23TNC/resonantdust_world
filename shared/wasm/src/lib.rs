@@ -116,9 +116,9 @@ impl Content {
     /// nothing. Today the two agree by construction (the registry is seeded from those ids) — this
     /// exists so that when the corpus stops carrying numbers, resolution keeps working unchanged.
     #[wasm_bindgen(js_name = withRegistry)]
-    pub fn with_registry(&mut self, is_tile: Vec<u8>, names: Vec<String>, kind_ids: Vec<u16>) {
+    pub fn with_registry(&mut self, is_tile: Vec<u8>, names: Vec<String>, defs: Vec<u32>) {
         let mut map = std::collections::HashMap::new();
-        for ((t, n), id) in is_tile.into_iter().zip(names).zip(kind_ids) {
+        for ((t, n), id) in is_tile.into_iter().zip(names).zip(defs) {
             map.insert((t != 0, n), id);
         }
         // `with_registry` consumes; swap through a placeholder-free take/rebuild.
@@ -978,7 +978,7 @@ mod tests {
     #[test]
     fn loads_content_and_maps_def_to_colour() {
         // Native exercise of the same Bundle the `Content` surface wraps.
-        let toml = "[[tile]]\nid = 1\nname = \"grass\"\ntexture = \"white\"\ntint = \"#4b573e\"\n";
+        let toml = "[[tile]]\nname = \"grass\"\ntexture = \"white\"\ntint = \"#4b573e\"\n";
         let bundle = dsl::load(&[("tiles.toml".into(), toml.into())]).expect("load");
         let id = bundle.tile_def_id("grass").unwrap();
         assert_eq!(bundle.color_bg_for_def(id), Some(0x4b573e));

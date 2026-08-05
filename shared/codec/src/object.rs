@@ -125,28 +125,16 @@ pub fn def_sans_variant(r: u32) -> u32 {
     r & !(VARIANT_ID_MASK as u32)
 }
 
-// ── pawn species — `TYPE_PAWN`'s `subtype_id` palette ───────────────────────────────────────────
+// ── pawn species — RETIRED (definition-registry P5) ────────────────────────────────────────────
 //
-// Code-owned like the type palette (few and fixed; APPEND-ONLY), not content-derived: the
-// manifest's subcategories are alphabetical, so a new species inserting mid-list would renumber
-// stored defs — a content registry can own these only once it guarantees append-only numbering.
-// Names match the texture tree's subtype segment (`pawn/<species>/<kind>/…`, VARIABLES.md:
-// the folder taxonomy and the definition fields are 1:1).
-
-/// `pawn/animal/…` — beasts (the wolf).
-pub const PAWN_SPECIES_ANIMAL: u16 = 1;
-/// `pawn/human/…` — humans.
-pub const PAWN_SPECIES_HUMAN: u16 = 2;
-
-/// The `subtype_id` for a pawn species NAME (the texture tree's subtype segment), or `None`
-/// for a species the palette doesn't know (the caller should fail loudly, not guess).
-pub fn pawn_species_subtype_id(name: &str) -> Option<u16> {
-    match name {
-        "animal" => Some(PAWN_SPECIES_ANIMAL),
-        "human" => Some(PAWN_SPECIES_HUMAN),
-        _ => None,
-    }
-}
+// `PAWN_SPECIES_ANIMAL/HUMAN` and `pawn_species_subtype_id` lived here because the manifest's
+// subcategories were alphabetical, so a new species inserting mid-list would renumber stored defs:
+// "a content registry can own these only once it guarantees append-only numbering."
+//
+// It does now. `index.definitions` numbers every `(type, subType, kind, variant)` tuple, never
+// renumbers an existing row, and refuses to hand one id to two definitions — so a species is a
+// corpus edit (`subType = ["reptile"]`) with no code change, and its number is allocated once and
+// kept. Git holds the palette.
 
 // ── type_reference : u16 = type_id:4 | subtype_id:12 (the shareable type half) ──────────────────
 //

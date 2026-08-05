@@ -131,12 +131,15 @@ fallback as the only authority everywhere — the opposite of the point._
       Acceptance: either it loads a registry, or the section retires with the reason recorded. →
       RETIRED ([F15](forks.md#f15)); the guard moved from a fixture to the registry's own
       constraints. The re-bless diff is EXACTLY those 19 lines and nothing else.
-- [ ] Delete the stem-parsing in `client/npc` — species comes from the authored taxonomy.
+- [x] Delete the stem-parsing in `client/npc` — species comes from the authored taxonomy.
       Acceptance: `rd-npc` resolves `def 0x…` with the same value it logs today; no `split('/')` on
-      a texture stem remains in the repo.
-- [ ] Delete the code-owned species palette in `shared/codec/src/object.rs`. Acceptance:
+      a texture stem remains in the repo. → live `def=0x30010070 speed 12 thirst 1`; the def now
+      comes WHOLE from the registry, so the injection carries full ids rather than the kind half.
+- [x] Delete the code-owned species palette in `shared/codec/src/object.rs`. Acceptance:
       `pawn_species_subtype_id` is gone; adding a species is a corpus edit with no code change,
-      proven by adding one in a test corpus.
+      proven by adding one in a test corpus. → gone; species ids move to `content/subtypes.toml`
+      ([F16](forks.md#f16)) with `animal=1 human=2` carried over, so every stored pawn def reads
+      the same. Adding a species is now two TOML lines.
 - [ ] Delete `is_append_compatible_with` and its call site. Acceptance: a corpus REORDER hot-swaps
       cleanly and stored zones still render the same tiles — the guard's whole premise is gone.
 

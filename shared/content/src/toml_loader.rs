@@ -32,6 +32,19 @@ struct Corpus {
   need: Vec<NeedToml>,
   #[serde(default)]
   condition: Vec<ConditionToml>,
+  #[serde(default)]
+  subtype: Vec<SubtypeToml>,
+}
+
+/// `(type, name) → subtype_id` for a subtype axis with no record of its own — pawn species today
+/// (definition-registry F16). A biome authors its own `subtype` on the biome record instead.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SubtypeToml {
+  #[serde(rename = "type")]
+  type_name: String,
+  name: String,
+  id: u16,
 }
 
 #[derive(Deserialize)]
@@ -338,6 +351,7 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
         all.material.extend(c.material);
         all.need.extend(c.need);
         all.condition.extend(c.condition);
+        all.subtype.extend(c.subtype);
       }
       Err(e) => errors.push(LoadError { file: name.clone(), message: format!("toml: {e}") }),
     }
@@ -358,6 +372,8 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
   // existing registry overrides it through `Bundle::with_registry`, which is what makes a reorder
   // harmless. Materials/needs/conditions above keep the explicit id law: nothing numbers them but
   // the corpus, so removing their ids would leave them with no authority rather than a better one.
+  let subtypes: Vec<(String, String, u16)> =
+    all.subtype.iter().map(|s| (s.type_name.clone(), s.name.clone(), s.id)).collect();
   let tiles: Vec<Option<&TileToml>> = all.tile.iter().map(Some).collect();
   let things: Vec<Option<&ThingToml>> = all.thing.iter().map(Some).collect();
   if !errors.is_empty() {
@@ -438,6 +454,7 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
       Err(e) => errors.push(e),
     }
   }
+  b.subtypes = subtypes;
 
   if !errors.is_empty() {
     return Err(errors);
@@ -937,7 +954,8 @@ name = "hunger"
     assert!(!b.has_registry());
 
     let mut map = std::collections::HashMap::new();
-    map.insert((true, "grass".to_string()), 77u16);
+    // A full packed def whose KIND half is 77 (`kind_id:12 | variant_id:4` → 77 << 4).
+    map.insert((true, "grass".to_string()), 0x1000_0000u32 | (77u32 << 4));
     let b = b.with_registry(map);
     assert!(b.has_registry());
     assert_eq!(b.tile_def_id("grass"), Some(77), "the registry OVERRIDES the authored id");

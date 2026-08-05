@@ -194,9 +194,9 @@ impl Bot {
 /// Resolve a pawn kind's `(packed definition_reference, tics-per-tile)` from the world server's
 /// `/content` corpus — the SAME corpus the browser renders with (first-pawns F5: content is the
 /// authority; a pinned `KIND_*` constant drifts the moment `things.toml` reorders). The def is the
-/// REAL packed form (human-pawns P0): `TYPE_PAWN | species | kind | variant 0`, species read off
-/// the kind's texture stem (`pawn/<species>/…` — the folder taxonomy and the definition fields
-/// are 1:1) through the code-owned palette. Speed is content too (pawn-movement F1/F5): the
+/// REAL packed form (human-pawns P0): `TYPE_PAWN | species | kind | variant 0`, taken whole from
+/// the DEFINITION REGISTRY — the taxonomy the corpus authors, numbered by the server. It used to be
+/// reassembled here from the texture stem's second segment via a code palette. Speed is content too (pawn-movement F1/F5): the
 /// authored tics-per-tile, already resolved through `codec::speed::resolve` (unauthored →
 /// default). The payload is `{ "toml": [[name, source], …] }`, loaded through shared/content.
 pub async fn resolve_thing(server_url: &str, name: &str) -> Result<(u32, u16), String> {
@@ -254,7 +254,7 @@ pub async fn fetch_corpus(server_url: &str) -> Result<resonantdust_content::load
 async fn fetch_registry(
     base: &str,
     bundle: &resonantdust_content::loader::Bundle,
-) -> Result<std::collections::HashMap<(bool, String), u16>, String> {
+) -> Result<std::collections::HashMap<(bool, String), u32>, String> {
     let url = format!("{base}/definitions");
     let body: serde_json::Value = reqwest::get(&url)
         .await
@@ -293,7 +293,7 @@ async fn fetch_registry(
                 continue;
             };
             if let Some((id, _)) = newest.get(&(t.type_name.clone(), sub, t.kind.clone(), variant)) {
-                out.insert((is_tile, name.clone()), resonantdust_codec::object::def_kind_id(*id));
+                out.insert((is_tile, name.clone()), *id);
             }
         }
     };
@@ -311,26 +311,18 @@ pub fn resolve_thing_in(bundle: &resonantdust_content::loader::Bundle, name: &st
     let kind = bundle
         .thing_object_id(name)
         .ok_or_else(|| format!("thing `{name}` not in the corpus"))?;
-    // Species = the texture stem's subtype segment (`pawn/<species>/<kind>`). No stem or an
-    // unknown species is a HARD error — a mis-subtyped def would be adopted/rendered wrong
-    // forever, so fail at resolve, not at draw.
-    let stem = bundle
-        .visual_for_object(kind)
-        .and_then(|v| v.texture)
-        .ok_or_else(|| format!("pawn `{name}`: no texture stem in the corpus (species unresolvable)"))?;
-    let species_name = stem
-        .split('/')
-        .nth(1)
-        .ok_or_else(|| format!("pawn `{name}`: stem `{stem}` has no subtype segment"))?
-        .to_string();
-    let species = resonantdust_codec::object::pawn_species_subtype_id(&species_name)
-        .ok_or_else(|| format!("pawn `{name}`: species `{species_name}` not in the palette"))?;
-    let def = resonantdust_codec::object::pack_definition_from_ids(
-        resonantdust_codec::object::TYPE_PAWN,
-        species,
-        kind,
-        0, // variant 0 = canonical art; the payload's PART defs carry the dressed variants
-    );
+    // The def comes from the REGISTRY (definition-registry P5): its id already carries the whole
+    // taxonomy — type, species, kind, variant — because that is what the registry numbers. The
+    // species nibble used to be recovered by splitting the texture stem on `/` and looking the
+    // segment up in a code-owned palette, i.e. a definition's identity derived from where its
+    // pictures live. That is gone.
+    //
+    // No registry (an older server, an unseeded index) is a HARD error rather than a guess: a
+    // mis-subtyped pawn would be adopted and rendered wrong forever, so fail at resolve, not at
+    // draw — the same stance the stem-parsing took, for the same reason.
+    let def = bundle.definition_reference(false, name).ok_or_else(|| {
+        format!("pawn `{name}`: not in the definition registry (unseeded index, or an older server)")
+    })?;
     Ok((def, resonantdust_codec::speed::resolve(bundle.thing_speed(kind))))
 }
 
@@ -391,28 +383,26 @@ mod def_fixture {
     }
 
     #[test]
-    fn packed_pawn_defs_are_pinned() {
+    fn a_pawn_without_a_registry_fails_loudly() {
+        // definition-registry P5: the species used to be recovered from the texture stem, so a
+        // corpus alone could resolve a pawn. It cannot now, and that is deliberate — a guessed
+        // subtype would be adopted and rendered wrong forever. The pinned VALUES moved to
+        // `master::defs::the_corpus_expands_to_the_ids_it_already_has`, which checks them against
+        // the same corpus the registry is seeded from.
         let Some(bundle) = corpus() else { return };
-        // (name, packed definition_reference, tics-per-tile) as of 2026-08-04. The wolf's
-        // `0x30010070` is the value the live npc logs on every boot.
-        for (name, want_def, want_speed) in
-            [("wolf", 0x3001_0070u32, 12u16), ("human_female", 0x3002_00A0, 16), ("human_male", 0x3002_00B0, 16)]
-        {
-            let (def, speed) = super::resolve_thing_in(&bundle, name).expect(name);
-            assert_eq!(def, want_def, "{name}: packed def moved (was {want_def:#010x}, now {def:#010x})");
-            assert_eq!(speed, want_speed, "{name}: speed moved");
-        }
+        let err = super::resolve_thing_in(&bundle, "wolf").expect_err("no registry ⇒ no def");
+        assert!(err.contains("definition registry"), "{err}");
     }
 
     #[test]
-    fn species_comes_from_the_stem_today() {
-        // The coupling P5 removes, asserted so its removal is a deliberate, visible change:
-        // the species nibble is the texture stem's SECOND segment, not an authored field.
+    fn an_injected_registry_yields_the_pinned_def() {
+        // The other half: WITH the registry, the wolf resolves to the value the live npc logs.
         let Some(bundle) = corpus() else { return };
-        let (def, _) = super::resolve_thing_in(&bundle, "wolf").unwrap();
-        assert_eq!(
-            resonantdust_codec::object::def_subtype_id(def),
-            resonantdust_codec::object::pawn_species_subtype_id("animal").unwrap(),
-        );
+        let mut map = std::collections::HashMap::new();
+        map.insert((false, "wolf".to_string()), 0x3001_0070u32);
+        let bundle = bundle.with_registry(map);
+        let (def, speed) = super::resolve_thing_in(&bundle, "wolf").expect("wolf");
+        assert_eq!(def, 0x3001_0070, "the wolf's packed def moved");
+        assert_eq!(speed, 12);
     }
 }

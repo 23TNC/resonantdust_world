@@ -75,7 +75,7 @@ impl Worldgen {
     /// corpus REORDER without renumbering — which is the fragility this whole stream removes.
     pub fn load_versioned_with(
         content_dir: &Path,
-        registry: Option<std::collections::HashMap<(bool, String), u16>>,
+        registry: Option<std::collections::HashMap<(bool, String), u32>>,
     ) -> Result<LoadedWorldgen, String> {
         let sources = resonantdust_content::content::read_content_dir(content_dir)
             .map_err(|e| format!("read content {}: {e}", content_dir.display()))?;
@@ -103,7 +103,7 @@ impl Worldgen {
     /// As [`from_sources`], with the definition registry injected when available.
     pub fn from_sources_with(
         sources: &[(String, String)],
-        registry: Option<std::collections::HashMap<(bool, String), u16>>,
+        registry: Option<std::collections::HashMap<(bool, String), u32>>,
     ) -> Result<Worldgen, String> {
         let bundle = resonantdust_content::load(sources).map_err(|errs| {
             errs.iter().map(|e| format!("{}: {}", e.file, e.message)).collect::<Vec<_>>().join("; ")

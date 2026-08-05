@@ -374,8 +374,10 @@ impl Pool {
     }
 }
 
-/// `name → kind_id` as the registry serves it, keyed `(is_tile, name)`.
-type DefRegistry = std::collections::HashMap<(bool, String), u16>;
+/// `name → definition_reference` as the registry serves it, keyed `(is_tile, name)`. The FULL
+/// packed def: the kind half is what `tile_def_id` serves, and the type/subtype halves are what let
+/// a caller read a pawn's species off the id instead of off an art path.
+type DefRegistry = std::collections::HashMap<(bool, String), u32>;
 
 /// Build the resolution map from the edge's live `index` subscription, pairing each registry row
 /// with the corpus def that carries the same taxonomy.
@@ -412,7 +414,7 @@ fn def_registry(index: &bindings::index::DbConnection, bundle: &Bundle) -> DefRe
             };
             let key = (tax.type_name.clone(), sub, tax.kind.clone(), variant);
             if let Some((id, _)) = newest.get(&key) {
-                out.insert((is_tile, name.clone()), resonantdust_codec::object::def_kind_id(*id));
+                out.insert((is_tile, name.clone()), *id);
             }
         }
     };

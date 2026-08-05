@@ -13,8 +13,8 @@
 //! is the single thing the registry exists to prevent.
 
 use resonantdust_codec::object::{
-    pack_definition_from_ids, pawn_species_subtype_id, KIND_ID_LIMIT, TYPE_BIOME_THING,
-    TYPE_BIOME_TILE, TYPE_PAWN, VARIANT_ID_LIMIT,
+    pack_definition_from_ids, KIND_ID_LIMIT, TYPE_BIOME_THING, TYPE_BIOME_TILE, TYPE_PAWN,
+    VARIANT_ID_LIMIT,
 };
 use resonantdust_content::loader::{Bundle, Taxonomy};
 
@@ -251,15 +251,16 @@ fn type_id_of(type_name: &str) -> Option<u8> {
 
 /// The `subtype_id` a taxonomy's `subType` name maps to, for a given type.
 ///
-/// Two sources, because subtype means two different things: for a biome family it is the BIOME,
-/// authored in `biomes.toml` and stored in zones; for a pawn it is the SPECIES, still in the codec
-/// palette until [P5] moves it to content. `"default"` is the reserved biome-agnostic 0.
+/// Three sources, because subtype means different things per type and each authors it where it
+/// belongs (F16): `"default"` is the reserved biome-agnostic `0`; a BIOME authors its id on the
+/// biome record; anything else — a pawn SPECIES today — authors it in `subtypes.toml`. All three
+/// are content now; the code-owned species palette is gone.
 fn subtype_id_of(bundle: &Bundle, type_id: u8, sub_type: &str) -> Option<u16> {
-    if type_id == TYPE_PAWN {
-        return pawn_species_subtype_id(sub_type);
-    }
     if sub_type == "default" {
         return Some(0);
+    }
+    if type_id == TYPE_PAWN {
+        return bundle.subtype_id_of("pawn", sub_type);
     }
     bundle.biome_subtype_id(sub_type)
 }

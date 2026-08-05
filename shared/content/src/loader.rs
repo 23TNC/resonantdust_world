@@ -398,6 +398,9 @@ pub struct Bundle {
   pub(crate) materials: Vec<(String, MaterialParams)>,
   pub(crate) needs: Vec<(String, NeedParams)>,
   pub(crate) conditions: Vec<(String, ConditionParams)>,
+  /// `(type, name) → subtype_id` for subtype axes with no record of their own — pawn species today
+  /// (definition-registry F16). A biome's subtype is authored on the biome instead.
+  pub(crate) subtypes: Vec<(String, String, u16)>,
   /// Registry name caches (id order) — what the slice-returning accessors serve.
   tile_names: Vec<String>,
   thing_names: Vec<String>,
@@ -405,16 +408,16 @@ pub struct Bundle {
   material_names: Vec<String>,
   need_names: Vec<String>,
   condition_names: Vec<String>,
-  /// The REGISTRY override for `name → kind_id`, when one has been supplied
-  /// (definition-registry P4). `None` means "resolve from the corpus's authored ids", which is
-  /// what happens today and in every test.
+  /// The REGISTRY override for `name → definition_reference` (definition-registry P4/P5), keyed
+  /// `(is_tile, name)`. `None` means "resolve from corpus position", which is what a registry-less
+  /// boot and every unit test does.
   ///
-  /// This is the seam that makes [P5]'s deletion of `id = N` safe. It is a **no-op right now, by
-  /// construction**: the registry is SEEDED from those same authored ids ([I9]), so injecting it
-  /// cannot move an answer. Its value is that once the corpus stops carrying numbers, the
-  /// accessors keep their signatures and every caller keeps working — resolution simply comes
-  /// from the table instead of the file.
-  registry: Option<std::collections::HashMap<(bool, String), u16>>,
+  /// The FULL packed def, not just the kind half. The kind half is what `tile_def_id` and
+  /// `thing_object_id` serve, but the type and subtype halves are the taxonomy's numbering too —
+  /// and throwing them away at bind time is what used to force the npc to recover a pawn's species
+  /// by string-parsing its texture path. [`Bundle::definition_reference`] hands the whole thing
+  /// back, which is what lets that parsing (and the code-owned species palette behind it) die.
+  registry: Option<std::collections::HashMap<(bool, String), u32>>,
 }
 
 impl Bundle {
@@ -422,7 +425,7 @@ impl Bundle {
   ///
   /// A name the registry does not carry falls back to the corpus's authored id, so a partially
   /// seeded registry degrades to today's behaviour rather than to nothing.
-  pub fn with_registry(mut self, map: std::collections::HashMap<(bool, String), u16>) -> Self {
+  pub fn with_registry(mut self, map: std::collections::HashMap<(bool, String), u32>) -> Self {
     self.registry = Some(map);
     self
   }
@@ -433,8 +436,17 @@ impl Bundle {
     self.registry.is_some()
   }
 
-  fn registry_id(&self, is_tile: bool, name: &str) -> Option<u16> {
+  /// The full `definition_reference` the registry carries for a name, if any. This is the
+  /// TAXONOMY's number — type, subtype, kind and variant all — so a caller that needs a pawn's
+  /// species reads it off the id rather than off an art path.
+  pub fn definition_reference(&self, is_tile: bool, name: &str) -> Option<u32> {
     self.registry.as_ref()?.get(&(is_tile, name.to_string())).copied()
+  }
+
+  /// The KIND half of the registry's answer — what the `*_def_id` accessors serve.
+  fn registry_id(&self, is_tile: bool, name: &str) -> Option<u16> {
+    // `kind_reference = kind_id:12 | variant_id:4`; the kind half is the high 12 of the low 16.
+    self.definition_reference(is_tile, name).map(|d| ((d >> 4) & 0xFFF) as u16)
   }
 
   /// Finalize the name caches after the def vecs are filled (both loaders call this).
@@ -470,6 +482,15 @@ impl Bundle {
   pub fn tile_def_id(&self, name: &str) -> Option<u16> {
     self.registry_id(true, name).or_else(|| Self::id_of(&self.tile_names, name))
   }
+  /// The `subtype_id` for a `(type, name)` pair authored in `subtypes.toml`, or `None`.
+  ///
+  /// This is where a pawn SPECIES gets its number now that the code-owned palette is gone
+  /// (F16): `subtype_id_of("pawn", "animal")` is `1`, exactly the value the palette held, so every
+  /// stored pawn def keeps reading the same.
+  pub fn subtype_id_of(&self, type_name: &str, name: &str) -> Option<u16> {
+    self.subtypes.iter().find(|(t, n, _)| t == type_name && n == name).map(|(_, _, id)| *id)
+  }
+
   /// A tile's authored TAXONOMY by `def_id`, or `None` if it has none yet ([I9]).
   pub fn tile_taxonomy(&self, def_id: u16) -> Option<&Taxonomy> {
     self.tiles.get(def_id.checked_sub(1)? as usize)?.taxonomy.as_ref()
