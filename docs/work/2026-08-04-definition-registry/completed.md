@@ -239,3 +239,34 @@ for grass) precisely because an equal one would prove nothing.
 
 **P4 is complete.** The registry is populated by the master, served by the edge, resolved locally by
 the client, and the loader has the seam it needs for the corpus to stop carrying numbers.
+
+## 2026-08-05 · P5 item 1 — the edge resolves through the registry
+
+`Worldgen::load_versioned_with` takes an optional `name → kind_id` map and injects it into the
+`Bundle`. The edge builds that map from its live `index` subscription in `def_registry`, pairing
+each registry row with the corpus def carrying the same taxonomy — which is
+[F14](forks.md#f14)'s two hops (`name → tuple` authored, `tuple → id` from the table) collapsed into
+the one lookup callers already make.
+
+Loading is **two passes**, deliberately: the map is keyed by name and names come from the corpus, so
+the edge loads once to learn the taxonomy, builds the map, and reloads with it injected. The corpus
+is five small files, and it keeps `def_registry` a pure function of its two inputs instead of
+something threaded through the loader.
+
+Verified live in `edge-dev.log` — the same corpus version, loaded twice:
+
+```
+worldgen content loaded  dir=content tiles=6 definitions=0   version=8d572b28f7c17983
+worldgen content loaded  dir=content tiles=6 definitions=17  version=8d572b28f7c17983
+```
+
+`definitions=17` is 6 tiles + 11 things bound from the table. An **unseeded index yields an empty
+map and the edge keeps its bare load**, so a cold boot resolves from the corpus exactly as it does
+today.
+
+**Honest about what is NOT proven** ([I11](issues.md#i11)): the item also asked for a corpus-reorder
+drill, and that test is vacuous while `id = N` is authored — the loader resolves from the authored
+id, so a reorder renumbers nothing whether the registry is injected or not. It would pass for the
+wrong reason. The drill moves to the item that deletes the seed, where the two answers finally
+differ. What is proven here is that the map is built, injected, and (by unit test, with a
+deliberately different number) actually consulted.

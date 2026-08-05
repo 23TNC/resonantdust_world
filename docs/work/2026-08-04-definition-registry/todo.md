@@ -105,9 +105,11 @@ _Re-ordered [I10](issues.md#i10): the seed cannot die until every consumer INJEC
 Nothing calls `with_registry` yet, so deleting `id = N` first would leave the loader's positional
 fallback as the only authority everywhere — the opposite of the point._
 
-- [ ] Inject the registry into the edge's `Bundle` from its live `index` subscription. Acceptance:
+- [x] Inject the registry into the edge's `Bundle` from its live `index` subscription. Acceptance:
       `rd logs edge` reports resolving through the registry, and a zone still seeds the same tiles
-      after a corpus REORDER (positional would renumber; the registry does not).
+      after a corpus REORDER (positional would renumber; the registry does not). → live:
+      `definitions=0` bare then `definitions=17` injected. The REORDER half is not yet meaningful —
+      see [I11](issues.md#i11); it only bites once `id = N` is gone.
 - [ ] Inject it into the client's wasm `Bundle` from `DefinitionRegistry`. Acceptance: the world
       renders with the registry injected, and `tile_def_id("grass")` answers `1` from the TABLE
       with the corpus deliberately reordered.
@@ -115,7 +117,9 @@ fallback as the only authority everywhere — the opposite of the point._
       `0x30010070` with the corpus reordered.
 - [ ] DELETE `id = N` from the corpus and the explicit-id law from the loader
       ([F1](forks.md#f1), [I9](issues.md#i9)) — only now, with every consumer on the registry.
-      Acceptance: an `id` key is an unknown-field load error; all three consumers still resolve.
+      Acceptance: an `id` key is an unknown-field load error; all three consumers still resolve;
+      and the REORDER drill ([I11](issues.md#i11)) finally means something — swap two defs in
+      `tiles.toml` and every id stays put.
 - [ ] Decide what the golden's `name → kind_id` section guards once the corpus carries no ids
       ([I10](issues.md#i10)) — it loads with no registry, so it can only pin corpus ORDER.
       Acceptance: either it loads a registry, or the section retires with the reason recorded.

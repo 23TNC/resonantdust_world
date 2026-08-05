@@ -30,6 +30,7 @@ use crate::bindings;
 use crate::bindings::index::set_server;
 use crate::config::ServerConfig;
 use crate::worldgen::Worldgen;
+use resonantdust_content::loader::{Bundle, Taxonomy};
 
 /// How long to wait for an upstream's `on_connect` (auth handshake) before
 /// giving up. Matches the old gateway's 5s budget.
@@ -210,7 +211,25 @@ impl Pool {
         // Load the content corpus worldgen seeds zones from. Non-fatal: a
         // server with no content can still route + relay zones that already
         // exist; it just can't generate new terrain, so warn loudly.
-        let content = load_content_state(&cfg.content_dir);
+        //
+        // Two passes, because the registry map is keyed by NAME and names come from the corpus:
+        // load once to learn the taxonomy, build the map, reload with it injected. Cheap (the
+        // corpus is five small files) and it keeps `def_registry` a pure function of the two
+        // inputs rather than something threaded through the loader.
+        let content = {
+            let bare = load_content_state(&cfg.content_dir, None);
+            match bare.worldgen.as_ref() {
+                Some(wg) => {
+                    let map = def_registry(&index, wg.bundle());
+                    if map.is_empty() {
+                        bare // unseeded index — the corpus's own ids answer, as they do today
+                    } else {
+                        load_content_state(&cfg.content_dir, Some(map))
+                    }
+                }
+                None => bare,
+            }
+        };
 
         Ok(Arc::new(Pool {
             cfg,
@@ -355,17 +374,70 @@ impl Pool {
     }
 }
 
+/// `name → kind_id` as the registry serves it, keyed `(is_tile, name)`.
+type DefRegistry = std::collections::HashMap<(bool, String), u16>;
+
+/// Build the resolution map from the edge's live `index` subscription, pairing each registry row
+/// with the corpus def that carries the same taxonomy.
+///
+/// Keyed by NAME because that is what every caller asks with ([F14](../../../docs/work/2026-08-04-definition-registry/forks.md#f14)):
+/// `name → tuple` is authored in the corpus, `tuple → id` is the registry, and this collapses the
+/// two hops the callers never see. A def with no taxonomy contributes nothing and falls back to its
+/// authored id.
+fn def_registry(index: &bindings::index::DbConnection, bundle: &Bundle) -> DefRegistry {
+    use crate::bindings::index::definitions_table::DefinitionsTableAccess as _;
+
+    // tuple key → highest-version id (F6: newest wins for a NAME lookup).
+    let mut newest: std::collections::HashMap<(String, String, String, String), (u32, u32)> =
+        std::collections::HashMap::new();
+    for d in index.db().definitions().iter() {
+        let key = (d.type_name.clone(), d.sub_type.clone(), d.kind.clone(), d.variant.clone());
+        let e = newest.entry(key).or_insert((d.id, d.version));
+        if d.version > e.1 {
+            *e = (d.id, d.version);
+        }
+    }
+
+    let mut out = DefRegistry::new();
+    let mut bind = |is_tile: bool, names: &[String], tax_of: &dyn Fn(u16) -> Option<Taxonomy>| {
+        for (i, name) in names.iter().enumerate() {
+            if name.is_empty() {
+                continue;
+            }
+            let Some(tax) = tax_of((i + 1) as u16) else { continue };
+            // A def's kind_id is the same across all its tuples, so the first is enough.
+            let Some((sub, variant)) = tax.tuples().first().map(|(s, v)| (s.to_string(), v.to_string()))
+            else {
+                continue;
+            };
+            let key = (tax.type_name.clone(), sub, tax.kind.clone(), variant);
+            if let Some((id, _)) = newest.get(&key) {
+                out.insert((is_tile, name.clone()), resonantdust_codec::object::def_kind_id(*id));
+            }
+        }
+    };
+    let tiles: Vec<String> = bundle.tile_names().to_vec();
+    let things: Vec<String> = bundle.thing_names().to_vec();
+    bind(true, &tiles, &|id| bundle.tile_taxonomy(id).cloned());
+    bind(false, &things, &|id| bundle.thing_taxonomy(id).cloned());
+    out
+}
+
 /// Load the initial content-derived state (worldgen + fingerprint) from
 /// `content_dir`. Non-fatal: a failed load yields an empty state (no worldgen,
 /// version `0`), logged, so the server still routes existing zones — the poll can
 /// later pick content up once it becomes valid.
-fn load_content_state(content_dir: &str) -> ContentState {
-    match Worldgen::load_versioned(std::path::Path::new(content_dir)) {
+fn load_content_state(content_dir: &str, registry: Option<DefRegistry>) -> ContentState {
+    let via_registry = registry.as_ref().map(|m| m.len()).unwrap_or(0);
+    match Worldgen::load_versioned_with(std::path::Path::new(content_dir), registry) {
         Ok(loaded) => {
             let tiles = loaded.worldgen.bundle().tile_names().len();
             tracing::info!(
                 dir = %content_dir,
                 tiles,
+                // definition-registry P5: which authority resolved the names. `0` means the corpus
+                // answered from its own ids — a cold boot, or an index that has not been seeded.
+                definitions = via_registry,
                 version = format!("{:016x}", loaded.version),
                 "worldgen content loaded"
             );

@@ -59,10 +59,28 @@ impl Worldgen {
     /// joined string) if the corpus won't parse, defines no biomes, or is missing
     /// the default tile.
     pub fn load_versioned(content_dir: &Path) -> Result<LoadedWorldgen, String> {
+        Self::load_versioned_with(content_dir, None)
+    }
+
+    /// As [`load_versioned`], with the definition REGISTRY injected when one is available
+    /// (definition-registry P5).
+    ///
+    /// `registry` is `name → kind_id`, keyed `(is_tile, name)`, read from the edge's live `index`
+    /// subscription. When present it is the authority for name resolution; when absent the corpus's
+    /// own ids answer, which is today's behaviour and what a cold boot against an unseeded index
+    /// falls back to.
+    ///
+    /// Injecting matters even though the two agree TODAY (the registry is seeded from those same
+    /// ids): once the corpus stops carrying numbers, the registry is the only thing that survives a
+    /// corpus REORDER without renumbering — which is the fragility this whole stream removes.
+    pub fn load_versioned_with(
+        content_dir: &Path,
+        registry: Option<std::collections::HashMap<(bool, String), u16>>,
+    ) -> Result<LoadedWorldgen, String> {
         let sources = resonantdust_content::content::read_content_dir(content_dir)
             .map_err(|e| format!("read content {}: {e}", content_dir.display()))?;
         let version = resonantdust_content::content::content_version(&sources);
-        let worldgen = Self::from_sources(&sources)?;
+        let worldgen = Self::from_sources_with(&sources, registry)?;
         Ok(LoadedWorldgen { version, worldgen })
     }
 
@@ -79,9 +97,21 @@ impl Worldgen {
     /// Build worldgen from already-read `(name, source)` pairs — the core of
     /// [`load`], split out so it's testable without touching the filesystem.
     pub fn from_sources(sources: &[(String, String)]) -> Result<Worldgen, String> {
+        Self::from_sources_with(sources, None)
+    }
+
+    /// As [`from_sources`], with the definition registry injected when available.
+    pub fn from_sources_with(
+        sources: &[(String, String)],
+        registry: Option<std::collections::HashMap<(bool, String), u16>>,
+    ) -> Result<Worldgen, String> {
         let bundle = resonantdust_content::load(sources).map_err(|errs| {
             errs.iter().map(|e| format!("{}: {}", e.file, e.message)).collect::<Vec<_>>().join("; ")
         })?;
+        let bundle = match registry {
+            Some(map) => bundle.with_registry(map),
+            None => bundle,
+        };
         if bundle.biome_names().is_empty() {
             return Err("content defines no biomes (content/biomes.toml)".into());
         }

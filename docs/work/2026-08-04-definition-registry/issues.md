@@ -17,6 +17,27 @@ Note what is *absent*: nothing reads `def_kind_id` and expects a stable meaning 
 render decode uses it as an opaque table index, which is precisely why [F5](forks.md#f5) can burn
 kind ids for versioning without touching a consumer.
 
+## I11 — the "survives a reorder" test cannot be run until the seed is gone {#i11}
+
+_2026-08-05, P5. An acceptance criterion that cannot mean what it says, yet._
+
+Three P5 items ask for the same proof: reorder the corpus, confirm the consumer still resolves the
+same ids. **That test is vacuous today.** While `id = N` is authored, the loader resolves from the
+AUTHORED id, not from position — so a reorder does not renumber whether the registry is injected or
+not, and the test passes for both the right and the wrong reason.
+
+What CAN be proven now, and is:
+
+- the map is **built and injected** — the edge logs `definitions=17` on its second load pass, versus
+  `definitions=0` bare;
+- injection **overrides** — `an_injected_registry_wins_and_falls_back` drives it with a deliberately
+  different number (grass → 77), because an equal one proves nothing;
+- an unlisted name **falls back**, so a partially seeded registry degrades to today's behaviour.
+
+The reorder drill moves to the item that deletes the seed, where it becomes the actual acceptance:
+after `id = N` is gone, a reorder either renumbers (positional fallback — the bug) or does not (the
+registry — correct), and the two answers finally differ.
+
 ## I10 — after `id = N` dies, a corpus loaded WITHOUT the registry silently renumbers {#i10}
 
 _2026-08-05, P5. Caught before deleting anything._
