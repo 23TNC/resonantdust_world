@@ -158,9 +158,9 @@ fallback as the only authority everywhere — the opposite of the point._
       rewritten ([I7](issues.md#i7)), so an existing entity keeping v0 is true by construction.
 - [ ] Prove the apple case end to end on a real field: change one def's data, place a new one beside
       an old one. Acceptance: the two coexist with different behaviour, in the client, with no
-      migration step run. **BLOCKED on [B6](blockers.md#b6)** (and [B5](blockers.md#b5), its
-      symptom) — nothing stores what an old version DID, so an old object would silently adopt the
-      NEW behaviour. F6 is not implemented; the item cannot pass until it is.
+      migration step run. **BLOCKED on [B7](blockers.md#b7)** — how a version is SPELLED in the
+      corpus. [B6](blockers.md#b6) is resolved (the corpus retains live versions, which dissolves
+      [B5](blockers.md#b5) too); only the authoring shape is open.
 
 ## P7 — reclaim: designed, NOT built ([F7](forks.md#f7))
 

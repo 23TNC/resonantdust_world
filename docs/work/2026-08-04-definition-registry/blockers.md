@@ -50,7 +50,7 @@ boundary (data shards grow independently), not a lifecycle division. A sibling `
 stays available, exactly as `chat`/`players` sit beside `index`, if reclaim ever needs its own
 reducers.
 
-## B6 — nothing stores what an old version DID, so F6 is not implemented (OPEN) {#b6}
+## B6 — nothing stores what an old version DID — ✅ RESOLVED: the CORPUS retains it {#b6}
 
 _2026-08-05, found while explaining [B5](#b5) to the user — their question is what surfaced it._
 
@@ -82,13 +82,60 @@ check: there IS no wolf.2 in the corpus, and that is exactly the problem.
 3. **Snapshot at bump time** into a side table — option 1 staged differently, with the same storage
    and an extra moving part.
 
-**My recommendation: option 1**, and it subsumes [B5](#b5) — if the row carries the data, the
-per-def tables stop being indexed by anything and the two-masters problem dissolves rather than
-being worked around.
+**RESOLVED by the user, 2026-08-05 — option 2, and it was the intent all along:**
 
-**Why it needs you**: it changes what the registry IS — from a name↔number map to the durable home
-of definition data — which is a materially bigger thing than this stream planned, and it decides
-whether the corpus stays a description of the present.
+> "If our game has wolf.2 and we update to wolf.3, then the wolf.2's are still in our game, so our
+> toml needs to retain wolf.2 until there are no remaining wolf.2's in our game and we can safely
+> remove them."
+
+And at the outset of the design: *"the reason we might want to do this is so we can hold old
+versions of our things in our toml so we can handle updates."* I built the identity half and lost
+the "in our toml" half.
+
+**The corpus retains every LIVE version.** `wolf.2` stays authored beside `wolf.3` for as long as
+any wolf.2 exists in the world; an old entity's behaviour comes from the corpus because the corpus
+still describes it. Removal is the LAST step — delete the block only once none remain, and only then
+may [F7](forks.md#f7)'s reclaim retire its registry row.
+
+I recorded "the corpus stops being a description of the present" as a *cost* of this option. That
+was the wrong frame: the corpus describes **every version the world is still running**, which is a
+larger and more useful claim than describing only the newest.
+
+Consequences, all simplifying:
+
+- **[B5](#b5) dissolves.** If every live version is authored, every live version has a corpus
+  POSITION — so `kind_id = position` holds for all of them and a bump needs no fresh coordinate.
+  The two-masters problem was created by allocating ids for definitions the corpus did not contain.
+- **[F12](forks.md#f12)'s fingerprint auto-bump is WRONG and superseded.** Deriving a version from
+  "did the sim-visible fields change" *replaces* a definition; it cannot produce two coexisting
+  ones. The version must be AUTHORED, because only the author knows the old one is meant to survive.
+- **[F7](forks.md#f7)'s reclaim gains its front half**: an id becomes reclaimable only after its
+  block leaves the corpus, which is a deliberate human act rather than a sweep's inference.
+
+Remaining question — see [B7](#b7): how a version is SPELLED in the corpus.
+
+## B7 — how is a version spelled in the corpus? (OPEN) {#b7}
+
+_2026-08-05. The one thing [B6](#b6)'s resolution leaves open, and the user has used both spellings._
+
+Two blocks must be distinguishable as versions of one definition. Both appear in the design
+conversation:
+
+1. **An authored field** — `[[thing]] name = "wolf"` … `version = 2`, taxonomy unchanged
+   (`kind = "wolf"`). Matches the single `version` column the registry already has, and keeps the
+   taxonomy meaning "what this is" rather than "which revision".
+2. **A taxonomy suffix** — `kind = "wolf.2"`, from the earlier sketch: *"if we update human we will
+   go from pawn/human/male/ to pawn/human.1/male… `type/subType.ver/kind.ver/variant`."* Makes each
+   version a distinct tuple, so the registry's existing uniqueness covers it with no version column
+   at all — but it puts revisions into the ART PATH, and `pawn/animal/wolf.2/…` implies a texture
+   folder that need not exist.
+
+**My recommendation: (1), the authored field.** The taxonomy answers "what is this", the version
+answers "which revision of it", and keeping them separate means a revision does not imply a new art
+folder. It is also what the `(tuple, version)` uniqueness in `TABLES.md` already assumes.
+
+**Why it needs you**: it is the corpus's authoring shape — what a content author types — and you
+have used both spellings, so I will not pick for you.
 
 ## B5 — `kind_id` serves two masters, and versioning breaks their equivalence (OPEN) {#b5}
 

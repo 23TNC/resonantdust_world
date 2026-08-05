@@ -166,6 +166,13 @@ or scheduling.
 
 ## F12 — a version bumps on SIMULATION-visible change only {#f12}
 
+> **SUPERSEDED 2026-08-05 by [B6](blockers.md#b6).** An auto-derived bump REPLACES a definition; it
+> cannot produce two coexisting ones, and the corpus retaining old versions is the whole point. The
+> version is AUTHORED. What survives of this fork is its *reason* — "same id ⇒ same behaviour" —
+> which the corpus now guarantees directly by keeping the old block, rather than a fingerprint
+> guaranteeing it indirectly.
+
+
 _2026-08-04, the user accepted the recommendation ("Fine")._
 
 Bump `version` when any field the **simulation** reads changes — weight, expiry, speed, footprint,
