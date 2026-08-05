@@ -17,6 +17,41 @@ Note what is *absent*: nothing reads `def_kind_id` and expects a stable meaning 
 render decode uses it as an opaque table index, which is precisely why [F5](forks.md#f5) can burn
 kind ids for versioning without touching a consumer.
 
+## I10 — after `id = N` dies, a corpus loaded WITHOUT the registry silently renumbers {#i10}
+
+_2026-08-05, P5. Caught before deleting anything._
+
+Deleting `id = N` does not break resolution — the loader's `id_of` walks the name cache, which is
+built in corpus ORDER, so `tile_def_id("grass")` would still answer `1`. Today's authored ids
+happen to equal corpus position exactly (tiles 1–6, things 1–11, no holes), so the golden would
+replay and every test would pass.
+
+**That is the problem.** It passes for the wrong reason, and it re-introduces precisely the
+fragility [`toml-content` F1](../2026-08-04-toml-content/forks.md#f1) existed to prevent:
+
+- Delete `conifer` from the corpus and every def after it shifts up one — *positionally*. The
+  registry overrides for defs it knows, so the shift is invisible until a def the registry has
+  never seen resolves to a number that belongs to something else.
+- **Holes stop being expressible in the corpus.** F1's "a deleted def retires its id forever" was
+  spelled `id = 4` skipped. With no ids there is no way to write a hole; retirement has to live in
+  the registry (which keeps the row) instead. That is arguably better — but it means the CORPUS
+  alone can no longer state the id law, and nothing in the loader will complain.
+- The **golden fixture's `name → kind_id` section stops guarding anything**, because it loads the
+  corpus with no registry injected. It would be asserting corpus order, dressed as identity.
+
+And the prerequisite the plan omits entirely: **nothing calls `with_registry` yet.** The seam
+landed in P4 item 3, but the edge's worldgen, the client's wasm `Bundle` and the npc all still
+resolve through the corpus. Deleting the seed before wiring those three would leave the positional
+fallback as the *only* authority everywhere — the exact opposite of this stream's point.
+
+**So P5 item 1 is not next.** The order has to be: wire every consumer to inject the registry →
+prove each resolves through it (not through position) → *then* delete `id = N` → and decide what
+the golden's id section means afterwards. That last one is a real question, not a mechanical step:
+a fixture that loads without a registry can only pin corpus order, so either it grows a registry to
+load with, or that section retires and the registry's own uniqueness constraints become the guard.
+
+Raised rather than resolved: it changes what P5 is, and the golden is the stream's safety net.
+
 ## I9 — P3 and P4 as written are a circular big-bang; the corpus `id` must become a SEED first {#i9}
 
 _2026-08-04, P3. A plan-sequencing defect, caught before writing code._
