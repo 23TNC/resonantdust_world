@@ -119,14 +119,18 @@ fallback as the only authority everywhere — the opposite of the point._
       `0x30010070` with the corpus reordered. → `fetch_registry` over `/definitions`, bound by
       name; live log shows `definitions=17` then `def 0x30010070 speed 12 thirst 1`. Best-effort:
       an older server or unseeded index leaves the corpus answering. Reorder half: [I11](issues.md#i11).
-- [ ] DELETE `id = N` from the corpus and the explicit-id law from the loader
+- [x] DELETE `id = N` from the corpus and the explicit-id law from the loader
       ([F1](forks.md#f1), [I9](issues.md#i9)) — only now, with every consumer on the registry.
       Acceptance: an `id` key is an unknown-field load error; all three consumers still resolve;
       and the REORDER drill ([I11](issues.md#i11)) finally means something — swap two defs in
-      `tiles.toml` and every id stays put.
-- [ ] Decide what the golden's `name → kind_id` section guards once the corpus carries no ids
+      `tiles.toml` and every id stays put. → 17 id lines gone (tiles+things only,
+      [F15](forks.md#f15)); the drill PASSES — with `dirt` authored first, the client still
+      resolves `grass→1, dirt→2`.
+- [x] Decide what the golden's `name → kind_id` section guards once the corpus carries no ids
       ([I10](issues.md#i10)) — it loads with no registry, so it can only pin corpus ORDER.
-      Acceptance: either it loads a registry, or the section retires with the reason recorded.
+      Acceptance: either it loads a registry, or the section retires with the reason recorded. →
+      RETIRED ([F15](forks.md#f15)); the guard moved from a fixture to the registry's own
+      constraints. The re-bless diff is EXACTLY those 19 lines and nothing else.
 - [ ] Delete the stem-parsing in `client/npc` — species comes from the authored taxonomy.
       Acceptance: `rd-npc` resolves `def 0x…` with the same value it logs today; no `split('/')` on
       a texture stem remains in the repo.

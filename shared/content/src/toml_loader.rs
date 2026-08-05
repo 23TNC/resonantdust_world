@@ -37,7 +37,6 @@ struct Corpus {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct TileToml {
-  id: u16,
   name: String,
   // ── taxonomy (definition-registry F1) — additive; `id` remains the allocation SEED (I9) ──
   #[serde(default, rename = "type")]
@@ -93,7 +92,6 @@ struct PackedToml {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ThingToml {
-  id: u16,
   name: String,
   // ── taxonomy (definition-registry F1) — additive; `id` remains the allocation SEED (I9) ──
   #[serde(default, rename = "type")]
@@ -355,8 +353,13 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
   let materials = place(&all.material, "material", |m| (m.id, m.name.clone()), &mut errors);
   let needs_slots = place(&all.need, "need", |n| (n.id, n.name.clone()), &mut errors);
   let condition_slots = place(&all.condition, "condition", |m| (m.id, m.name.clone()), &mut errors);
-  let tiles = place(&all.tile, "tile", |t| (t.id, t.name.clone()), &mut errors);
-  let things = place(&all.thing, "thing", |t| (t.id, t.name.clone()), &mut errors);
+  // Tiles and things carry NO ids (definition-registry F1/F15): the corpus describes and the
+  // server numbers. Their position here is only the SEED a fresh registry allocates from — an
+  // existing registry overrides it through `Bundle::with_registry`, which is what makes a reorder
+  // harmless. Materials/needs/conditions above keep the explicit id law: nothing numbers them but
+  // the corpus, so removing their ids would leave them with no authority rather than a better one.
+  let tiles: Vec<Option<&TileToml>> = all.tile.iter().map(Some).collect();
+  let things: Vec<Option<&ThingToml>> = all.thing.iter().map(Some).collect();
   if !errors.is_empty() {
     return Err(errors);
   }
@@ -772,13 +775,11 @@ mod tests {
   fn a_minimal_corpus_round_trips_ids_and_tables() {
     let text = r##"
 [[tile]]
-id = 1
 name = "grass"
 texture = "white"
 tint = "#4b573e"
 
 [[tile]]
-id = 3
 name = "stone"
 texture = "linked/wall_smooth"
 tint = "#ffffff"
@@ -796,7 +797,6 @@ hue_swing = 10.0
 sample_space = "world"
 
 [[thing]]
-id = 2
 name = "wolf"
 speed = 12
 needs = ["thirst"]
@@ -837,24 +837,29 @@ scatter = [ { salt = 6, p = 0.99, thing = "wolf" } ]
 "##;
     let b = load(&[src("content.toml", text)]).expect("clean load");
 
-    // ids: explicit, with a HOLE at tile 2 (retired).
+    // ids: POSITIONAL now (definition-registry F1/F15) — the corpus describes, the server numbers,
+    // and a position is only the SEED a fresh registry allocates from. An existing registry
+    // overrides through `with_registry`, which is what makes a reorder harmless.
+    //
+    // HOLES moved with the numbering. A retired tile used to be a skipped `id`; now it simply
+    // stops being authored, and the registry keeps its row so the id is never handed to anything
+    // else (reclaim is deliberately unbuilt — F7).
     assert_eq!(b.tile_def_id("grass"), Some(1));
-    assert_eq!(b.tile_def_id("stone"), Some(3));
-    assert_eq!(b.tile_name(2), None, "a retired id resolves nothing");
-    assert_eq!(b.tile_names().len(), 3);
-    assert_eq!(b.tile_texture_stems(), vec!["white".to_string(), String::new(), "linked/wall_smooth".to_string()]);
+    assert_eq!(b.tile_def_id("stone"), Some(2));
+    assert_eq!(b.tile_names().len(), 2);
+    assert_eq!(b.tile_texture_stems(), vec!["white".to_string(), "linked/wall_smooth".to_string()]);
 
     // tile lanes + packed + height
-    assert_eq!(b.tile_lighting_lanes()[12..18], [4.0, 4.0, 0.5, 0.0, 0.0, 0.0]);
-    assert_eq!(b.tile_height(3), Some(1.0));
-    assert_eq!(b.tile_packed_channels()[2][0].material_id, 1);
-    assert_eq!(b.tile_packed_channels()[2][0].tint, 0x6b6b6b);
+    assert_eq!(b.tile_lighting_lanes()[6..12], [4.0, 4.0, 0.5, 0.0, 0.0, 0.0]);
+    assert_eq!(b.tile_height(2), Some(1.0));
+    assert_eq!(b.tile_packed_channels()[1][0].material_id, 1);
+    assert_eq!(b.tile_packed_channels()[1][0].tint, 0x6b6b6b);
 
     // the wolf: speed, needs, subframe chain (default + e + v2 compose per component)
-    assert_eq!(b.thing_object_id("wolf"), Some(2));
-    assert_eq!(b.thing_speed(2), Some(12));
-    assert_eq!(b.thing_needs(2), vec![1]);
-    let v = b.visual_for_object(2).unwrap();
+    assert_eq!(b.thing_object_id("wolf"), Some(1));
+    assert_eq!(b.thing_speed(1), Some(12));
+    assert_eq!(b.thing_needs(1), vec![1]);
+    let v = b.visual_for_object(1).unwrap();
     let f = &v.dir_frames;
     assert_eq!(f[0][0].sub.0, 0.25, "default");
     assert_eq!(f[0][1].sub.0, 0.05, "east overrides x");
@@ -881,25 +886,40 @@ scatter = [ { salt = 6, p = 0.99, thing = "wolf" } ]
   }
 
   #[test]
-  fn the_id_law_refuses_duplicates_and_zero() {
+  fn the_id_law_survives_where_nothing_else_numbers() {
+    // NARROWED, not deleted (definition-registry F15). Tiles and things lost their ids to the
+    // registry; materials, needs and conditions keep the law, because nothing but the corpus
+    // numbers them — removing their ids would leave them with no authority rather than a better
+    // one. Their ids are stored data too (a `need_id` lives inside a payload word).
     let dup = r##"
-[[tile]]
+[[need]]
 id = 1
-name = "grass"
-[[tile]]
+name = "thirst"
+[[need]]
 id = 1
-name = "dirt"
+name = "hunger"
 "##;
     let e = load(&[src("t.toml", dup)]).unwrap_err();
-    assert!(e[0].message.contains("already taken"), "{}", e[0].message);
+    assert!(e.iter().any(|e| e.message.contains("already taken")), "{e:?}");
 
-    let zero = "[[tile]]\nid = 0\nname = \"grass\"\n";
+    let zero = "[[material]]\nid = 0\nname = \"mottle\"\n";
     let e = load(&[src("t.toml", zero)]).unwrap_err();
-    assert!(e[0].message.contains("id 0"), "{}", e[0].message);
+    assert!(e.iter().any(|e| e.message.contains("id 0")), "{e:?}");
 
-    let missing = "[[tile]]\nname = \"grass\"\n";
+    let missing = "[[condition]]\nname = \"thirsty\"\n";
     let e = load(&[src("t.toml", missing)]).unwrap_err();
-    assert!(e[0].message.contains("missing field"), "{}", e[0].message);
+    assert!(e.iter().any(|e| e.message.contains("missing field")), "{e:?}");
+  }
+
+  #[test]
+  fn a_tile_authoring_an_id_is_now_a_load_error() {
+    // The cutover's own assertion: `id` is gone from the tile/thing schema, so a corpus still
+    // carrying one fails loudly instead of being silently ignored — `deny_unknown_fields` doing
+    // the work the id law used to.
+    let e = load(&[src("t.toml", "[[tile]]\nid = 1\nname = \"grass\"\n")]).unwrap_err();
+    assert!(e[0].message.contains("unknown field `id`"), "{}", e[0].message);
+    let e = load(&[src("t.toml", "[[thing]]\nid = 1\nname = \"tree\"\n")]).unwrap_err();
+    assert!(e[0].message.contains("unknown field `id`"), "{}", e[0].message);
   }
 
   #[test]
@@ -909,8 +929,8 @@ name = "dirt"
     // deliberately DIFFERENT number to prove the override is actually consulted.
     let b = load(&[src(
       "t.toml",
-      "[[tile]]\nid = 1\nname = \"grass\"\ntint = \"#fff\"\n\
-       [[tile]]\nid = 2\nname = \"dirt\"\ntint = \"#000\"\n",
+      "[[tile]]\nname = \"grass\"\ntint = \"#fff\"\n\
+       [[tile]]\nname = \"dirt\"\ntint = \"#000\"\n",
     )])
     .unwrap();
     assert_eq!(b.tile_def_id("grass"), Some(1), "the authored id, with no registry");
@@ -935,7 +955,6 @@ name = "dirt"
       "t.toml",
       r##"
 [[tile]]
-id = 1
 name = "wall_smooth"
 type = "biome-tile"
 kind = "smooth"
@@ -963,7 +982,6 @@ tint = "#ffffff"
       "t.toml",
       r##"
 [[thing]]
-id = 1
 name = "tree"
 type = "biome-thing"
 kind = "conifer"
@@ -989,7 +1007,6 @@ variant = ["0","1","2"]
       "t.toml",
       r##"
 [[tile]]
-id = 1
 name = "g"
 type = "biome-tile"
 "##,
@@ -1001,7 +1018,6 @@ type = "biome-tile"
       "t.toml",
       r##"
 [[tile]]
-id = 1
 name = "g"
 type = "biome-tile"
 kind = "grass"
@@ -1015,7 +1031,7 @@ kind = "grass"
   fn unknown_fields_refuse_loudly() {
     // deny_unknown_fields: a typo'd key is a LOAD ERROR, not silence — the TOML
     // answer to the DSL's silently-dropped writes.
-    let e = load(&[src("t.toml", "[[tile]]\nid = 1\nname = \"grass\"\ntnit = \"#fff\"\n")]).unwrap_err();
+    let e = load(&[src("t.toml", "[[tile]]\nname = \"grass\"\ntnit = \"#fff\"\n")]).unwrap_err();
     assert!(e[0].message.contains("tnit"), "{}", e[0].message);
   }
 }

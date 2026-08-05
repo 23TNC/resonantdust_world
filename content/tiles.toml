@@ -1,8 +1,9 @@
 # Tiles — see docs/VARIABLES.md § TOML content schema.
-# Ids are STORED DATA (zone kind_references) — never renumber, never reuse (F1).
+# NO ids: the corpus DESCRIBES (type/kind/subType/variant) and the server NUMBERS, into
+# `index.definitions` (definition-registry F1). A def's number survives a reorder because the
+# registry keeps it, which is what the old `id = N` law was reaching for.
 
 [[tile]]
-id = 1
 name = "grass"
 type = "biome-tile"
 kind = "grass"
@@ -13,7 +14,6 @@ tint = "#4b573e"
 receives_shadows = 2.0
 
 [[tile]]
-id = 2
 name = "dirt"
 type = "biome-tile"
 kind = "dirt"
@@ -24,7 +24,6 @@ tint = "#653d00"
 receives_shadows = 2.0
 
 [[tile]]
-id = 3
 name = "sand"
 type = "biome-tile"
 kind = "sand"
@@ -35,7 +34,6 @@ tint = "#c2b280"
 receives_shadows = 2.0
 
 [[tile]]
-id = 4
 name = "water"
 type = "biome-tile"
 kind = "water"
@@ -46,7 +44,6 @@ tint = "#2e5a78"
 receives_shadows = 2.0
 
 [[tile]]
-id = 5
 name = "stone"
 type = "biome-tile"
 kind = "stone"
@@ -57,7 +54,6 @@ tint = "#6b6b6b"
 receives_shadows = 2.0
 
 [[tile]]
-id = 6
 name = "wall_smooth"
 type = "biome-tile"
 kind = "smooth"

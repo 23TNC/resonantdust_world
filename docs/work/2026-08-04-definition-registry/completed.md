@@ -308,3 +308,49 @@ npc::brains::wolves: wolf def + speed + needs resolved  def="0x30010070" speed=1
 which is exactly the prerequisite [I10](issues.md#i10) identified before `id = N` can leave the
 corpus. The next item is the actual cutover, and it is the first point at which the reorder drill
 ([I11](issues.md#i11)) means anything.
+
+## 2026-08-05 · P5 items 4 + 5 — THE CUTOVER: the corpus stops carrying numbers
+
+**17 `id = N` lines deleted** — 6 tiles, 11 things. `TileToml`/`ThingToml` lost the field, so a
+corpus still carrying one now fails loudly (`unknown field 'id'`) rather than being ignored:
+`deny_unknown_fields` doing the work the id law used to.
+
+**Narrowed, not deleted** ([F15](forks.md#f15)). Materials, needs and conditions keep the explicit
+id law untouched — their ids are stored data too (a `need_id` lives inside a payload word) but
+nothing numbers them but the corpus, so removing theirs would leave them with no authority rather
+than a better one. The id-law test moved to those kinds and still passes.
+
+**The reorder drill, and it is decisive.** `dirt` authored FIRST in `tiles.toml`, so positional
+resolution would give `dirt=1, grass=2`. The client, live in the browser:
+
+```
+corpus_order: ["dirt","grass","sand","water","stone","wall_smooth"]
+grass → 1     dirt → 2     stone → 5     wall_smooth → 6
+```
+
+The ORIGINAL numbering, straight out of the registry, against a corpus that says otherwise. That is
+the whole stream in one result: the corpus can be reordered freely and stored zones still mean what
+they meant. (Order restored afterwards — the reorder was a drill, not a change.)
+
+**The golden's re-bless diff is exactly the retired section and nothing else** — 19 lines removed,
+every table, every stem, the 9,261-cell worldgen sweep and the needs probes byte-identical. The
+cutover moved no data.
+
+`name → kind_id` retired from the fixture with its reasoning ([F15](forks.md#f15)): it loads with no
+registry, so it could only have pinned corpus ORDER while reading as identity — the third test this
+stream has caught passing for that reason. **The guard moved from a fixture to a constraint**:
+`index.definitions` has `id` as its primary key and refuses a second id for one (tuple, version),
+so an existing numbering can never be contradicted. A fresh DB seeded from a reordered corpus does
+get different numbers, correctly — a fresh DB is a fresh world.
+
+Holes moved with the numbering: a retired tile used to be a skipped `id`, and now simply stops being
+authored while the registry keeps its row, so the id is never handed to anything else ([F7](forks.md#f7)
+leaves reclaim unbuilt).
+
+**The client-rebuild lesson landed twice.** Removing `id` is a corpus schema change, so the
+build-time wasm rejected the embedded TOML again until `rd build shared` ran — same black-screen as
+when the taxonomy went in. Worth stating plainly: **any corpus schema change is a client-rebuild
+event.**
+
+Verified: 83 tests across the shared workspace (incl. the re-blessed golden), 5 `defs::`, 2
+`def_fixture::`, and the live browser drill.

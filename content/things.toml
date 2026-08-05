@@ -1,8 +1,7 @@
 # Things — flora, wall kinds, PAWNS (a pawn is a thing with parts).
-# Ids are STORED DATA (thing entries + packed pawn defs) — never renumber (F1).
+# NO ids: the corpus DESCRIBES and the server NUMBERS (definition-registry F1) — see tiles.toml.
 
 [[thing]]
-id = 1
 name = "tree"
 type = "biome-thing"
 kind = "conifer"
@@ -30,7 +29,6 @@ packed = [ { tint = "#46d64f" }, { tint = "#b0754f" } ]
   "v8" = { x = 0.2227, y = 0.082, w = 0.5547, h = 0.8438 }
 
 [[thing]]
-id = 2
 name = "shrub"
 type = "biome-thing"
 kind = "shrub"
@@ -62,7 +60,6 @@ variant = ["0","1","2","3","4","5","6","7","8","9","10","11","12","13","14","15"
   "v12" = { x = 0.0781, y = 0.1484, w = 0.8516, h = 0.7266 }
 
 [[thing]]
-id = 3
 name = "cactus"
 type = "biome-thing"
 kind = "cactus"
@@ -78,7 +75,6 @@ variant = ["0","1","2","3","4","5","6","7","8","9","10","11","12","13","14","15"
   sprite_scale = { w = 0.5, h = 0.5 }
 
 [[thing]]
-id = 4
 name = "reed"
 type = "biome-thing"
 kind = "reed"
@@ -94,7 +90,6 @@ variant = ["0","1","2","3","4","5","6","7","8","9","10","11","12","13","14","15"
   sprite_scale = { w = 0.5, h = 0.5 }
 
 [[thing]]
-id = 5
 name = "rock"
 type = "biome-thing"
 kind = "rock"
@@ -110,7 +105,6 @@ variant = ["0","1","2","3","4","5","6","7","8","9","10","11","12","13","14","15"
   sprite_scale = { w = 0.5, h = 0.5 }
 
 [[thing]]
-id = 6
 name = "flora"
 type = "biome-thing"
 kind = "flora"
@@ -126,7 +120,6 @@ variant = ["0","1","2","3","4","5","6","7","8","9","10","11","12","13","14","15"
   sprite_scale = { w = 0.5, h = 0.5 }
 
 [[thing]]
-id = 7
 name = "wolf"
 type = "pawn"
 kind = "wolf"
@@ -149,7 +142,6 @@ needs = ["thirst"]
   "n" = { x = 0.3359, y = 0.0859, w = 0.3281, h = 0.8438 }
 
 [[thing]]
-id = 8
 name = "torch"
 type = "biome-thing"
 kind = "torch"
@@ -166,7 +158,6 @@ light = { r = 1.0, g = 0.85, b = 0.55, intensity = 1.0, reach = 16.0, radius = 0
   sprite_scale = { w = 0.5, h = 0.5 }
 
 [[thing]]
-id = 9
 name = "torch_blue"
 type = "biome-thing"
 kind = "torch_blue"
@@ -183,7 +174,6 @@ light = { r = 0.55, g = 0.75, b = 1.0, intensity = 1.0, reach = 16.0, radius = 0
   sprite_scale = { w = 0.5, h = 0.5 }
 
 [[thing]]
-id = 10
 name = "human_female"
 type = "pawn"
 kind = "female"
@@ -217,7 +207,6 @@ speed = 16
   "n" = { x = 0.1328, y = 0.0391, w = 0.7344, h = 0.9297 }
 
 [[thing]]
-id = 11
 name = "human_male"
 type = "pawn"
 kind = "male"

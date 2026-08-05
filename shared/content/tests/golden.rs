@@ -81,33 +81,22 @@ fn dump(b: &Bundle) -> String {
         &mut out,
     );
 
-    // ── name → id, EXPLICITLY (definition-registry P0) ────────────────────────────────────
+    // ── name → id RETIRED (definition-registry F15) ───────────────────────────────────────
     //
-    // The registries above already pin this implicitly — the id IS the line number — but that
-    // is a reading convention, not an assertion, and the definition-registry stream is about to
-    // move who owns these numbers. Stating the pairs makes the replay check mechanical: after
-    // resolution moves to the server-side registry, every unchanged def must still answer with
-    // the id it answers with here. Retired ids appear as holes and MUST stay holes.
-    sec(
-        "tile def_ids (name → kind_id)",
-        b.tile_names()
-            .iter()
-            .filter(|n| !n.is_empty())
-            .map(|n| format!("{n} {}", b.tile_def_id(n).unwrap_or(0)))
-            .collect::<Vec<_>>()
-            .join("\n"),
-        &mut out,
-    );
-    sec(
-        "thing object_ids (name → kind_id)",
-        b.thing_names()
-            .iter()
-            .filter(|n| !n.is_empty())
-            .map(|n| format!("{n} {}", b.thing_object_id(n).unwrap_or(0)))
-            .collect::<Vec<_>>()
-            .join("\n"),
-        &mut out,
-    );
+    // This section used to dump `name → kind_id` for tiles and things. It cannot mean anything
+    // now: the corpus carries no ids, so a Bundle loaded here (with no registry injected) numbers
+    // them by POSITION — the section would assert that corpus order has not changed while reading
+    // as though it proved identity. This stream has already caught two tests passing for that
+    // reason; a third would be worse than none.
+    //
+    // What guards identity instead is the REGISTRY, and it is a constraint rather than a fixture:
+    // `index.definitions` has `id` as its primary key and refuses a second id for one
+    // (tuple, version), so an EXISTING numbering can never be contradicted. A fresh DB seeded from
+    // a reordered corpus does get different numbers — correctly, because a fresh DB is a fresh
+    // world.
+    //
+    // Materials, needs and conditions still author ids and are still pinned by the registries
+    // dumped above, where the id IS the line number.
 
     // ── per-def scalar/colour lookups ──
     sec(

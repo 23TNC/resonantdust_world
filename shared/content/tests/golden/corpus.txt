@@ -36,25 +36,6 @@ wetland 4
 desert 5
 forest 6
 plains 7
-== tile def_ids (name → kind_id) ==
-grass 1
-dirt 2
-sand 3
-water 4
-stone 5
-wall_smooth 6
-== thing object_ids (name → kind_id) ==
-tree 1
-shrub 2
-cactus 3
-reed 4
-rock 5
-flora 6
-wolf 7
-torch 8
-torch_blue 9
-human_female 10
-human_male 11
 == tile colors ==
 grass Some(4937534)
 dirt Some(6634752)
