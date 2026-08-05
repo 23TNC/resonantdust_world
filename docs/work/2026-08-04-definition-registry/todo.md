@@ -80,9 +80,10 @@ numbering to the registry, and leaves `definition_reference` exactly as it is.
 
 ## P4 — the registry becomes the authority
 
-- [ ] Call `ensure_definition` per tuple from the master at content load. Acceptance: a fresh
+- [x] Call `ensure_definition` per tuple from the master at content load. Acceptance: a fresh
       `index` DB ends up with one row per tuple and `resolve_definition` returns the seeded id for
-      every def in P0's golden.
+      every def in P0's golden. → **182 rows seeded live** on a wiped DB; wolf lands on
+      `0x30010070` and `smooth/wall` on kind 6 / slot 0. Non-fatal like every other uplink.
 - [ ] Serve the registry to clients (initial table + updates on change) alongside `/content`.
       Acceptance: a client booting with an empty cache receives the table and can resolve
       `("biome-thing","default","conifer","4")` locally.

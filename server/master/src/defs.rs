@@ -332,3 +332,37 @@ pub fn allocations(bundle: &Bundle) -> Result<Vec<Allocation>, AllocError> {
     }
     Ok(out)
 }
+
+
+/// Seed the registry from a corpus: expand, then `ensure_definition` each allocation.
+///
+/// Idempotent end to end — the reducer no-ops on a row it already holds ([P2]), so this runs on
+/// every master boot without coordination and without churning the table. Returns how many
+/// allocations were sent.
+///
+/// A corpus that will not expand is a HARD failure: the master would otherwise fan a world whose
+/// definitions nothing has registered, and the first stored id would mean nothing. Better to log
+/// loudly and leave the registry as it was.
+pub async fn seed_registry(
+    index: &resonantdust_st_bindings::index::DbConnection,
+    bundle: &resonantdust_content::loader::Bundle,
+) -> Result<usize, AllocError> {
+    use resonantdust_st_bindings::index::ensure_definition as _;
+    use spacetimedb_sdk::DbContext;
+    let allocs = allocations(bundle)?;
+    for a in &allocs {
+        if let Err(err) = index.reducers().ensure_definition(
+            a.id,
+            a.version,
+            a.type_name.clone(),
+            a.sub_type.clone(),
+            a.kind.clone(),
+            a.variant.clone(),
+        ) {
+            // A send failure is the uplink's problem, not the corpus's — log and keep going, so
+            // one dropped call does not abandon the rest of the seed. The next boot re-sends.
+            tracing::warn!(id = format!("{:#010x}", a.id), %err, "ensure_definition send failed");
+        }
+    }
+    Ok(allocs.len())
+}

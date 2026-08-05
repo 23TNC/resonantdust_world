@@ -500,6 +500,23 @@ pub fn ensure_definition(
             existing.type_name, existing.sub_type, existing.kind, existing.variant, existing.version,
         ));
     }
+    // The OTHER uniqueness, and the one a primary key cannot express: at most one id per
+    // (tuple, version). Two ids for one tuple+version would both satisfy `max(version)` and
+    // resolution would pick arbitrarily — the same aliasing hazard as a duplicate id, wearing
+    // the other hat. `docs/TABLES.md` specifies this as `uniq`; here is where it is enforced.
+    if let Some(dup) = ctx.db.definitions().iter().find(|d| {
+        d.version == version
+            && d.type_name == type_name
+            && d.sub_type == sub_type
+            && d.kind == kind
+            && d.variant == variant
+    }) {
+        return Err(format!(
+            "definition {type_name}/{sub_type}/{kind}/{variant} v{version} already has id \
+             {:#010x}; refusing to also register {id:#010x}",
+            dup.id
+        ));
+    }
     ctx.db.definitions().insert(Definition { id, version, type_name, sub_type, kind, variant });
     Ok(())
 }

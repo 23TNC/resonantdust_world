@@ -61,6 +61,9 @@ async fn main() {
 
     let uri = env_or("ST_URI", "http://127.0.0.1:3000");
     let realm = parse_u8(&env_or("REALM", "0"), 0);
+    // Where the corpus lives, for the definition-registry seed. Same var + default the edge uses,
+    // so both read one tree.
+    let content_dir = env_or("RD_CONTENT_DIR", "content");
     let tic_hz: f64 = env_or("TIC_HZ", &resonantdust_codec::tic::TIC_HZ.to_string()).parse().unwrap_or(resonantdust_codec::tic::TIC_HZ as f64);
     let period = Duration::from_secs_f64(1.0 / tic_hz);
     let gc_every: u32 = env_or("GC_EVERY", "20").parse().unwrap_or(20);
@@ -102,6 +105,32 @@ async fn main() {
             tracing::warn!(%name, "not reachable at startup; will keep retrying");
         }
     }
+    // ── seed the definition registry (definition-registry P4) ───────────────────────────────
+    //
+    // The corpus DESCRIBES; the master NUMBERS (F11 — it is the single allocator, so there is no
+    // boot race to coordinate around). Idempotent: `ensure_definition` no-ops on a row it already
+    // holds, so this runs every boot and only writes what is genuinely new.
+    //
+    // Non-fatal by design, like every other upstream here: a down index or an unreadable corpus
+    // logs and the metronome still starts. The registry is re-seeded on the next boot, and until
+    // then every STORED id still decodes exactly as before (I6 — the read path never consults it).
+    match resonantdust_content::content::read_content_dir(std::path::Path::new(&content_dir))
+        .map_err(|e| e.to_string())
+        .and_then(|srcs| {
+            resonantdust_content::load(&srcs).map_err(|errs| {
+                format!("{} error(s), first: {:?}", errs.len(), errs.first())
+            })
+        }) {
+        Ok(bundle) => match index_up.get().await {
+            Ok(index) => match defs::seed_registry(&index, &bundle).await {
+                Ok(n) => tracing::info!(definitions = n, "definition registry seeded"),
+                Err(err) => tracing::error!(%err, "definition registry NOT seeded — corpus will not expand"),
+            },
+            Err(err) => tracing::warn!(%err, "index down at boot; registry seed deferred to next boot"),
+        },
+        Err(err) => tracing::warn!(%err, dir = %content_dir, "corpus unreadable; registry seed skipped"),
+    }
+
     tracing::info!("metronome starting (uplinks lazy — a dead upstream skips only its own work)");
 
     // The master owns NO counter — `last_fanned` is only a dedup so we push each tic to the shards
