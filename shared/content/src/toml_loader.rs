@@ -940,6 +940,38 @@ name = "hunger"
   }
 
   #[test]
+  fn only_simulation_visible_fields_bump_a_version() {
+    // F12's boundary, and the invariant it buys: **same id ⇒ same behaviour**. A tint or a texture
+    // change must NOT move the fingerprint (a re-master already propagates through the texture
+    // manifest's own hash); a speed or a height change must.
+    let base = "[[thing]]\nname = \"wolf\"\nspeed = 12\n[[thing.part]]\ntint = \"#ffffff\"\n";
+    let v = |t: &str| load(&[src("t.toml", t)]).unwrap().thing_sim_version(1).unwrap();
+
+    // ART: a different tint, same behaviour → same version.
+    let recoloured = "[[thing]]\nname = \"wolf\"\nspeed = 12\n[[thing.part]]\ntint = \"#ff0000\"\n";
+    assert_eq!(v(base), v(recoloured), "a recolour must NOT bump a version");
+
+    // DATA: a different speed is a different wolf to the simulation → different version.
+    let faster = "[[thing]]\nname = \"wolf\"\nspeed = 6\n[[thing.part]]\ntint = \"#ffffff\"\n";
+    assert_ne!(v(base), v(faster), "a speed change MUST bump a version");
+
+    // The apple case in miniature: needs are simulation state too.
+    let thirsty = "[[need]]\nid = 1\nname = \"thirst\"\n\
+                   [[thing]]\nname = \"wolf\"\nspeed = 12\nneeds = [\"thirst\"]\n\
+                   [[thing.part]]\ntint = \"#ffffff\"\n";
+    assert_ne!(v(base), v(thirsty), "gaining a need MUST bump a version");
+  }
+
+  #[test]
+  fn a_tile_version_tracks_height_and_build_not_art() {
+    let v = |t: &str| load(&[src("t.toml", t)]).unwrap().tile_sim_version(1).unwrap();
+    let base = "[[tile]]\nname = \"wall\"\nheight = 1.0\ntint = \"#fff\"\n";
+    assert_eq!(v(base), v("[[tile]]\nname = \"wall\"\nheight = 1.0\ntint = \"#000\"\n"));
+    // Height is occlusion and blocking — the simulation reads it.
+    assert_ne!(v(base), v("[[tile]]\nname = \"wall\"\nheight = 2.0\ntint = \"#fff\"\n"));
+  }
+
+  #[test]
   fn an_injected_registry_wins_and_falls_back() {
     // The P4 seam that makes P5's deletion of `id = N` safe. Today it is a no-op BY CONSTRUCTION
     // — the registry is seeded from these same authored ids — so the test drives it with a

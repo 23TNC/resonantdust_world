@@ -81,8 +81,15 @@ async fn main() {
 
     // ── the index: the tic authority. Its uplink carries the `master_clock` subscription
     // (subscribe-and-wait), so a `get()`ed connection always has the row mirrored. ────────────
+    // `definitions` rides the same subscription (definition-registry P6): the master must see what
+    // the registry ALREADY holds to decide whether a def is unchanged (keep its version) or changed
+    // (bump). Without it `known_versions` reads an empty local cache, every def looks brand new,
+    // and a data edit silently fails to bump — which is exactly what happened the first time.
     let index_up = resonantdust_uplink::subbed_uplink!(index, "index", uri, index_db,
-        vec![format!("SELECT * FROM master_clock WHERE realm = {realm}")]);
+        vec![
+            format!("SELECT * FROM master_clock WHERE realm = {realm}"),
+            "SELECT * FROM definitions".to_string(),
+        ]);
 
     // ── the shard call surfaces (sub-less). ──────────────────────────────────────────────────
     let event_up: Uplink<event_shard::DbConnection> = resonantdust_uplink::uplink!(event_shard, "event_shard", uri, event_db);

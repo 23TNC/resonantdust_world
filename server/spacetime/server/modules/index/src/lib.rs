@@ -456,6 +456,12 @@ pub struct Definition {
     /// Bumped on a SIMULATION-visible change only (F12) — art, tint and comments do not bump.
     /// A bump mints a NEW row with a new id; this one stays.
     pub version: u32,
+    /// The simulation fingerprint this version stands for — a hash of the fields the sim reads
+    /// (speed, needs, height, build), never of art. It is what makes a re-seed IDEMPOTENT: the
+    /// master matches it to decide "same definition, keep this version" versus "changed, bump".
+    /// Stored rather than recomputed because the master must compare against what the world
+    /// already believes, not against the corpus in front of it.
+    pub sim: u64,
     /// Taxonomy. `type_name`, not `type` — `type` is a Rust keyword.
     pub type_name: String,
     pub sub_type: String,
@@ -480,6 +486,7 @@ pub fn ensure_definition(
     ctx: &ReducerContext,
     id: u32,
     version: u32,
+    sim: u64,
     type_name: String,
     sub_type: String,
     kind: String,
@@ -491,6 +498,7 @@ pub fn ensure_definition(
             && existing.kind == kind
             && existing.variant == variant
             && existing.version == version
+            && existing.sim == sim
         {
             return Ok(()); // already recorded — the idempotent path
         }
@@ -517,7 +525,7 @@ pub fn ensure_definition(
             dup.id
         ));
     }
-    ctx.db.definitions().insert(Definition { id, version, type_name, sub_type, kind, variant });
+    ctx.db.definitions().insert(Definition { id, version, sim, type_name, sub_type, kind, variant });
     Ok(())
 }
 

@@ -49,3 +49,52 @@ that `index` is a routing directory — was rebutted on the facts: the module sp
 boundary (data shards grow independently), not a lifecycle division. A sibling `definitions` module
 stays available, exactly as `chat`/`players` sit beside `index`, if reclaim ever needs its own
 reducers.
+
+## B5 — `kind_id` serves two masters, and versioning breaks their equivalence (OPEN) {#b5}
+
+_2026-08-05, P6. Found by the live apple drill, not by any test._
+
+The wolf bumped to v2 and the npc resolved it correctly — `def=0x300100d0`, `max(version)` working
+exactly as designed. Then it reported **`speed=3 thirst_need=0`** instead of `speed=12 thirst=1`.
+
+`kind_id` in the packed def is doing **two different jobs**, and until a version bump they happened
+to be the same number:
+
+1. **Stored identity** — what a zone's `kind_reference` means, what the registry allocates and never
+   reuses. A bump MUST take a fresh one ([F5](forks.md#f5)), or two versions share an id and the
+   table's primary key rejects the second.
+2. **An index into the corpus's per-def tables** — `thing_speed`, `thing_needs`, `thing_layout`,
+   `visual_for_object`, the render decode's `def_kind_id(...)` lookup. These are `Vec`s in corpus
+   order; the index must be within range.
+
+v2's `kind_id` is **13**. The corpus has **11** things. So the identity is right and every table
+lookup falls off the end into defaults — speed 3 is `speed::resolve(None)`, thirst 0 is "no needs".
+
+I recorded the opposite in [I1](issues.md#i1) — *"the render decode uses it as an opaque table
+index, which is precisely why F5 can burn kind ids without touching a consumer"*. That was wrong:
+an opaque index still has to be **in range**, and F5 guarantees it eventually is not.
+
+**Why it needs you.** Every fix changes what the render path indexes by, and that path is hot
+(per cell, per zone) and touches stored data:
+
+1. **Split the two roles.** `thing_object_id(name)` returns the corpus POSITION (table index);
+   `definition_reference(name)` returns the registry id (identity). Worldgen packs the latter into
+   zones; the render decode maps a stored `kind_id` back to a position through the registry. Correct
+   and explicit — but it puts a lookup on the per-cell decode, which [I1](issues.md#i1) says is the
+   one place that cannot take one.
+2. **The Bundle indexes by registry `kind_id`** — build the per-def tables sparse/keyed rather than
+   positional, so index 13 is simply the v2 wolf. No lookup on the hot path; costs a table rebuild
+   and makes the tables sparse.
+3. **A bump reuses its `kind_id` and versions elsewhere** — impossible while `id` is the primary key
+   and the packed layout is frozen ([F13](forks.md#f13)), unless version rides a field it currently
+   does not.
+
+**My recommendation: option 2.** It keeps the hot path a direct index, which is the constraint that
+actually binds, and the sparseness costs nothing at this scale (a few thousand slots). Option 1 is
+cleaner on paper and I would take it if the render decode were not per-cell.
+
+**State right now**: the dev registry holds wolf v0/v1/v2 from the drill and `max(version)` resolves
+to v2, so the npc reads default speed. Wiping and re-seeding `index` returns dev to one clean row
+per tuple — the drill's rows are real history, not corruption, but they are not worth keeping.
+P6 items 1–2 are otherwise verified (a data change bumps, an art change does not, old rows survive);
+item 3 — the two versions coexisting in the client — is what this blocks.

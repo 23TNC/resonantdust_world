@@ -387,6 +387,20 @@ pub(crate) struct BiomeRules {
   pub scatter: Vec<(i64, f64, String)>,
 }
 
+const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+
+fn fnv_bytes(h: &mut u64, bytes: &[u8]) {
+  for &b in bytes {
+    *h ^= b as u64;
+    *h = h.wrapping_mul(0x0000_0100_0000_01b3);
+  }
+}
+
+fn fnv_str(h: &mut u64, s: &str) {
+  fnv_bytes(h, s.as_bytes());
+  fnv_bytes(h, b"\0"); // separator, so ("ab","c") and ("a","bc") differ
+}
+
 /// Everything the runtime needs, built once at load — REGISTRIES in id order
 /// (index = id − 1; a `""`-named slot is a retired id) + evaluated params.
 #[derive(Default, Debug)]
@@ -489,6 +503,37 @@ impl Bundle {
   /// stored pawn def keeps reading the same.
   pub fn subtype_id_of(&self, type_name: &str, name: &str) -> Option<u16> {
     self.subtypes.iter().find(|(t, n, _)| t == type_name && n == name).map(|(_, _, id)| *id)
+  }
+
+  /// A FNV-1a fingerprint of the fields the **simulation** reads for a tile — its VERSION input
+  /// (definition-registry [F12](../../../docs/work/2026-08-04-definition-registry/forks.md#f12)).
+  ///
+  /// Deliberately excludes `color`, `visual` and the lighting lanes: art, tint and comments do not
+  /// bump a version, because the invariant the versioning buys is **"same id ⇒ same behaviour"**,
+  /// and behaviour is what the simulation reads. A re-master already propagates through the
+  /// texture manifest's own content hash without touching identity — bumping there would mint an
+  /// id per art tweak and burn kind space for nothing.
+  ///
+  /// For a tile that is `height` (walls occlude and block) and `build` (what the panel places).
+  pub fn tile_sim_version(&self, def_id: u16) -> Option<u64> {
+    let d = self.tiles.get(def_id.checked_sub(1)? as usize)?;
+    let mut h = FNV_OFFSET;
+    fnv_str(&mut h, &d.name);
+    fnv_str(&mut h, d.build.as_deref().unwrap_or(""));
+    fnv_bytes(&mut h, &d.height.unwrap_or(0.0).to_bits().to_le_bytes());
+    Some(h)
+  }
+
+  /// The same for a thing: `speed` (hop cost) and `needs` (what it depletes). Not its art.
+  pub fn thing_sim_version(&self, object_id: u16) -> Option<u64> {
+    let d = self.things.get(object_id.checked_sub(1)? as usize)?;
+    let mut h = FNV_OFFSET;
+    fnv_str(&mut h, &d.name);
+    fnv_bytes(&mut h, &d.speed.unwrap_or(0).to_le_bytes());
+    for n in &d.needs {
+      fnv_bytes(&mut h, &n.to_le_bytes());
+    }
+    Some(h)
   }
 
   /// A tile's authored TAXONOMY by `def_id`, or `None` if it has none yet ([I9]).

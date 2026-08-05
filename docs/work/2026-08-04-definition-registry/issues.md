@@ -13,9 +13,38 @@ with no registry available:
 | [`worker/main.rs:92`](../../../server/worker/src/main.rs) | `def_type_id` | `tics_for` branches on `TYPE_PAWN` to decide how to key the speed table |
 | [`wasm/lib.rs:523-532`](../../../shared/wasm/src/lib.rs) | `def_kind_id`, `def_type_id`, `def_variant_id` | the per-cell render decode: namespace, visual-table index, subframe select — per cell, per zone |
 
-Note what is *absent*: nothing reads `def_kind_id` and expects a stable meaning across versions. The
-render decode uses it as an opaque table index, which is precisely why [F5](forks.md#f5) can burn
-kind ids for versioning without touching a consumer.
+**CORRECTED 2026-08-05.** This row originally claimed that nothing reads `def_kind_id` expecting a
+stable meaning, so [F5](forks.md#f5) could burn kind ids freely. That was wrong — see
+[B5](blockers.md#b5). The render decode does use
+`kind_id` as an opaque table index, but an opaque index still has to be **in range**, and the
+per-def tables are `Vec`s in corpus order. [F5](forks.md#f5) burning a fresh kind id per version
+guarantees it eventually is not: the wolf's v2 landed on kind 13 against an 11-entry table, and
+every lookup fell through to defaults. The live drill caught what the inventory had asserted away.
+
+## I12 — matching ANY old fingerprint resurrects a stale version; only the newest may match {#i12}
+
+_2026-08-05, P6. Found by reverting the drill, not by a test._
+
+`version_for` matched the corpus's current fingerprint against **every** row on record and returned
+that row's version. Bumping the wolf's speed 12 → 9 minted v1 correctly; reverting 9 → 12 then
+matched **v0** and resolved the wolf back to v0's id.
+
+That leaves the registry self-contradicting: `max(version)` — the rule every NAME lookup uses
+([F6](forks.md#f6)) — answers **v1**, while the master says the corpus IS v0. A client placing a
+wolf would get a definition describing behaviour the corpus no longer has.
+
+**A revert is a change.** The corpus's current state must always be the HIGHEST version, so the
+match has to be against the newest row alone:
+
+- fingerprint == newest row's → unchanged, keep that version (the idempotent re-seed).
+- anything else, INCLUDING an exact match on an older row → **bump**.
+
+So speed 12 → 9 → 12 gives v0, v1, v2 — three rows, the third meaning the same as the first. That is
+correct rather than wasteful: v1 may be on entities in the world, and "go back to how it was" is a
+new decision, not the un-happening of an old one. It costs one kind id, out of 4096.
+
+Worth noting how it surfaced: every unit test passed, because they only ever drove one bump. The
+live drill's *cleanup* — restoring the corpus — is what produced the second transition.
 
 ## I11 — the "survives a reorder" test cannot be run until the seed is gone {#i11}
 
