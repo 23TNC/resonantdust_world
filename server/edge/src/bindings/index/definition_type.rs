@@ -15,7 +15,6 @@ use spacetimedb_sdk::__codegen::{
 pub struct Definition {
     pub id: u32,
     pub version: u32,
-    pub sim: u64,
     pub type_name: String,
     pub sub_type: String,
     pub kind: String,
@@ -34,7 +33,6 @@ impl __sdk::InModule for Definition {
 pub struct DefinitionCols {
     pub id: __sdk::__query_builder::Col<Definition, u32>,
     pub version: __sdk::__query_builder::Col<Definition, u32>,
-    pub sim: __sdk::__query_builder::Col<Definition, u64>,
     pub type_name: __sdk::__query_builder::Col<Definition, String>,
     pub sub_type: __sdk::__query_builder::Col<Definition, String>,
     pub kind: __sdk::__query_builder::Col<Definition, String>,
@@ -47,7 +45,6 @@ impl __sdk::__query_builder::HasCols for Definition {
         DefinitionCols {
             id: __sdk::__query_builder::Col::new(table_name, "id"),
             version: __sdk::__query_builder::Col::new(table_name, "version"),
-            sim: __sdk::__query_builder::Col::new(table_name, "sim"),
             type_name: __sdk::__query_builder::Col::new(table_name, "type_name"),
             sub_type: __sdk::__query_builder::Col::new(table_name, "sub_type"),
             kind: __sdk::__query_builder::Col::new(table_name, "kind"),

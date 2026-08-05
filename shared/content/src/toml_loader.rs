@@ -51,6 +51,11 @@ struct SubtypeToml {
 #[serde(deny_unknown_fields)]
 struct TileToml {
   name: String,
+  /// Which REVISION of this definition ([F17](../../../docs/work/2026-08-04-definition-registry/forks.md#f17)).
+  /// Unauthored = 0. Every live version stays authored — an entity holding an old id gets its
+  /// behaviour from the block that is still here, which is the whole point ([B6]).
+  #[serde(default)]
+  version: u32,
   // ── taxonomy (definition-registry F1) — additive; `id` remains the allocation SEED (I9) ──
   #[serde(default, rename = "type")]
   type_name: Option<String>,
@@ -106,6 +111,11 @@ struct PackedToml {
 #[serde(deny_unknown_fields)]
 struct ThingToml {
   name: String,
+  /// Which REVISION of this definition ([F17](../../../docs/work/2026-08-04-definition-registry/forks.md#f17)).
+  /// Unauthored = 0. Every live version stays authored — an entity holding an old id gets its
+  /// behaviour from the block that is still here, which is the whole point ([B6]).
+  #[serde(default)]
+  version: u32,
   // ── taxonomy (definition-registry F1) — additive; `id` remains the allocation SEED (I9) ──
   #[serde(default, rename = "type")]
   type_name: Option<String>,
@@ -456,6 +466,40 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
   }
   b.subtypes = subtypes;
 
+  // The ID LAW'S SUCCESSOR ([F17]): two defs may share a taxonomy — that is how wolf v0 and wolf v1
+  // coexist — but not a `(tuple, version)` pair. A duplicate would give one identity two
+  // definitions, which is the same aliasing the old duplicate-id check refused, wearing the shape
+  // versioning gives it.
+  {
+    let mut seen: HashMap<(String, String, String, String, u32), String> = HashMap::new();
+    let mut check = |tax: Option<&Taxonomy>, version: u32, name: &str, errors: &mut Vec<LoadError>| {
+      let Some(t) = tax else { return };
+      let Some((sub, variant)) = t.tuples().first().map(|(s, v)| (s.to_string(), v.to_string()))
+      else {
+        return;
+      };
+      let key = (t.type_name.clone(), sub, t.kind.clone(), variant, version);
+      if let Some(prev) = seen.get(&key) {
+        errors.push(LoadError {
+          file: String::new(),
+          message: format!(
+            "`{name}`: {}/{}/{} v{version} is already defined by `{prev}` — two defs may share a \
+             taxonomy (that is how versions coexist) but not a (taxonomy, version) pair",
+            key.0, key.1, key.2
+          ),
+        });
+      } else {
+        seen.insert(key, name.to_string());
+      }
+    };
+    for d in &b.tiles {
+      check(d.taxonomy.as_ref(), d.version, &d.name, &mut errors);
+    }
+    for d in &b.things {
+      check(d.taxonomy.as_ref(), d.version, &d.name, &mut errors);
+    }
+  }
+
   if !errors.is_empty() {
     return Err(errors);
   }
@@ -655,6 +699,7 @@ fn tile_def(t: &TileToml, material_id: &dyn Fn(&str) -> u16, errors: &mut Vec<Lo
     .then(|| visual(&[part], &t.packed, &None, material_id, &t.name, tax.as_ref(), errors))
     .flatten();
   TileDef {
+    version: t.version,
     taxonomy: tax,
     name: t.name.clone(),
     color: visual.as_ref().map(|v| v.tint),
@@ -734,6 +779,7 @@ fn thing_def(
     }
   }
   ThingDef {
+    version: t.version,
     taxonomy: tax,
     name: t.name.clone(),
     color: visual.as_ref().map(|v| v.tint),
@@ -969,6 +1015,65 @@ name = "hunger"
     assert_eq!(v(base), v("[[tile]]\nname = \"wall\"\nheight = 1.0\ntint = \"#000\"\n"));
     // Height is occlusion and blocking — the simulation reads it.
     assert_ne!(v(base), v("[[tile]]\nname = \"wall\"\nheight = 2.0\ntint = \"#fff\"\n"));
+  }
+
+  #[test]
+  fn two_versions_of_one_def_coexist_in_the_corpus() {
+    // B6/F17: the corpus retains every LIVE version. wolf v0 stays authored beside v1 for as long
+    // as any v0 wolf exists in the world, so an old entity's behaviour comes from a block that is
+    // still here. This is what makes "an old apple stays an old apple" true rather than promised.
+    let b = load(&[src(
+      "t.toml",
+      r##"
+[[thing]]
+name = "wolf"
+type = "pawn"
+kind = "wolf"
+subType = ["animal"]
+variant = ["0"]
+speed = 12
+
+[[thing]]
+name = "wolf"
+type = "pawn"
+kind = "wolf"
+subType = ["animal"]
+variant = ["0"]
+version = 1
+speed = 9
+"##,
+    )])
+    .unwrap();
+    // Both are present, at their own positions, with their OWN behaviour.
+    assert_eq!(b.thing_version(1), Some(0));
+    assert_eq!(b.thing_speed(1), Some(12), "v0 keeps the old speed");
+    assert_eq!(b.thing_version(2), Some(1));
+    assert_eq!(b.thing_speed(2), Some(9), "v1 has the new one");
+    // Same taxonomy, so they are versions of ONE definition rather than two definitions.
+    assert_eq!(b.thing_taxonomy(1).unwrap().kind, b.thing_taxonomy(2).unwrap().kind);
+  }
+
+  #[test]
+  fn a_duplicate_taxonomy_and_version_is_a_load_error() {
+    // The id law's successor: sharing a taxonomy is fine (that IS versioning), sharing a
+    // (taxonomy, version) pair gives one identity two definitions.
+    let dup = r##"
+[[thing]]
+name = "wolf"
+type = "pawn"
+kind = "wolf"
+subType = ["animal"]
+variant = ["0"]
+
+[[thing]]
+name = "wolf_again"
+type = "pawn"
+kind = "wolf"
+subType = ["animal"]
+variant = ["0"]
+"##;
+    let e = load(&[src("t.toml", dup)]).unwrap_err();
+    assert!(e.iter().any(|e| e.message.contains("already defined by")), "{e:?}");
   }
 
   #[test]

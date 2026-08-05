@@ -15,7 +15,6 @@ use spacetimedb_sdk::__codegen::{
 pub(super) struct EnsureDefinitionArgs {
     pub id: u32,
     pub version: u32,
-    pub sim: u64,
     pub type_name: String,
     pub sub_type: String,
     pub kind: String,
@@ -27,7 +26,6 @@ impl From<EnsureDefinitionArgs> for super::Reducer {
         Self::EnsureDefinition {
             id: args.id,
             version: args.version,
-            sim: args.sim,
             type_name: args.type_name,
             sub_type: args.sub_type,
             kind: args.kind,
@@ -53,13 +51,12 @@ pub trait ensure_definition {
     /// /// Use [`ensure_definition:ensure_definition_then`] to run a callback after the reducer completes.
     fn ensure_definition(&self, id: u32,
 version: u32,
-sim: u64,
 type_name: String,
 sub_type: String,
 kind: String,
 variant: String,
 ) -> __sdk::Result<()> {
-        self.ensure_definition_then(id, version, sim, type_name, sub_type, kind, variant,  |_, _| {})
+        self.ensure_definition_then(id, version, type_name, sub_type, kind, variant,  |_, _| {})
     }
 
     /// Request that the remote module invoke the reducer `ensure_definition` to run as soon as possible,
@@ -72,7 +69,6 @@ variant: String,
         &self,
         id: u32,
 version: u32,
-sim: u64,
 type_name: String,
 sub_type: String,
 kind: String,
@@ -89,7 +85,6 @@ impl ensure_definition for super::RemoteReducers {
         &self,
         id: u32,
 version: u32,
-sim: u64,
 type_name: String,
 sub_type: String,
 kind: String,
@@ -99,7 +94,7 @@ variant: String,
             + Send
             + 'static,
     ) -> __sdk::Result<()> {
-        self.imp.invoke_reducer_with_callback(EnsureDefinitionArgs { id, version, sim, type_name, sub_type, kind, variant,  }, callback)
+        self.imp.invoke_reducer_with_callback(EnsureDefinitionArgs { id, version, type_name, sub_type, kind, variant,  }, callback)
     }
 }
 

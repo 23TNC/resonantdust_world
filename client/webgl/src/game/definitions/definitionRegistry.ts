@@ -22,6 +22,16 @@ interface RegistryPayload {
   definitions: Row[];
 }
 
+/** What an id means: its taxonomy and which revision of it. */
+export interface Definition {
+  id: number;
+  version: number;
+  type: string;
+  subType: string;
+  kind: string;
+  variant: string;
+}
+
 /** The tuple key — the four taxonomy names that identify a definition. */
 function key(type: string, subType: string, kind: string, variant: string): string {
   return `${type}/${subType}/${kind}/${variant}`;
@@ -30,6 +40,11 @@ function key(type: string, subType: string, kind: string, variant: string): stri
 export class DefinitionRegistry {
   /** tuple key → the highest-version row seen for it. */
   private readonly byTuple = new Map<string, { id: number; version: number }>();
+  /** id → what it MEANS. The reverse direction, which is what makes a stored id self-describing:
+   *  a client receives a `definition_reference` off the wire and can say which definition and which
+   *  REVISION it is, without asking the server. Every row is here, not just the newest — an old id
+   *  is precisely the one whose meaning you need to look up. */
+  private readonly byId = new Map<number, Definition>();
   /** Listeners fired after a successful swap — the mirror of `onContentReloaded`. */
   private readonly listeners = new Set<() => void>();
 
@@ -43,6 +58,15 @@ export class DefinitionRegistry {
    *  guess a number, which is the whole point of the registry owning them). */
   resolve(type: string, subType: string, kind: string, variant: string): number | null {
     return this.byTuple.get(key(type, subType, kind, variant))?.id ?? null;
+  }
+
+  /** What a `definition_reference` MEANS — its taxonomy and revision — or `null` if the registry
+   *  has never seen it. The reverse of {@link resolve}.
+   *
+   *  This is the lookup a version-aware action needs ([version-predicates]): given an id off the
+   *  wire, which revision is this, and does my implementation understand it? */
+  lookup(id: number): Definition | null {
+    return this.byId.get(id >>> 0) ?? null;
   }
 
   /** Subscribe to "the registry changed". Returns an unsubscribe. */
@@ -63,15 +87,20 @@ export class DefinitionRegistry {
   /** Replace the table from raw rows. Split out so a test can drive it without a server. */
   swap(rows: Row[]): void {
     const next = new Map<string, { id: number; version: number }>();
+    const byId = new Map<number, Definition>();
     for (const [id, version, type, subType, kind, variant] of rows) {
       const k = key(type, subType, kind, variant);
       const cur = next.get(k);
-      // F6: highest version wins for NEW placements. Older rows stay in the payload — they are
-      // what stored ids mean — but they never win a name lookup.
+      // F6: highest version wins for NEW placements. Older rows stay — they are what stored ids
+      // mean — but they never win a name lookup. EVERY row goes into `byId`, for exactly that
+      // reason: the reverse lookup exists to explain the old ones.
       if (!cur || version > cur.version) next.set(k, { id, version });
+      byId.set(id >>> 0, { id: id >>> 0, version, type, subType, kind, variant });
     }
     this.byTuple.clear();
     for (const [k, v] of next) this.byTuple.set(k, v);
+    this.byId.clear();
+    for (const [k, v] of byId) this.byId.set(k, v);
     for (const fn of this.listeners) fn();
   }
 

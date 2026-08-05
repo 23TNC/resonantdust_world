@@ -156,18 +156,25 @@ fallback as the only authority everywhere — the opposite of the point._
       a newly placed object carries the v1 id while an existing entity still carries v0 and still
       renders and behaves as v0. → the npc resolved `0x300100d0` (v2) live. Stored ids are never
       rewritten ([I7](issues.md#i7)), so an existing entity keeping v0 is true by construction.
-- [ ] Parse an optional `version` on tile/thing defs ([F17](forks.md#f17)); unauthored = 0, and a
+- [x] Parse an optional `version` on tile/thing defs ([F17](forks.md#f17)); unauthored = 0, and a
       duplicate `(tuple, version)` is a load error. Acceptance: a crate test loads two `wolf` blocks
-      at v0 and v1 and reads both back; a duplicate pair fails loudly.
-- [ ] Register each authored `(tuple, version)` at its CORPUS POSITION and delete the fingerprint
+      at v0 and v1 and reads both back; a duplicate pair fails loudly. → both tests green; the
+      duplicate check is the id law's successor (sharing a taxonomy IS versioning; sharing a
+      `(taxonomy, version)` pair is not).
+- [x] Register each authored `(tuple, version)` at its CORPUS POSITION and delete the fingerprint
       bump machinery ([F12](forks.md#f12) superseded, [B5](blockers.md#b5) dissolved). Acceptance:
-      `defs::` tests green with `known_versions`/`sim` gone; a two-version corpus mints two rows.
-- [ ] Add the REVERSE lookup `id → (taxonomy, version)` to the registry, client and server
+      `defs::` tests green with `known_versions`/`sim` gone; a two-version corpus mints two rows. →
+      `version_for`, `KnownVersions`, `highest_kind_id` and the `sim` column all deleted; live, v0
+      took kind 7 and v1 kind 8 — both INSIDE the corpus range.
+- [x] Add the REVERSE lookup `id → (taxonomy, version)` to the registry, client and server
       ([B7](blockers.md#b7)). Acceptance: the client resolves `0x30010070` back to
-      `pawn/animal/wolf/0 v0`; an unknown id yields null.
-- [ ] Prove the apple case end to end: author `wolf` at v0 and v1 with different speeds, place one
+      `pawn/animal/wolf/0 v0`; an unknown id yields null. → `lookup()` client-side +
+      `lookup_definition` in the module; verified in the browser, unknown → null. EVERY row is
+      indexed, not just the newest — an old id is precisely the one whose meaning you need.
+- [x] Prove the apple case end to end: author `wolf` at v0 and v1 with different speeds, place one
       of each. Acceptance: the two coexist with DIFFERENT behaviour, in the client, with no
-      migration step run.
+      migration step run. → **in the browser**: `wolf v0 → speed 12`, `wolf v1 → speed 4`, new
+      placements resolve to v1, one definition two revisions, no migration.
 
 ## P7 — reclaim: designed, NOT built ([F7](forks.md#f7))
 

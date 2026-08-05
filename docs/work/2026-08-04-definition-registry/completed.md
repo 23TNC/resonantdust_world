@@ -471,3 +471,38 @@ definition kind-space  kind_ids_used=11  kind_ids_free=4085  bumps_on_record=0
 ```
 
 11 of 4096 used at ~17 kinds. Reclaim gets built when that number says so, not on principle.
+
+## 2026-08-05 · P6 rebuilt on B6/B7 — THE APPLE CASE, in the client (4/4)
+
+The user's correction ([B6](blockers.md#b6)) turned the last phase into something smaller and
+better. `version` is now an **authored** field ([F17](forks.md#f17)), the corpus retains every live
+revision, and everything else fell out of that:
+
+- **The fingerprint machinery is gone.** `version_for`, `KnownVersions`, `highest_kind_id` and the
+  table's `sim` column — all deleted. An auto-derived bump *replaces* a definition; it cannot
+  produce two coexisting ones, which is the whole point ([F12](forks.md#f12) superseded).
+- **[B5](blockers.md#b5) dissolved, and the live numbers show it.** wolf v0 took `kind_id` **7** and
+  v1 took **8** — both inside the corpus's positional range, because both are authored. The
+  two-masters problem only ever existed because the master was allocating ids for definitions the
+  corpus did not contain.
+- **The duplicate check is the id law's successor**: sharing a taxonomy IS versioning; sharing a
+  `(taxonomy, version)` pair gives one identity two definitions, and is refused.
+- **The reverse lookup** landed both sides — `lookup(id)` client-side, `lookup_definition` in the
+  module. Every row is indexed, not just the newest, because an OLD id is precisely the one whose
+  meaning you need. It is also the prerequisite for
+  [version predicates](../../components/server/spacetime/modules/index/intent/version-predicates.md).
+
+**The apple case, run in the browser** with `wolf` authored at v0 (speed 12) and v1 (speed 4):
+
+```
+old_entity:            wolf v0 → speed 12
+new_entity:            wolf v1 → speed 4
+new_placements_get:    0x30010080          (v1 — the newest)
+behaviours_differ:     true
+one_definition_two_revisions: true
+migration_run:         none
+```
+
+Two revisions of one definition, coexisting, behaving differently, with nothing swept. That is
+[F6](forks.md#f6) — *"if all old apples are old apples and function like old apples"* — working
+rather than promised. Corpus and dev registry restored afterwards; the drill was a drill.

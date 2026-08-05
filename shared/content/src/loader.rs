@@ -315,6 +315,8 @@ impl Taxonomy {
 #[derive(Debug, Default, Clone)]
 pub(crate) struct TileDef {
   pub name: String,
+  /// Which REVISION ([F17]). Unauthored = 0; every live version stays authored.
+  pub version: u32,
   /// The authored taxonomy, or `None` while the corpus is mid-migration ([I9]).
   pub taxonomy: Option<Taxonomy>,
   pub color: Option<u32>,
@@ -329,6 +331,8 @@ pub(crate) struct TileDef {
 #[derive(Debug, Default, Clone)]
 pub(crate) struct ThingDef {
   pub name: String,
+  /// Which REVISION ([F17]). Unauthored = 0; every live version stays authored.
+  pub version: u32,
   /// The authored taxonomy, or `None` while the corpus is mid-migration ([I9]).
   pub taxonomy: Option<Taxonomy>,
   pub color: Option<u32>,
@@ -534,6 +538,15 @@ impl Bundle {
       fnv_bytes(&mut h, &n.to_le_bytes());
     }
     Some(h)
+  }
+
+  /// A tile's authored VERSION ([F17]) — which revision this def is. `0` when unauthored.
+  pub fn tile_version(&self, def_id: u16) -> Option<u32> {
+    Some(self.tiles.get(def_id.checked_sub(1)? as usize)?.version)
+  }
+  /// A thing's authored VERSION ([F17]).
+  pub fn thing_version(&self, object_id: u16) -> Option<u32> {
+    Some(self.things.get(object_id.checked_sub(1)? as usize)?.version)
   }
 
   /// A tile's authored TAXONOMY by `def_id`, or `None` if it has none yet ([I9]).

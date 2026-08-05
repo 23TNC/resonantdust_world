@@ -23,9 +23,6 @@ use resonantdust_content::loader::{Bundle, Taxonomy};
 pub struct Allocation {
     pub id: u32,
     pub version: u32,
-    /// The SIMULATION fingerprint this version stands for ([F12]) — what makes a re-seed
-    /// idempotent and a data edit a bump.
-    pub sim: u64,
     pub type_name: String,
     pub sub_type: String,
     pub kind: String,
@@ -174,46 +171,53 @@ mod tests {
     }
 
     #[test]
-    fn a_data_change_bumps_and_an_art_change_does_not() {
-        // F6/F12 end to end at the allocator: what the registry ALREADY holds decides the version.
-        let Some(bundle) = corpus() else { return };
-        let tuple = ("biome-thing".into(), "default".into(), "conifer".into(), "0".into());
+    fn each_authored_version_gets_its_own_row_at_its_own_position() {
+        // B6/F17: versions are AUTHORED and coexist in the corpus, so each is simply another def
+        // with its own position and its own id. No fingerprint, no bump to derive, no fresh
+        // coordinate — which is what dissolved B5.
+        let sources = vec![
+            // The species' subtype id lives in the corpus now (F16), so the fixture needs it too.
+            (
+                "subtypes.toml".to_string(),
+                "[[subtype]]\ntype = \"pawn\"\nname = \"animal\"\nid = 1\n".to_string(),
+            ),
+            (
+            "things.toml".to_string(),
+            r##"
+[[thing]]
+name = "wolf"
+type = "pawn"
+kind = "wolf"
+subType = ["animal"]
+variant = ["0"]
+speed = 12
 
-        // Nothing on record → v0.
-        let fresh = allocations(&bundle, &KnownVersions::new()).unwrap();
-        let conifer0 = fresh.iter().find(|a| a.kind == "conifer" && a.variant == "0").unwrap();
-        assert_eq!(conifer0.version, 0);
+[[thing]]
+name = "wolf"
+type = "pawn"
+kind = "wolf"
+subType = ["animal"]
+variant = ["0"]
+version = 1
+speed = 9
+"##
+            .to_string(),
+            ),
+        ];
+        let bundle = resonantdust_content::load(&sources).expect("loads");
+        let allocs = allocations(&bundle).expect("expands");
+        let wolves: Vec<_> = allocs.iter().filter(|a| a.kind == "wolf").collect();
+        assert_eq!(wolves.len(), 2, "both versions register");
 
-        // The SAME fingerprint as the NEWEST row → the same version. A re-seed writes nothing new,
-        // which is what lets the master run this on every boot.
-        let mut known = KnownVersions::new();
-        known.insert(tuple.clone(), vec![(0, conifer0.sim, def_kind_id(conifer0.id))]);
-        let again = allocations(&bundle, &known).unwrap();
-        let a0 = again.iter().find(|a| a.kind == "conifer" && a.variant == "0").unwrap();
-        assert_eq!(a0.version, 0, "an unchanged def must not bump");
-        assert_eq!(a0.id, conifer0.id, "and must not move its id");
-
-        // A DIFFERENT fingerprint on record → bump past it. The old row is untouched; this mints a
-        // new one, which is exactly how an old apple stays an old apple.
-        let mut known = KnownVersions::new();
-        known.insert(tuple, vec![(0, conifer0.sim ^ 0xdead_beef, def_kind_id(conifer0.id))]);
-        let bumped = allocations(&bundle, &known).unwrap();
-        let b0 = bumped.iter().find(|a| a.kind == "conifer" && a.variant == "0").unwrap();
-        assert_eq!(b0.version, 1, "a changed def MUST bump");
-        assert_ne!(b0.id, conifer0.id, "and MUST take a fresh id — the old row keeps its meaning");
-        assert_ne!(def_kind_id(b0.id), def_kind_id(conifer0.id), "the fresh id burns KIND space (F5)");
-
-        // I12: a REVERT is a change. With v1 on record carrying a different fingerprint, matching
-        // v0's fingerprint exactly must still BUMP to v2 — never resurrect v0, or `max(version)`
-        // would point at a definition the corpus no longer describes.
-        let mut known = KnownVersions::new();
-        known.insert(
-            ("biome-thing".into(), "default".into(), "conifer".into(), "0".into()),
-            vec![(0, conifer0.sim, def_kind_id(conifer0.id)), (1, conifer0.sim ^ 0xfeed, 99)],
-        );
-        let reverted = allocations(&bundle, &known).unwrap();
-        let r0 = reverted.iter().find(|a| a.kind == "conifer" && a.variant == "0").unwrap();
-        assert_eq!(r0.version, 2, "a revert bumps past the newest, it does not resurrect v0");
+        let v0 = wolves.iter().find(|a| a.version == 0).unwrap();
+        let v1 = wolves.iter().find(|a| a.version == 1).unwrap();
+        assert_ne!(v0.id, v1.id, "each version is its own identity");
+        // Positional: v0 is thing 1, v1 is thing 2 — both inside the corpus, both indexable.
+        assert_eq!(def_kind_id(v0.id), 1);
+        assert_eq!(def_kind_id(v1.id), 2);
+        // Same taxonomy — they are versions of ONE definition.
+        assert_eq!(v0.sub_type, v1.sub_type);
+        assert_eq!(def_subtype_id(v0.id), def_subtype_id(v1.id));
     }
 
     #[test]
@@ -222,7 +226,7 @@ mod tests {
         // reproduce exactly the numbering the world already stores — every one of which P0's
         // golden and the npc's def_fixture pin independently.
         let Some(bundle) = corpus() else { return };
-        let allocs = allocations(&bundle, &KnownVersions::new()).expect("the corpus expands cleanly");
+        let allocs = allocations(&bundle).expect("the corpus expands cleanly");
 
         // One row per tuple, no duplicates — a duplicate id would mean two definitions aliased.
         let mut ids: Vec<u32> = allocs.iter().map(|a| a.id).collect();
@@ -324,7 +328,6 @@ fn expand(
     tax: &Taxonomy,
     seed_kind_id: u16,
     version: u32,
-    sim: u64,
 ) -> Result<Vec<Allocation>, AllocError> {
     let type_id = type_id_of(&tax.type_name)
         .ok_or_else(|| AllocError::UnknownType { type_name: tax.type_name.clone() })?;
@@ -345,7 +348,6 @@ fn expand(
         out.push(Allocation {
             id,
             version,
-            sim,
             type_name: tax.type_name.clone(),
             sub_type: sub_type.to_string(),
             kind: tax.kind.clone(),
@@ -360,27 +362,19 @@ fn expand(
 /// Defs with no authored taxonomy are SKIPPED, not guessed: a guessed taxonomy would mint rows
 /// nobody authored.
 ///
-/// `version` is the def's SIMULATION fingerprint ([F12]) — art, tint and comments do not move it,
-/// so a re-master mints nothing. `known` maps a tuple to the (version, sim-fingerprint) pairs the
-/// registry already holds; a def whose fingerprint matches an existing row keeps that row's
-/// version, and a def whose fingerprint is NEW takes the next version after the highest seen.
-/// That is [F6](../../../docs/work/2026-08-04-definition-registry/forks.md#f6) in code: the old row
-/// stays, so an object already holding its id keeps behaving exactly as it did.
-pub fn allocations(bundle: &Bundle, known: &KnownVersions) -> Result<Vec<Allocation>, AllocError> {
+/// `version` is AUTHORED ([F17]) — the corpus carries every live revision, so each is simply another
+/// def with its own position and its own number. There is no bump to derive and no fresh
+/// coordinate to allocate: `kind_id` is the corpus POSITION for every version, which is what
+/// dissolved [B5](../../../docs/work/2026-08-04-definition-registry/blockers.md#b5).
+pub fn allocations(bundle: &Bundle) -> Result<Vec<Allocation>, AllocError> {
     let mut out = Vec::new();
-    // Fresh ids for bumps start past everything ever allocated — and past the corpus's own seed
-    // range, so a first boot and a later bump can never land on the same number.
-    let seed_high = (bundle.tile_names().len().max(bundle.thing_names().len())) as u16;
-    let mut next_free = highest_kind_id(known).max(seed_high);
     for (i, name) in bundle.tile_names().iter().enumerate() {
         let def_id = (i + 1) as u16;
         if name.is_empty() {
             continue; // a retired id — a hole stays a hole
         }
         if let Some(tax) = bundle.tile_taxonomy(def_id) {
-            let sim = bundle.tile_sim_version(def_id).unwrap_or(0);
-            let (version, kind_id) = version_for(known, tax, sim, def_id, &mut next_free);
-            out.extend(expand(bundle, tax, kind_id, version, sim)?);
+            out.extend(expand(bundle, tax, def_id, bundle.tile_version(def_id).unwrap_or(0))?);
         }
     }
     for (i, name) in bundle.thing_names().iter().enumerate() {
@@ -389,57 +383,16 @@ pub fn allocations(bundle: &Bundle, known: &KnownVersions) -> Result<Vec<Allocat
             continue;
         }
         if let Some(tax) = bundle.thing_taxonomy(object_id) {
-            let sim = bundle.thing_sim_version(object_id).unwrap_or(0);
-            let (version, kind_id) = version_for(known, tax, sim, object_id, &mut next_free);
-            out.extend(expand(bundle, tax, kind_id, version, sim)?);
+            out.extend(expand(bundle, tax, object_id, bundle.thing_version(object_id).unwrap_or(0))?);
         }
     }
     Ok(out)
 }
 
+
 /// What the registry already knows: tuple → the `(version, sim_fingerprint, kind_id)` rows on
 /// record. `kind_id` matters because a bump must take a FRESH one ([F5]) — reusing it would put two
 /// versions on one id, and the id is the primary key.
-pub type KnownVersions =
-    std::collections::HashMap<(String, String, String, String), Vec<(u32, u64, u16)>>;
-
-/// The `(version, kind_id)` this def should carry, given what the registry already holds.
-///
-/// - **Matching fingerprint** → that row's version AND its kind_id. Idempotent: a re-seed writes
-///   nothing new, which is what lets the master run this on every boot.
-/// - **New fingerprint** → one past the highest version, and a FRESH kind_id ([F5](../../../docs/work/2026-08-04-definition-registry/forks.md#f5)).
-///   The old row keeps its id and its meaning — an old apple stays an old apple — so the new one
-///   cannot share it. Burning kind (rather than subtype or variant) is what confines the change to
-///   the thing that changed.
-/// - **Nothing on record** → version 0 at the seed id.
-fn version_for(known: &KnownVersions, tax: &Taxonomy, sim: u64, seed_kind: u16, next_free: &mut u16) -> (u32, u16) {
-    let Some((sub, variant)) = tax.tuples().first().map(|(s, v)| (s.to_string(), v.to_string()))
-    else {
-        return (0, seed_kind);
-    };
-    let key = (tax.type_name.clone(), sub, tax.kind.clone(), variant);
-    let Some(rows) = known.get(&key) else { return (0, seed_kind) };
-    // Match ONLY the newest row ([I12](../../../docs/work/2026-08-04-definition-registry/issues.md#i12)).
-    // Matching any older one would resurrect a stale version, leaving `max(version)` — the rule
-    // every name lookup uses — pointing at a definition the corpus no longer describes. A REVERT is
-    // a change: 12 → 9 → 12 gives v0, v1, v2, and the third meaning the same as the first is
-    // correct, because v1 may be on entities in the world.
-    let Some((newest_v, newest_sim, newest_kind)) = rows.iter().max_by_key(|(v, _, _)| *v) else {
-        return (0, seed_kind);
-    };
-    if *newest_sim == sim {
-        return (*newest_v, *newest_kind);
-    }
-    *next_free += 1;
-    (newest_v + 1, *next_free)
-}
-
-/// The highest `kind_id` the registry has ever handed out — where a bump's fresh id starts from.
-/// Never reused, because reclaim is deliberately unbuilt ([F7](../../../docs/work/2026-08-04-definition-registry/forks.md#f7)).
-fn highest_kind_id(known: &KnownVersions) -> u16 {
-    known.values().flatten().map(|(_, _, k)| *k).max().unwrap_or(0)
-}
-
 
 /// Seed the registry from a corpus: expand, then `ensure_definition` each allocation.
 ///
@@ -450,41 +403,21 @@ fn highest_kind_id(known: &KnownVersions) -> u16 {
 /// A corpus that will not expand is a HARD failure: the master would otherwise fan a world whose
 /// definitions nothing has registered, and the first stored id would mean nothing. Better to log
 /// loudly and leave the registry as it was.
-/// What the registry already holds, as `version_for` wants it. A row's sim fingerprint is not
-/// stored — it is DERIVED from the id, because a version's identity is the id it minted. Two rows
-/// of one tuple therefore differ by id, and a re-seed matching neither is a genuine bump.
-fn known_versions(index: &resonantdust_st_bindings::index::DbConnection) -> KnownVersions {
-    use resonantdust_st_bindings::index::DefinitionsTableAccess as _;
-    use spacetimedb_sdk::{DbContext as _, Table as _};
-    let mut out = KnownVersions::new();
-    for d in index.db().definitions().iter() {
-        out.entry((d.type_name.clone(), d.sub_type.clone(), d.kind.clone(), d.variant.clone()))
-            .or_default()
-            .push((d.version, d.sim, resonantdust_codec::object::def_kind_id(d.id)));
-    }
-    out
-}
-
 pub async fn seed_registry(
     index: &resonantdust_st_bindings::index::DbConnection,
     bundle: &resonantdust_content::loader::Bundle,
 ) -> Result<usize, AllocError> {
     use resonantdust_st_bindings::index::ensure_definition as _;
     use spacetimedb_sdk::DbContext;
-    let known = known_versions(index);
-    let allocs = allocations(bundle, &known)?;
+    let allocs = allocations(bundle)?;
 
     // KIND-SPACE PRESSURE ([F7](../../../docs/work/2026-08-04-definition-registry/forks.md#f7)).
     // Reclaim is designed and deliberately unbuilt; this is the number that decides when that
     // stops being the right call. `used` counts DISTINCT kind ids the registry has ever handed
     // out — every version of every kind, since none is ever reused — against the u12 ceiling.
-    let used: std::collections::HashSet<u16> = known
-        .values()
-        .flatten()
-        .map(|(_, _, k)| *k)
-        .chain(allocs.iter().map(|a| resonantdust_codec::object::def_kind_id(a.id)))
-        .collect();
-    let versions: usize = known.values().map(|rows| rows.len().saturating_sub(1)).sum();
+    let used: std::collections::HashSet<u16> =
+        allocs.iter().map(|a| resonantdust_codec::object::def_kind_id(a.id)).collect();
+    let versions = allocs.iter().filter(|a| a.version > 0).count();
     tracing::info!(
         kind_ids_used = used.len(),
         kind_ids_free = KIND_ID_LIMIT as usize - used.len(),
@@ -495,7 +428,6 @@ pub async fn seed_registry(
         if let Err(err) = index.reducers().ensure_definition(
             a.id,
             a.version,
-            a.sim,
             a.type_name.clone(),
             a.sub_type.clone(),
             a.kind.clone(),

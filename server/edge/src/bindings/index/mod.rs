@@ -94,7 +94,6 @@ pub enum Reducer {
     EnsureDefinition {
         id: u32,
         version: u32,
-        sim: u64,
         type_name: String,
         sub_type: String,
         kind: String,
@@ -195,7 +194,6 @@ fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
             Reducer::EnsureDefinition{
                 id,
                 version,
-                sim,
                 type_name,
                 sub_type,
                 kind,
@@ -203,7 +201,6 @@ fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
 }             => __sats::bsatn::to_vec(&ensure_definition_reducer::EnsureDefinitionArgs {
                 id: id.clone(),
                 version: version.clone(),
-                sim: sim.clone(),
                 type_name: type_name.clone(),
                 sub_type: sub_type.clone(),
                 kind: kind.clone(),
