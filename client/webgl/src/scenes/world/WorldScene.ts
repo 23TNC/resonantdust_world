@@ -123,11 +123,12 @@ export class WorldScene extends Scene {
           // ALREADY SORTED (conditions F3 — priority desc, |mood| desc, id asc); this loop
           // preserves that order and must never re-sort. `priority` is carried for display.
           const flat = c.pawnConditions(payload, now);
-          const labels = c.conditionLabels();
           for (let i = 0; i + 3 < flat.length; i += 4) {
+            // `condition_id` is a u32 gameplay definition_reference now (interactions F1) —
+            // labels resolve BY REF, never by position.
             const id = flat[i];
             conditions.push({
-              label: labels[id - 1] ?? `#${id}`,
+              label: c.conditionLabelOf(id) ?? `#${id.toString(16)}`,
               mood: flat[i + 1],
               remaining: flat[i + 2],
               priority: flat[i + 3],

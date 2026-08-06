@@ -329,11 +329,26 @@ impl Content {
             .map_or(-1.0, f64::from)
     }
 
-    /// Every condition's display LABEL in `condition_id` order (index 0 → id 1) — the panel's
-    /// name lookup. Labels are presentation; ids are what the eval returns.
-    #[wasm_bindgen(js_name = conditionLabels)]
-    pub fn condition_labels(&self) -> Vec<String> {
-        self.bundle.condition_params_all().into_iter().map(|m| m.label).collect()
+    /// A condition's display LABEL by its u32 gameplay `definition_reference` — the panel's
+    /// name lookup (interactions F1: the eval returns REFS, so a positional label array
+    /// cannot index them). `undefined` for an unknown ref. Labels are presentation.
+    #[wasm_bindgen(js_name = conditionLabelOf)]
+    pub fn condition_label_of(&self, reference: u32) -> Option<String> {
+        self.bundle.condition_params_by_ref(reference).map(|m| m.label)
+    }
+
+    /// Bind the GAMEPLAY registry (interactions F1): three parallel arrays over the
+    /// `/definitions` rows whose `type` is `"gameplay"` — `categories[i]` = the row's
+    /// `sub_type`, `names[i]` = its `kind`, `defs[i]` = the u32 id. Without this the bundle
+    /// resolves through the corpus-position SEED, which a fresh registry reproduces exactly.
+    #[wasm_bindgen(js_name = withGameplayRegistry)]
+    pub fn with_gameplay_registry(&mut self, categories: Vec<String>, names: Vec<String>, defs: Vec<u32>) {
+        let mut map = std::collections::HashMap::new();
+        for ((c, n), id) in categories.into_iter().zip(names).zip(defs) {
+            map.insert((c, n), id);
+        }
+        let bundle = std::mem::take(&mut self.bundle);
+        self.bundle = bundle.with_gameplay_registry(map);
     }
 
     /// Per-kind emitted light, stride-8 (`[r, g, b, intensity, reach, radius, height, flags]`;

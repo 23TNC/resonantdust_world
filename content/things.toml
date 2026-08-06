@@ -128,6 +128,9 @@ subType = ["animal"]
 variant = ["0"]
 speed = 12
 needs = ["thirst"]
+# The trait gate's first citizen (interactions F6): the drink_water affordance
+# requires this. Per-KIND today; per-pawn traits are a payload opcode later.
+traits = ["biological_lifeform"]
 
   [[thing.part]]
   tint = "#ffffff"

@@ -1,0 +1,46 @@
+# Traits, interactions, affordances — what a pawn CAN DO and who may do it
+# (work 2026-08-06-interactions; schema docs/VARIABLES.md § TOML content schema).
+#
+# The three-entity model (user, 2026-08-06):
+#   - a TRAIT is a capability class a pawn HAS (kinds author `traits = [...]`);
+#   - an INTERACTION is something a pawn can do — how (inputs, location) and what it
+#     does (effects). It is GENERIC: the input signature is bound by the caller's
+#     event words, in order;
+#   - an AFFORDANCE says WHO may do WHAT — the trait gate bound to an interaction
+#     ONCE. Carriers reference it by name with THEIR parameters, so the water tile
+#     authors `affordances = [{ name = "drink_water", magnitude = 3 }]` and a future
+#     waterskin authors the same name at 1 or 5.
+#
+# NO ids (interactions F1/F9): identity is the derived taxonomy
+# (`gameplay/interaction/drink/default`), numbered by the registry. `variants` on the
+# affordance is the variation lane — a later `angry` drink is a new interaction
+# variant the affordance chooses to offer (or not).
+#
+# Effect operands: `"@name"` binds an input slot; a bare name or number is baked.
+# `amount` is a SIGNED f32 in the need's own units, clamped to its authored min/max on
+# apply — damage-a-need is the same mechanism as satisfy.
+
+[[trait]]
+name = "biological_lifeform"
+label = "Biological Lifeform"
+
+[[interaction]]
+name = "drink"
+label = "Drink"
+inputs = ["pawn", "need", "amount"]
+satisfy = { target = "@pawn", need = "@need", amount = "@amount" }
+grant = ["quenched"]
+# This turn's only placement rule (F8): the target stands ON a carrier tile. The
+# recorded generalization — unit.x/y/z locations + a queued "move to and execute" —
+# is a later stream.
+location = "on"
+# RESERVED (I9): interactions are instantaneous; a timed "drinking" state must
+# negotiate with MOVE_STEP chain supersession and gets its own stream.
+duration = 0
+
+[[affordance]]
+name = "drink_water"
+label = "Drink Water"
+requires = ["biological_lifeform"]
+interaction = "drink"
+variants = ["default"]

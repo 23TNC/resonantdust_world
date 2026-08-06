@@ -13,8 +13,8 @@
 //! is the single thing the registry exists to prevent.
 
 use resonantdust_codec::object::{
-    pack_definition_from_ids, KIND_ID_LIMIT, TYPE_BIOME_THING, TYPE_BIOME_TILE, TYPE_PAWN,
-    VARIANT_ID_LIMIT,
+    gameplay_subtype_id, pack_definition_from_ids, KIND_ID_LIMIT, TYPE_BIOME_THING,
+    TYPE_BIOME_TILE, TYPE_GAMEPLAY, TYPE_PAWN, VARIANT_ID_LIMIT,
 };
 use resonantdust_content::loader::{Bundle, Taxonomy};
 
@@ -256,6 +256,20 @@ speed = 9
         assert_eq!(def_kind_id(find("smooth", "default", "wall")), 6);
         assert_eq!(def_variant_id(find("smooth", "default", "wall")), 0);
 
+        // GAMEPLAY defs (interactions F1/F9): the allocator's rows must equal the loader's SEED
+        // fallback exactly — that agreement is what lets a registry-less boot resolve the same
+        // refs a fresh registry records.
+        assert_eq!(find("drink", "interaction", "default"), 0x8004_0010);
+        assert_eq!(
+            find("thirst", "need", "default"),
+            bundle.gameplay_reference("need", "thirst").expect("seed ref"),
+            "allocator and seed fallback disagree on thirst"
+        );
+        assert_eq!(
+            find("drink_water", "affordance", "default"),
+            bundle.gameplay_reference("affordance", "drink_water").expect("seed ref"),
+        );
+
         // The cross-product is real: a 16-variant def contributes 16 rows that differ ONLY in the
         // variant nibble, so worldgen's per-cell roll always lands on a registered definition.
         let conifers: Vec<u32> =
@@ -295,6 +309,7 @@ fn type_id_of(type_name: &str) -> Option<u8> {
         "biome-tile" => Some(TYPE_BIOME_TILE),
         "biome-thing" => Some(TYPE_BIOME_THING),
         "pawn" => Some(TYPE_PAWN),
+        "gameplay" => Some(TYPE_GAMEPLAY),
         _ => None,
     }
 }
@@ -306,6 +321,12 @@ fn type_id_of(type_name: &str) -> Option<u8> {
 /// biome record; anything else — a pawn SPECIES today — authors it in `subtypes.toml`. All three
 /// are content now; the code-owned species palette is gone.
 fn subtype_id_of(bundle: &Bundle, type_id: u8, sub_type: &str) -> Option<u16> {
+    // The gameplay CATEGORY palette is code-owned like the type palette (interactions F1/F9):
+    // a category implies a loader schema + an executor, so it is schema vocabulary, not
+    // content the corpus adds to — unlike a species, which is (F16).
+    if type_id == TYPE_GAMEPLAY {
+        return gameplay_subtype_id(sub_type);
+    }
     if sub_type == "default" {
         return Some(0);
     }
@@ -384,6 +405,30 @@ pub fn allocations(bundle: &Bundle) -> Result<Vec<Allocation>, AllocError> {
         }
         if let Some(tax) = bundle.thing_taxonomy(object_id) {
             out.extend(expand(bundle, tax, object_id, bundle.thing_version(object_id).unwrap_or(0))?);
+        }
+    }
+    // The GAMEPLAY categories (interactions F1/F9): the taxonomy is DERIVED —
+    // `gameplay/<category>/<name>/default` — and the kind seed is the corpus position,
+    // exactly the posture the tile/thing seeds established (the migration proof: a fresh
+    // registry reproduces what the seed fallback already resolves).
+    for (category, names) in [
+        ("need", bundle.need_names()),
+        ("condition", bundle.condition_names()),
+        ("trait", bundle.trait_names()),
+        ("interaction", bundle.interaction_names()),
+        ("affordance", bundle.affordance_names()),
+    ] {
+        for (i, name) in names.iter().enumerate() {
+            if name.is_empty() {
+                continue;
+            }
+            let tax = Taxonomy {
+                type_name: "gameplay".to_string(),
+                kind: name.clone(),
+                sub_type: vec![category.to_string()],
+                variant: vec!["default".to_string()],
+            };
+            out.extend(expand(bundle, &tax, (i + 1) as u16, 0)?);
         }
     }
     Ok(out)

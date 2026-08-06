@@ -166,20 +166,26 @@ pub const NEEDS_PER_KIND: usize = 8;
 pub struct NeedBand {
   /// The `<condition>` name this band activates (resolved via [`Bundle::condition_id`]).
   pub condition: String,
-  /// Band start (inclusive), `0..1` satisfaction. Default `0`.
+  /// Band start (inclusive), in the need's OWN units (interactions F7). Default `0`.
   pub lo: f64,
-  /// Band end (exclusive), `0..1` satisfaction.
+  /// Band end (exclusive), in the need's own units.
   pub hi: f64,
 }
 
-/// A `<need>` def's parameters (needs-moodlets P1). A need is a 0..1 SATISFACTION that
-/// depletes toward zero (F1); nothing ticks it — observers compute `satisfaction_at(tic)`
-/// from `deplete` (F4).
+/// A `[[need]]` def's parameters (needs-moodlets P1). A need is an f32 SATISFACTION on its
+/// OWN authored `min..max` domain (interactions F3/F7 — the corpus decides range and sign,
+/// the system stores and CLAMPS), depleting toward `min`; nothing ticks it — observers
+/// compute `satisfaction_at(tic)` from `deplete` (F4).
 #[derive(Debug, Clone, PartialEq)]
 pub struct NeedParams {
   /// Display label ("Thirst") — authoring/debug only. The need itself is NEVER shown.
   pub label: String,
-  /// TICS from full (`1.0`) to empty (`0.0`). `0` = unauthored (the need never drains).
+  /// The authored domain floor — depletion's resting point. `min` may be negative:
+  /// min/max IS the sign treatment (F7). Default `0`.
+  pub min: f64,
+  /// The authored domain ceiling — "full". Default `1` (the pre-F7 fractional domain).
+  pub max: f64,
+  /// TICS from `max` to `min`. `0` = unauthored (the need never drains).
   pub deplete: f64,
   /// The derived-condition bands, in authored slot order.
   pub bands: Vec<NeedBand>,
@@ -206,6 +212,67 @@ pub struct ConditionParams {
   /// renumbering. The full sort — `priority` desc, `|mood|` desc, `condition_id` asc — lives in
   /// [`crate::needs_eval::active_conditions`], NOT in any consumer (F3).
   pub priority: i32,
+}
+
+/// A `[[trait]]` def — a capability class a pawn HAS (interactions F6). Kinds author
+/// `traits = [...]`; the availability gate takes a TRAIT SET, so per-pawn traits later
+/// (a payload opcode) change nothing here.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TraitParams {
+  pub label: String,
+}
+
+/// One operand of an interaction effect (interactions F5): an `"@name"` reference into the
+/// interaction's declared `inputs`, a bare name constant (a def baked into the effect), or
+/// a number constant. `@` references resolve to their input INDEX at load — a dangling one
+/// refuses the load.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Operand {
+  /// The index into [`InteractionParams::inputs`] the caller's event word binds.
+  Input(usize),
+  /// A baked name (e.g. `need = "thirst"` on an interaction that only ever drinks water).
+  Name(String),
+  /// A baked number.
+  Value(f64),
+}
+
+/// The `satisfy` effect: move `need`'s satisfaction on `target` by the SIGNED `amount`
+/// (clamped to the need's authored domain by the executor).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SatisfyEffect {
+  pub target: Operand,
+  pub need: Operand,
+  pub amount: Operand,
+}
+
+/// An `[[interaction]]` def — something a pawn can DO (interactions F5): an input
+/// SIGNATURE plus declarative effects binding inputs or constants.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InteractionParams {
+  pub label: String,
+  /// The declared input signature — event input words bind these IN ORDER.
+  pub inputs: Vec<String>,
+  /// The satisfy effect, if the interaction moves a need.
+  pub satisfy: Option<SatisfyEffect>,
+  /// TIMED condition grants on execute (expiry from each condition's own `duration`).
+  pub grants: Vec<String>,
+  /// The placement rule — `"on"` this turn (F8): the target stands ON a carrier tile.
+  pub location: String,
+  /// RESERVED (interactions I9): interactions are instantaneous; authored 0.
+  pub duration: f64,
+}
+
+/// An `[[affordance]]` def — WHO may do WHAT (interactions F2): a trait gate bound to an
+/// interaction once; carriers reference it by name with their own parameters.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AffordanceParams {
+  pub label: String,
+  /// Trait names the pawn must carry (ALL of them).
+  pub requires: Vec<String>,
+  /// The interaction this affordance offers.
+  pub interaction: String,
+  /// Which variants of the interaction it offers (F1's variation lane).
+  pub variants: Vec<String>,
 }
 
 /// One part SLOT of a kind's visual skeleton (human-pawns P2). Slot index =
@@ -325,6 +392,8 @@ pub(crate) struct TileDef {
   pub height: Option<f64>,
   /// `[linked_w, linked_h, padding, rotation, cast_shadow, receives_shadows]`.
   pub lanes: [f64; 6],
+  /// Affordance bindings — `(affordance name, magnitude)` (interactions F2).
+  pub affordances: Vec<(String, f64)>,
 }
 
 /// One thing def, fully evaluated. `name` may be `""` for a retired id.
@@ -338,8 +407,13 @@ pub(crate) struct ThingDef {
   pub color: Option<u32>,
   pub visual: Option<VisualParts>,
   pub speed: Option<u16>,
-  /// 1-based need ids (`&thing.needs` / `needs = [...]`), corpus-resolved.
-  pub needs: Vec<u16>,
+  /// The need NAMES this kind carries (`needs = [...]`), load-validated; consumers read
+  /// gameplay refs through [`Bundle::thing_needs`] (interactions F1).
+  pub needs: Vec<String>,
+  /// The trait names this kind carries (`traits = [...]`, interactions F6).
+  pub traits: Vec<String>,
+  /// Affordance bindings — `(affordance name, magnitude)` (interactions F2).
+  pub affordances: Vec<(String, f64)>,
 }
 
 /// One biome, with its classifier body in either dialect.
@@ -414,8 +488,13 @@ pub struct Bundle {
   /// Evaluation order = priority (first match wins), NOT an id namespace.
   pub(crate) biomes: Vec<BiomeDef>,
   pub(crate) materials: Vec<(String, MaterialParams)>,
+  /// The five GAMEPLAY category registries (interactions F1), corpus order — identity is
+  /// the registry-allocated `gameplay/<category>/<name>/default` def ref, never a position.
   pub(crate) needs: Vec<(String, NeedParams)>,
   pub(crate) conditions: Vec<(String, ConditionParams)>,
+  pub(crate) traits: Vec<(String, TraitParams)>,
+  pub(crate) interactions: Vec<(String, InteractionParams)>,
+  pub(crate) affordances: Vec<(String, AffordanceParams)>,
   /// `(type, name) → subtype_id` for subtype axes with no record of their own — pawn species today
   /// (definition-registry F16). A biome's subtype is authored on the biome instead.
   pub(crate) subtypes: Vec<(String, String, u16)>,
@@ -426,6 +505,9 @@ pub struct Bundle {
   material_names: Vec<String>,
   need_names: Vec<String>,
   condition_names: Vec<String>,
+  trait_names: Vec<String>,
+  interaction_names: Vec<String>,
+  affordance_names: Vec<String>,
   /// The REGISTRY override for `name → definition_reference` (definition-registry P4/P5), keyed
   /// `(is_tile, name)`. `None` means "resolve from corpus position", which is what a registry-less
   /// boot and every unit test does.
@@ -436,6 +518,10 @@ pub struct Bundle {
   /// by string-parsing its texture path. [`Bundle::definition_reference`] hands the whole thing
   /// back, which is what lets that parsing (and the code-owned species palette behind it) die.
   registry: Option<std::collections::HashMap<(bool, String), u32>>,
+  /// The GAMEPLAY registry override, keyed `(category, name)` (interactions F1) — the
+  /// same posture as `registry`: `None` resolves from the corpus-position SEED, which is
+  /// exactly what a fresh registry allocates, so the two agree by construction.
+  gameplay_registry: Option<std::collections::HashMap<(String, String), u32>>,
 }
 
 impl Bundle {
@@ -467,6 +553,77 @@ impl Bundle {
     self.definition_reference(is_tile, name).map(|d| ((d >> 4) & 0xFFF) as u16)
   }
 
+  /// Supply the GAMEPLAY registry's resolution, keyed `(category, name)` — built by consumers
+  /// from `/definitions` rows with `type == "gameplay"` (`sub_type` = category, `kind` = name).
+  pub fn with_gameplay_registry(
+    mut self,
+    map: std::collections::HashMap<(String, String), u32>,
+  ) -> Self {
+    self.gameplay_registry = Some(map);
+    self
+  }
+
+  /// The category registry a gameplay category name indexes, or `None` for an unknown one.
+  fn gameplay_names(&self, category: &str) -> Option<&[String]> {
+    match category {
+      "need" => Some(&self.need_names),
+      "condition" => Some(&self.condition_names),
+      "trait" => Some(&self.trait_names),
+      "interaction" => Some(&self.interaction_names),
+      "affordance" => Some(&self.affordance_names),
+      _ => None,
+    }
+  }
+
+  /// A gameplay def's u32 `definition_reference` — registry-first, else the corpus-position
+  /// SEED (`gameplay | category | position | default`), which is exactly what a fresh
+  /// registry allocates from, so the two agree by construction (interactions F1).
+  pub fn gameplay_reference(&self, category: &str, name: &str) -> Option<u32> {
+    if let Some(map) = &self.gameplay_registry {
+      if let Some(id) = map.get(&(category.to_string(), name.to_string())) {
+        return Some(*id);
+      }
+    }
+    let subtype = resonantdust_codec::object::gameplay_subtype_id(category)?;
+    let kind = Self::id_of(self.gameplay_names(category)?, name)?;
+    Some(resonantdust_codec::object::pack_definition_from_ids(
+      resonantdust_codec::object::TYPE_GAMEPLAY,
+      subtype,
+      kind,
+      0,
+    ))
+  }
+
+  /// The reverse: what a gameplay `definition_reference` MEANS — `(category, name)`.
+  /// Registry-first (a scan; the map is tiny), else the seed unpack. `None` for a
+  /// non-gameplay reference or an unknown one.
+  pub fn gameplay_lookup(&self, reference: u32) -> Option<(String, String)> {
+    if let Some(map) = &self.gameplay_registry {
+      if let Some(((category, name), _)) = map.iter().find(|(_, id)| **id == reference) {
+        return Some((category.clone(), name.clone()));
+      }
+    }
+    use resonantdust_codec::object as obj;
+    if obj::def_type_id(reference) != obj::TYPE_GAMEPLAY {
+      return None;
+    }
+    let category = obj::gameplay_category(obj::def_subtype_id(reference))?;
+    let name = Self::name_of(self.gameplay_names(category)?, obj::def_kind_id(reference))?;
+    Some((category.to_string(), name.to_string()))
+  }
+
+  /// A need's params by gameplay `definition_reference` — the eval's resolution path.
+  pub fn need_params_by_ref(&self, reference: u32) -> Option<NeedParams> {
+    let (category, name) = self.gameplay_lookup(reference)?;
+    (category == "need").then(|| self.need_params(&name)).flatten()
+  }
+
+  /// A condition's params by gameplay `definition_reference`.
+  pub fn condition_params_by_ref(&self, reference: u32) -> Option<ConditionParams> {
+    let (category, name) = self.gameplay_lookup(reference)?;
+    (category == "condition").then(|| self.condition_params(&name)).flatten()
+  }
+
   /// Finalize the name caches after the def vecs are filled (both loaders call this).
   pub(crate) fn index(mut self) -> Self {
     self.tile_names = self.tiles.iter().map(|d| d.name.clone()).collect();
@@ -475,6 +632,9 @@ impl Bundle {
     self.material_names = self.materials.iter().map(|(n, _)| n.clone()).collect();
     self.need_names = self.needs.iter().map(|(n, _)| n.clone()).collect();
     self.condition_names = self.conditions.iter().map(|(n, _)| n.clone()).collect();
+    self.trait_names = self.traits.iter().map(|(n, _)| n.clone()).collect();
+    self.interaction_names = self.interactions.iter().map(|(n, _)| n.clone()).collect();
+    self.affordance_names = self.affordances.iter().map(|(n, _)| n.clone()).collect();
     self
   }
 
@@ -525,6 +685,10 @@ impl Bundle {
     fnv_str(&mut h, &d.name);
     fnv_str(&mut h, d.build.as_deref().unwrap_or(""));
     fnv_bytes(&mut h, &d.height.unwrap_or(0.0).to_bits().to_le_bytes());
+    for (a, m) in &d.affordances {
+      fnv_str(&mut h, a);
+      fnv_bytes(&mut h, &m.to_le_bytes());
+    }
     Some(h)
   }
 
@@ -535,7 +699,14 @@ impl Bundle {
     fnv_str(&mut h, &d.name);
     fnv_bytes(&mut h, &d.speed.unwrap_or(0).to_le_bytes());
     for n in &d.needs {
-      fnv_bytes(&mut h, &n.to_le_bytes());
+      fnv_str(&mut h, n);
+    }
+    for t in &d.traits {
+      fnv_str(&mut h, t);
+    }
+    for (a, m) in &d.affordances {
+      fnv_str(&mut h, a);
+      fnv_bytes(&mut h, &m.to_le_bytes());
     }
     Some(h)
   }
@@ -730,24 +901,54 @@ impl Bundle {
     self.things.iter().map(|d| d.visual.as_ref().map(|v| v.packed).unwrap_or_default()).collect()
   }
 
-  /// The needs a thing kind carries, as 1-based need ids (needs-moodlets P1).
-  pub fn thing_needs(&self, object_id: u16) -> Vec<u16> {
+  /// The needs a thing kind carries, as u32 gameplay `definition_reference`s
+  /// (interactions F1; needs-moodlets P1). A name the resolution cannot number is
+  /// dropped — load validation makes that unreachable for a well-formed corpus.
+  pub fn thing_needs(&self, object_id: u16) -> Vec<u32> {
     self
       .things
       .get(object_id.checked_sub(1).map(usize::from).unwrap_or(usize::MAX))
-      .map(|d| d.needs.clone())
+      .map(|d| d.needs.iter().filter_map(|n| self.gameplay_reference("need", n)).collect())
       .unwrap_or_default()
   }
   /// Every thing's needs in `object_id` order, flattened **stride-[`NEEDS_PER_KIND`]**
-  /// per kind (`0` = empty slot).
+  /// per kind (`0` = empty slot). Values are u32 gameplay refs (exact in an f64).
   pub fn thing_needs_table(&self) -> Vec<f64> {
     let mut out = Vec::with_capacity(self.things.len() * NEEDS_PER_KIND);
     for d in &self.things {
       for i in 0..NEEDS_PER_KIND {
-        out.push(d.needs.get(i).copied().unwrap_or(0) as f64);
+        let r = d.needs.get(i).and_then(|n| self.gameplay_reference("need", n)).unwrap_or(0);
+        out.push(f64::from(r));
       }
     }
     out
+  }
+
+  /// The trait names a thing kind carries (`traits = [...]`, interactions F6). The KIND
+  /// half of a pawn's trait set — union payload traits (none yet) at the gate.
+  pub fn thing_traits(&self, object_id: u16) -> Vec<String> {
+    self
+      .things
+      .get(object_id.checked_sub(1).map(usize::from).unwrap_or(usize::MAX))
+      .map(|d| d.traits.clone())
+      .unwrap_or_default()
+  }
+  /// A thing kind's affordance bindings — `(affordance name, magnitude)` (interactions F2).
+  pub fn thing_affordances(&self, object_id: u16) -> Vec<(String, f64)> {
+    self
+      .things
+      .get(object_id.checked_sub(1).map(usize::from).unwrap_or(usize::MAX))
+      .map(|d| d.affordances.clone())
+      .unwrap_or_default()
+  }
+  /// A tile def's affordance bindings — `(affordance name, magnitude)`. The water tile's
+  /// `drink_water 3` lives here.
+  pub fn tile_affordances(&self, def_id: u16) -> Vec<(String, f64)> {
+    self
+      .tiles
+      .get(def_id.checked_sub(1).map(usize::from).unwrap_or(usize::MAX))
+      .map(|d| d.affordances.clone())
+      .unwrap_or_default()
   }
 
   // ---------- biomes ----------
@@ -866,6 +1067,51 @@ impl Bundle {
   /// The whole condition registry in `condition_id` order.
   pub fn condition_params_all(&self) -> Vec<ConditionParams> {
     self.conditions.iter().map(|(_, p)| p.clone()).collect()
+  }
+
+  // ---------- traits, interactions, affordances (interactions P1) ----------
+
+  /// Every trait name, corpus order.
+  pub fn trait_names(&self) -> &[String] {
+    &self.trait_names
+  }
+  /// A trait's [`TraitParams`], or `None` if unknown.
+  pub fn trait_params(&self, name: &str) -> Option<TraitParams> {
+    self.traits.iter().find(|(n, _)| n == name).map(|(_, p)| p.clone())
+  }
+
+  /// Every interaction name, corpus order.
+  pub fn interaction_names(&self) -> &[String] {
+    &self.interaction_names
+  }
+  /// An interaction's [`InteractionParams`], or `None` if unknown.
+  pub fn interaction_params(&self, name: &str) -> Option<InteractionParams> {
+    self.interactions.iter().find(|(n, _)| n == name).map(|(_, p)| p.clone())
+  }
+  /// An interaction's params by gameplay `definition_reference` — the worker's resolution
+  /// of an `EXECUTE_INTERACTION` event's first operand.
+  pub fn interaction_params_by_ref(&self, reference: u32) -> Option<InteractionParams> {
+    let (category, name) = self.gameplay_lookup(reference)?;
+    (category == "interaction").then(|| self.interaction_params(&name)).flatten()
+  }
+
+  /// Every affordance name, corpus order.
+  pub fn affordance_names(&self) -> &[String] {
+    &self.affordance_names
+  }
+  /// An affordance's [`AffordanceParams`], or `None` if unknown.
+  pub fn affordance_params(&self, name: &str) -> Option<AffordanceParams> {
+    self.affordances.iter().find(|(n, _)| n == name).map(|(_, p)| p.clone())
+  }
+
+  /// The AVAILABILITY gate (interactions F2/F6): whether a pawn holding `traits` may use
+  /// `affordance`. Takes a TRAIT SET, not a kind — per-pawn traits later change callers,
+  /// not this. All `requires` must be present; an unknown affordance is unavailable.
+  pub fn affordance_available(&self, affordance: &str, traits: &[String]) -> bool {
+    match self.affordance_params(affordance) {
+      Some(a) => a.requires.iter().all(|r| traits.iter().any(|t| t == r)),
+      None => false,
+    }
   }
 }
 

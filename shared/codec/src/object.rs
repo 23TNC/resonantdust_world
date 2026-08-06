@@ -74,6 +74,39 @@ pub const TYPE_SERVER: u8 = 6;
 /// **not** change with biome. The counterpart to [`TYPE_BIOME_THING`] (biome-varying scenery like
 /// trees); `subtype` classifies the item family (resource / equipment / …) rather than a biome.
 pub const TYPE_THING: u8 = 7;
+/// A GAMEPLAY definition — needs, conditions, traits, interactions, affordances (work
+/// `2026-08-06-interactions` F1): `subtype` = the category, `kind` = the def, `variant` its
+/// variation (`default` = 0). These ids ride payload words and event inputs, never placements.
+pub const TYPE_GAMEPLAY: u8 = 8;
+
+// The gameplay CATEGORY palette — `subtype_id` values under [`TYPE_GAMEPLAY`]. Code-owned like
+// the type palette (a category implies a loader schema + an executor, so an unknown one is a
+// corpus error, never a number invented on the spot). APPEND-ONLY.
+/// `subtype_id` of `gameplay/need`.
+pub const GAMEPLAY_NEED: u16 = 1;
+/// `subtype_id` of `gameplay/condition`.
+pub const GAMEPLAY_CONDITION: u16 = 2;
+/// `subtype_id` of `gameplay/trait`.
+pub const GAMEPLAY_TRAIT: u16 = 3;
+/// `subtype_id` of `gameplay/interaction`.
+pub const GAMEPLAY_INTERACTION: u16 = 4;
+/// `subtype_id` of `gameplay/affordance`.
+pub const GAMEPLAY_AFFORDANCE: u16 = 5;
+
+/// The gameplay category names in `subtype_id` order (index 0 → id 1) — ONE spelling of the
+/// palette, shared by the loader's derived taxonomy (interactions F9) and the master's
+/// allocator so the two can never drift.
+pub const GAMEPLAY_CATEGORIES: [&str; 5] = ["need", "condition", "trait", "interaction", "affordance"];
+
+/// A gameplay category name's `subtype_id`, or `None` for a name outside the palette.
+pub fn gameplay_subtype_id(category: &str) -> Option<u16> {
+    GAMEPLAY_CATEGORIES.iter().position(|c| *c == category).map(|i| i as u16 + 1)
+}
+
+/// The reverse: a `subtype_id`'s gameplay category name.
+pub fn gameplay_category(subtype_id: u16) -> Option<&'static str> {
+    (subtype_id != 0).then(|| GAMEPLAY_CATEGORIES.get(subtype_id as usize - 1).copied()).flatten()
+}
 
 /// Compose a `definition_reference` from its two `u16` halves: `type_reference | kind_reference`.
 /// This is the plan's shape — the halves *are* the definition, so it composes rather than

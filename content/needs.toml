@@ -1,26 +1,32 @@
 # Needs & conditions — the pawn's hidden state and its DISPLAYED consequences
-# (work 2026-08-04-conditions; schema docs/VARIABLES.md).
+# (work 2026-08-04-conditions + 2026-08-06-interactions; schema docs/VARIABLES.md).
 #
-# A need is a 0..1 SATISFACTION depleting toward zero (`deplete` = TICS
-# full→empty). Nothing ticks it: a pawn's shard row stores (satisfaction,
-# set_tic) and every observer computes the current value + the exact band
-# crossings lazily. Bands are EXCLUSIVE ranges (lo <= sat < hi) — at most one
-# band condition per need is active; the player sees CONDITIONS, never the
-# scalar. `duration 0` = DERIVED (alive while its band holds); `> 0` = TIMED,
-# a stored grant expiring that many tics after it lands (the drink action's).
+# A need is an f32 SATISFACTION on its OWN authored domain (`min`..`max` — interactions
+# F7; min may be negative, that IS the sign treatment) depleting toward `min` (`deplete` =
+# TICS max→min). Nothing ticks it: a pawn's payload row stores (need ref, satisfaction,
+# set_tic) and every observer computes the current value + the exact band crossings
+# lazily. Bands are EXCLUSIVE ranges in the need's OWN units (lo <= sat < hi) — at most
+# one band condition per need is active; the player sees CONDITIONS, never the scalar.
+# `duration 0` = DERIVED (alive while its band holds); `> 0` = TIMED, a stored grant
+# expiring that many tics after it lands (drink's `quenched`).
 #
-# Ids ride inside pawn PAYLOAD words — never renumber, never reuse (F1).
+# NO ids (interactions F1): a gameplay def's identity is its derived taxonomy
+# (`gameplay/need/thirst/default`), numbered by the registry; payload words and event
+# inputs carry the full u32 definition_reference.
+#
 # Numbers are PROVISIONAL and authored here precisely so tuning is a data edit.
-# 21600 tics = 1 h wall at 6 Hz.
+# 21600 tics = 1 h wall at 6 Hz. Thirst's domain is 0..100 — a percent scale, so the
+# water tile's `drink 3` reads as +3% of full.
 
 [[need]]
-id = 1
 name = "thirst"
 label = "Thirst"
+min = 0
+max = 100
 deplete = 21600.0
 band = [
-  { condition = "thirsty", lo = 0.1, hi = 0.35 },
-  { condition = "dehydrated", lo = 0.0, hi = 0.1 },
+  { condition = "thirsty", lo = 10, hi = 35 },
+  { condition = "dehydrated", lo = 0, hi = 10 },
 ]
 
 # `priority` sorts the details panel's cards, DESCENDING — the top 4 show maximized, the
@@ -28,21 +34,18 @@ band = [
 # TENS so a new condition slots between two without renumbering anything.
 
 [[condition]]
-id = 1
 name = "thirsty"
 label = "Thirsty"
 mood = -0.15
 priority = 20
 
 [[condition]]
-id = 2
 name = "dehydrated"
 label = "Dehydrated"
 mood = -0.4
 priority = 30
 
 [[condition]]
-id = 3
 name = "quenched"
 label = "Quenched"
 mood = 0.2

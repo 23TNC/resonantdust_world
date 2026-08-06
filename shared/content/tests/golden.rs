@@ -88,8 +88,10 @@ fn dump(b: &Bundle) -> String {
     // a reordered corpus does get different numbers — correctly, because a fresh DB is a fresh
     // world.
     //
-    // Materials, needs and conditions still author ids and are still pinned by the registries
-    // dumped above, where the id IS the line number.
+    // MATERIALS still author ids and are still pinned by the registry dumped above, where the id
+    // IS the line number. Needs/conditions (and the interactions categories) stopped authoring
+    // ids in `2026-08-06-interactions` F1 — their identity is the registry-numbered
+    // `gameplay/<category>/<name>/default` tuple, and the SEED refs are dumped below.
 
     // ── per-def scalar/colour lookups ──
     sec(
@@ -140,6 +142,80 @@ fn dump(b: &Bundle) -> String {
     sec("need_params", format!("{:#?}", b.need_params_all()), &mut out);
     sec("condition_params", format!("{:#?}", b.condition_params_all()), &mut out);
 
+    // ── the gameplay categories (interactions P1) — registries, params, seed refs, carriers ──
+    sec("traits", b.trait_names().join("\n"), &mut out);
+    sec("interactions", b.interaction_names().join("\n"), &mut out);
+    sec("affordances", b.affordance_names().join("\n"), &mut out);
+    sec(
+        "trait_params",
+        b.trait_names()
+            .iter()
+            .map(|n| format!("{n}: {:?}", b.trait_params(n)))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        &mut out,
+    );
+    sec(
+        "interaction_params",
+        b.interaction_names()
+            .iter()
+            .map(|n| format!("{n}: {:?}", b.interaction_params(n)))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        &mut out,
+    );
+    sec(
+        "affordance_params",
+        b.affordance_names()
+            .iter()
+            .map(|n| format!("{n}: {:?}", b.affordance_params(n)))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        &mut out,
+    );
+    // The SEED gameplay refs — what a registry-less boot resolves, and exactly what a fresh
+    // registry allocates from (the migration-proof posture the kind seeds established).
+    let mut refs = String::new();
+    for (category, names) in [
+        ("need", b.need_names()),
+        ("condition", b.condition_names()),
+        ("trait", b.trait_names()),
+        ("interaction", b.interaction_names()),
+        ("affordance", b.affordance_names()),
+    ] {
+        for n in names {
+            let r = b.gameplay_reference(category, n);
+            let _ = writeln!(refs, "gameplay/{category}/{n} {:?}", r.map(|r| format!("{r:#010x}")));
+        }
+    }
+    sec("gameplay seed refs", refs, &mut out);
+    sec(
+        "tile affordances (name → bindings)",
+        b.tile_names()
+            .iter()
+            .enumerate()
+            .map(|(i, n)| format!("{n} {:?}", b.tile_affordances(i as u16 + 1)))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        &mut out,
+    );
+    sec(
+        "thing traits + affordances",
+        b.thing_names()
+            .iter()
+            .enumerate()
+            .map(|(i, n)| {
+                format!(
+                    "{n} traits={:?} affordances={:?}",
+                    b.thing_traits(i as u16 + 1),
+                    b.thing_affordances(i as u16 + 1)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+        &mut out,
+    );
+
     // ── the visual PARTS skeletons (per thing — the human's body+head, the wolf's one) ──
     sec(
         "thing visual parts",
@@ -189,11 +265,15 @@ fn dump(b: &Bundle) -> String {
     sec("worldgen sweep (t,h,e biome tile thing1)", grid, &mut out);
 
     // ── the needs probes (the wasm-probe fixtures, against the REAL corpus) ──
-    let probes: [(&str, Vec<(u8, u8, u16)>, Vec<(u8, u16)>, u16); 4] = [
-        ("full", vec![(1, 255, 0)], vec![], 0),
-        ("mid", vec![(1, 64, 0)], vec![], 0),
-        ("empty", vec![(1, 0, 0)], vec![], 0),
-        ("timed", vec![], vec![(3, 0)], 100),
+    // Rows are (need ref, f32 satisfaction, set_tic) on thirst's authored 0..100 domain
+    // (interactions F1/F3/F7); refs resolve through the seed (no registry injected here).
+    let thirst = b.gameplay_reference("need", "thirst").expect("thirst ref");
+    let quenched = b.gameplay_reference("condition", "quenched").expect("quenched ref");
+    let probes: [(&str, Vec<(u32, f32, u16)>, Vec<(u32, u16)>, u16); 4] = [
+        ("full", vec![(thirst, 100.0, 0)], vec![], 0),
+        ("mid", vec![(thirst, 25.0, 0)], vec![], 0),
+        ("empty", vec![(thirst, 0.0, 0)], vec![], 0),
+        ("timed", vec![], vec![(quenched, 0)], 100),
     ];
     let mut needs = String::new();
     for (name, rows, grants, now) in &probes {

@@ -7,9 +7,9 @@
 //! slot as an empty placeholder forever).
 
 use crate::loader::{
-  BiomeBody, BiomeDef, BiomeRules, Bundle, Cmp, DirFrame, LightParts, LoadError, MaterialParams,
-  ConditionParams, NeedBand, NeedParams, PackedChannel, Taxonomy, ThingDef, TileDef, VisualPart,
-  VisualParts,
+  AffordanceParams, BiomeBody, BiomeDef, BiomeRules, Bundle, Cmp, ConditionParams, DirFrame,
+  InteractionParams, LightParts, LoadError, MaterialParams, NeedBand, NeedParams, Operand,
+  PackedChannel, SatisfyEffect, Taxonomy, ThingDef, TileDef, TraitParams, VisualPart, VisualParts,
   NEEDS_PER_KIND, ROTATIONS_PER_DEF, VARIANTS_PER_DEF,
 };
 use serde::Deserialize;
@@ -32,6 +32,12 @@ struct Corpus {
   need: Vec<NeedToml>,
   #[serde(default)]
   condition: Vec<ConditionToml>,
+  #[serde(default, rename = "trait")]
+  trait_: Vec<TraitToml>,
+  #[serde(default)]
+  interaction: Vec<InteractionToml>,
+  #[serde(default)]
+  affordance: Vec<AffordanceToml>,
   #[serde(default)]
   subtype: Vec<SubtypeToml>,
 }
@@ -89,6 +95,9 @@ struct TileToml {
   padding: Option<f64>,
   #[serde(default)]
   packed: Vec<PackedToml>,
+  /// Affordance bindings (interactions F2) — the water tile's `drink_water 3`.
+  #[serde(default)]
+  affordances: Vec<AffordanceBindToml>,
 }
 
 #[derive(Deserialize)]
@@ -129,6 +138,12 @@ struct ThingToml {
   speed: Option<u16>,
   #[serde(default)]
   needs: Vec<String>,
+  /// The trait names this kind carries (interactions F6).
+  #[serde(default)]
+  traits: Vec<String>,
+  /// Affordance bindings (interactions F2) — a carried thing's drink source, later.
+  #[serde(default)]
+  affordances: Vec<AffordanceBindToml>,
   #[serde(default)]
   light: Option<LightToml>,
   #[serde(default)]
@@ -307,13 +322,21 @@ struct DetailToml {
   scale: f64,
 }
 
+// ── the gameplay categories (interactions F1/F9) — identity is the derived
+// `gameplay/<category>/<name>/default` taxonomy; NO ids and NO authored taxonomy fields.
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct NeedToml {
-  id: u16,
   name: String,
   #[serde(default)]
   label: Option<String>,
+  /// The authored value domain (interactions F7) — min may be negative (deficit);
+  /// defaults `0..1` (the pre-F7 fractional domain).
+  #[serde(default)]
+  min: f64,
+  #[serde(default = "one")]
+  max: f64,
   #[serde(default)]
   deplete: f64,
   #[serde(default)]
@@ -332,7 +355,6 @@ struct BandToml {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ConditionToml {
-  id: u16,
   name: String,
   #[serde(default)]
   label: Option<String>,
@@ -343,6 +365,85 @@ struct ConditionToml {
   /// Card sort key, descending; absent = 0. See [`ConditionParams::priority`].
   #[serde(default)]
   priority: i32,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TraitToml {
+  name: String,
+  #[serde(default)]
+  label: Option<String>,
+}
+
+/// One effect operand: `"@name"` = a reference into the interaction's `inputs`; a bare
+/// string = a baked name; a number = a baked value (interactions F5).
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum OperandToml {
+  Num(f64),
+  Str(String),
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SatisfyToml {
+  target: OperandToml,
+  need: OperandToml,
+  amount: OperandToml,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct InteractionToml {
+  name: String,
+  #[serde(default)]
+  label: Option<String>,
+  /// The input SIGNATURE — event input words bind these in order (F5).
+  #[serde(default)]
+  inputs: Vec<String>,
+  #[serde(default)]
+  satisfy: Option<SatisfyToml>,
+  /// TIMED condition grants on execute.
+  #[serde(default)]
+  grant: Vec<String>,
+  /// The placement rule; `"on"` is this turn's only value (F8).
+  #[serde(default = "on")]
+  location: String,
+  /// RESERVED (I9) — interactions are instantaneous; author 0.
+  #[serde(default)]
+  duration: f64,
+}
+
+fn on() -> String {
+  "on".into()
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AffordanceToml {
+  name: String,
+  #[serde(default)]
+  label: Option<String>,
+  /// The trait gate — ALL must be carried.
+  #[serde(default)]
+  requires: Vec<String>,
+  interaction: String,
+  /// Which variants of the interaction this affordance offers (F1's variation lane).
+  #[serde(default = "default_variants")]
+  variants: Vec<String>,
+}
+
+fn default_variants() -> Vec<String> {
+  vec!["default".into()]
+}
+
+/// A CARRIER's affordance binding — the reference plus this carrier's parameters (F2).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AffordanceBindToml {
+  name: String,
+  #[serde(default)]
+  magnitude: f64,
 }
 
 // ── loading ────────────────────────────────────────────────────────────────────────
@@ -361,6 +462,9 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
         all.material.extend(c.material);
         all.need.extend(c.need);
         all.condition.extend(c.condition);
+        all.trait_.extend(c.trait_);
+        all.interaction.extend(c.interaction);
+        all.affordance.extend(c.affordance);
         all.subtype.extend(c.subtype);
       }
       Err(e) => errors.push(LoadError { file: name.clone(), message: format!("toml: {e}") }),
@@ -372,16 +476,35 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
 
   let mut b = Bundle::default();
 
-  // Registries with the id law. Materials/needs/conditions first — visuals and
-  // `needs = [...]` resolve names against them.
+  // Materials keep the explicit id law (a RENDER registry — nothing numbers them but the
+  // corpus). The five GAMEPLAY categories carry NO ids (interactions F1): identity is the
+  // registry-allocated `gameplay/<category>/<name>/default` tuple, with corpus position only
+  // the allocation SEED — so here a NAME must be unique per category, the same aliasing rule
+  // the (taxonomy, version) check enforces for tiles/things.
   let materials = place(&all.material, "material", |m| (m.id, m.name.clone()), &mut errors);
-  let needs_slots = place(&all.need, "need", |n| (n.id, n.name.clone()), &mut errors);
-  let condition_slots = place(&all.condition, "condition", |m| (m.id, m.name.clone()), &mut errors);
+  let mut unique = |category: &str, names: Vec<&str>| {
+    let mut seen = std::collections::HashSet::new();
+    for n in names {
+      if !seen.insert(n.to_string()) {
+        errors.push(LoadError {
+          file: String::new(),
+          message: format!(
+            "{category} `{n}` is defined twice — a gameplay def's name IS its kind \
+             (gameplay/{category}/{n}), so two defs cannot share it"
+          ),
+        });
+      }
+    }
+  };
+  unique("need", all.need.iter().map(|d| d.name.as_str()).collect());
+  unique("condition", all.condition.iter().map(|d| d.name.as_str()).collect());
+  unique("trait", all.trait_.iter().map(|d| d.name.as_str()).collect());
+  unique("interaction", all.interaction.iter().map(|d| d.name.as_str()).collect());
+  unique("affordance", all.affordance.iter().map(|d| d.name.as_str()).collect());
   // Tiles and things carry NO ids (definition-registry F1/F15): the corpus describes and the
   // server numbers. Their position here is only the SEED a fresh registry allocates from — an
-  // existing registry overrides it through `Bundle::with_registry`, which is what makes a reorder
-  // harmless. Materials/needs/conditions above keep the explicit id law: nothing numbers them but
-  // the corpus, so removing their ids would leave them with no authority rather than a better one.
+  // existing registry overrides it through `Bundle::with_registry`, which is what makes a
+  // reorder harmless.
   let subtypes: Vec<(String, String, u16)> =
     all.subtype.iter().map(|s| (s.type_name.clone(), s.name.clone(), s.id)).collect();
   let tiles: Vec<Option<&TileToml>> = all.tile.iter().map(Some).collect();
@@ -407,53 +530,177 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
     })
     .collect();
 
-  b.needs = needs_slots
+  b.needs = all
+    .need
     .iter()
-    .map(|slot| match slot {
-      Some(n) => (n.name.clone(), NeedParams {
+    .map(|n| {
+      if n.min >= n.max {
+        errors.push(LoadError {
+          file: String::new(),
+          message: format!("need `{}`: min ({}) must be below max ({})", n.name, n.min, n.max),
+        });
+      }
+      (n.name.clone(), NeedParams {
         label: n.label.clone().unwrap_or_else(|| n.name.clone()),
+        min: n.min,
+        max: n.max,
         deplete: n.deplete,
         bands: n
           .band
           .iter()
           .map(|band| NeedBand { condition: band.condition.clone(), lo: band.lo, hi: band.hi })
           .collect(),
-      }),
-      None => (String::new(), NeedParams { label: String::new(), deplete: 0.0, bands: Vec::new() }),
+      })
     })
     .collect();
 
-  b.conditions = condition_slots
+  b.conditions = all
+    .condition
     .iter()
-    .map(|slot| match slot {
-      Some(m) => (m.name.clone(), ConditionParams {
+    .map(|m| {
+      (m.name.clone(), ConditionParams {
         label: m.label.clone().unwrap_or_else(|| m.name.clone()),
         mood: m.mood,
         duration: m.duration,
         priority: m.priority,
-      }),
-      None => (String::new(), ConditionParams {
-        label: String::new(), mood: 0.0, duration: 0.0, priority: 0,
-      }),
+      })
+    })
+    .collect();
+
+  b.traits = all
+    .trait_
+    .iter()
+    .map(|t| (t.name.clone(), TraitParams { label: t.label.clone().unwrap_or_else(|| t.name.clone()) }))
+    .collect();
+
+  // The name-resolution closures every cross-reference below validates through.
+  let condition_exists =
+    |name: &str| all.condition.iter().any(|c| c.name == name);
+  let need_exists = |name: &str| all.need.iter().any(|n| n.name == name);
+  let trait_exists = |name: &str| all.trait_.iter().any(|t| t.name == name);
+
+  // Band → condition references (needs already built; conditions above).
+  for n in &all.need {
+    for band in &n.band {
+      if !condition_exists(&band.condition) {
+        errors.push(LoadError {
+          file: String::new(),
+          message: format!("need `{}`: band names unknown condition `{}`", n.name, band.condition),
+        });
+      }
+    }
+  }
+
+  b.interactions = all
+    .interaction
+    .iter()
+    .map(|i| {
+      let operand = |o: &OperandToml, field: &str, errors: &mut Vec<LoadError>| -> Operand {
+        match o {
+          OperandToml::Num(v) => Operand::Value(*v),
+          OperandToml::Str(s) => match s.strip_prefix('@') {
+            Some(input) => match i.inputs.iter().position(|n| n == input) {
+              Some(idx) => Operand::Input(idx),
+              None => {
+                errors.push(LoadError {
+                  file: String::new(),
+                  message: format!(
+                    "interaction `{}`: {field} references `@{input}`, which is not in \
+                     inputs {:?}",
+                    i.name, i.inputs
+                  ),
+                });
+                Operand::Value(0.0)
+              }
+            },
+            None => Operand::Name(s.clone()),
+          },
+        }
+      };
+      let satisfy = i.satisfy.as_ref().map(|s| SatisfyEffect {
+        target: operand(&s.target, "satisfy.target", &mut errors),
+        need: operand(&s.need, "satisfy.need", &mut errors),
+        amount: operand(&s.amount, "satisfy.amount", &mut errors),
+      });
+      if let Some(SatisfyEffect { need: Operand::Name(n), .. }) = &satisfy {
+        if !need_exists(n) {
+          errors.push(LoadError {
+            file: String::new(),
+            message: format!("interaction `{}`: satisfy names unknown need `{n}`", i.name),
+          });
+        }
+      }
+      for g in &i.grant {
+        if !condition_exists(g) {
+          errors.push(LoadError {
+            file: String::new(),
+            message: format!("interaction `{}`: grants unknown condition `{g}`", i.name),
+          });
+        }
+      }
+      if i.location != "on" {
+        errors.push(LoadError {
+          file: String::new(),
+          message: format!(
+            "interaction `{}`: location `{}` — `on` is the only rule built (interactions F8)",
+            i.name, i.location
+          ),
+        });
+      }
+      (i.name.clone(), InteractionParams {
+        label: i.label.clone().unwrap_or_else(|| i.name.clone()),
+        inputs: i.inputs.clone(),
+        satisfy,
+        grants: i.grant.clone(),
+        location: i.location.clone(),
+        duration: i.duration,
+      })
+    })
+    .collect();
+
+  b.affordances = all
+    .affordance
+    .iter()
+    .map(|a| {
+      for r in &a.requires {
+        if !trait_exists(r) {
+          errors.push(LoadError {
+            file: String::new(),
+            message: format!("affordance `{}`: requires unknown trait `{r}`", a.name),
+          });
+        }
+      }
+      if !all.interaction.iter().any(|i| i.name == a.interaction) {
+        errors.push(LoadError {
+          file: String::new(),
+          message: format!("affordance `{}`: unknown interaction `{}`", a.name, a.interaction),
+        });
+      }
+      (a.name.clone(), AffordanceParams {
+        label: a.label.clone().unwrap_or_else(|| a.name.clone()),
+        requires: a.requires.clone(),
+        interaction: a.interaction.clone(),
+        variants: a.variants.clone(),
+      })
     })
     .collect();
 
   let material_id = |name: &str| -> u16 {
     b.materials.iter().position(|(n, _)| n == name).map(|i| i as u16 + 1).unwrap_or(0)
   };
-  let need_id = |name: &str| -> Option<u16> {
-    b.needs.iter().position(|(n, _)| n == name && !n.is_empty()).map(|i| i as u16 + 1)
-  };
+  let affordance_exists = |name: &str| all.affordance.iter().any(|a| a.name == name);
 
   for slot in &tiles {
     b.tiles.push(match slot {
-      Some(t) => tile_def(t, &material_id, &mut errors),
+      Some(t) => tile_def(t, &material_id, &affordance_exists, &mut errors),
       None => TileDef::default(), // a retired id holds its place
     });
   }
   for slot in &things {
     b.things.push(match slot {
-      Some(t) => thing_def(t, &material_id, &need_id, &mut errors),
+      Some(t) => {
+        thing_def(t, &material_id, &need_exists, &trait_exists, &affordance_exists, &mut errors)
+      }
       None => ThingDef::default(),
     });
   }
@@ -672,7 +919,12 @@ fn visual(
   })
 }
 
-fn tile_def(t: &TileToml, material_id: &dyn Fn(&str) -> u16, errors: &mut Vec<LoadError>) -> TileDef {
+fn tile_def(
+  t: &TileToml,
+  material_id: &dyn Fn(&str) -> u16,
+  affordance_exists: &dyn Fn(&str) -> bool,
+  errors: &mut Vec<LoadError>,
+) -> TileDef {
   // A tile's visual is the single-part degenerate case: synthesize the one part from
   // the flat fields so `visual()` stays the one constructor.
   let part = PartToml {
@@ -714,7 +966,27 @@ fn tile_def(t: &TileToml, material_id: &dyn Fn(&str) -> u16, errors: &mut Vec<Lo
       t.cast_shadow.unwrap_or(0.0),
       t.receives_shadows.unwrap_or(0.0),
     ],
+    affordances: affordance_binds(&t.affordances, affordance_exists, "tile", &t.name, errors),
   }
+}
+
+/// Validate + flatten a carrier's affordance bindings (interactions F2).
+fn affordance_binds(
+  binds: &[AffordanceBindToml],
+  affordance_exists: &dyn Fn(&str) -> bool,
+  what: &str,
+  name: &str,
+  errors: &mut Vec<LoadError>,
+) -> Vec<(String, f64)> {
+  for b in binds {
+    if !affordance_exists(&b.name) {
+      errors.push(LoadError {
+        file: String::new(),
+        message: format!("{what} `{name}`: unknown affordance `{}`", b.name),
+      });
+    }
+  }
+  binds.iter().map(|b| (b.name.clone(), b.magnitude)).collect()
 }
 
 /// Build a def's [`Taxonomy`] from its authored fields, or `None` if it authors none.
@@ -763,19 +1035,30 @@ fn taxonomy(
 fn thing_def(
   t: &ThingToml,
   material_id: &dyn Fn(&str) -> u16,
-  need_id: &dyn Fn(&str) -> Option<u16>,
+  need_exists: &dyn Fn(&str) -> bool,
+  trait_exists: &dyn Fn(&str) -> bool,
+  affordance_exists: &dyn Fn(&str) -> bool,
   errors: &mut Vec<LoadError>,
 ) -> ThingDef {
   let tax = taxonomy(&t.type_name, &t.kind, &t.sub_type, &t.variant, &format!("thing `{}`", t.name), errors);
   let visual = visual(&t.part, &t.packed, &t.light, material_id, &t.name, tax.as_ref(), errors);
   let mut needs = Vec::new();
   for n in t.needs.iter().take(NEEDS_PER_KIND) {
-    match need_id(n) {
-      Some(id) => needs.push(id),
-      None => errors.push(LoadError {
+    if need_exists(n) {
+      needs.push(n.clone());
+    } else {
+      errors.push(LoadError {
         file: String::new(),
         message: format!("thing `{}`: unknown need `{n}`", t.name),
-      }),
+      });
+    }
+  }
+  for tr in &t.traits {
+    if !trait_exists(tr) {
+      errors.push(LoadError {
+        file: String::new(),
+        message: format!("thing `{}`: unknown trait `{tr}`", t.name),
+      });
     }
   }
   ThingDef {
@@ -786,6 +1069,8 @@ fn thing_def(
     visual,
     speed: t.speed,
     needs,
+    traits: t.traits.clone(),
+    affordances: affordance_binds(&t.affordances, affordance_exists, "thing", &t.name, errors),
   }
 }
 
@@ -874,20 +1159,17 @@ e = { x = 0.05 }
 v2 = { x = 0.6 }
 
 [[need]]
-id = 1
 name = "thirst"
 deplete = 21600
 band = [ { condition = "thirsty", lo = 0.10, hi = 0.35 } ]
 
 [[condition]]
-id = 1
 name = "thirsty"
 label = "Thirsty"
 mood = -0.15
 priority = 20
 
 [[condition]]
-id = 2
 name = "dehydrated"
 mood = -0.4
 
@@ -921,7 +1203,11 @@ scatter = [ { salt = 6, p = 0.99, thing = "wolf" } ]
     // the wolf: speed, needs, subframe chain (default + e + v2 compose per component)
     assert_eq!(b.thing_object_id("wolf"), Some(1));
     assert_eq!(b.thing_speed(1), Some(12));
-    assert_eq!(b.thing_needs(1), vec![1]);
+    // needs are u32 gameplay refs now (interactions F1) — the seed packs
+    // gameplay(8) | need(1) | position(1) | default(0).
+    let thirst = b.gameplay_reference("need", "thirst").expect("thirst ref");
+    assert_eq!(thirst, 0x8001_0010);
+    assert_eq!(b.thing_needs(1), vec![thirst]);
     let v = b.visual_for_object(1).unwrap();
     let f = &v.dir_frames;
     assert_eq!(f[0][0].sub.0, 0.25, "default");
@@ -950,28 +1236,113 @@ scatter = [ { salt = 6, p = 0.99, thing = "wolf" } ]
 
   #[test]
   fn the_id_law_survives_where_nothing_else_numbers() {
-    // NARROWED, not deleted (definition-registry F15). Tiles and things lost their ids to the
-    // registry; materials, needs and conditions keep the law, because nothing but the corpus
-    // numbers them — removing their ids would leave them with no authority rather than a better
-    // one. Their ids are stored data too (a `need_id` lives inside a payload word).
+    // NARROWED again (interactions F1): MATERIALS alone keep the explicit id law — a render
+    // registry nothing else numbers. Needs/conditions joined the gameplay taxonomy, where the
+    // NAME is the kind, so the aliasing rule becomes name-uniqueness per category.
     let dup = r##"
 [[need]]
-id = 1
 name = "thirst"
 [[need]]
-id = 1
-name = "hunger"
+name = "thirst"
 "##;
     let e = load(&[src("t.toml", dup)]).unwrap_err();
-    assert!(e.iter().any(|e| e.message.contains("already taken")), "{e:?}");
+    assert!(e.iter().any(|e| e.message.contains("defined twice")), "{e:?}");
 
     let zero = "[[material]]\nid = 0\nname = \"mottle\"\n";
     let e = load(&[src("t.toml", zero)]).unwrap_err();
     assert!(e.iter().any(|e| e.message.contains("id 0")), "{e:?}");
 
-    let missing = "[[condition]]\nname = \"thirsty\"\n";
+    let missing = "[[material]]\nname = \"mottle\"\n";
     let e = load(&[src("t.toml", missing)]).unwrap_err();
     assert!(e.iter().any(|e| e.message.contains("missing field")), "{e:?}");
+
+    // A need still authoring an id is a LOUD refusal now, not a silently-ignored key.
+    let e = load(&[src("t.toml", "[[need]]\nid = 1\nname = \"thirst\"\n")]).unwrap_err();
+    assert!(e[0].message.contains("unknown field `id`"), "{}", e[0].message);
+  }
+
+  #[test]
+  fn the_gameplay_categories_round_trip_with_resolved_effects() {
+    // Interactions P1: trait/interaction/affordance parse, the F5 operand resolution turns
+    // `@refs` into input indices at LOAD, carriers bind, and the F6 gate reads a trait SET.
+    let text = r##"
+[[need]]
+name = "thirst"
+min = 0
+max = 100
+
+[[condition]]
+name = "quenched"
+duration = 3600
+
+[[trait]]
+name = "biological_lifeform"
+label = "Biological Lifeform"
+
+[[interaction]]
+name = "drink"
+inputs = ["pawn", "need", "amount"]
+satisfy = { target = "@pawn", need = "@need", amount = "@amount" }
+grant = ["quenched"]
+
+[[affordance]]
+name = "drink_water"
+requires = ["biological_lifeform"]
+interaction = "drink"
+
+[[tile]]
+name = "water"
+tint = "#2e5a78"
+affordances = [ { name = "drink_water", magnitude = 3 } ]
+
+[[thing]]
+name = "wolf"
+traits = ["biological_lifeform"]
+[[thing.part]]
+tint = "#ffffff"
+"##;
+    let b = load(&[src("t.toml", text)]).expect("clean load");
+
+    // The consumer read path: the interaction's signature + resolved effect.
+    let drink = b.interaction_params("drink").expect("drink");
+    assert_eq!(drink.inputs, vec!["pawn", "need", "amount"]);
+    let satisfy = drink.satisfy.expect("satisfy");
+    assert_eq!(satisfy.target, crate::loader::Operand::Input(0));
+    assert_eq!(satisfy.need, crate::loader::Operand::Input(1));
+    assert_eq!(satisfy.amount, crate::loader::Operand::Input(2));
+    assert_eq!(drink.grants, vec!["quenched"]);
+    assert_eq!(drink.location, "on");
+
+    // Carrier bindings + the availability gate over a trait SET (F6).
+    assert_eq!(b.tile_affordances(1), vec![("drink_water".to_string(), 3.0)]);
+    let traits = b.thing_traits(1);
+    assert!(b.affordance_available("drink_water", &traits));
+    assert!(!b.affordance_available("drink_water", &[]), "no traits, no drink");
+    assert!(!b.affordance_available("ghost", &traits), "unknown affordance is unavailable");
+
+    // Refs pack under the derived taxonomy, and the reverse lookup agrees.
+    let a = b.gameplay_reference("affordance", "drink_water").expect("ref");
+    assert_eq!(b.gameplay_lookup(a), Some(("affordance".to_string(), "drink_water".to_string())));
+
+    // Refusals: a dangling @ref, an unknown grant, an unbuilt location.
+    let e = load(&[src(
+      "t.toml",
+      "[[interaction]]\nname = \"drink\"\nsatisfy = { target = \"@ghost\", need = \"x\", amount = 1 }\n",
+    )])
+    .unwrap_err();
+    assert!(e.iter().any(|e| e.message.contains("@ghost")), "{e:?}");
+    let e = load(&[src("t.toml", "[[interaction]]\nname = \"d\"\ngrant = [\"ghost\"]\n")]).unwrap_err();
+    assert!(e.iter().any(|e| e.message.contains("unknown condition `ghost`")), "{e:?}");
+    let e = load(&[src("t.toml", "[[interaction]]\nname = \"d\"\nlocation = \"adjacent\"\n")])
+      .unwrap_err();
+    assert!(e.iter().any(|e| e.message.contains("only rule built")), "{e:?}");
+    // A carrier binding a ghost affordance refuses too.
+    let e = load(&[src("t.toml", "[[tile]]\nname = \"w\"\naffordances = [{ name = \"x\" }]\n")])
+      .unwrap_err();
+    assert!(e.iter().any(|e| e.message.contains("unknown affordance `x`")), "{e:?}");
+    // An inverted domain refuses.
+    let e = load(&[src("t.toml", "[[need]]\nname = \"n\"\nmin = 5\nmax = 1\n")]).unwrap_err();
+    assert!(e.iter().any(|e| e.message.contains("below max")), "{e:?}");
   }
 
   #[test]
@@ -1002,7 +1373,7 @@ name = "hunger"
     assert_ne!(v(base), v(faster), "a speed change MUST bump a version");
 
     // The apple case in miniature: needs are simulation state too.
-    let thirsty = "[[need]]\nid = 1\nname = \"thirst\"\n\
+    let thirsty = "[[need]]\nname = \"thirst\"\n\
                    [[thing]]\nname = \"wolf\"\nspeed = 12\nneeds = [\"thirst\"]\n\
                    [[thing.part]]\ntint = \"#ffffff\"\n";
     assert_ne!(v(base), v(thirsty), "gaining a need MUST bump a version");
