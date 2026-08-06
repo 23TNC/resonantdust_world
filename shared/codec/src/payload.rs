@@ -3,30 +3,35 @@
 //!
 //! The command-buffer encoding (human-pawns P0, user F1): a flat stream of entries, each a
 //! header `opcode:16 | count:16` followed by `count` operand words. A reader skips unknown
-//! opcodes by their `count`, so the stream grows new opcodes (inventory, stats, needs, …)
-//! without breaking old readers. Opcode ids are APPEND-ONLY.
+//! opcodes by their `count`, so the stream grows new opcodes (inventory, equips, …) without
+//! breaking old readers. Opcode ids are APPEND-ONLY, and a reshape RETIRES its value and
+//! claims a new one (stat-model I1) — a retired value is never reused, so pre-reshape rows
+//! read as unknown entries and are skipped whole.
 //!
-//! NEED/CONDITION reshaped by `2026-08-06-interactions` (F1/F3/I1): ids are full u32
-//! gameplay `definition_reference`s and satisfaction is an f32 bit pattern — NOT
-//! read-compatible with the old packed-`u8`-id single words; dev pawns re-mint.
+//! TRAIT/CONDITION rows are the packed gameplay form (stat-model F1):
+//! `data:16 | kind:12 | variant:4` ([`crate::object::pack_gameplay_row`]). NEEDS left the
+//! payload for the `needs` sub-table (stat-model F2) — need churn fans alone.
 
 /// `PART slot definition_reference` — the FULL def a part slot draws (body = slot 0,
 /// head = slot 1). An equip verb later swaps a slot by rewriting its entry.
 pub const PAYLOAD_OP_PART: u32 = 1;
 
-/// `NEED need:definition_reference · satisfaction (f32 BITS) · set_tic:16` — one need's row
-/// (needs-moodlets F7, interactions I1). Satisfaction lives on the need's authored `min..max`
-/// domain (interactions F7); nothing ever ticks it — observers compute `satisfaction_at(tic)`
-/// from the corpus `deplete` rate (F4), so the entry rewrites only when something HAPPENS
-/// (mint, drink, a drill's forced set). One entry per need; `SET_NEED` upserts by the def ref.
-pub const PAYLOAD_OP_NEED: u32 = 2;
+// RETIRED opcode values (never reuse): 2 = the f32-era NEED entry (needs moved to the
+// `needs` sub-table, stat-model F2); 3 = the f32-era CONDITION entry (`def_ref · grant_tic`,
+// replaced by the packed-row shape below).
 
-/// `CONDITION condition:definition_reference · grant_tic:16` — one STORED (timed) condition
-/// grant (needs-moodlets F2/F7, interactions I1). Expiry is DERIVED — `grant_tic + duration`
-/// from the corpus — never stored; a re-grant refreshes the timer by rewriting the entry.
-/// DERIVED (band) conditions never appear here — they are computed from NEED entries by
-/// every observer.
-pub const PAYLOAD_OP_CONDITION: u32 = 3;
+/// `CONDITION row · written_tic:16` — one STORED (timed) condition (stat-model F1/F3). The
+/// row is `remaining_at_write:16 | kind:12 | variant:4`: remaining-now =
+/// `remaining_at_write − (now − written_tic)`, expiry DERIVED at read, never stored; a
+/// re-grant refreshes the row. DERIVED (band) conditions never appear here — they are
+/// computed from need rows by every observer.
+pub const PAYLOAD_OP_CONDITION: u32 = 4;
+
+/// `TRAIT row` — one trait/skill the pawn carries (stat-model F1/F5). The row is
+/// `level:16 | kind:12 | variant:4`, level ≥ 1 (level 0 = the trait absent — such a row is
+/// never stored). Minted at CREATE from the thing def's bindings (F11); static until the
+/// grant/revoke verbs (a recorded successor).
+pub const PAYLOAD_OP_TRAIT: u32 = 5;
 
 /// Compose one entry's header word: `opcode:16 | count:16`.
 pub fn payload_header(opcode: u32, count: u16) -> u32 {
@@ -38,14 +43,14 @@ pub fn part_entry(slot: u8, definition_reference: u32) -> [u32; 3] {
     [payload_header(PAYLOAD_OP_PART, 2), slot as u32, definition_reference]
 }
 
-/// One `NEED` entry: `[header(3), need_ref, satisfaction.to_bits(), set_tic]`.
-pub fn need_entry(need: u32, satisfaction: f32, set_tic: u16) -> [u32; 4] {
-    [payload_header(PAYLOAD_OP_NEED, 3), need, satisfaction.to_bits(), set_tic as u32]
+/// One `CONDITION` entry: `[header(2), packed_row, written_tic]`.
+pub fn condition_entry(row: u32, written_tic: u16) -> [u32; 3] {
+    [payload_header(PAYLOAD_OP_CONDITION, 2), row, written_tic as u32]
 }
 
-/// One `CONDITION` entry: `[header(2), condition_ref, grant_tic]`.
-pub fn condition_entry(condition: u32, grant_tic: u16) -> [u32; 3] {
-    [payload_header(PAYLOAD_OP_CONDITION, 2), condition, grant_tic as u32]
+/// One `TRAIT` entry: `[header(1), packed_row]`.
+pub fn trait_entry(row: u32) -> [u32; 2] {
+    [payload_header(PAYLOAD_OP_TRAIT, 1), row]
 }
 
 /// Decode a payload stream's `PART` entries → `(slot, definition_reference)` pairs, in stream
@@ -55,30 +60,28 @@ pub fn payload_parts(payload: &[u32]) -> Vec<(u8, u32)> {
     entries(payload, PAYLOAD_OP_PART, 2).map(|ops| (ops[0] as u8, ops[1])).collect()
 }
 
-/// Decode a payload's `NEED` entries → `(need_ref, satisfaction, set_tic)`, stream order.
+/// Decode a payload's `CONDITION` entries → `(packed_row, written_tic)`, stream order.
 /// Tolerant like [`payload_parts`]: unknown opcodes skip by count, a malformed tail stops,
 /// and an entry whose count is not this layout's is IGNORED (an old-shape row reads as "no
-/// row", never as garbage — the re-mint posture, interactions I1).
-pub fn payload_needs(payload: &[u32]) -> Vec<(u32, f32, u16)> {
-    entries(payload, PAYLOAD_OP_NEED, 3)
-        .map(|ops| (ops[0], f32::from_bits(ops[1]), ops[2] as u16))
-        .collect()
-}
-
-/// Decode a payload's `CONDITION` entries → `(condition_ref, grant_tic)`, stream order.
+/// row", never as garbage — the re-mint posture, stat-model I1).
 pub fn payload_conditions(payload: &[u32]) -> Vec<(u32, u16)> {
     entries(payload, PAYLOAD_OP_CONDITION, 2).map(|ops| (ops[0], ops[1] as u16)).collect()
 }
 
-/// Upsert one need's entry in place: rewrite the entry whose def ref matches, else append a
-/// fresh `NEED` entry. The pawn module's `set_need` reducer is the writer (F7).
-pub fn upsert_need(payload: &mut Vec<u32>, need: u32, satisfaction: f32, set_tic: u16) {
-    upsert(payload, PAYLOAD_OP_NEED, need, &need_entry(need, satisfaction, set_tic));
+/// Decode a payload's `TRAIT` entries → packed rows, stream order.
+pub fn payload_traits(payload: &[u32]) -> Vec<u32> {
+    entries(payload, PAYLOAD_OP_TRAIT, 1).map(|ops| ops[0]).collect()
 }
 
-/// Upsert one stored-condition grant: a re-grant of the same condition refreshes its timer.
-pub fn upsert_condition(payload: &mut Vec<u32>, condition: u32, grant_tic: u16) {
-    upsert(payload, PAYLOAD_OP_CONDITION, condition, &condition_entry(condition, grant_tic));
+/// Upsert one stored-condition row: identity is the row's LOW 16 (kind|variant), so a
+/// re-grant with a different `remaining_at_write` still refreshes the same entry.
+pub fn upsert_condition(payload: &mut Vec<u32>, row: u32, written_tic: u16) {
+    upsert(payload, PAYLOAD_OP_CONDITION, row & 0xFFFF, 0xFFFF, &condition_entry(row, written_tic));
+}
+
+/// Upsert one trait row by its LOW 16 — a level change rewrites the same entry.
+pub fn upsert_trait(payload: &mut Vec<u32>, row: u32) {
+    upsert(payload, PAYLOAD_OP_TRAIT, row & 0xFFFF, 0xFFFF, &trait_entry(row));
 }
 
 /// Iterate the OPERAND SLICES of every `opcode` entry with exactly `count` operands. Entries
@@ -101,10 +104,10 @@ fn entries(payload: &[u32], opcode: u32, count: usize) -> impl Iterator<Item = &
     out.into_iter()
 }
 
-/// Rewrite the entry of `opcode` (at this layout's arity) whose FIRST operand is `key`, else
-/// append `entry`. An old-shape entry (same opcode, different count) is left alone — the
-/// reader ignores it and the fresh entry wins.
-fn upsert(payload: &mut Vec<u32>, opcode: u32, key: u32, entry: &[u32]) {
+/// Rewrite the entry of `opcode` (at this layout's arity) whose FIRST operand matches `key`
+/// under `mask`, else append `entry`. An old-shape entry (same opcode, different count) is
+/// left alone — the reader ignores it and the fresh entry wins.
+fn upsert(payload: &mut Vec<u32>, opcode: u32, key: u32, mask: u32, entry: &[u32]) {
     let count = entry.len() - 1;
     let mut i = 0usize;
     while i < payload.len() {
@@ -114,7 +117,7 @@ fn upsert(payload: &mut Vec<u32>, opcode: u32, key: u32, entry: &[u32]) {
         if end > payload.len() {
             break;
         }
-        if header >> 16 == opcode && n == count && payload[i + 1] == key {
+        if header >> 16 == opcode && n == count && payload[i + 1] & mask == key {
             payload[i..end].copy_from_slice(entry);
             return;
         }
@@ -126,54 +129,51 @@ fn upsert(payload: &mut Vec<u32>, opcode: u32, key: u32, entry: &[u32]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::object::pack_gameplay_row;
 
-    const THIRST: u32 = 0x8001_0010; // gameplay/need/thirst — an arbitrary registry ref
-    const HUNGER: u32 = 0x8001_0020;
-    const QUENCHED: u32 = 0x8002_0030; // gameplay/condition/quenched
+    const QUENCHED: u32 = 0x8002_0030; // gameplay/condition/quenched — a registry ref
+    const THIRSTY: u32 = 0x8002_0010;
+    const WALKS: u32 = 0x8003_0020; // gameplay/trait/walks
 
     #[test]
-    fn need_entries_upsert_and_decode() {
-        // needs-moodlets F7: a mint writes thirst full; a later set REWRITES the same
-        // entry (no growth); a second need appends without touching the first — and PART
-        // entries pass through untouched.
-        let mut p = Vec::from(part_entry(0, 0x3001_0027));
-        upsert_need(&mut p, THIRST, 100.0, 100);
+    fn condition_rows_refresh_by_key_across_remaining_changes() {
+        // stat-model F3: identity is kind|variant — a re-grant carries a DIFFERENT
+        // remaining_at_write in the same word and must still rewrite the same entry.
+        let mut p = Vec::new();
+        upsert_condition(&mut p, pack_gameplay_row(QUENCHED, 3600), 500);
         let len_once = p.len();
-        upsert_need(&mut p, THIRST, 40.5, 900);
-        assert_eq!(p.len(), len_once, "an upsert of the same need rewrites in place");
-        upsert_need(&mut p, HUNGER, 80.0, 901);
-        assert_eq!(payload_needs(&p), vec![(THIRST, 40.5, 900), (HUNGER, 80.0, 901)]);
+        upsert_condition(&mut p, pack_gameplay_row(QUENCHED, 3600), 800);
+        assert_eq!(p.len(), len_once, "a re-grant rewrites in place");
+        upsert_condition(&mut p, pack_gameplay_row(THIRSTY, 100), 810);
+        assert_eq!(
+            payload_conditions(&p),
+            vec![(pack_gameplay_row(QUENCHED, 3600), 800), (pack_gameplay_row(THIRSTY, 100), 810)]
+        );
+    }
+
+    #[test]
+    fn trait_rows_upsert_by_key_so_a_level_change_rewrites() {
+        let mut p = Vec::from(part_entry(0, 0x3001_0027));
+        upsert_trait(&mut p, pack_gameplay_row(WALKS, 1));
+        upsert_trait(&mut p, pack_gameplay_row(WALKS, 2)); // the skill levels up
+        assert_eq!(payload_traits(&p), vec![pack_gameplay_row(WALKS, 2)]);
         assert_eq!(payload_parts(&p), vec![(0, 0x3001_0027)], "PART entries survive");
     }
 
     #[test]
-    fn condition_grants_refresh_by_ref() {
-        let mut p = Vec::new();
-        upsert_condition(&mut p, QUENCHED, 500);
-        upsert_condition(&mut p, QUENCHED, 800); // re-grant → refreshed timer, same entry
-        upsert_condition(&mut p, QUENCHED + 1, 810);
-        assert_eq!(payload_conditions(&p), vec![(QUENCHED, 800), (QUENCHED + 1, 810)]);
-        assert_eq!(payload_needs(&p), Vec::<(u32, f32, u16)>::new());
-    }
-
-    #[test]
-    fn satisfaction_round_trips_exact_bits() {
-        // f32 BITS in the u32 lane (interactions F3) — including a negative deficit value.
-        let mut p = Vec::new();
-        upsert_need(&mut p, THIRST, -12.25, 7);
-        assert_eq!(payload_needs(&p), vec![(THIRST, -12.25, 7)]);
-    }
-
-    #[test]
-    fn an_old_shape_need_word_is_ignored_not_misread() {
-        // The pre-interactions single-word NEED entry (count 1): the reader must skip it
-        // whole (re-mint posture, I1), never decode its word as a def ref.
-        let mut p = vec![payload_header(PAYLOAD_OP_NEED, 1), 0x0A80_1234];
-        assert_eq!(payload_needs(&p), Vec::<(u32, f32, u16)>::new());
-        // ... and an upsert appends the NEW shape beside it rather than corrupting it.
-        upsert_need(&mut p, THIRST, 55.0, 3);
-        assert_eq!(payload_needs(&p), vec![(THIRST, 55.0, 3)]);
-        assert_eq!(p[0], payload_header(PAYLOAD_OP_NEED, 1), "the old entry is untouched");
+    fn retired_opcode_values_read_as_no_rows() {
+        // Pre-reshape entries under the RETIRED values 2 (NEED) and 3 (old CONDITION) must
+        // be skipped whole — never decoded by the new readers (stat-model I1).
+        let mut p = vec![
+            payload_header(2, 3), 0x8001_0010, 42.5f32.to_bits(), 900, // old NEED
+            payload_header(3, 2), QUENCHED, 500,                       // old CONDITION
+        ];
+        assert_eq!(payload_conditions(&p), Vec::<(u32, u16)>::new());
+        assert_eq!(payload_traits(&p), Vec::<u32>::new());
+        // ... and fresh entries land beside them untouched.
+        upsert_condition(&mut p, pack_gameplay_row(QUENCHED, 3600), 700);
+        assert_eq!(payload_conditions(&p), vec![(pack_gameplay_row(QUENCHED, 3600), 700)]);
+        assert_eq!(p[0], payload_header(2, 3), "the old entries are untouched");
     }
 
     #[test]

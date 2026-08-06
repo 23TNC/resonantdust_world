@@ -173,6 +173,15 @@ fn dump(b: &Bundle) -> String {
             .join("\n"),
         &mut out,
     );
+    sec(
+        "stat_params",
+        b.stat_names()
+            .iter()
+            .map(|n| format!("{n}: {:?}", b.stat_params(n)))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        &mut out,
+    );
     // The SEED gameplay refs — what a registry-less boot resolves, and exactly what a fresh
     // registry allocates from (the migration-proof posture the kind seeds established).
     let mut refs = String::new();
@@ -182,6 +191,7 @@ fn dump(b: &Bundle) -> String {
         ("trait", b.trait_names()),
         ("interaction", b.interaction_names()),
         ("affordance", b.affordance_names()),
+        ("stat", b.stat_names()),
     ] {
         for n in names {
             let r = b.gameplay_reference(category, n);
@@ -190,25 +200,25 @@ fn dump(b: &Bundle) -> String {
     }
     sec("gameplay seed refs", refs, &mut out);
     sec(
-        "tile affordances (name → bindings)",
+        "tile interactions (name → bindings)",
         b.tile_names()
             .iter()
             .enumerate()
-            .map(|(i, n)| format!("{n} {:?}", b.tile_affordances(i as u16 + 1)))
+            .map(|(i, n)| format!("{n} {:?}", b.tile_interactions(i as u16 + 1)))
             .collect::<Vec<_>>()
             .join("\n"),
         &mut out,
     );
     sec(
-        "thing traits + affordances",
+        "thing traits + interactions",
         b.thing_names()
             .iter()
             .enumerate()
             .map(|(i, n)| {
                 format!(
-                    "{n} traits={:?} affordances={:?}",
+                    "{n} traits={:?} interactions={:?}",
                     b.thing_traits(i as u16 + 1),
-                    b.thing_affordances(i as u16 + 1)
+                    b.thing_interactions(i as u16 + 1)
                 )
             })
             .collect::<Vec<_>>()
@@ -265,25 +275,35 @@ fn dump(b: &Bundle) -> String {
     sec("worldgen sweep (t,h,e biome tile thing1)", grid, &mut out);
 
     // ── the needs probes (the wasm-probe fixtures, against the REAL corpus) ──
-    // Rows are (need ref, f32 satisfaction, set_tic) on thirst's authored 0..100 domain
-    // (interactions F1/F3/F7); refs resolve through the seed (no registry injected here).
+    // Rows are the PACKED stat-model shapes: needs `(value:16|key:16, set_tic)` with the
+    // value u16 fixed-point on thirst's authored 0..100 domain (F4), stored conditions
+    // `(remaining_at_write:16|key:16, written_tic)` (F3). Refs resolve through the seed.
     let thirst = b.gameplay_reference("need", "thirst").expect("thirst ref");
     let quenched = b.gameplay_reference("condition", "quenched").expect("quenched ref");
-    let probes: [(&str, Vec<(u32, f32, u16)>, Vec<(u32, u16)>, u16); 4] = [
-        ("full", vec![(thirst, 100.0, 0)], vec![], 0),
-        ("mid", vec![(thirst, 25.0, 0)], vec![], 0),
-        ("empty", vec![(thirst, 0.0, 0)], vec![], 0),
-        ("timed", vec![], vec![(quenched, 0)], 100),
+    let tp = b.need_params("thirst").expect("thirst params");
+    let qp = b.condition_params("quenched").expect("quenched params");
+    let nrow = |v: f32| {
+        resonantdust_codec::object::pack_gameplay_row(
+            thirst,
+            resonantdust_codec::value::quantize(v, tp.min as f32, tp.max as f32),
+        )
+    };
+    let qrow = resonantdust_codec::object::pack_gameplay_row(quenched, qp.duration as u16);
+    let probes: [(&str, Vec<(u32, u16)>, Vec<(u32, u16)>, u16); 4] = [
+        ("full", vec![(nrow(100.0), 0)], vec![], 0),
+        ("mid", vec![(nrow(25.0), 0)], vec![], 0),
+        ("empty", vec![(nrow(0.0), 0)], vec![], 0),
+        ("timed", vec![], vec![(qrow, 0)], 100),
     ];
     let mut needs = String::new();
     for (name, rows, grants, now) in &probes {
-        let active = needs_eval::active_conditions(b, rows, grants, *now);
+        let active = needs_eval::active_conditions(b, &[], rows, grants, *now);
         let _ = writeln!(
             needs,
             "{name}: active={:?} mood={:?} next={:?}",
             active.iter().map(|m| (m.condition_id, m.mood, m.remaining)).collect::<Vec<_>>(),
             needs_eval::mood(&active),
-            needs_eval::next_crossing_tic(b, rows, grants, *now),
+            needs_eval::next_crossing_tic(b, &[], rows, grants, *now),
         );
     }
     sec("needs probes", needs, &mut out);
@@ -323,4 +343,26 @@ fn the_golden_fixture_matches_the_corpus() {
 fn the_dump_is_deterministic() {
     let Some(b) = corpus() else { return };
     assert_eq!(dump(&b), dump(&b), "two dumps of one bundle must be byte-identical");
+}
+
+#[test]
+fn the_wolfs_derived_ground_speed_equals_its_speed_field() {
+    // stat-model I10: until the input stream rewires movement onto the stat (F12), the
+    // wolf carries BOTH `speed = 12` and walks-level-N. This guard makes the two values
+    // unable to drift during the window; the input stream deletes the field AND this test.
+    let Some(b) = corpus() else { return };
+    let kind = b.thing_object_id("wolf").expect("wolf kind");
+    let rows: Vec<u32> = b
+        .thing_traits(kind)
+        .iter()
+        .map(|(name, level)| {
+            resonantdust_codec::object::pack_gameplay_row(
+                b.gameplay_reference("trait", name).expect("trait ref"),
+                *level,
+            )
+        })
+        .collect();
+    let derived = resonantdust_content::stat_eval::stat_value(&b, "ground_speed", &rows, &[]);
+    let authored = b.thing_speed(kind).expect("wolf speed") as f64;
+    assert_eq!(derived, authored, "walks level table vs the speed field (I10)");
 }

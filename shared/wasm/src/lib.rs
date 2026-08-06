@@ -292,11 +292,16 @@ impl Content {
     /// **Already sorted** (conditions F3) — `priority` desc, `|mood|` desc, `condition_id` asc.
     /// The caller renders in the order given; `priority` rides along so it can be shown, not so
     /// it can be re-sorted. A TS sort here would be the second implementation of a corpus rule.
+    /// `needs` is the pawn's `needs` SUB-TABLE rows, flattened stride-2:
+    /// `[packed_row, set_tic, …]` (stat-model F2); traits + stored conditions decode from
+    /// `payload`. The eval is the SAME `needs_eval` the npc and worker import natively.
     #[wasm_bindgen(js_name = pawnConditions)]
-    pub fn pawn_conditions(&self, payload: Vec<u32>, now_tic: u16) -> Vec<f64> {
-        let needs = resonantdust_codec::payload::payload_needs(&payload);
-        let grants = resonantdust_codec::payload::payload_conditions(&payload);
-        let active = resonantdust_content::needs_eval::active_conditions(&self.bundle, &needs, &grants, now_tic);
+    pub fn pawn_conditions(&self, payload: Vec<u32>, needs: Vec<u32>, now_tic: u16) -> Vec<f64> {
+        let (traits, conditions) = decode_payload(&payload);
+        let need_rows = decode_need_rows(&needs);
+        let active = resonantdust_content::needs_eval::active_conditions(
+            &self.bundle, &traits, &need_rows, &conditions, now_tic,
+        );
         let mut out = Vec::with_capacity(active.len() * 4);
         for c in &active {
             out.extend_from_slice(&[
@@ -311,22 +316,26 @@ impl Content {
 
     /// The pawn's MOOD at `now_tic` — `clamp(0.5 + Σ active offsets, 0..1)` (F5).
     #[wasm_bindgen(js_name = pawnMood)]
-    pub fn pawn_mood(&self, payload: Vec<u32>, now_tic: u16) -> f64 {
-        let needs = resonantdust_codec::payload::payload_needs(&payload);
-        let grants = resonantdust_codec::payload::payload_conditions(&payload);
-        let active = resonantdust_content::needs_eval::active_conditions(&self.bundle, &needs, &grants, now_tic);
+    pub fn pawn_mood(&self, payload: Vec<u32>, needs: Vec<u32>, now_tic: u16) -> f64 {
+        let (traits, conditions) = decode_payload(&payload);
+        let need_rows = decode_need_rows(&needs);
+        let active = resonantdust_content::needs_eval::active_conditions(
+            &self.bundle, &traits, &need_rows, &conditions, now_tic,
+        );
         resonantdust_content::needs_eval::mood(&active)
     }
 
     /// The next FUTURE tic the pawn's active-condition set can change WITHOUT a new write
-    /// (band crossing or timed expiry), or `-1` when nothing ahead changes — what lets the
-    /// panel re-evaluate on a schedule instead of sampling (F4).
+    /// (band crossing under the PIECEWISE rate, or a stored row's expiry), or `-1` when
+    /// nothing ahead changes — what lets the panel re-evaluate on a schedule (F4).
     #[wasm_bindgen(js_name = pawnNextCrossing)]
-    pub fn pawn_next_crossing(&self, payload: Vec<u32>, now_tic: u16) -> f64 {
-        let needs = resonantdust_codec::payload::payload_needs(&payload);
-        let grants = resonantdust_codec::payload::payload_conditions(&payload);
-        resonantdust_content::needs_eval::next_crossing_tic(&self.bundle, &needs, &grants, now_tic)
-            .map_or(-1.0, f64::from)
+    pub fn pawn_next_crossing(&self, payload: Vec<u32>, needs: Vec<u32>, now_tic: u16) -> f64 {
+        let (traits, conditions) = decode_payload(&payload);
+        let need_rows = decode_need_rows(&needs);
+        resonantdust_content::needs_eval::next_crossing_tic(
+            &self.bundle, &traits, &need_rows, &conditions, now_tic,
+        )
+        .map_or(-1.0, f64::from)
     }
 
     /// A condition's display LABEL by its u32 gameplay `definition_reference` — the panel's
@@ -637,6 +646,19 @@ impl Content {
 /// `mover_prim`). Straight from `object::macro_world_origin` — the same helper
 /// worldgen samples, so generation and render place a cell identically.
 #[cfg(feature = "js")]
+/// Decode a pawn payload into its (trait rows, condition rows) — the stat-model shapes.
+fn decode_payload(payload: &[u32]) -> (Vec<u32>, Vec<(u32, u16)>) {
+    (
+        resonantdust_codec::payload::payload_traits(payload),
+        resonantdust_codec::payload::payload_conditions(payload),
+    )
+}
+
+/// Un-flatten the stride-2 `[packed_row, set_tic, …]` needs rows the host passes.
+fn decode_need_rows(needs: &[u32]) -> Vec<(u32, u16)> {
+    needs.chunks_exact(2).map(|c| (c[0], c[1] as u16)).collect()
+}
+
 fn macro_origin(macro_position: u16) -> (i64, i64) {
     let (ox, oy) = resonantdust_codec::object::macro_world_origin(macro_position);
     (ox as i64, oy as i64)

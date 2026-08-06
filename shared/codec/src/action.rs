@@ -66,17 +66,21 @@ pub const MOVE_STEP: u32 = 8;
 /// Immediate building is the worker's CURRENT policy, not this verb's contract: the
 /// documented future swaps the queued events for blueprint-entity creates (`ACTIONS.md`).
 pub const BUILD_WALL: u32 = 9;
-/// Set one NEED's satisfaction on a pawn (needs-moodlets F7). Operands: `obj` (write — the
-/// pawn; grouping serialises this with its movement writes), `need_id` (imm, 1-based corpus
-/// id), `satisfaction` (imm, quantised `0..=255`). The pawn module's `set_need` reducer
-/// splices the `NEED` payload entry itself (`set_tic` = the composing tic) — the worker
-/// relays, so the verb adds nothing to the worker's read set.
+/// Set one NEED's value on a pawn (stat-model F1/F4). Operands: `obj` (write — the pawn;
+/// grouping serialises this with its movement writes), `row` (imm, the packed gameplay row
+/// `value:16 | kind:12 | variant:4` — value is u16 FIXED-POINT on the need's authored
+/// domain, quantized ONCE by the composer via [`crate::value::quantize`]). The pawn module's
+/// `set_need` reducer upserts the `needs` sub-table row (`set_tic` = the composing tic) —
+/// the worker relays, so the verb adds nothing to the worker's read set. Arity 3→2 with the
+/// stat-model reshape (the def-ref + f32-bits form is gone).
 pub const SET_NEED: u32 = 10;
-/// Grant one STORED (timed) condition to a pawn (needs-moodlets F2/F7). Operands: `obj`
-/// (write), `condition_id` (imm, u32 gameplay `definition_reference` — interactions F1).
-/// `grant_tic` = the composing tic; expiry is DERIVED (`grant_tic + duration` from the
-/// corpus), never stored. A re-grant refreshes the timer. DERIVED (band) conditions have no
-/// verb — they are computed, not granted.
+/// Grant one STORED (timed) condition to a pawn (stat-model F1/F3). Operands: `obj`
+/// (write), `row` (imm, the packed gameplay row `remaining_at_write:16 | kind:12 |
+/// variant:4` — the composer passes the condition's authored `duration` as
+/// `remaining_at_write`). `written_tic` = the composing tic; remaining-now and expiry are
+/// DERIVED at read, never stored. A re-grant refreshes the row; the reducer also RE-STAMPS
+/// the condition's affected need rows in the same transaction (stat-model F7). DERIVED
+/// (band) conditions have no verb — they are computed, not granted.
 pub const GRANT_CONDITION: u32 = 11;
 /// Execute a corpus-defined interaction (interactions F4 — the user's layout verbatim).
 /// Operands: `interaction` (imm, gameplay `definition_reference`) · `version` (imm) ·
@@ -127,8 +131,8 @@ pub fn signature(action: u32) -> Option<&'static [OperandKind]> {
         MOVE_STEP => &[ReadWrite, Imm, Imm], // obj, dest, trip-serial (worker-only chain hop)
         SET => &[Write, Imm, Imm, Imm, Imm], // cold_row, type_id, tile_reference, kind_reference, data
         BUILD_WALL => &[Imm, Imm, Imm], // start, end, object — writes nothing; the worker queues SETs
-        SET_NEED => &[Write, Imm, Imm], // obj, need def ref, satisfaction (f32 bits)
-        GRANT_CONDITION => &[Write, Imm], // obj, condition def ref
+        SET_NEED => &[Write, Imm], // obj, packed row (value:16 | kind:12 | variant:4)
+        GRANT_CONDITION => &[Write, Imm], // obj, packed row (remaining_at_write:16 | key:16)
         // EXECUTE_INTERACTION is variable-arity (interaction, version, count, inputs×count —
         // all Imm; writes ride the verbs the worker queues) — framed in the reader like
         // CREATE/INIT_ZONE, no fixed signature.

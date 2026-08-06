@@ -585,10 +585,10 @@ derivable from the row, and the eval integrates PIECEWISE across it.
 
 **Worked window** (the numbers stat-model P1's eval test reuses): thirst `0..100`,
 `deplete = 21600` (base rate `100/21600` per tic). At tic 1000 a sip re-stamps thirst at 40.0
-(`q = 26214`, dequantized `39.9994`) and grants quenched (`rate = 0.5`,
-`remaining_at_write = 3600` → derived expiry 4600). Read at tic 6000: segment 1 = 3600 tics at
-the halved rate → `3600 · 100/43200 = 8.3333`; segment 2 = 1400 tics at base →
-`1400 · 100/21600 = 6.4815`; `satisfaction ≈ 39.9994 − 8.3333 − 6.4815 = 25.1846`.
+(`q = 26214` — 40% of 65535 exactly, so the stamp dequantizes to `40.0000`) and grants
+quenched (`rate = 0.5`, `remaining_at_write = 3600` → derived expiry 4600). Read at tic 6000:
+segment 1 = 3600 tics at the halved rate → `3600 · 100/43200 = 8.3333`; segment 2 = 1400 tics
+at base → `1400 · 100/21600 = 6.4815`; `satisfaction ≈ 40.0 − 8.3333 − 6.4815 = 25.1852`.
 
 **A condition's time is REMAINING-AT-WRITE** (F3, user): the row stores the remaining tics AT
 the write beside the written tic — remaining-now = `remaining_at_write − (now − written_tic)`,

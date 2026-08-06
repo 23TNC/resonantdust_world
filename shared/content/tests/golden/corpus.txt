@@ -148,6 +148,7 @@ pawn/human/male
         label: "Thirst",
         min: 0.0,
         max: 100.0,
+        min_wins: true,
         deplete: 21600.0,
         bands: [
             NeedBand {
@@ -169,60 +170,84 @@ pawn/human/male
         label: "Thirsty",
         mood: -0.15,
         duration: 0.0,
+        stats: [],
+        needs: [],
         priority: 20,
     },
     ConditionParams {
         label: "Dehydrated",
         mood: -0.4,
         duration: 0.0,
+        stats: [],
+        needs: [],
         priority: 30,
     },
     ConditionParams {
         label: "Quenched",
         mood: 0.2,
         duration: 3600.0,
+        stats: [],
+        needs: [
+            NeedModifier {
+                need: "thirst",
+                rate: 0.5,
+                min: None,
+                max: None,
+            },
+        ],
         priority: 10,
     },
 ]
 == traits ==
 biological_lifeform
+walks
 == interactions ==
 drink
 == affordances ==
-drink_water
+can_drink
+can_move_ground
 == trait_params ==
-biological_lifeform: Some(TraitParams { label: "Biological Lifeform" })
+biological_lifeform: Some(TraitParams { label: "Biological Lifeform", levels: [TraitLevel { stats: [StatModifier { stat: "metabolism", add: 1.0, min: None, max: None }], needs: [] }] })
+walks: Some(TraitParams { label: "Walks", levels: [TraitLevel { stats: [StatModifier { stat: "ground_speed", add: 24.0, min: None, max: None }], needs: [] }, TraitLevel { stats: [StatModifier { stat: "ground_speed", add: 12.0, min: None, max: None }], needs: [] }, TraitLevel { stats: [StatModifier { stat: "ground_speed", add: 6.0, min: None, max: None }], needs: [] }] })
 == interaction_params ==
-drink: Some(InteractionParams { label: "Drink", inputs: ["pawn", "need", "amount"], satisfy: Some(SatisfyEffect { target: Input(0), need: Input(1), amount: Input(2) }), grants: ["quenched"], location: "on", duration: 0.0 })
+drink: Some(InteractionParams { label: "Drink", affordances: ["can_drink"], inputs: ["pawn", "need", "amount"], satisfy: Some(SatisfyEffect { target: Input(0), need: Input(1), amount: Input(2) }), grants: ["quenched"], location: "on", duration: 0.0 })
 == affordance_params ==
-drink_water: Some(AffordanceParams { label: "Drink Water", requires: ["biological_lifeform"], interaction: "drink", variants: ["default"] })
+can_drink: Some(AffordanceParams { label: "Can Drink", stat: "metabolism", above: Some(0.0), below: None })
+can_move_ground: Some(AffordanceParams { label: "Can Move Ground", stat: "ground_speed", above: Some(0.0), below: None })
+== stat_params ==
+ground_speed: Some(StatParams { label: "Ground Speed", min: 0.0, max: 240.0, min_wins: true })
+metabolism: Some(StatParams { label: "Metabolism", min: 0.0, max: 10.0, min_wins: true })
 == gameplay seed refs ==
 gameplay/need/thirst Some("0x80010010")
 gameplay/condition/thirsty Some("0x80020010")
 gameplay/condition/dehydrated Some("0x80020020")
 gameplay/condition/quenched Some("0x80020030")
 gameplay/trait/biological_lifeform Some("0x80030010")
+gameplay/trait/walks Some("0x80030020")
 gameplay/interaction/drink Some("0x80040010")
-gameplay/affordance/drink_water Some("0x80050010")
-== tile affordances (name → bindings) ==
+gameplay/affordance/can_drink Some("0x80050010")
+gameplay/affordance/can_move_ground Some("0x80050020")
+gameplay/stat/ground_speed Some("0x80060010")
+gameplay/stat/metabolism Some("0x80060020")
+== tile interactions (name → bindings) ==
 grass []
 dirt []
 sand []
-water [("drink_water", 3.0)]
+water [("drink", 3.0)]
 stone []
 wall_smooth []
-== thing traits + affordances ==
-tree traits=[] affordances=[]
-shrub traits=[] affordances=[]
-cactus traits=[] affordances=[]
-reed traits=[] affordances=[]
-rock traits=[] affordances=[]
-flora traits=[] affordances=[]
-wolf traits=["biological_lifeform"] affordances=[]
-torch traits=[] affordances=[]
-torch_blue traits=[] affordances=[]
-human_female traits=[] affordances=[]
-human_male traits=[] affordances=[]
+== thing traits + interactions ==
+tree traits=[] interactions=[]
+shrub traits=[] interactions=[]
+cactus traits=[] interactions=[]
+reed traits=[] interactions=[]
+rock traits=[] interactions=[]
+flora traits=[] interactions=[]
+wolf traits=[("biological_lifeform", 1), ("walks", 2)] interactions=[]
+torch traits=[] interactions=[]
+torch_blue traits=[] interactions=[]
+human_female traits=[] interactions=[]
+human_male traits=[] interactions=[]
 == thing visual parts ==
 tree: 1 part(s) [(0, 1.0, Some("biome-thing/default/conifer"))]
 shrub: 1 part(s) [(0, 1.0, Some("white"))]

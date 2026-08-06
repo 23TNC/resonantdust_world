@@ -21,7 +21,8 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 - [x] Document the combiner law ([F6](forks.md#f6)) and the re-stamp law ([F7](forks.md#f7)) with
       a hand-computed quenched piecewise window ([I4](issues.md#i4)). Acceptance: the worked
       window's numbers appear in the doc and P1's eval test reuses them. → sums/intersections/
-      winner/rate-product rules + the 39.9994 − 8.3333 − 6.4815 ≈ 25.1846 window in VARIABLES.
+      winner/rate-product rules + the 40.0 − 8.3333 − 6.4815 ≈ 25.1852 window in VARIABLES
+      (numbers corrected in P1 — the 40.0 stamp dequantizes exactly).
 - [x] TABLES.md: the needs sub-table row `(entity, packed, set_tic)`; payload TRAIT(count 1) /
       CONDITION(count 2) entries; NEED leaves the payload ([I1](issues.md#i1)). ACTIONS.md:
       SET_NEED/GRANT_CONDITION operand meanings. Acceptance: `bin/rd docs-check` green. →
@@ -31,38 +32,57 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P1 — codec + the shared evals
 
-- [ ] Codec: pack/unpack for the 16+16 gameplay row, the ONE f32↔u16 quantize/dequantize pair
+- [x] Codec: pack/unpack for the 16+16 gameplay row, the ONE f32↔u16 quantize/dequantize pair
       (rounding defined at the fn, [I2](issues.md#i2)), `GAMEPLAY_CATEGORIES` appends `stat`
       (append-only law + test, [I5](issues.md#i5)). Acceptance: round-trip tests incl. both
-      domain ends.
-- [ ] Codec payload: TRAIT/CONDITION entries in the packed shape; the NEED opcode DELETED
+      domain ends. → `object::pack_gameplay_row`+key/data/reference, new `value.rs`
+      (quantize half-away-from-zero, re-stamp stability test), palette test freezes all six
+      ids. 71/71 codec tests.
+- [x] Codec payload: TRAIT/CONDITION entries in the packed shape; the NEED opcode DELETED
       ([I11](issues.md#i11)); count-guard posture kept. Acceptance: old-shape-ignored test green;
-      `grep` finds no payload NEED composer or reader.
-- [ ] Loader: `[[stat]]`; trait level tables + contributions + need modifiers; structured
+      `grep` finds no payload NEED composer or reader. → values 2+3 RETIRED (never reuse),
+      CONDITION=4/TRAIT=5; upsert matches the row's LOW 16 so a re-grant with different
+      remaining refreshes in place; retired-value test feeds old entries and reads nothing.
+- [x] Loader: `[[stat]]`; trait level tables + contributions + need modifiers; structured
       predicates validated against the stat registry; interaction `affordances`; carrier
       `interactions`; thing trait bindings. Refusals for unknown/empty/dangling. Acceptance:
-      per-category crate tests incl. each refusal.
-- [ ] Shared eval: stat derivation `clamp(sum, combined bounds)` + the affordance predicate check
+      per-category crate tests incl. each refusal. → all six categories; leveled arrays must
+      agree on length; `the_stat_model_refusals_are_loud` covers predicate/level/winner/F13
+      refusals; F13 recorded (a DERIVED condition may not modify needs — the circularity cut).
+- [x] Shared eval: stat derivation `clamp(sum, combined bounds)` + the affordance predicate check
       over (trait, condition) rows ([F8](forks.md#f8)). Acceptance: the user's combiner cases
-      pinned — 3..7 ∧ 4..8 → 4..7; 2..3 ∧ 4..5 → the authored winner.
-- [ ] needs_eval reworked: packed fixed-point rows, modifier sets through the SAME combiner,
+      pinned — 3..7 ∧ 4..8 → 4..7; 2..3 ∧ 4..5 → the authored winner. → new `stat_eval.rs`:
+      `combine_bounds`/`stat_value`/`affordance_passes`/`interaction_available` +
+      `condition_remaining` (F3 + future-stamp guard); the F6 cases are `the_users_combiner_cases_hold`.
+- [x] needs_eval reworked: packed fixed-point rows, modifier sets through the SAME combiner,
       piecewise integration across a DERIVED condition expiry, wrap guards at both new tic seams
       ([I4](issues.md#i4)/[I6](issues.md#i6)). Acceptance: the P0 worked window reproduced
-      exactly; future-stamp tests green.
-- [ ] Extend the golden dump (stats, leveled traits, predicates, carrier interactions,
+      exactly; future-stamp tests green. → `rate_windows` (traits unbounded, stored rows cut at
+      remaining-at-set), piecewise `depletion` + `crossing_elapsed`; the 25.1852 window test +
+      a piecewise-crossing test (expiry wake at 100, band at 101); wrap/future-stamp kept.
+- [x] Extend the golden dump (stats, leveled traits, predicates, carrier interactions,
       fixed-point probes) and re-bless; 2-pass gate green. Acceptance: every diff line accounted
-      for in completed.md ([I7](issues.md#i7)).
+      for in completed.md ([I7](issues.md#i7)). → 44+/19−, all reviewed (completed.md); probes
+      BIT-STABLE (quantization exact at the probe points); native codec 71 + content 37+3,
+      wasm32 pkg rebuilt with the stride-2 needs-row surface.
 
 ## P2 — the corpus re-expressed
 
-- [ ] Author `[[stat]]` metabolism + ground_speed; rework biological_lifeform (level 1 → +1
+- [x] Author `[[stat]]` metabolism + ground_speed; rework biological_lifeform (level 1 → +1
       metabolism) and author walks (1: 60, 2: 50, 3: 40 tics/tile → ground_speed); affordances
       can_drink / can_move_ground; drink gains `affordances = ["can_drink"]`; quenched gains the
       thirst rate ×0.5 modifier ([I9](issues.md#i9)). Acceptance: loads; `rd content-check` green.
-- [ ] Rebind the carriers: water `interactions = [{ name = "drink", magnitude = 3 }]`; wolf
+      → landed WITH P1's golden re-bless (the schema change makes the old corpus refuse — the
+      same one-build-unit coupling as last stream); walks re-based to `[24, 12, 6]` so a level
+      EQUALS `speed = 12` (I10; the 60/50/40 illustration could not satisfy the guard).
+      content-check clean (7 files).
+- [x] Rebind the carriers: water `interactions = [{ name = "drink", magnitude = 3 }]`; wolf
       `traits = ["biological_lifeform", { name = "walks", level = 1 }]`; add the I10 guard test
       (derived ground_speed == the `speed` field). Acceptance: golden shows exactly these rows;
-      guard test green.
+      guard test green. → wolf binds walks at LEVEL 2 (the 12-tics/tile slot; the plan's
+      level-1 guess predated the re-based table); golden rows verbatim (`water [("drink",
+      3.0)]`, `wolf traits=[("biological_lifeform", 1), ("walks", 2)]`); the guard is
+      `the_wolfs_derived_ground_speed_equals_its_speed_field` (derives 12.0 == 12).
 
 ## P3 — spacetime + the worker
 

@@ -42,9 +42,10 @@ variant = ["0","1","2","3","4","5","6","7","8","9","10","11","12","13","14","15"
 texture = "white"
 tint = "#2e5a78"
 receives_shadows = 2.0
-# The first affordance carrier (interactions F2): biological lifeforms may drink here,
-# +3 thirst (the need's 0..100 percent scale) per drink.
-affordances = [ { name = "drink_water", magnitude = 3 } ]
+# The first interaction carrier (stat-model F5/F9): this tile OFFERS drink at +3
+# thirst (the need's 0..100 percent scale); the interaction carries its own gate
+# (can_drink ⇔ metabolism > 0).
+interactions = [ { name = "drink", magnitude = 3 } ]
 
 [[tile]]
 name = "stone"

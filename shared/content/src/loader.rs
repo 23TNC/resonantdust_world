@@ -172,32 +172,72 @@ pub struct NeedBand {
   pub hi: f64,
 }
 
-/// A `[[need]]` def's parameters (needs-moodlets P1). A need is an f32 SATISFACTION on its
-/// OWN authored `min..max` domain (interactions F3/F7 — the corpus decides range and sign,
-/// the system stores and CLAMPS), depleting toward `min`; nothing ticks it — observers
-/// compute `satisfaction_at(tic)` from `deplete` (F4).
+/// A `[[need]]` def's parameters (needs-moodlets P1, stat-model F4/F6). A need is a
+/// SATISFACTION on its OWN authored `min..max` domain (the corpus decides range and sign,
+/// the system stores and CLAMPS — stored as u16 FIXED-POINT on exactly these bounds),
+/// depleting toward `min`; nothing ticks it — observers compute `satisfaction_at(tic)`
+/// from `deplete` (F4), piecewise across condition expiries (stat-model F7).
 #[derive(Debug, Clone, PartialEq)]
 pub struct NeedParams {
   /// Display label ("Thirst") — authoring/debug only. The need itself is NEVER shown.
   pub label: String,
-  /// The authored domain floor — depletion's resting point. `min` may be negative:
-  /// min/max IS the sign treatment (F7). Default `0`.
+  /// The authored domain floor — depletion's resting point AND the fixed-point encoding
+  /// floor (stat-model F4). `min` may be negative: min/max IS the sign treatment (F7).
   pub min: f64,
   /// The authored domain ceiling — "full". Default `1` (the pre-F7 fractional domain).
   pub max: f64,
-  /// TICS from `max` to `min`. `0` = unauthored (the need never drains).
+  /// The empty-intersection rule for modifier ranges (stat-model F6): `true` = the
+  /// combined minimum stands (`winner = "min"`, the default), `false` = the maximum.
+  pub min_wins: bool,
+  /// TICS from `max` to `min` at BASE rate. `0` = unauthored (the need never drains).
   pub deplete: f64,
   /// The derived-condition bands, in authored slot order.
   pub bands: Vec<NeedBand>,
 }
 
+/// One STAT contribution of a trait level or a condition (stat-model F5/F6): `add` SUMS
+/// into the stat's value; `min`/`max` join the range intersection (max-of-mins /
+/// min-of-maxes) inside the stat's authored global bounds.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StatModifier {
+  pub stat: String,
+  pub add: f64,
+  pub min: Option<f64>,
+  pub max: Option<f64>,
+}
+
+/// One NEED modifier of a trait level or a condition (stat-model F6/F7): `rate` MULTIPLIES
+/// the depletion rate (multipliers form a product; `1.0` = no change); `min`/`max` narrow
+/// the need's effective clamp inside its authored domain. Any mutation of the modifier set
+/// re-stamps the affected need rows — the re-stamp law (F7).
+#[derive(Debug, Clone, PartialEq)]
+pub struct NeedModifier {
+  pub need: String,
+  pub rate: f64,
+  pub min: Option<f64>,
+  pub max: Option<f64>,
+}
+
+/// A `[[stat]]` def (stat-model F6/F8) — a DERIVED quantity: never stored, never fanned;
+/// computed anywhere from the pawn's trait/condition rows + this corpus.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StatParams {
+  pub label: String,
+  /// Authored GLOBAL safety bounds — the outermost clamp.
+  pub min: f64,
+  pub max: f64,
+  /// The empty-intersection rule (F6): `true` = `winner = "min"` (the combined minimum
+  /// stands), `false` = `"max"`.
+  pub min_wins: bool,
+}
+
 /// A `<condition>` def's parameters — the DISPLAYED consequence of hidden state.
 /// `duration == 0` marks a DERIVED condition (alive exactly while its band holds);
-/// `> 0` a TIMED one (a stored grant expiring `duration` tics after its `grant_tic`).
+/// `> 0` a TIMED one (a stored row expiring `duration` tics after its written tic).
 ///
-/// `mood` is ONE effect, not the definition (conditions F6): a condition acts on pawn
-/// state, and mood is simply the first such effect we carry. The open effect set — need
-/// rates, later stats — is the successor stream's charter; add fields beside `mood`.
+/// `mood` is ONE effect, not the definition (conditions F6), and the stat-model realizes
+/// the open set: `stats`/`needs` modifier lists sit beside it, feeding the SAME combiner
+/// traits feed (stat-model F5/F6).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConditionParams {
   pub label: String,
@@ -205,6 +245,11 @@ pub struct ConditionParams {
   pub mood: f64,
   /// Lifetime in TICS for a stored grant; `0` = DERIVED (band-computed).
   pub duration: f64,
+  /// Stat contributions while active (SCALARS — conditions have no levels).
+  pub stats: Vec<StatModifier>,
+  /// Need modifiers while active. A grant/expiry of a condition carrying one of these is
+  /// exactly the mutation the re-stamp law (F7) speaks about.
+  pub needs: Vec<NeedModifier>,
   /// Display PRIORITY, descending — the details panel maximizes the top 4 and minimizes the
   /// rest (conditions F2). AUTHORED, never derived: `|mood|` cannot express "mild but urgent",
   /// and it means nothing at all once a condition's effect is a need rather than a mood ([F6]).
@@ -214,12 +259,23 @@ pub struct ConditionParams {
   pub priority: i32,
 }
 
-/// A `[[trait]]` def — a capability class a pawn HAS (interactions F6). Kinds author
-/// `traits = [...]`; the availability gate takes a TRAIT SET, so per-pawn traits later
-/// (a payload opcode) change nothing here.
+/// One LEVEL of a trait — the modifier set active at that level (stat-model F5). Index in
+/// [`TraitParams::levels`] = level − 1; level 0 = the trait absent.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct TraitLevel {
+  pub stats: Vec<StatModifier>,
+  pub needs: Vec<NeedModifier>,
+}
+
+/// A `[[trait]]` def — a LEVELED stat contributor, "traits/skills" (stat-model F1/F5).
+/// Thing defs bind starting `(trait, level)` pairs minted at CREATE (F11); a pawn's row
+/// stores its level, and the level indexes the authored table here.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TraitParams {
   pub label: String,
+  /// The per-level modifier tables, index = level − 1. Never empty (a marker trait with
+  /// no modifiers still has one empty level).
+  pub levels: Vec<TraitLevel>,
 }
 
 /// One operand of an interaction effect (interactions F5): an `"@name"` reference into the
@@ -246,10 +302,13 @@ pub struct SatisfyEffect {
 }
 
 /// An `[[interaction]]` def — something a pawn can DO (interactions F5): an input
-/// SIGNATURE plus declarative effects binding inputs or constants.
+/// SIGNATURE plus declarative effects binding inputs or constants, gated by affordance
+/// PREDICATES (stat-model F5).
 #[derive(Debug, Clone, PartialEq)]
 pub struct InteractionParams {
   pub label: String,
+  /// The affordance gates — EVERY listed predicate must pass for the acting pawn.
+  pub affordances: Vec<String>,
   /// The declared input signature — event input words bind these IN ORDER.
   pub inputs: Vec<String>,
   /// The satisfy effect, if the interaction moves a need.
@@ -262,17 +321,18 @@ pub struct InteractionParams {
   pub duration: f64,
 }
 
-/// An `[[affordance]]` def — WHO may do WHAT (interactions F2): a trait gate bound to an
-/// interaction once; carriers reference it by name with their own parameters.
+/// An `[[affordance]]` def — a named PREDICATE over pawn stats (stat-model F5/F10):
+/// `can_move_ground` ⇔ `ground_speed > 0`. Structured, not an expression string; exactly
+/// one of `above`/`below` is authored (both thresholds EXCLUSIVE).
 #[derive(Debug, Clone, PartialEq)]
 pub struct AffordanceParams {
   pub label: String,
-  /// Trait names the pawn must carry (ALL of them).
-  pub requires: Vec<String>,
-  /// The interaction this affordance offers.
-  pub interaction: String,
-  /// Which variants of the interaction it offers (F1's variation lane).
-  pub variants: Vec<String>,
+  /// The stat the predicate reads.
+  pub stat: String,
+  /// Passes while `value > above`.
+  pub above: Option<f64>,
+  /// Passes while `value < below`.
+  pub below: Option<f64>,
 }
 
 /// One part SLOT of a kind's visual skeleton (human-pawns P2). Slot index =
@@ -392,8 +452,9 @@ pub(crate) struct TileDef {
   pub height: Option<f64>,
   /// `[linked_w, linked_h, padding, rotation, cast_shadow, receives_shadows]`.
   pub lanes: [f64; 6],
-  /// Affordance bindings — `(affordance name, magnitude)` (interactions F2).
-  pub affordances: Vec<(String, f64)>,
+  /// Interaction bindings — `(interaction name, magnitude)`: what this carrier OFFERS
+  /// (stat-model F5/F9 — the interaction carries its own affordance gate).
+  pub interactions: Vec<(String, f64)>,
 }
 
 /// One thing def, fully evaluated. `name` may be `""` for a retired id.
@@ -410,10 +471,11 @@ pub(crate) struct ThingDef {
   /// The need NAMES this kind carries (`needs = [...]`), load-validated; consumers read
   /// gameplay refs through [`Bundle::thing_needs`] (interactions F1).
   pub needs: Vec<String>,
-  /// The trait names this kind carries (`traits = [...]`, interactions F6).
-  pub traits: Vec<String>,
-  /// Affordance bindings — `(affordance name, magnitude)` (interactions F2).
-  pub affordances: Vec<(String, f64)>,
+  /// The STARTING trait bindings — `(trait name, level ≥ 1)` — minted at CREATE
+  /// (stat-model F11). A bare-string binding authors level 1.
+  pub traits: Vec<(String, u16)>,
+  /// Interaction bindings — `(interaction name, magnitude)` (stat-model F5/F9).
+  pub interactions: Vec<(String, f64)>,
 }
 
 /// One biome, with its classifier body in either dialect.
@@ -488,13 +550,15 @@ pub struct Bundle {
   /// Evaluation order = priority (first match wins), NOT an id namespace.
   pub(crate) biomes: Vec<BiomeDef>,
   pub(crate) materials: Vec<(String, MaterialParams)>,
-  /// The five GAMEPLAY category registries (interactions F1), corpus order — identity is
-  /// the registry-allocated `gameplay/<category>/<name>/default` def ref, never a position.
+  /// The six GAMEPLAY category registries (interactions F1, stat-model), corpus order —
+  /// identity is the registry-allocated `gameplay/<category>/<name>/default` def ref,
+  /// never a position.
   pub(crate) needs: Vec<(String, NeedParams)>,
   pub(crate) conditions: Vec<(String, ConditionParams)>,
   pub(crate) traits: Vec<(String, TraitParams)>,
   pub(crate) interactions: Vec<(String, InteractionParams)>,
   pub(crate) affordances: Vec<(String, AffordanceParams)>,
+  pub(crate) stats: Vec<(String, StatParams)>,
   /// `(type, name) → subtype_id` for subtype axes with no record of their own — pawn species today
   /// (definition-registry F16). A biome's subtype is authored on the biome instead.
   pub(crate) subtypes: Vec<(String, String, u16)>,
@@ -508,6 +572,7 @@ pub struct Bundle {
   trait_names: Vec<String>,
   interaction_names: Vec<String>,
   affordance_names: Vec<String>,
+  stat_names: Vec<String>,
   /// The REGISTRY override for `name → definition_reference` (definition-registry P4/P5), keyed
   /// `(is_tile, name)`. `None` means "resolve from corpus position", which is what a registry-less
   /// boot and every unit test does.
@@ -571,6 +636,7 @@ impl Bundle {
       "trait" => Some(&self.trait_names),
       "interaction" => Some(&self.interaction_names),
       "affordance" => Some(&self.affordance_names),
+      "stat" => Some(&self.stat_names),
       _ => None,
     }
   }
@@ -635,6 +701,7 @@ impl Bundle {
     self.trait_names = self.traits.iter().map(|(n, _)| n.clone()).collect();
     self.interaction_names = self.interactions.iter().map(|(n, _)| n.clone()).collect();
     self.affordance_names = self.affordances.iter().map(|(n, _)| n.clone()).collect();
+    self.stat_names = self.stats.iter().map(|(n, _)| n.clone()).collect();
     self
   }
 
@@ -685,8 +752,8 @@ impl Bundle {
     fnv_str(&mut h, &d.name);
     fnv_str(&mut h, d.build.as_deref().unwrap_or(""));
     fnv_bytes(&mut h, &d.height.unwrap_or(0.0).to_bits().to_le_bytes());
-    for (a, m) in &d.affordances {
-      fnv_str(&mut h, a);
+    for (i, m) in &d.interactions {
+      fnv_str(&mut h, i);
       fnv_bytes(&mut h, &m.to_le_bytes());
     }
     Some(h)
@@ -701,11 +768,12 @@ impl Bundle {
     for n in &d.needs {
       fnv_str(&mut h, n);
     }
-    for t in &d.traits {
+    for (t, level) in &d.traits {
       fnv_str(&mut h, t);
+      fnv_bytes(&mut h, &level.to_le_bytes());
     }
-    for (a, m) in &d.affordances {
-      fnv_str(&mut h, a);
+    for (i, m) in &d.interactions {
+      fnv_str(&mut h, i);
       fnv_bytes(&mut h, &m.to_le_bytes());
     }
     Some(h)
@@ -924,30 +992,32 @@ impl Bundle {
     out
   }
 
-  /// The trait names a thing kind carries (`traits = [...]`, interactions F6). The KIND
-  /// half of a pawn's trait set — union payload traits (none yet) at the gate.
-  pub fn thing_traits(&self, object_id: u16) -> Vec<String> {
+  /// The STARTING trait bindings a thing kind authors — `(trait name, level ≥ 1)`
+  /// (stat-model F11): what CREATE mints as the pawn's trait rows. Runtime truth is the
+  /// pawn's payload rows, not this.
+  pub fn thing_traits(&self, object_id: u16) -> Vec<(String, u16)> {
     self
       .things
       .get(object_id.checked_sub(1).map(usize::from).unwrap_or(usize::MAX))
       .map(|d| d.traits.clone())
       .unwrap_or_default()
   }
-  /// A thing kind's affordance bindings — `(affordance name, magnitude)` (interactions F2).
-  pub fn thing_affordances(&self, object_id: u16) -> Vec<(String, f64)> {
+  /// A thing kind's interaction bindings — `(interaction name, magnitude)`
+  /// (stat-model F5/F9): what this carrier OFFERS.
+  pub fn thing_interactions(&self, object_id: u16) -> Vec<(String, f64)> {
     self
       .things
       .get(object_id.checked_sub(1).map(usize::from).unwrap_or(usize::MAX))
-      .map(|d| d.affordances.clone())
+      .map(|d| d.interactions.clone())
       .unwrap_or_default()
   }
-  /// A tile def's affordance bindings — `(affordance name, magnitude)`. The water tile's
-  /// `drink_water 3` lives here.
-  pub fn tile_affordances(&self, def_id: u16) -> Vec<(String, f64)> {
+  /// A tile def's interaction bindings — `(interaction name, magnitude)`. The water tile's
+  /// `drink 3` lives here.
+  pub fn tile_interactions(&self, def_id: u16) -> Vec<(String, f64)> {
     self
       .tiles
       .get(def_id.checked_sub(1).map(usize::from).unwrap_or(usize::MAX))
-      .map(|d| d.affordances.clone())
+      .map(|d| d.interactions.clone())
       .unwrap_or_default()
   }
 
@@ -1069,7 +1139,7 @@ impl Bundle {
     self.conditions.iter().map(|(_, p)| p.clone()).collect()
   }
 
-  // ---------- traits, interactions, affordances (interactions P1) ----------
+  // ---------- traits, interactions, affordances, stats (interactions P1, stat-model) ----------
 
   /// Every trait name, corpus order.
   pub fn trait_names(&self) -> &[String] {
@@ -1078,6 +1148,21 @@ impl Bundle {
   /// A trait's [`TraitParams`], or `None` if unknown.
   pub fn trait_params(&self, name: &str) -> Option<TraitParams> {
     self.traits.iter().find(|(n, _)| n == name).map(|(_, p)| p.clone())
+  }
+  /// A trait's params by gameplay `definition_reference` — the stat eval's resolution of
+  /// a pawn's packed trait rows.
+  pub fn trait_params_by_ref(&self, reference: u32) -> Option<TraitParams> {
+    let (category, name) = self.gameplay_lookup(reference)?;
+    (category == "trait").then(|| self.trait_params(&name)).flatten()
+  }
+
+  /// Every stat name, corpus order.
+  pub fn stat_names(&self) -> &[String] {
+    &self.stat_names
+  }
+  /// A stat's [`StatParams`], or `None` if unknown.
+  pub fn stat_params(&self, name: &str) -> Option<StatParams> {
+    self.stats.iter().find(|(n, _)| n == name).map(|(_, p)| p.clone())
   }
 
   /// Every interaction name, corpus order.
@@ -1100,18 +1185,13 @@ impl Bundle {
     &self.affordance_names
   }
   /// An affordance's [`AffordanceParams`], or `None` if unknown.
+  ///
+  /// The availability GATE itself lives in [`crate::stat_eval::affordance_passes`]
+  /// (stat-model F5/F8): a predicate over DERIVED stats, computed from the pawn's
+  /// trait/condition rows — the old trait-set `affordance_available` is deleted with the
+  /// `requires` field it read (I11).
   pub fn affordance_params(&self, name: &str) -> Option<AffordanceParams> {
     self.affordances.iter().find(|(n, _)| n == name).map(|(_, p)| p.clone())
-  }
-
-  /// The AVAILABILITY gate (interactions F2/F6): whether a pawn holding `traits` may use
-  /// `affordance`. Takes a TRAIT SET, not a kind — per-pawn traits later change callers,
-  /// not this. All `requires` must be present; an unknown affordance is unavailable.
-  pub fn affordance_available(&self, affordance: &str, traits: &[String]) -> bool {
-    match self.affordance_params(affordance) {
-      Some(a) => a.requires.iter().all(|r| traits.iter().any(|t| t == r)),
-      None => false,
-    }
   }
 }
 

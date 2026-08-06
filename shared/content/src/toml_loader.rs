@@ -8,9 +8,10 @@
 
 use crate::loader::{
   AffordanceParams, BiomeBody, BiomeDef, BiomeRules, Bundle, Cmp, ConditionParams, DirFrame,
-  InteractionParams, LightParts, LoadError, MaterialParams, NeedBand, NeedParams, Operand,
-  PackedChannel, SatisfyEffect, Taxonomy, ThingDef, TileDef, TraitParams, VisualPart, VisualParts,
-  NEEDS_PER_KIND, ROTATIONS_PER_DEF, VARIANTS_PER_DEF,
+  InteractionParams, LightParts, LoadError, MaterialParams, NeedBand, NeedModifier, NeedParams,
+  Operand, PackedChannel, SatisfyEffect, StatModifier, StatParams, Taxonomy, ThingDef, TileDef,
+  TraitLevel, TraitParams, VisualPart, VisualParts, NEEDS_PER_KIND, ROTATIONS_PER_DEF,
+  VARIANTS_PER_DEF,
 };
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -38,6 +39,8 @@ struct Corpus {
   interaction: Vec<InteractionToml>,
   #[serde(default)]
   affordance: Vec<AffordanceToml>,
+  #[serde(default)]
+  stat: Vec<StatToml>,
   #[serde(default)]
   subtype: Vec<SubtypeToml>,
 }
@@ -95,9 +98,9 @@ struct TileToml {
   padding: Option<f64>,
   #[serde(default)]
   packed: Vec<PackedToml>,
-  /// Affordance bindings (interactions F2) — the water tile's `drink_water 3`.
+  /// Interaction bindings (stat-model F5/F9) — the water tile's `drink 3`.
   #[serde(default)]
-  affordances: Vec<AffordanceBindToml>,
+  interactions: Vec<InteractionBindToml>,
 }
 
 #[derive(Deserialize)]
@@ -138,12 +141,12 @@ struct ThingToml {
   speed: Option<u16>,
   #[serde(default)]
   needs: Vec<String>,
-  /// The trait names this kind carries (interactions F6).
+  /// STARTING trait bindings (stat-model F11) — a bare string = level 1.
   #[serde(default)]
-  traits: Vec<String>,
-  /// Affordance bindings (interactions F2) — a carried thing's drink source, later.
+  traits: Vec<TraitBindToml>,
+  /// Interaction bindings (stat-model F5/F9) — a carried thing's drink source, later.
   #[serde(default)]
-  affordances: Vec<AffordanceBindToml>,
+  interactions: Vec<InteractionBindToml>,
   #[serde(default)]
   light: Option<LightToml>,
   #[serde(default)]
@@ -332,15 +335,88 @@ struct NeedToml {
   #[serde(default)]
   label: Option<String>,
   /// The authored value domain (interactions F7) — min may be negative (deficit);
-  /// defaults `0..1` (the pre-F7 fractional domain).
+  /// defaults `0..1` (the pre-F7 fractional domain). ALSO the fixed-point encoding
+  /// domain (stat-model F4).
+  #[serde(default)]
+  min: f64,
+  #[serde(default = "one")]
+  max: f64,
+  /// The empty-intersection rule for modifier ranges (stat-model F6): `"min"` (default)
+  /// or `"max"`.
+  #[serde(default)]
+  winner: Option<String>,
+  #[serde(default)]
+  deplete: f64,
+  #[serde(default)]
+  band: Vec<BandToml>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StatToml {
+  name: String,
+  #[serde(default)]
+  label: Option<String>,
+  /// Authored GLOBAL safety bounds (stat-model F6) — the outermost clamp.
   #[serde(default)]
   min: f64,
   #[serde(default = "one")]
   max: f64,
   #[serde(default)]
-  deplete: f64,
+  winner: Option<String>,
+}
+
+/// A condition's SCALAR stat modifier (conditions have no levels).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ModStatToml {
+  stat: String,
   #[serde(default)]
-  band: Vec<BandToml>,
+  add: f64,
+  #[serde(default)]
+  min: Option<f64>,
+  #[serde(default)]
+  max: Option<f64>,
+}
+
+/// A condition's scalar need modifier — `rate` multiplies depletion (default 1.0).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ModNeedToml {
+  need: String,
+  #[serde(default = "one")]
+  rate: f64,
+  #[serde(default)]
+  min: Option<f64>,
+  #[serde(default)]
+  max: Option<f64>,
+}
+
+/// A trait's LEVELED stat modifier — arrays index level − 1 (stat-model F5); every
+/// authored array within one trait must agree on length (the trait's level count).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LevelStatToml {
+  stat: String,
+  #[serde(default)]
+  add: Vec<f64>,
+  #[serde(default)]
+  min: Vec<f64>,
+  #[serde(default)]
+  max: Vec<f64>,
+}
+
+/// A trait's leveled need modifier.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LevelNeedToml {
+  need: String,
+  #[serde(default)]
+  rate: Vec<f64>,
+  #[serde(default)]
+  min: Vec<f64>,
+  #[serde(default)]
+  max: Vec<f64>,
 }
 
 #[derive(Deserialize)]
@@ -365,6 +441,12 @@ struct ConditionToml {
   /// Card sort key, descending; absent = 0. See [`ConditionParams::priority`].
   #[serde(default)]
   priority: i32,
+  /// Stat contributions while active (stat-model F5/F6).
+  #[serde(default)]
+  stats: Vec<ModStatToml>,
+  /// Need modifiers while active — quenched's `rate = 0.5` on thirst.
+  #[serde(default)]
+  needs: Vec<ModNeedToml>,
 }
 
 #[derive(Deserialize)]
@@ -373,6 +455,12 @@ struct TraitToml {
   name: String,
   #[serde(default)]
   label: Option<String>,
+  /// Per-LEVEL stat contributions (stat-model F5) — walks' tics/tile table.
+  #[serde(default)]
+  stats: Vec<LevelStatToml>,
+  /// Per-level need modifiers.
+  #[serde(default)]
+  needs: Vec<LevelNeedToml>,
 }
 
 /// One effect operand: `"@name"` = a reference into the interaction's `inputs`; a bare
@@ -398,6 +486,9 @@ struct InteractionToml {
   name: String,
   #[serde(default)]
   label: Option<String>,
+  /// The affordance GATES (stat-model F5) — every listed predicate must pass.
+  #[serde(default)]
+  affordances: Vec<String>,
   /// The input SIGNATURE — event input words bind these in order (F5).
   #[serde(default)]
   inputs: Vec<String>,
@@ -418,32 +509,60 @@ fn on() -> String {
   "on".into()
 }
 
+/// An affordance is a structured stat PREDICATE (stat-model F5/F10) — never an
+/// expression string. Exactly one of `above`/`below` (both EXCLUSIVE).
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AffordanceToml {
   name: String,
   #[serde(default)]
   label: Option<String>,
-  /// The trait gate — ALL must be carried.
-  #[serde(default)]
-  requires: Vec<String>,
-  interaction: String,
-  /// Which variants of the interaction this affordance offers (F1's variation lane).
-  #[serde(default = "default_variants")]
-  variants: Vec<String>,
+  check: CheckToml,
 }
 
-fn default_variants() -> Vec<String> {
-  vec!["default".into()]
-}
-
-/// A CARRIER's affordance binding — the reference plus this carrier's parameters (F2).
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct AffordanceBindToml {
+struct CheckToml {
+  stat: String,
+  #[serde(default)]
+  above: Option<f64>,
+  #[serde(default)]
+  below: Option<f64>,
+}
+
+/// A CARRIER's interaction binding — what it offers, plus its parameters (stat-model F9).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct InteractionBindToml {
   name: String,
   #[serde(default)]
   magnitude: f64,
+}
+
+/// A thing's STARTING trait binding (stat-model F11): a bare string (level 1) or
+/// `{ name, level }`.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum TraitBindToml {
+  Name(String),
+  Full {
+    name: String,
+    #[serde(default = "one_u16")]
+    level: u16,
+  },
+}
+
+fn one_u16() -> u16 {
+  1
+}
+
+impl TraitBindToml {
+  fn pair(&self) -> (String, u16) {
+    match self {
+      TraitBindToml::Name(n) => (n.clone(), 1),
+      TraitBindToml::Full { name, level } => (name.clone(), *level),
+    }
+  }
 }
 
 // ── loading ────────────────────────────────────────────────────────────────────────
@@ -465,6 +584,7 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
         all.trait_.extend(c.trait_);
         all.interaction.extend(c.interaction);
         all.affordance.extend(c.affordance);
+        all.stat.extend(c.stat);
         all.subtype.extend(c.subtype);
       }
       Err(e) => errors.push(LoadError { file: name.clone(), message: format!("toml: {e}") }),
@@ -501,6 +621,7 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
   unique("trait", all.trait_.iter().map(|d| d.name.as_str()).collect());
   unique("interaction", all.interaction.iter().map(|d| d.name.as_str()).collect());
   unique("affordance", all.affordance.iter().map(|d| d.name.as_str()).collect());
+  unique("stat", all.stat.iter().map(|d| d.name.as_str()).collect());
   // Tiles and things carry NO ids (definition-registry F1/F15): the corpus describes and the
   // server numbers. Their position here is only the SEED a fresh registry allocates from — an
   // existing registry overrides it through `Bundle::with_registry`, which is what makes a
@@ -530,6 +651,53 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
     })
     .collect();
 
+  // The name-resolution closures every cross-reference below validates through.
+  let condition_exists = |name: &str| all.condition.iter().any(|c| c.name == name);
+  let need_exists = |name: &str| all.need.iter().any(|n| n.name == name);
+  let stat_exists = |name: &str| all.stat.iter().any(|s| s.name == name);
+  let affordance_exists = |name: &str| all.affordance.iter().any(|a| a.name == name);
+  let interaction_exists = |name: &str| all.interaction.iter().any(|i| i.name == name);
+
+  // The empty-intersection rule (stat-model F6): `"min"` (default) or `"max"`.
+  fn parse_winner(
+    winner: &Option<String>,
+    who: &str,
+    name: &str,
+    errors: &mut Vec<LoadError>,
+  ) -> bool {
+    match winner.as_deref() {
+      None | Some("min") => true,
+      Some("max") => false,
+      Some(w) => {
+        errors.push(LoadError {
+          file: String::new(),
+          message: format!("{who} `{name}`: winner `{w}` — must be `min` or `max` (stat-model F6)"),
+        });
+        true
+      }
+    }
+  }
+
+  b.stats = all
+    .stat
+    .iter()
+    .map(|s| {
+      if s.min >= s.max {
+        errors.push(LoadError {
+          file: String::new(),
+          message: format!("stat `{}`: min ({}) must be below max ({})", s.name, s.min, s.max),
+        });
+      }
+      let min_wins = parse_winner(&s.winner, "stat", &s.name, &mut errors);
+      (s.name.clone(), StatParams {
+        label: s.label.clone().unwrap_or_else(|| s.name.clone()),
+        min: s.min,
+        max: s.max,
+        min_wins,
+      })
+    })
+    .collect();
+
   b.needs = all
     .need
     .iter()
@@ -540,10 +708,12 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
           message: format!("need `{}`: min ({}) must be below max ({})", n.name, n.min, n.max),
         });
       }
+      let min_wins = parse_winner(&n.winner, "need", &n.name, &mut errors);
       (n.name.clone(), NeedParams {
         label: n.label.clone().unwrap_or_else(|| n.name.clone()),
         min: n.min,
         max: n.max,
+        min_wins,
         deplete: n.deplete,
         bands: n
           .band
@@ -558,26 +728,133 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
     .condition
     .iter()
     .map(|m| {
+      for s in &m.stats {
+        if !stat_exists(&s.stat) {
+          errors.push(LoadError {
+            file: String::new(),
+            message: format!("condition `{}`: modifier names unknown stat `{}`", m.name, s.stat),
+          });
+        }
+      }
+      for n in &m.needs {
+        if !need_exists(&n.need) {
+          errors.push(LoadError {
+            file: String::new(),
+            message: format!("condition `{}`: modifier names unknown need `{}`", m.name, n.need),
+          });
+        }
+      }
+      // stat-model F13: a DERIVED (band) condition may not modify needs — its own liveness
+      // is computed FROM need evaluation, so the modifier would feed the thing that decides
+      // it (a fixpoint the lazy eval cannot host). Stat contributions are fine.
+      if m.duration <= 0.0 && !m.needs.is_empty() {
+        errors.push(LoadError {
+          file: String::new(),
+          message: format!(
+            "condition `{}` is DERIVED (duration 0) and authors need modifiers — only TIMED \
+             conditions may modify needs (stat-model F13)",
+            m.name
+          ),
+        });
+      }
       (m.name.clone(), ConditionParams {
         label: m.label.clone().unwrap_or_else(|| m.name.clone()),
         mood: m.mood,
         duration: m.duration,
         priority: m.priority,
+        stats: m
+          .stats
+          .iter()
+          .map(|s| StatModifier { stat: s.stat.clone(), add: s.add, min: s.min, max: s.max })
+          .collect(),
+        needs: m
+          .needs
+          .iter()
+          .map(|n| NeedModifier { need: n.need.clone(), rate: n.rate, min: n.min, max: n.max })
+          .collect(),
       })
     })
     .collect();
 
+  // Traits: the authored per-field ARRAYS become per-LEVEL modifier tables (stat-model F5).
+  // Every authored array within one trait must agree on length — that length IS the trait's
+  // level count; a trait with no modifier arrays has ONE (empty) level.
   b.traits = all
     .trait_
     .iter()
-    .map(|t| (t.name.clone(), TraitParams { label: t.label.clone().unwrap_or_else(|| t.name.clone()) }))
+    .map(|t| {
+      let mut lens: Vec<usize> = Vec::new();
+      for s in &t.stats {
+        for l in [s.add.len(), s.min.len(), s.max.len()] {
+          if l > 0 {
+            lens.push(l);
+          }
+        }
+      }
+      for n in &t.needs {
+        for l in [n.rate.len(), n.min.len(), n.max.len()] {
+          if l > 0 {
+            lens.push(l);
+          }
+        }
+      }
+      let count = lens.iter().copied().max().unwrap_or(1);
+      if lens.iter().any(|&l| l != count) {
+        errors.push(LoadError {
+          file: String::new(),
+          message: format!(
+            "trait `{}`: level arrays disagree on length — every authored array is per-LEVEL \
+             and must have the trait's level count ({count})",
+            t.name
+          ),
+        });
+      }
+      for s in &t.stats {
+        if !stat_exists(&s.stat) {
+          errors.push(LoadError {
+            file: String::new(),
+            message: format!("trait `{}`: modifier names unknown stat `{}`", t.name, s.stat),
+          });
+        }
+      }
+      for n in &t.needs {
+        if !need_exists(&n.need) {
+          errors.push(LoadError {
+            file: String::new(),
+            message: format!("trait `{}`: modifier names unknown need `{}`", t.name, n.need),
+          });
+        }
+      }
+      let levels = (0..count)
+        .map(|i| TraitLevel {
+          stats: t
+            .stats
+            .iter()
+            .map(|s| StatModifier {
+              stat: s.stat.clone(),
+              add: s.add.get(i).copied().unwrap_or(0.0),
+              min: s.min.get(i).copied(),
+              max: s.max.get(i).copied(),
+            })
+            .collect(),
+          needs: t
+            .needs
+            .iter()
+            .map(|n| NeedModifier {
+              need: n.need.clone(),
+              rate: n.rate.get(i).copied().unwrap_or(1.0),
+              min: n.min.get(i).copied(),
+              max: n.max.get(i).copied(),
+            })
+            .collect(),
+        })
+        .collect();
+      (t.name.clone(), TraitParams {
+        label: t.label.clone().unwrap_or_else(|| t.name.clone()),
+        levels,
+      })
+    })
     .collect();
-
-  // The name-resolution closures every cross-reference below validates through.
-  let condition_exists =
-    |name: &str| all.condition.iter().any(|c| c.name == name);
-  let need_exists = |name: &str| all.need.iter().any(|n| n.name == name);
-  let trait_exists = |name: &str| all.trait_.iter().any(|t| t.name == name);
 
   // Band → condition references (needs already built; conditions above).
   for n in &all.need {
@@ -638,6 +915,14 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
           });
         }
       }
+      for a in &i.affordances {
+        if !affordance_exists(a) {
+          errors.push(LoadError {
+            file: String::new(),
+            message: format!("interaction `{}`: unknown affordance `{a}`", i.name),
+          });
+        }
+      }
       if i.location != "on" {
         errors.push(LoadError {
           file: String::new(),
@@ -649,6 +934,7 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
       }
       (i.name.clone(), InteractionParams {
         label: i.label.clone().unwrap_or_else(|| i.name.clone()),
+        affordances: i.affordances.clone(),
         inputs: i.inputs.clone(),
         satisfy,
         grants: i.grant.clone(),
@@ -662,25 +948,27 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
     .affordance
     .iter()
     .map(|a| {
-      for r in &a.requires {
-        if !trait_exists(r) {
-          errors.push(LoadError {
-            file: String::new(),
-            message: format!("affordance `{}`: requires unknown trait `{r}`", a.name),
-          });
-        }
-      }
-      if !all.interaction.iter().any(|i| i.name == a.interaction) {
+      if !stat_exists(&a.check.stat) {
         errors.push(LoadError {
           file: String::new(),
-          message: format!("affordance `{}`: unknown interaction `{}`", a.name, a.interaction),
+          message: format!("affordance `{}`: check names unknown stat `{}`", a.name, a.check.stat),
         });
+      }
+      match (a.check.above, a.check.below) {
+        (None, None) | (Some(_), Some(_)) => errors.push(LoadError {
+          file: String::new(),
+          message: format!(
+            "affordance `{}`: check authors exactly ONE of `above`/`below` (stat-model F10)",
+            a.name
+          ),
+        }),
+        _ => {}
       }
       (a.name.clone(), AffordanceParams {
         label: a.label.clone().unwrap_or_else(|| a.name.clone()),
-        requires: a.requires.clone(),
-        interaction: a.interaction.clone(),
-        variants: a.variants.clone(),
+        stat: a.check.stat.clone(),
+        above: a.check.above,
+        below: a.check.below,
       })
     })
     .collect();
@@ -688,19 +976,26 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
   let material_id = |name: &str| -> u16 {
     b.materials.iter().position(|(n, _)| n == name).map(|i| i as u16 + 1).unwrap_or(0)
   };
-  let affordance_exists = |name: &str| all.affordance.iter().any(|a| a.name == name);
+  // A thing's trait BINDING must name a level the trait's table has (stat-model F11).
+  let trait_level_counts: HashMap<String, usize> =
+    b.traits.iter().map(|(n, p)| (n.clone(), p.levels.len())).collect();
 
   for slot in &tiles {
     b.tiles.push(match slot {
-      Some(t) => tile_def(t, &material_id, &affordance_exists, &mut errors),
+      Some(t) => tile_def(t, &material_id, &interaction_exists, &mut errors),
       None => TileDef::default(), // a retired id holds its place
     });
   }
   for slot in &things {
     b.things.push(match slot {
-      Some(t) => {
-        thing_def(t, &material_id, &need_exists, &trait_exists, &affordance_exists, &mut errors)
-      }
+      Some(t) => thing_def(
+        t,
+        &material_id,
+        &need_exists,
+        &trait_level_counts,
+        &interaction_exists,
+        &mut errors,
+      ),
       None => ThingDef::default(),
     });
   }
@@ -922,7 +1217,7 @@ fn visual(
 fn tile_def(
   t: &TileToml,
   material_id: &dyn Fn(&str) -> u16,
-  affordance_exists: &dyn Fn(&str) -> bool,
+  interaction_exists: &dyn Fn(&str) -> bool,
   errors: &mut Vec<LoadError>,
 ) -> TileDef {
   // A tile's visual is the single-part degenerate case: synthesize the one part from
@@ -966,23 +1261,23 @@ fn tile_def(
       t.cast_shadow.unwrap_or(0.0),
       t.receives_shadows.unwrap_or(0.0),
     ],
-    affordances: affordance_binds(&t.affordances, affordance_exists, "tile", &t.name, errors),
+    interactions: interaction_binds(&t.interactions, interaction_exists, "tile", &t.name, errors),
   }
 }
 
-/// Validate + flatten a carrier's affordance bindings (interactions F2).
-fn affordance_binds(
-  binds: &[AffordanceBindToml],
-  affordance_exists: &dyn Fn(&str) -> bool,
+/// Validate + flatten a carrier's interaction bindings (stat-model F5/F9).
+fn interaction_binds(
+  binds: &[InteractionBindToml],
+  interaction_exists: &dyn Fn(&str) -> bool,
   what: &str,
   name: &str,
   errors: &mut Vec<LoadError>,
 ) -> Vec<(String, f64)> {
   for b in binds {
-    if !affordance_exists(&b.name) {
+    if !interaction_exists(&b.name) {
       errors.push(LoadError {
         file: String::new(),
-        message: format!("{what} `{name}`: unknown affordance `{}`", b.name),
+        message: format!("{what} `{name}`: unknown interaction `{}`", b.name),
       });
     }
   }
@@ -1036,8 +1331,8 @@ fn thing_def(
   t: &ThingToml,
   material_id: &dyn Fn(&str) -> u16,
   need_exists: &dyn Fn(&str) -> bool,
-  trait_exists: &dyn Fn(&str) -> bool,
-  affordance_exists: &dyn Fn(&str) -> bool,
+  trait_level_counts: &HashMap<String, usize>,
+  interaction_exists: &dyn Fn(&str) -> bool,
   errors: &mut Vec<LoadError>,
 ) -> ThingDef {
   let tax = taxonomy(&t.type_name, &t.kind, &t.sub_type, &t.variant, &format!("thing `{}`", t.name), errors);
@@ -1053,12 +1348,23 @@ fn thing_def(
       });
     }
   }
-  for tr in &t.traits {
-    if !trait_exists(tr) {
-      errors.push(LoadError {
+  let mut traits = Vec::new();
+  for tb in &t.traits {
+    let (name, level) = tb.pair();
+    match trait_level_counts.get(&name) {
+      None => errors.push(LoadError {
         file: String::new(),
-        message: format!("thing `{}`: unknown trait `{tr}`", t.name),
-      });
+        message: format!("thing `{}`: unknown trait `{name}`", t.name),
+      }),
+      Some(&count) if level == 0 || level as usize > count => errors.push(LoadError {
+        file: String::new(),
+        message: format!(
+          "thing `{}`: trait `{name}` level {level} is out of range (the trait authors \
+           {count} level(s); level 0 = absent — don't bind it)",
+          t.name
+        ),
+      }),
+      Some(_) => traits.push((name, level)),
     }
   }
   ThingDef {
@@ -1069,8 +1375,8 @@ fn thing_def(
     visual,
     speed: t.speed,
     needs,
-    traits: t.traits.clone(),
-    affordances: affordance_binds(&t.affordances, affordance_exists, "thing", &t.name, errors),
+    traits,
+    interactions: interaction_binds(&t.interactions, interaction_exists, "thing", &t.name, errors),
   }
 }
 
@@ -1263,9 +1569,15 @@ name = "thirst"
 
   #[test]
   fn the_gameplay_categories_round_trip_with_resolved_effects() {
-    // Interactions P1: trait/interaction/affordance parse, the F5 operand resolution turns
-    // `@refs` into input indices at LOAD, carriers bind, and the F6 gate reads a trait SET.
+    // Stat-model P1: all six categories parse; the F5 operand resolution turns `@refs`
+    // into input indices at LOAD; traits carry LEVELED modifier tables; affordances are
+    // structured stat predicates listed BY the interaction; carriers bind interactions.
     let text = r##"
+[[stat]]
+name = "metabolism"
+min = 0
+max = 10
+
 [[need]]
 name = "thirst"
 min = 0
@@ -1274,26 +1586,28 @@ max = 100
 [[condition]]
 name = "quenched"
 duration = 3600
+needs = [ { need = "thirst", rate = 0.5 } ]
 
 [[trait]]
 name = "biological_lifeform"
 label = "Biological Lifeform"
+stats = [ { stat = "metabolism", add = [1] } ]
 
 [[interaction]]
 name = "drink"
+affordances = ["can_drink"]
 inputs = ["pawn", "need", "amount"]
 satisfy = { target = "@pawn", need = "@need", amount = "@amount" }
 grant = ["quenched"]
 
 [[affordance]]
-name = "drink_water"
-requires = ["biological_lifeform"]
-interaction = "drink"
+name = "can_drink"
+check = { stat = "metabolism", above = 0.0 }
 
 [[tile]]
 name = "water"
 tint = "#2e5a78"
-affordances = [ { name = "drink_water", magnitude = 3 } ]
+interactions = [ { name = "drink", magnitude = 3 } ]
 
 [[thing]]
 name = "wolf"
@@ -1303,8 +1617,9 @@ tint = "#ffffff"
 "##;
     let b = load(&[src("t.toml", text)]).expect("clean load");
 
-    // The consumer read path: the interaction's signature + resolved effect.
+    // The consumer read path: the interaction's signature + resolved effect + gates.
     let drink = b.interaction_params("drink").expect("drink");
+    assert_eq!(drink.affordances, vec!["can_drink"]);
     assert_eq!(drink.inputs, vec!["pawn", "need", "amount"]);
     let satisfy = drink.satisfy.expect("satisfy");
     assert_eq!(satisfy.target, crate::loader::Operand::Input(0));
@@ -1313,16 +1628,24 @@ tint = "#ffffff"
     assert_eq!(drink.grants, vec!["quenched"]);
     assert_eq!(drink.location, "on");
 
-    // Carrier bindings + the availability gate over a trait SET (F6).
-    assert_eq!(b.tile_affordances(1), vec![("drink_water".to_string(), 3.0)]);
-    let traits = b.thing_traits(1);
-    assert!(b.affordance_available("drink_water", &traits));
-    assert!(!b.affordance_available("drink_water", &[]), "no traits, no drink");
-    assert!(!b.affordance_available("ghost", &traits), "unknown affordance is unavailable");
+    // The predicate + the trait's leveled table + the condition's need modifier.
+    let can = b.affordance_params("can_drink").expect("can_drink");
+    assert_eq!((can.stat.as_str(), can.above, can.below), ("metabolism", Some(0.0), None));
+    let bl = b.trait_params("biological_lifeform").expect("trait");
+    assert_eq!(bl.levels.len(), 1);
+    assert_eq!(bl.levels[0].stats[0].add, 1.0);
+    let q = b.condition_params("quenched").expect("quenched");
+    assert_eq!((q.needs[0].need.as_str(), q.needs[0].rate), ("thirst", 0.5));
 
-    // Refs pack under the derived taxonomy, and the reverse lookup agrees.
-    let a = b.gameplay_reference("affordance", "drink_water").expect("ref");
-    assert_eq!(b.gameplay_lookup(a), Some(("affordance".to_string(), "drink_water".to_string())));
+    // Carrier bindings: interactions on the tile, leveled traits on the thing (bare = 1).
+    assert_eq!(b.tile_interactions(1), vec![("drink".to_string(), 3.0)]);
+    assert_eq!(b.thing_traits(1), vec![("biological_lifeform".to_string(), 1)]);
+
+    // Refs pack under the derived taxonomy, and the reverse lookup agrees — `stat` too.
+    let a = b.gameplay_reference("affordance", "can_drink").expect("ref");
+    assert_eq!(b.gameplay_lookup(a), Some(("affordance".to_string(), "can_drink".to_string())));
+    let s = b.gameplay_reference("stat", "metabolism").expect("stat ref");
+    assert_eq!(b.gameplay_lookup(s), Some(("stat".to_string(), "metabolism".to_string())));
 
     // Refusals: a dangling @ref, an unknown grant, an unbuilt location.
     let e = load(&[src(
@@ -1336,13 +1659,56 @@ tint = "#ffffff"
     let e = load(&[src("t.toml", "[[interaction]]\nname = \"d\"\nlocation = \"adjacent\"\n")])
       .unwrap_err();
     assert!(e.iter().any(|e| e.message.contains("only rule built")), "{e:?}");
-    // A carrier binding a ghost affordance refuses too.
-    let e = load(&[src("t.toml", "[[tile]]\nname = \"w\"\naffordances = [{ name = \"x\" }]\n")])
+    // A carrier binding a ghost interaction refuses too.
+    let e = load(&[src("t.toml", "[[tile]]\nname = \"w\"\ninteractions = [{ name = \"x\" }]\n")])
       .unwrap_err();
-    assert!(e.iter().any(|e| e.message.contains("unknown affordance `x`")), "{e:?}");
+    assert!(e.iter().any(|e| e.message.contains("unknown interaction `x`")), "{e:?}");
     // An inverted domain refuses.
     let e = load(&[src("t.toml", "[[need]]\nname = \"n\"\nmin = 5\nmax = 1\n")]).unwrap_err();
     assert!(e.iter().any(|e| e.message.contains("below max")), "{e:?}");
+  }
+
+  #[test]
+  fn the_stat_model_refusals_are_loud() {
+    // A predicate must author exactly one of above/below.
+    let e = load(&[src(
+      "t.toml",
+      "[[stat]]\nname = \"s\"\n[[affordance]]\nname = \"a\"\ncheck = { stat = \"s\" }\n",
+    )])
+    .unwrap_err();
+    assert!(e.iter().any(|e| e.message.contains("exactly ONE")), "{e:?}");
+    // ... and its stat must exist.
+    let e = load(&[src(
+      "t.toml",
+      "[[affordance]]\nname = \"a\"\ncheck = { stat = \"ghost\", above = 0.0 }\n",
+    )])
+    .unwrap_err();
+    assert!(e.iter().any(|e| e.message.contains("unknown stat `ghost`")), "{e:?}");
+    // Trait level arrays must agree on length.
+    let e = load(&[src(
+      "t.toml",
+      "[[stat]]\nname = \"s\"\n[[trait]]\nname = \"t\"\nstats = [ { stat = \"s\", add = [1, 2], min = [0] } ]\n",
+    )])
+    .unwrap_err();
+    assert!(e.iter().any(|e| e.message.contains("level arrays disagree")), "{e:?}");
+    // A thing binding a level past the trait's table refuses.
+    let e = load(&[src(
+      "t.toml",
+      "[[stat]]\nname = \"s\"\n[[trait]]\nname = \"t\"\nstats = [ { stat = \"s\", add = [1] } ]\n\
+       [[thing]]\nname = \"w\"\ntraits = [ { name = \"t\", level = 3 } ]\n",
+    )])
+    .unwrap_err();
+    assert!(e.iter().any(|e| e.message.contains("out of range")), "{e:?}");
+    // A DERIVED condition may not modify needs (F13 — the circularity cut).
+    let e = load(&[src(
+      "t.toml",
+      "[[need]]\nname = \"n\"\n[[condition]]\nname = \"c\"\nneeds = [ { need = \"n\", rate = 0.5 } ]\n",
+    )])
+    .unwrap_err();
+    assert!(e.iter().any(|e| e.message.contains("only TIMED")), "{e:?}");
+    // An unknown winner refuses.
+    let e = load(&[src("t.toml", "[[stat]]\nname = \"s\"\nwinner = \"median\"\n")]).unwrap_err();
+    assert!(e.iter().any(|e| e.message.contains("`min` or `max`")), "{e:?}");
   }
 
   #[test]

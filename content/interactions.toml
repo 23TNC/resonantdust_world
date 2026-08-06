@@ -1,32 +1,69 @@
-# Traits, interactions, affordances — what a pawn CAN DO and who may do it
-# (work 2026-08-06-interactions; schema docs/VARIABLES.md § TOML content schema).
+# Stats, traits, interactions, affordances — what a pawn IS, what it can DO, and who
+# may do it (work 2026-08-06-stat-model; schema docs/VARIABLES.md § TOML content schema).
 #
-# The three-entity model (user, 2026-08-06):
-#   - a TRAIT is a capability class a pawn HAS (kinds author `traits = [...]`);
+# The four-family model (user, 2026-08-06):
+#   - a STAT is a DERIVED quantity — never stored, never fanned: computed anywhere from
+#     the pawn's trait/condition rows + this corpus. It authors GLOBAL safety bounds and
+#     the empty-intersection `winner` ("min"/"max") for the range combiner (F6);
+#   - a TRAIT is a LEVELED stat contributor ("traits/skills"): each modifier field is a
+#     per-LEVEL array (index = level − 1). Thing defs bind starting `(trait, level)`
+#     pairs, minted at CREATE;
 #   - an INTERACTION is something a pawn can do — how (inputs, location) and what it
-#     does (effects). It is GENERIC: the input signature is bound by the caller's
-#     event words, in order;
-#   - an AFFORDANCE says WHO may do WHAT — the trait gate bound to an interaction
-#     ONCE. Carriers reference it by name with THEIR parameters, so the water tile
-#     authors `affordances = [{ name = "drink_water", magnitude = 3 }]` and a future
-#     waterskin authors the same name at 1 or 5.
+#     does (effects), GATED by `affordances` (every listed predicate must pass).
+#     Carriers author `interactions = [{ name, magnitude }]` — the water tile offers
+#     `drink 3`, a future waterskin 1 or 5;
+#   - an AFFORDANCE is a named PREDICATE over pawn stats: `check = { stat, above|below }`
+#     (exactly one; both thresholds EXCLUSIVE). `can_move_air`/`can_teleport` are a
+#     stat + an affordance away — no new code.
 #
 # NO ids (interactions F1/F9): identity is the derived taxonomy
-# (`gameplay/interaction/drink/default`), numbered by the registry. `variants` on the
-# affordance is the variation lane — a later `angry` drink is a new interaction
-# variant the affordance chooses to offer (or not).
+# (`gameplay/interaction/drink/default`), numbered by the registry.
 #
 # Effect operands: `"@name"` binds an input slot; a bare name or number is baked.
-# `amount` is a SIGNED f32 in the need's own units, clamped to its authored min/max on
-# apply — damage-a-need is the same mechanism as satisfy.
+# `amount` is a SIGNED f32 in the need's own units, clamped to its effective domain and
+# quantized ONCE at write (stat-model F4) — damage-a-need is the same mechanism.
+
+# ── stats ─────────────────────────────────────────────────────────────────────
+
+# Ground locomotion pace in TICS PER TILE (lower = faster; 0 = cannot ground-move).
+# The wolf's walks level 2 contributes 12 — equal to its `speed` field until the
+# input stream rewires movement onto this stat (stat-model F12/I10).
+[[stat]]
+name = "ground_speed"
+label = "Ground Speed"
+min = 0
+max = 240
+winner = "min"
+
+# The "is a metabolizing organism" scalar can_drink reads. biological_lifeform
+# contributes 1; a golem contributes nothing and cannot drink.
+[[stat]]
+name = "metabolism"
+label = "Metabolism"
+min = 0
+max = 10
+winner = "min"
+
+# ── traits ────────────────────────────────────────────────────────────────────
 
 [[trait]]
 name = "biological_lifeform"
 label = "Biological Lifeform"
+stats = [ { stat = "metabolism", add = [1] } ]
+
+# The leveled locomotion skill (stat-model F5): level 1 lumbers, level 2 is the wolf's
+# standard pace, level 3 sprints. Values are tics/tile INTO ground_speed.
+[[trait]]
+name = "walks"
+label = "Walks"
+stats = [ { stat = "ground_speed", add = [24, 12, 6] } ]
+
+# ── interactions ──────────────────────────────────────────────────────────────
 
 [[interaction]]
 name = "drink"
 label = "Drink"
+affordances = ["can_drink"]
 inputs = ["pawn", "need", "amount"]
 satisfy = { target = "@pawn", need = "@need", amount = "@amount" }
 grant = ["quenched"]
@@ -38,9 +75,16 @@ location = "on"
 # negotiate with MOVE_STEP chain supersession and gets its own stream.
 duration = 0
 
+# ── affordances ───────────────────────────────────────────────────────────────
+
 [[affordance]]
-name = "drink_water"
-label = "Drink Water"
-requires = ["biological_lifeform"]
-interaction = "drink"
-variants = ["default"]
+name = "can_drink"
+label = "Can Drink"
+check = { stat = "metabolism", above = 0.0 }
+
+# Authored ahead of the movement rewire (stat-model F12): the input stream's move_to
+# interaction gates on this.
+[[affordance]]
+name = "can_move_ground"
+label = "Can Move Ground"
+check = { stat = "ground_speed", above = 0.0 }

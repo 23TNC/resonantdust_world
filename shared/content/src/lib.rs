@@ -18,6 +18,7 @@
 pub mod content;
 pub mod loader;
 pub mod needs_eval;
+pub mod stat_eval;
 pub mod toml_loader;
 
 pub use loader::{load, Bundle, LoadError};

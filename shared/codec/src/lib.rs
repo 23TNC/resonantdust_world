@@ -29,6 +29,7 @@ pub mod speed;
 pub mod status;
 pub mod tic;
 pub mod uid;
+pub mod value;
 
 // The `tick_pipeline!` macro (crate-root via `#[macro_export]`) — the shared tic-composition
 // machinery SpacetimeDB shards stamp out. Inert here (only expands where invoked); references

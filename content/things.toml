@@ -128,9 +128,10 @@ subType = ["animal"]
 variant = ["0"]
 speed = 12
 needs = ["thirst"]
-# The trait gate's first citizen (interactions F6): the drink_water affordance
-# requires this. Per-KIND today; per-pawn traits are a payload opcode later.
-traits = ["biological_lifeform"]
+# Starting trait bindings (stat-model F11), minted as payload rows at CREATE: a bare
+# string = level 1. walks level 2 contributes 12 tics/tile to ground_speed — equal to
+# `speed` above until the input stream rewires movement onto the stat (F12/I10).
+traits = ["biological_lifeform", { name = "walks", level = 2 }]
 
   [[thing.part]]
   tint = "#ffffff"

@@ -142,3 +142,13 @@ derivation (tests + npc log), but the worker's movement chain and MoverLayer kee
 stream, one seam: rewiring movement here would drag the pie menu's front door in with it.
 The two-source window is guarded ([I10](issues.md#i10)), and `speed` dies WITH the rewire
 (delete-don't-deprecate), not before.
+
+## F13 — a DERIVED condition may not modify needs (the circularity cut) {#f13}
+
+_2026-08-06, resolved during P1._ A band (DERIVED) condition's liveness is computed FROM need
+evaluation; letting it carry a `needs` modifier would feed the thing that decides it — a
+fixpoint the lazy eval cannot host (and each band flip would be an unstamped rate change,
+breaking [F7](#f7)). The loader REFUSES `duration = 0` + `needs = [...]`; stat contributions
+on derived conditions remain legal (stats don't feed the needs eval). If a "Dehydrated slows
+you" style rule ever needs the reverse — a band condition slowing a DIFFERENT need — that's a
+design conversation about stamping band crossings, not a validation to delete.

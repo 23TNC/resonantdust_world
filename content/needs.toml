@@ -1,18 +1,25 @@
 # Needs & conditions — the pawn's hidden state and its DISPLAYED consequences
-# (work 2026-08-04-conditions + 2026-08-06-interactions; schema docs/VARIABLES.md).
+# (work 2026-08-04-conditions + 2026-08-06-interactions + 2026-08-06-stat-model;
+# schema docs/VARIABLES.md § Pawn gameplay state).
 #
-# A need is an f32 SATISFACTION on its OWN authored domain (`min`..`max` — interactions
-# F7; min may be negative, that IS the sign treatment) depleting toward `min` (`deplete` =
-# TICS max→min). Nothing ticks it: a pawn's payload row stores (need ref, satisfaction,
-# set_tic) and every observer computes the current value + the exact band crossings
-# lazily. Bands are EXCLUSIVE ranges in the need's OWN units (lo <= sat < hi) — at most
-# one band condition per need is active; the player sees CONDITIONS, never the scalar.
-# `duration 0` = DERIVED (alive while its band holds); `> 0` = TIMED, a stored grant
-# expiring that many tics after it lands (drink's `quenched`).
+# A need is a SATISFACTION on its OWN authored domain (`min`..`max`; min may be
+# negative, that IS the sign treatment) depleting toward `min` (`deplete` = TICS
+# max→min at BASE rate). Stored as u16 FIXED-POINT on exactly these bounds in the
+# `needs` sub-table `(value:16|kind:12|variant:4, set_tic)` — nothing ticks it: every
+# observer computes the current value + the exact band crossings lazily, PIECEWISE
+# across condition expiries. Bands are EXCLUSIVE ranges in the need's OWN units
+# (lo <= sat < hi); the player sees CONDITIONS, never the scalar.
+# `duration 0` = DERIVED (alive while its band holds); `> 0` = TIMED, a stored row
+# holding remaining-at-write beside its written tic (drink's `quenched`).
+#
+# TIMED conditions (and trait levels) may MODIFY needs: `rate` multiplies depletion
+# (multipliers form a product), min/max narrow the effective clamp. Every grant
+# re-stamps the affected rows (the re-stamp law, stat-model F7); a DERIVED condition
+# may not modify needs (F13 — its liveness is computed FROM them).
 #
 # NO ids (interactions F1): a gameplay def's identity is its derived taxonomy
-# (`gameplay/need/thirst/default`), numbered by the registry; payload words and event
-# inputs carry the full u32 definition_reference.
+# (`gameplay/need/thirst/default`), numbered by the registry; event inputs carry the
+# full u32 definition_reference, stored rows its low 16 bits.
 #
 # Numbers are PROVISIONAL and authored here precisely so tuning is a data edit.
 # 21600 tics = 1 h wall at 6 Hz. Thirst's domain is 0..100 — a percent scale, so the
@@ -51,3 +58,6 @@ label = "Quenched"
 mood = 0.2
 duration = 3600.0
 priority = 10
+# The stream's living proof of the modifier machinery (stat-model I4): while quenched,
+# thirst depletes at HALF rate, and the eval integrates piecewise across the expiry.
+needs = [ { need = "thirst", rate = 0.5 } ]
