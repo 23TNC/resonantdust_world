@@ -132,9 +132,13 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P5 — the verdict
 
-- [ ] Docs + memory truth pass: component docs re-pointed where they touch needs/actions, the
+- [x] Docs + memory truth pass: component docs re-pointed where they touch needs/actions, the
       needs-moodlets memory amended (i8 domain, registry ids), the stream memory written.
-      Acceptance: `bin/rd docs-check` green.
+      Acceptance: `bin/rd docs-check` green. → component docs were clean (grep found no stale
+      needs spellings — P0 already moved the authoritative sections); memories:
+      needs-moodlets-delivered rewritten to the f32/refs reality, interactions-delivered
+      written, toml-content's stale explicit-id claim superseded, index rows updated; the
+      work index row records delivery. docs-check green.
 - [ ] Cold-boot the stack; standing drills (wolf trip, thirst crossing, panel cards) + the
       UNPROMPTED drink arc green together; **the user's eyes close the stream**. Acceptance:
       captures + logs recorded in `completed.md`.
