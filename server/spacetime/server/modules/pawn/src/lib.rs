@@ -59,8 +59,9 @@ pub struct Payload {
 }
 
 /// The `entity_tables!` state hook: every `entity_state` upsert drags the entity's `payload`
-/// row into the entity's zone, in the SAME transaction — a zone-crossing hop is the one
-/// movement that touches the sidecar, and only its key.
+/// row — AND its `needs` rows (stat-model F2: the sub-table is zone-keyed for the same
+/// subscription reason) — into the entity's zone, in the SAME transaction. A zone-crossing
+/// hop is the one movement that touches the sidecars, and only their keys.
 fn payload_follow_state(ctx: &ReducerContext, r: &TargetState, _tic: u16) {
     if let Some(mut p) = ctx.db.payload().entity_reference().find(r.entity_reference) {
         if p.macro_position_reference != r.macro_position_reference {
@@ -68,6 +69,69 @@ fn payload_follow_state(ctx: &ReducerContext, r: &TargetState, _tic: u16) {
             ctx.db.payload().entity_reference().update(p);
         }
     }
+    let stale: Vec<Needs> = ctx
+        .db
+        .needs()
+        .entity_reference()
+        .filter(r.entity_reference)
+        .filter(|n| n.macro_position_reference != r.macro_position_reference)
+        .collect();
+    for mut n in stale {
+        n.macro_position_reference = r.macro_position_reference;
+        ctx.db.needs().uid().update(n);
+    }
+}
+
+// ── needs — the per-(pawn, need) row table (stat-model F2) ──────────────────────────────
+//
+// Needs churn on every sip and every re-stamp, so they fan ALONE instead of dragging the
+// whole payload. One row per (entity, need kind|variant); the value is u16 FIXED-POINT on
+// the need's authored domain, quantized ONCE by the composer (F4); `set_tic` is the lazy
+// eval's anchor — nothing ever ticks the value. No log twin, deliberately (TABLES.md).
+
+/// One need row: `uid = entity_reference:32 | need_key:16` (key = the packed row's low 16).
+#[spacetimedb::table(accessor = needs, public)]
+pub struct Needs {
+    #[primary_key]
+    pub uid: u64,
+    #[index(btree)]
+    pub entity_reference: u32,
+    /// The zone-subscription key — slaved to the entity's zone (the state hook).
+    #[index(btree)]
+    pub macro_position_reference: u16,
+    /// The packed gameplay row: `value:16 | kind:12 | variant:4`.
+    pub need: u32,
+    pub set_tic: u16,
+}
+
+/// Upsert one need row (the `SET_NEED` body + the spawn mint path).
+fn upsert_need_row(ctx: &ReducerContext, tic: u16, entity: u32, row: u32, zone: u16) {
+    let uid = ((entity as u64) << 16) | (row as u64 & 0xFFFF);
+    let r = Needs {
+        uid,
+        entity_reference: entity,
+        macro_position_reference: zone,
+        need: row,
+        set_tic: tic,
+    };
+    if ctx.db.needs().uid().find(uid).is_some() {
+        ctx.db.needs().uid().update(r);
+    } else {
+        ctx.db.needs().insert(r);
+    }
+}
+
+/// The entity's current zone key — its promoted state row, else its payload row, else 0.
+fn entity_zone(ctx: &ReducerContext, entity: u32) -> u16 {
+    ctx.db
+        .entity_state()
+        .entity_reference()
+        .find(entity)
+        .map(|s| s.macro_position_reference)
+        .or_else(|| {
+            ctx.db.payload().entity_reference().find(entity).map(|p| p.macro_position_reference)
+        })
+        .unwrap_or(0)
 }
 
 // ── needs & conditions — payload-entry verbs (needs-moodlets F7) ──────────────────────
@@ -110,39 +174,37 @@ fn write_payload_entry(ctx: &ReducerContext, tic: u16, entity: u32, edit: impl F
     }
 }
 
-/// `SET_NEED` — upsert one need's `(satisfaction, set_tic)` entry (`set_tic` = this tic;
-/// observers compute the current value from the corpus deplete rate, F4). `need_id` is the
-/// full u32 gameplay `definition_reference` and `satisfaction` an f32 BIT PATTERN on the
-/// need's authored domain (interactions F1/F3) — the reducer signature is unchanged, only
-/// the composed entry shape moved (TABLES.md § payload).
+/// `SET_NEED` — upsert one `needs` sub-table row (stat-model F2/F4). `row` is the packed
+/// gameplay row `value:16 | kind:12 | variant:4`; the value is u16 fixed-point on the
+/// need's authored domain, quantized ONCE by the composer; `set_tic` = this tic (the lazy
+/// eval's anchor — observers compute the current value, F4).
 #[spacetimedb::reducer]
 pub fn set_need(
     ctx: &ReducerContext,
     _worker: u8,
     tic: u16,
     entity_reference: u32,
-    need_id: u32,
-    satisfaction: u32,
+    row: u32,
 ) -> Result<(), String> {
-    write_payload_entry(ctx, tic, entity_reference, |p| {
-        resonantdust_codec::payload::upsert_need(p, need_id, f32::from_bits(satisfaction), tic);
-    });
+    let zone = entity_zone(ctx, entity_reference);
+    upsert_need_row(ctx, tic, entity_reference, row, zone);
     Ok(())
 }
 
-/// `GRANT_CONDITION` — upsert one stored (timed) condition grant (`grant_tic` = this tic;
-/// expiry is DERIVED from the corpus duration, never stored; a re-grant refreshes).
-/// `condition_id` is the full u32 gameplay `definition_reference` (interactions F1).
+/// `GRANT_CONDITION` — upsert one stored (timed) condition row (stat-model F1/F3). `row`
+/// is `remaining_at_write:16 | kind:12 | variant:4`; `written_tic` = this tic; remaining
+/// and expiry are DERIVED at read, never stored; a re-grant refreshes (upsert by the low
+/// 16). The re-stamp law binds the COMPOSER (I12) — this reducer holds no corpus.
 #[spacetimedb::reducer]
 pub fn grant_condition(
     ctx: &ReducerContext,
     _worker: u8,
     tic: u16,
     entity_reference: u32,
-    condition_id: u32,
+    row: u32,
 ) -> Result<(), String> {
     write_payload_entry(ctx, tic, entity_reference, |p| {
-        resonantdust_codec::payload::upsert_condition(p, condition_id, tic);
+        resonantdust_codec::payload::upsert_condition(p, row, tic);
     });
     Ok(())
 }
@@ -185,11 +247,13 @@ fn next_pawn_reference(ctx: &ReducerContext) -> u32 {
     pack_entity_reference(pack_server_reference(TYPE_PAWN, 0), n & OBJECT_REF_MASK)
 }
 
-/// Mint + first write + promote — AND the payload sidecar — in one transaction, idempotent by
-/// `(event_reference, index)`. The worker's `CREATE` arm is the only caller. The first row is
-/// absolute and `dirty=false` — a fresh entity is its own singleton component, so nothing
-/// claimed it and nothing composes on it this tic (every read is `< tic`). An EMPTY `payload`
-/// writes no sidecar rows at all (the wolf's common case stays free).
+/// Mint + first write + promote — AND the sidecars — in one transaction, idempotent by
+/// `(event_reference, index)`. The worker's `CREATE` arm is the only caller: it composes
+/// `payload` (PART + TRAIT entries — stat-model F11: starting traits mint here) and `needs`
+/// (packed full-value rows for the def's needs list) from the corpus, because this module
+/// holds none. The first row is absolute and `dirty=false` — a fresh entity is its own
+/// singleton component, so nothing claimed it and nothing composes on it this tic. An EMPTY
+/// `payload` writes no sidecar rows at all.
 #[spacetimedb::reducer]
 pub fn spawn(
     ctx: &ReducerContext,
@@ -200,6 +264,7 @@ pub fn spawn(
     definition_reference: u32,
     position_reference: u32,
     payload: Vec<u32>,
+    needs: Vec<u32>,
     promote: bool,
 ) -> Result<(), String> {
     let spawn_uid = ((event_reference as u64) << 16) | index as u64;
@@ -247,6 +312,11 @@ pub fn spawn(
             tic,
             payload,
         });
+    }
+    // The needs sub-table mint (stat-model F2/F11): one row per packed full-value row the
+    // worker composed from the def's needs list, stamped at the spawn tic.
+    for row in needs {
+        upsert_need_row(ctx, tic, entity, row, r.macro_position_reference);
     }
     if promote {
         entity_tables_upsert_state(ctx, &r, tic);

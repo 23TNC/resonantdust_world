@@ -240,6 +240,9 @@ export class MoverLayer {
   /** The latest RAW payload stream per entity (needs-moodlets P5) — same lifecycle as
    *  {@link pawnDefs}; see {@link pawnPayload}. */
   private readonly payloads = new Map<number, Uint32Array>();
+  /** The `needs` sub-table rows per entity (stat-model F2): `need_key → [packed, setTic]` —
+   *  a sip lands as exactly one update here; see {@link pawnNeeds}. */
+  private readonly needRows = new Map<number, Map<number, [number, number]>>();
 
   constructor(
     private readonly client: WasmClient,
@@ -254,6 +257,11 @@ export class MoverLayer {
     this.refreshTables();
     this.unsubs.push(client.onStateObject((obj) => this.onStateObject(obj)));
     this.unsubs.push(client.onPawnParts((p) => this.onPawnParts(p)));
+    this.unsubs.push(client.onPawnNeed((n) => {
+      let rows = this.needRows.get(n.entityReference);
+      if (!rows) this.needRows.set(n.entityReference, (rows = new Map()));
+      rows.set(n.need & 0xffff, [n.need, n.setTic]);
+    }));
     this.unsubs.push(client.onMoveIntent((intent) => this.onMoveIntent(intent)));
     // A zone leaving the subscription sends no per-entity delete, so drop its movers.
     this.unsubs.push(client.onZoneClosed((macroPosition) => this.onZoneClosed(macroPosition)));
@@ -274,6 +282,7 @@ export class MoverLayer {
     this.movers.clear();
     this.pawnDefs.clear();
     this.payloads.clear();
+    this.needRows.clear();
   }
 
   /** Wall-clock of the previous {@link tick} — the chase integrates real dt. */
@@ -439,6 +448,20 @@ export class MoverLayer {
    *  panel's eval input (needs-moodlets P5). */
   pawnPayload(entity: number): Uint32Array | null {
     return this.payloads.get(entity) ?? null;
+  }
+
+  /** The entity's `needs` rows, flattened stride-2 `[packed, setTic, …]` (stat-model F2) —
+   *  the second eval input; fed verbatim to `pawnConditions`/`pawnMood`. */
+  pawnNeeds(entity: number): Uint32Array {
+    const rows = this.needRows.get(entity);
+    if (!rows) return new Uint32Array(0);
+    const out = new Uint32Array(rows.size * 2);
+    let i = 0;
+    for (const [, [packed, setTic]] of rows) {
+      out[i++] = packed;
+      out[i++] = setTic;
+    }
+    return out;
   }
 
   // ── internals ───────────────────────────────────────────────────────
@@ -804,6 +827,7 @@ export class MoverLayer {
     }
     this.pawnDefs.delete(key);
     this.payloads.delete(key);
+    this.needRows.delete(key);
     this.pendingIntents.delete(key);
   }
 
@@ -814,6 +838,7 @@ export class MoverLayer {
         this.movers.delete(key);
         this.pawnDefs.delete(key);
         this.payloads.delete(key);
+        this.needRows.delete(key);
         this.pendingIntents.delete(key);
       }
     }

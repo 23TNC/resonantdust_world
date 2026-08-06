@@ -175,6 +175,17 @@ export interface PawnParts {
 }
 export type PawnPartsHandler = (p: PawnParts) => void;
 
+/** One `needs` sub-table row (stat-model F2): `need` is the packed gameplay row
+ *  (`value:16 | kind:12 | variant:4`), `setTic` the lazy eval's anchor. Fanned ALONE —
+ *  a sip updates exactly this. Joined by `entityReference`; fed verbatim to the wasm eval. */
+export interface PawnNeed {
+  macroPosition: number;
+  entityReference: number;
+  need: number;
+  setTic: number;
+}
+export type PawnNeedHandler = (n: PawnNeed) => void;
+
 /** A promoted movement INTENT (`ACTIONS.md` §Movement): `entityReference` is heading to global
  *  tile `(tileX, tileY)`, its first hop composed at `eventTic`. Clients SPECULATE position from
  *  this — per-hop state never fans out. */
@@ -235,6 +246,13 @@ type WorldEvent =
       parts: Uint32Array;
       /** The raw payload opcode stream (needs-moodlets P4). */
       payload: Uint32Array;
+    }
+  | {
+      kind: "pawnNeed";
+      macroPosition: number;
+      entityReference: number;
+      need: number;
+      setTic: number;
     }
   | { kind: "zoneClosed"; macroPosition: number }
   | { kind: "paused"; paused: boolean }
@@ -315,6 +333,7 @@ export class WasmClient {
   private readonly zoneClosedCbs = new Set<ZoneClosedHandler>();
   private readonly stateObjectCbs = new Set<StateObjectHandler>();
   private readonly pawnPartsCbs = new Set<PawnPartsHandler>();
+  private readonly pawnNeedCbs = new Set<PawnNeedHandler>();
   private readonly pausedCbs = new Set<(paused: boolean) => void>();
   private readonly callStatCbs = new Set<(stats: CallStat[]) => void>();
   private readonly subStatCbs = new Set<(snap: SubStatsSnapshot) => void>();
@@ -582,6 +601,12 @@ export class WasmClient {
     return () => this.pawnPartsCbs.delete(cb);
   }
 
+  /** Subscribe to `needs` sub-table rows (stat-model F2). Returns an unsubscribe. */
+  onPawnNeed(cb: PawnNeedHandler): () => void {
+    this.pawnNeedCbs.add(cb);
+    return () => this.pawnNeedCbs.delete(cb);
+  }
+
   /** Subscribe to promoted movement INTENTS (`ACTIONS.md` §Movement — the channel speculation
    *  walks on; per-hop state never fans out). Returns an unsubscribe. */
   onMoveIntent(cb: MoveIntentHandler): () => void {
@@ -761,6 +786,16 @@ export class WasmClient {
         }
         break;
       }
+      case "pawnNeed":
+        for (const cb of this.pawnNeedCbs) {
+          cb({
+            macroPosition: ev.macroPosition,
+            entityReference: ev.entityReference,
+            need: ev.need,
+            setTic: ev.setTic,
+          });
+        }
+        break;
       case "clockSync":
         // Refresh the *raw* offset target (the disciplined clock chases it in
         // `syncedNowMs`), then project the snapshot into the HUD's `ClockStats`.

@@ -1,5 +1,44 @@
 # Completed — stat-model
 
+## 2026-08-06 · P3 + P4 — the tables, the worker, the fan, the drinking wolf (4/4 + 3/3)
+
+**The pawn shard**: the `needs` table (uid = `entity:32|key:16`, zone-slaved alongside
+`payload` by the state hook) + `spawn(needs)`; `set_need` arity 5→4 (ONE packed row),
+`grant_condition` packs remaining|key. The RE-STAMP duty moved to COMPOSERS
+([I12](issues.md#i12), found designing this phase: the module holds no corpus, so P0's
+"reducer re-stamps" claim was wrong — ACTIONS/TABLES amended) and the EVAL hardened for the
+derivable gap: a condition row written AFTER the need's stamp gets a rate window STARTING at
+that offset (`RateWindow.start`), so a lone first grant evaluates exactly with no re-stamp.
+`need_bounds` gives the write-side effective clamp. The worker composes both mint sidecars
+(`mint_sidecars` — F11), gates on `interaction_available` (the SAME fn the npc asks), reads
+needs from the sub-table, quantizes ONCE at write, and queues re-stamping SET_NEEDs beside
+any grant whose condition modifies other needs. Bindings regenerated (edge + st-bindings).
+
+**The fan** ([I8](issues.md#i8)): `Need` wire frame (edge per-zone sub + snapshot replay +
+insert/update relays) → `Event::PawnNeed` (both engines + wasm marshal) → npc buffer +
+MoverLayer `pawnNeeds` (stride-2). The dev registry was RESET by the full-module republish
+(`rd redeploy --run` — codec in every closure), which also cleanly retired the dead
+`drink_water @ 0x80050010` row: `ensure_definition` REJECTS collisions, so the re-seed was
+the correct lane; master seeded **193** definitions (189 − 7 old gameplay + 11 new).
+
+**The drills, all seeds stated**: fresh wolf `0x30800000` minted with thirst `0xFFFF_0010`
+@918 + payload `[TRAIT bio@1][TRAIT walks@2]` (sql). Off-water `NPC_INTERACT=drink` →
+`interaction dropped … the tile does not offer this interaction (F8: on-tile only)`, zero
+splices. `NPC_THIRST=12 NPC_HOME=100,62` → Thirsty@1436 → walk to (102,68) → sips of
+EXACTLY +3.0 with the quenched ×0.5 rate VISIBLE between them (0.0138 per 6 tics =
+6·100/43200) → band cleared at 35.17 → `["quenched"] mood 0.7` → the thermostat dipped back
+at 1718 exactly as the piecewise crossing (1713+eval cadence) predicted, and the wolf
+re-sipped. Grant drill: quenched `3600@3213` + thirst re-stamped at the SAME tic (sql) —
+found+fixed: the combined seed+grant drill raced (re-stamp composed the pre-seed value), so
+the grant lane defers 3 s past init; re-run holds 49.97%. HONEST GAP: the predicate
+NEGATIVE case is undrillable (every pawn kind carries biological_lifeform); the gate runs
+positively on every sip through the one shared fn.
+
+**The panel** (browser, `:5174/?focus=102,68`): wolf `0x30800001` mood 70% **Quenched
++0.20 3170t**; the thermostat window mood 55% **Thirsty −0.15 + Quenched +0.20 2433t** in
+authored priority order — rendered ENTIRELY from the fanned payload + needs rows through
+the wasm eval (`pawnConditions(payload, needs, now)`).
+
 ## 2026-08-06 · P1 + P2 — codec, the shared evals, the corpus (6/6 + 2/2)
 
 One build unit again by necessity: the schema change makes the old corpus refuse

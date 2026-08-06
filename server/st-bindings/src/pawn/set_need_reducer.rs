@@ -16,8 +16,7 @@ pub(super) struct SetNeedArgs {
     pub worker: u8,
     pub tic: u16,
     pub entity_reference: u32,
-    pub need_id: u32,
-    pub satisfaction: u32,
+    pub row: u32,
 }
 
 impl From<SetNeedArgs> for super::Reducer {
@@ -26,8 +25,7 @@ impl From<SetNeedArgs> for super::Reducer {
             worker: args.worker,
             tic: args.tic,
             entity_reference: args.entity_reference,
-            need_id: args.need_id,
-            satisfaction: args.satisfaction,
+            row: args.row,
 }
 }
 }
@@ -50,10 +48,9 @@ pub trait set_need {
     fn set_need(&self, worker: u8,
 tic: u16,
 entity_reference: u32,
-need_id: u32,
-satisfaction: u32,
+row: u32,
 ) -> __sdk::Result<()> {
-        self.set_need_then(worker, tic, entity_reference, need_id, satisfaction,  |_, _| {})
+        self.set_need_then(worker, tic, entity_reference, row,  |_, _| {})
     }
 
     /// Request that the remote module invoke the reducer `set_need` to run as soon as possible,
@@ -67,8 +64,7 @@ satisfaction: u32,
         worker: u8,
 tic: u16,
 entity_reference: u32,
-need_id: u32,
-satisfaction: u32,
+row: u32,
 
         callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
             + Send
@@ -82,14 +78,13 @@ impl set_need for super::RemoteReducers {
         worker: u8,
 tic: u16,
 entity_reference: u32,
-need_id: u32,
-satisfaction: u32,
+row: u32,
 
         callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
             + Send
             + 'static,
     ) -> __sdk::Result<()> {
-        self.imp.invoke_reducer_with_callback(SetNeedArgs { worker, tic, entity_reference, need_id, satisfaction,  }, callback)
+        self.imp.invoke_reducer_with_callback(SetNeedArgs { worker, tic, entity_reference, row,  }, callback)
     }
 }
 

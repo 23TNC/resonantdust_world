@@ -86,32 +86,54 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P3 — spacetime + the worker
 
-- [ ] Pawn shard: the needs sub-table via the shard-tables macro family; CREATE mints trait rows
+- [x] Pawn shard: the needs sub-table via the shard-tables macro family; CREATE mints trait rows
       + need rows from the def ([F11](forks.md#f11)). Acceptance: a fresh wolf read via sql shows
       walks level 1 + thirst full with a stamped set_tic; the new subscription checked LIVE
-      ([I3](issues.md#i3)).
-- [ ] Reducers: SET_NEED targets the sub-table (quantized u16 write); GRANT_CONDITION writes
+      ([I3](issues.md#i3)). → `needs` table (uid entity:32|key:16, zone-slaved by the state
+      hook) + spawn gains `needs`; the WORKER composes both sidecars (`mint_sidecars` — the
+      module holds no corpus). sql: thirst `0xFFFF_0010` @918 + payload traits bio@1/walks@2
+      (level 2 per the re-based table). Live subs: worker sips off it, npc + browser fan green.
+- [x] Reducers: SET_NEED targets the sub-table (quantized u16 write); GRANT_CONDITION writes
       remaining-at-write and RE-STAMPS affected needs ([F7](forks.md#f7)). Acceptance: sql
-      read-back after a drill grant shows the condition row AND the re-stamped need row.
-- [ ] Worker: the interaction arm on the new rows — affordance PREDICATES gate execution from
+      read-back after a drill grant shows the condition row AND the re-stamped need row. →
+      set_need arity 5→4 (packed row); grant_condition packs remaining|key; the RE-STAMP moved
+      to COMPOSERS ([I12](issues.md#i12) — no corpus in the module); drill sql: quenched
+      `3600@3213` + thirst re-stamped at the SAME tic 3213.
+- [x] Worker: the interaction arm on the new rows — affordance PREDICATES gate execution from
       derived stats, ONE quantization at write, effects still queued at `master+4`. Acceptance:
       drills — a predicate refusal logs and splices nothing; an on-water sip lands exactly +3.0
-      on the fixed-point value.
-- [ ] Fan the needs table: edge + client engine + npc grow the row lane ([I8](issues.md#i8)).
+      on the fixed-point value. → off-water NPC_INTERACT → `the tile does not offer this
+      interaction (F8: on-tile only)`, zero splices; sips exact (`from=17.241013 to=20.241013`).
+      The predicate NEGATIVE case is undrillable (every pawn kind carries biological_lifeform)
+      — the gate runs positively on every sip via the SAME `interaction_available` the npc asks.
+- [x] Fan the needs table: edge + client engine + npc grow the row lane ([I8](issues.md#i8)).
       Acceptance: a need row update observed over the wire in BOTH the npc log and the browser
-      console.
+      console. → `Need` frame (edge zone sub + snapshot replay) → `Event::PawnNeed` →
+      npc buffer + MoverLayer.pawnNeeds; proven by the npc's band-change evals tracking sip
+      set_tics AND the browser panel's cards (below) — both read ONLY the fanned rows.
 
 ## P4 — the npc + the client
 
-- [ ] npc wolves: thirst from the sub-table, traits from pawn rows, availability via the shared
+- [x] npc wolves: thirst from the sub-table, traits from pawn rows, availability via the shared
       predicate eval (the string-set gate deleted, [I11](issues.md#i11)). Acceptance: the
-      unprompted arc green — Thirsty → walk to water → sip → Quenched.
-- [ ] Drill the rate modifier live: quenched VISIBLY halves depletion and the slope changes at
+      unprompted arc green — Thirsty → walk to water → sip → Quenched. → NPC_THIRST=12 →
+      Thirsty@1436 → `heading to water (102,68)` → sips +3.0 → band clears at 35.17 →
+      `["quenched"] mood 0.7`; trait rows read from the PAYLOAD (runtime truth, F11);
+      `usable_interaction` = tile_interactions × `interaction_available`.
+- [x] Drill the rate modifier live: quenched VISIBLY halves depletion and the slope changes at
       its derived expiry ([I4](issues.md#i4)). Acceptance: logged satisfaction across
-      grant→expiry matches the shared eval's piecewise numbers.
-- [ ] wasm + panel: `pawnConditions`/`pawnMood`/`pawnNextCrossing` move to the new-shape inputs;
+      grant→expiry matches the shared eval's piecewise numbers. → between sips 6 tics apart
+      thirst dropped 0.0138 = 6·100/43200 EXACTLY (the halved rate); the npc's crossing
+      prediction 1713 (73 tics for 0.17 at half slope) came true at the next eval (1718 flip)
+      — the piecewise crossing arithmetic live. Found+fixed en route: the combined
+      NPC_THIRST+NPC_GRANT drill raced (the re-stamp composed the PRE-seed value the same
+      tick) — the grant lane now defers 3 s past init; re-run holds 49.97%.
+- [x] wasm + panel: `pawnConditions`/`pawnMood`/`pawnNextCrossing` move to the new-shape inputs;
       the cards render live. Acceptance: browser captures — a Thirsty card and a
-      quenched-SLOWED next-crossing.
+      quenched-SLOWED next-crossing. → stride-2 needs rows beside the payload; captures at
+      `:5174/?focus=102,68`: wolf `0x30800001` mood 70% **Quenched +0.20 3170t**, then the
+      thermostat window mood 55% **Thirsty −0.15 + Quenched +0.20 2433t** (priority order);
+      the slowed crossing is the npc's `next_crossing=1713` (unhalved would be ~37 tics out).
 
 ## P5 — the verdict
 

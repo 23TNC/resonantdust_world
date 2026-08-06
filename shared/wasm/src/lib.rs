@@ -888,6 +888,15 @@ fn event_to_js(event: &client::Event) -> JsValue {
             raw.copy_from(payload);
             set("payload", &raw);
         }
+        Event::PawnNeed { macro_position, entity_reference, need, set_tic } => {
+            set("kind", &JsValue::from_str("pawnNeed"));
+            set("macroPosition", &JsValue::from_f64(*macro_position as f64));
+            set("entityReference", &JsValue::from_f64(*entity_reference as f64));
+            // The packed gameplay row (value:16 | kind:12 | variant:4) + the lazy anchor —
+            // the host buffers pairs and feeds them to `pawnConditions` untouched.
+            set("need", &JsValue::from_f64(*need as f64));
+            set("setTic", &JsValue::from_f64(*set_tic as f64));
+        }
         Event::ColdTiles { macro_position, subtype_id, layer_id, tic, tiles } => {
             set("kind", &JsValue::from_str("coldTiles"));
             set("macroPosition", &JsValue::from_f64(*macro_position as f64));

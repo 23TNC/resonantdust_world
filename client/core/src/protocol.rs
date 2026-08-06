@@ -72,6 +72,10 @@ pub enum ServerMsg {
     /// (`opcode:16 | count:16` + operands; `PART = 1`: slot, def). Joined to the entity's `State`
     /// rows by `entity_reference` (either may arrive first). `tic` = last payload CONTENT change.
     Payload { entity_reference: u32, zone: u16, tic: u16, payload: Vec<u32> },
+    /// One `needs` sub-table row (stat-model F2) — a pawn's single need, fanned alone.
+    /// `need` is the packed gameplay row `value:16 | kind:12 | variant:4`; `set_tic`
+    /// anchors the lazy eval. Joined by `entity_reference`.
+    Need { entity_reference: u32, zone: u16, need: u32, set_tic: u16 },
     /// A settled, promoted event touching a subscribed zone.
     Event {
         event_reference: u32,

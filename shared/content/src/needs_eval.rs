@@ -45,13 +45,16 @@ pub struct ActiveCondition {
     pub priority: i32,
 }
 
-/// One rate-multiplier window over a need row's elapsed time (stat-model F6/F7): the
-/// multiplier holds from the row's `set_tic` until `until` elapsed tics (`None` = forever —
-/// a trait's contribution). The re-stamp law guarantees no window STARTS inside the row's
-/// lifetime — grants re-stamp — so windows only end.
+/// One rate-multiplier window over a need row's elapsed time (stat-model F6/F7/I12): the
+/// multiplier holds for elapsed `start <= t < until` (`until` `None` = forever — a trait's
+/// contribution). `start` is normally 0 (the re-stamp law pairs grants with re-stamps), but
+/// a lone FIRST grant landing after the row's `set_tic` is derivable from its `written_tic`
+/// and gets a mid-row start — exact without a re-stamp (I12). Re-grants overwrite their own
+/// history, which is why the law still binds composers.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RateWindow {
     pub rate: f64,
+    pub start: f64,
     pub until: Option<f64>,
 }
 
@@ -81,7 +84,7 @@ pub fn rate_windows(
         let level = gameplay_row_data(row) as usize;
         let Some(entry) = level.checked_sub(1).and_then(|i| tp.levels.get(i)) else { continue };
         for m in entry.needs.iter().filter(|m| m.need == need_name && m.rate != 1.0) {
-            out.push(RateWindow { rate: m.rate, until: None });
+            out.push(RateWindow { rate: m.rate, start: 0.0, until: None });
         }
     }
     for &(row, written) in condition_rows {
@@ -90,34 +93,54 @@ pub fn rate_windows(
         if cp.duration <= 0.0 {
             continue; // a stored row of a DERIVED condition is inert (F2/F13)
         }
-        let remaining_at_set = condition_remaining(row, written, set_tic);
-        if remaining_at_set == 0 {
+        // Where does this grant sit relative to the row's stamp? Written at-or-before the
+        // stamp (the paired-re-stamp common case, or older): starts at 0 with the remaining
+        // it had AT the stamp. Written AFTER the stamp (a lone unpaired grant — I12): starts
+        // at the derivable offset with its full remaining.
+        let offset = written.wrapping_sub(set_tic);
+        let (start, remaining) = if offset > u16::MAX / 2 {
+            (0.0, condition_remaining(row, written, set_tic))
+        } else {
+            (f64::from(offset), gameplay_row_data(row))
+        };
+        if remaining == 0 {
             continue; // already expired when the row was stamped
         }
         for m in cp.needs.iter().filter(|m| m.need == need_name && m.rate != 1.0) {
-            out.push(RateWindow { rate: m.rate, until: Some(f64::from(remaining_at_set)) });
+            out.push(RateWindow { rate: m.rate, start, until: Some(start + f64::from(remaining)) });
         }
     }
     out
 }
 
-/// The product of window multipliers active at elapsed `t` (a window covers `[0, until)`).
+/// The product of window multipliers active at elapsed `t` (a window covers `[start, until)`).
 fn multiplier_at(windows: &[RateWindow], t: f64) -> f64 {
     windows
         .iter()
-        .filter(|w| w.until.is_none_or(|u| t < u))
+        .filter(|w| t >= w.start && w.until.is_none_or(|u| t < u))
         .map(|w| w.rate)
         .product::<f64>()
         .max(0.0)
 }
 
-/// Total depletion (in need units) over `elapsed` tics at `base_rate`, integrated
-/// PIECEWISE across the windows' ends (stat-model I4).
-fn depletion(base_rate: f64, windows: &[RateWindow], elapsed: f64) -> f64 {
-    let mut cuts: Vec<f64> =
-        windows.iter().filter_map(|w| w.until).filter(|&u| u > 0.0 && u < elapsed).collect();
+/// Every elapsed at which some window's multiplier switches on or off, ascending.
+fn window_cuts(windows: &[RateWindow]) -> Vec<f64> {
+    let mut cuts: Vec<f64> = windows
+        .iter()
+        .flat_map(|w| [Some(w.start), w.until])
+        .flatten()
+        .filter(|&c| c > 0.0)
+        .collect();
     cuts.sort_by(f64::total_cmp);
     cuts.dedup();
+    cuts
+}
+
+/// Total depletion (in need units) over `elapsed` tics at `base_rate`, integrated
+/// PIECEWISE across the windows' edges (stat-model I4).
+fn depletion(base_rate: f64, windows: &[RateWindow], elapsed: f64) -> f64 {
+    let mut cuts: Vec<f64> =
+        window_cuts(windows).into_iter().filter(|&c| c < elapsed).collect();
     cuts.push(elapsed);
     let mut total = 0.0;
     let mut prev = 0.0;
@@ -127,6 +150,36 @@ fn depletion(base_rate: f64, windows: &[RateWindow], elapsed: f64) -> f64 {
         prev = cut;
     }
     total
+}
+
+/// A need's EFFECTIVE clamp at `now` (stat-model F6): the authored domain intersected with
+/// the min/max contributions of trait levels + stored conditions ALIVE at `now`, under the
+/// need's authored `winner`. Rate is not consulted here — this is the write-side clamp.
+pub fn need_bounds(
+    bundle: &Bundle,
+    need_name: &str,
+    np: &NeedParams,
+    trait_rows: &[u32],
+    condition_rows: &[(u32, u16)],
+    now: u16,
+) -> (f64, f64) {
+    let mut contribs: Vec<(Option<f64>, Option<f64>)> = Vec::new();
+    for &row in trait_rows {
+        let reference = gameplay_row_reference(GAMEPLAY_TRAIT, row);
+        let Some(tp) = bundle.trait_params_by_ref(reference) else { continue };
+        let level = gameplay_row_data(row) as usize;
+        let Some(entry) = level.checked_sub(1).and_then(|i| tp.levels.get(i)) else { continue };
+        contribs.extend(entry.needs.iter().filter(|m| m.need == need_name).map(|m| (m.min, m.max)));
+    }
+    for &(row, written) in condition_rows {
+        let reference = gameplay_row_reference(GAMEPLAY_CONDITION, row);
+        let Some(cp) = bundle.condition_params_by_ref(reference) else { continue };
+        if cp.duration <= 0.0 || condition_remaining(row, written, now) == 0 {
+            continue;
+        }
+        contribs.extend(cp.needs.iter().filter(|m| m.need == need_name).map(|m| (m.min, m.max)));
+    }
+    crate::stat_eval::combine_bounds((np.min, np.max), contribs.into_iter(), np.min_wins)
 }
 
 /// The current satisfaction of a need row at `now`, on the need's authored domain:
@@ -300,9 +353,7 @@ pub fn next_crossing_tic(
 /// The REAL elapsed at which cumulative depletion reaches `drop` (> 0), walking the
 /// piecewise segments; `None` if it never does (every live segment rate 0 with no end).
 fn crossing_elapsed(drop: f64, base_rate: f64, windows: &[RateWindow]) -> Option<f64> {
-    let mut cuts: Vec<f64> = windows.iter().filter_map(|w| w.until).filter(|&u| u > 0.0).collect();
-    cuts.sort_by(f64::total_cmp);
-    cuts.dedup();
+    let cuts = window_cuts(windows);
     let mut prev = 0.0;
     let mut left = drop;
     for cut in cuts {
@@ -314,7 +365,7 @@ fn crossing_elapsed(drop: f64, base_rate: f64, windows: &[RateWindow]) -> Option
         left -= rate * span;
         prev = cut;
     }
-    // the unbounded tail: every finite window has ended
+    // the unbounded tail: every finite window has switched off
     let rate = base_rate * multiplier_at(windows, prev + 1.0);
     (rate > 0.0).then(|| prev + left / rate)
 }
@@ -479,7 +530,7 @@ needs = [ { need = "thirst", rate = 0.5 } ]
         let p = np(&b, "thirst");
         let conditions = [(cond_row(&b, "quenched", 3600), 1000u16)];
         let windows = rate_windows(&b, "thirst", &[], &conditions, 1000);
-        assert_eq!(windows, vec![RateWindow { rate: 0.5, until: Some(3600.0) }]);
+        assert_eq!(windows, vec![RateWindow { rate: 0.5, start: 0.0, until: Some(3600.0) }]);
         let sat = satisfaction_at(40.0, 1000, &p, 6000, &windows);
         assert!((sat - 25.1852).abs() < 1e-3, "the worked window (got {sat})");
         // Inside the quenched window the slope is HALVED: at tic 4600 (expiry) only
@@ -490,6 +541,34 @@ needs = [ { need = "thirst", rate = 0.5 } ]
         let needs = [(need_row(&b, "thirst", 40.0), 1000u16)];
         let active = active_conditions(&b, &[], &needs, &conditions, 6000);
         assert!(active.is_empty(), "25.18 is band-free and quenched expired at 4600");
+    }
+
+    #[test]
+    fn a_lone_late_grant_gets_a_mid_row_window() {
+        // I12: quenched granted 100 tics AFTER the row's stamp, with NO paired re-stamp.
+        // The window is derivable from written_tic: base rate for [0,100), halved for
+        // [100,200), base after. thirst 0..100, deplete 1000 → 0.1/tic.
+        let src = r#"
+[[need]]
+name = "thirst"
+min = 0
+max = 100
+deplete = 1000
+
+[[condition]]
+name = "quenched"
+mood = 0.20
+duration = 3600
+needs = [ { need = "thirst", rate = 0.5 } ]
+"#;
+        let b = load(&[("needs.toml".into(), src.into())]).expect("loads");
+        let p = np(&b, "thirst");
+        let conditions = [(cond_row(&b, "quenched", 100), 100u16)]; // written at 100, row set at 0
+        let windows = rate_windows(&b, "thirst", &[], &conditions, 0);
+        assert_eq!(windows, vec![RateWindow { rate: 0.5, start: 100.0, until: Some(200.0) }]);
+        // read at 300: 100·0.1 + 100·0.05 + 100·0.1 = 25 drained.
+        let sat = satisfaction_at(80.0, 0, &p, 300, &windows);
+        assert!((sat - 55.0).abs() < 1e-9, "got {sat}");
     }
 
     #[test]
@@ -510,7 +589,7 @@ needs = [ { need = "thirst", rate = [0.5] } ]
         let p = np(&b, "thirst");
         let tr = pack_gameplay_row(b.gameplay_reference("trait", "camel").unwrap(), 1);
         let windows = rate_windows(&b, "thirst", &[tr], &[], 0);
-        assert_eq!(windows, vec![RateWindow { rate: 0.5, until: None }]);
+        assert_eq!(windows, vec![RateWindow { rate: 0.5, start: 0.0, until: None }]);
         // 1000 tics at half of 0.1/tic → 50 drained, not 100.
         let sat = satisfaction_at(100.0, 0, &p, 1000, &windows);
         assert!((sat - 50.0).abs() < 1e-9, "got {sat}");

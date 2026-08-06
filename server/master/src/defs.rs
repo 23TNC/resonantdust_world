@@ -265,9 +265,16 @@ speed = 9
             bundle.gameplay_reference("need", "thirst").expect("seed ref"),
             "allocator and seed fallback disagree on thirst"
         );
+        // The stat-model categories (predicate affordances + the new `stat` subtype 6).
         assert_eq!(
-            find("drink_water", "affordance", "default"),
-            bundle.gameplay_reference("affordance", "drink_water").expect("seed ref"),
+            find("can_drink", "affordance", "default"),
+            bundle.gameplay_reference("affordance", "can_drink").expect("seed ref"),
+        );
+        assert_eq!(find("walks", "trait", "default"), 0x8003_0020);
+        assert_eq!(find("ground_speed", "stat", "default"), 0x8006_0010);
+        assert_eq!(
+            find("metabolism", "stat", "default"),
+            bundle.gameplay_reference("stat", "metabolism").expect("seed ref"),
         );
 
         // The cross-product is real: a 16-variant def contributes 16 rows that differ ONLY in the
@@ -417,6 +424,7 @@ pub fn allocations(bundle: &Bundle) -> Result<Vec<Allocation>, AllocError> {
         ("trait", bundle.trait_names()),
         ("interaction", bundle.interaction_names()),
         ("affordance", bundle.affordance_names()),
+        ("stat", bundle.stat_names()),
     ] {
         for (i, name) in names.iter().enumerate() {
             if name.is_empty() {

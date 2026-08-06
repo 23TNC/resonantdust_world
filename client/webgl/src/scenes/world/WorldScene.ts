@@ -114,15 +114,18 @@ export class WorldScene extends Scene {
         // nothing ticks; the row + the corpus + the tic are the whole computation).
         let conditions: { label: string; mood: number; remaining: number; priority: number }[] = [];
         let mood = 0.5;
-        const payload = this.moverLayer.pawnPayload(e);
+        // TWO eval inputs now (stat-model F2): the payload (TRAIT + CONDITION rows) and
+        // the fanned `needs` sub-table rows, both verbatim — the host decodes neither.
+        const payload = this.moverLayer.pawnPayload(e) ?? new Uint32Array(0);
+        const needs = this.moverLayer.pawnNeeds(e);
         const d = ctx.client.ticDelta(0); // fractional now-tic (mod 2^16 below)
-        if (payload && d !== null) {
+        if (d !== null) {
           const now = ((Math.floor(d) % 0x10000) + 0x10000) % 0x10000;
           const c = getContent();
           // Stride 4: [condition_id, mood, remaining, priority]. The eval returns them
           // ALREADY SORTED (conditions F3 — priority desc, |mood| desc, id asc); this loop
           // preserves that order and must never re-sort. `priority` is carried for display.
-          const flat = c.pawnConditions(payload, now);
+          const flat = c.pawnConditions(payload, needs, now);
           for (let i = 0; i + 3 < flat.length; i += 4) {
             // `condition_id` is a u32 gameplay definition_reference now (interactions F1) —
             // labels resolve BY REF, never by position.
@@ -134,7 +137,7 @@ export class WorldScene extends Scene {
               priority: flat[i + 3],
             });
           }
-          mood = c.pawnMood(payload, now);
+          mood = c.pawnMood(payload, needs, now);
         }
         return { ...info, conditions, mood };
       },

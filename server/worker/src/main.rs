@@ -44,9 +44,10 @@ use resonantdust_st_bindings::{data_shard, event_shard, index, pawn, thing, tile
 use resonantdust_uplink::acquire;
 use data_shard::{write as _, EntityStateLogTableAccess as _};
 use pawn::{grant_condition as _, set_need as _, spawn as _, write as _, EntityStateLogTableAccess as _};
-// interactions P3: the execute arm reads the pawn shard's COMPOSED rows (position + payload)
-// and the tile shard's baseline ⊕ overlay for the F8 on-tile check.
-use pawn::{EntityStateTableAccess as _, PayloadTableAccess as _};
+// interactions P3 / stat-model P3: the execute arm reads the pawn shard's COMPOSED rows
+// (position + payload traits/conditions + the `needs` sub-table) and the tile shard's
+// baseline ⊕ overlay for the F8 on-tile check.
+use pawn::{EntityStateTableAccess as _, NeedsTableAccess as _, PayloadTableAccess as _};
 use tile::{EntityStateTableAccess as _, OverlayTableAccess as _};
 use event_shard::{complete as _, queue_at as _, EventLogTableAccess as _};
 use index::MasterClockTableAccess as _;
@@ -101,6 +102,28 @@ fn tics_for(speeds: &[u16], def: u32) -> u16 {
     kind.checked_sub(1)
         .and_then(|i| speeds.get(i as usize).copied())
         .unwrap_or(speed::DEFAULT_TICS_PER_TILE)
+}
+
+/// The CREATE sidecars a def implies (stat-model F11): TRAIT payload entries + full-value
+/// packed need rows, composed HERE from the corpus — the pawn module holds none.
+fn mint_sidecars(bundle: &resonantdust_content::loader::Bundle, def: u32) -> (Vec<u32>, Vec<u32>) {
+    let kind = def_kind_id(def);
+    let mut trait_words = Vec::new();
+    for (name, level) in bundle.thing_traits(kind) {
+        if let Some(r) = bundle.gameplay_reference("trait", &name) {
+            trait_words.extend_from_slice(&resonantdust_codec::payload::trait_entry(
+                resonantdust_codec::object::pack_gameplay_row(r, level),
+            ));
+        }
+    }
+    let mut need_rows = Vec::new();
+    for nref in bundle.thing_needs(kind) {
+        if let Some(np) = bundle.need_params_by_ref(nref) {
+            let q = resonantdust_codec::value::quantize(np.max as f32, np.min as f32, np.max as f32);
+            need_rows.push(resonantdust_codec::object::pack_gameplay_row(nref, q));
+        }
+    }
+    (trait_words, need_rows)
 }
 
 fn shard_of(entity: u32) -> Shard {
@@ -186,7 +209,8 @@ async fn main() {
     // target's position + payload here rather than through a claim. The shard holds pawns
     // only, so "all rows" is small by construction.
     let pawn_up = resonantdust_uplink::subbed_uplink!(pawn, "pawn", uri, pawn_db,
-        vec![hot_sql(()), "SELECT * FROM entity_state".to_string(), "SELECT * FROM payload".to_string()]);
+        vec![hot_sql(()), "SELECT * FROM entity_state".to_string(), "SELECT * FROM payload".to_string(),
+             "SELECT * FROM needs".to_string()]);
     let cold_sql: Vec<String> = ["entity_state_log", "overlay_log"]
         .iter()
         .map(|t| format!("SELECT * FROM {t} WHERE worker_reference = {self_ref} OR observer_reference = {self_ref}"))
@@ -522,6 +546,13 @@ async fn main() {
                                         "CREATE rejected: no shard arm for this def type (only TYPE_PAWN is implemented)"
                                     );
                                 } else {
+                                    // stat-model F11: the def's starting traits ride the
+                                    // payload as TRAIT entries; its needs mint full-value
+                                    // rows in the `needs` sub-table — both composed here
+                                    // (the module holds no corpus).
+                                    let (trait_words, need_rows) = mint_sidecars(&bundle, *def);
+                                    let mut words = payload.to_vec();
+                                    words.extend_from_slice(&trait_words);
                                     if let Err(err) = pawn.reducers().spawn(
                                         self_ref,
                                         t,
@@ -529,7 +560,8 @@ async fn main() {
                                         index,
                                         *def,
                                         *pos,
-                                        payload.to_vec(),
+                                        words,
+                                        need_rows,
                                         pending_promote,
                                     ) {
                                         tracing::warn!(%err, tic = t, "spawn failed — will retry next pass");
@@ -558,8 +590,9 @@ async fn main() {
                 for inst in action::program(actions) {
                     let Ok(inst) = inst else { break };
                     let r = match (inst.action, inst.operands) {
-                        (SET_NEED, [obj, need, sat]) => pawn.reducers().set_need(self_ref, t, *obj, *need, *sat),
-                        (GRANT_CONDITION, [obj, condition]) => pawn.reducers().grant_condition(self_ref, t, *obj, *condition),
+                        // stat-model: both verbs carry ONE packed gameplay row beside the obj.
+                        (SET_NEED, [obj, row]) => pawn.reducers().set_need(self_ref, t, *obj, *row),
+                        (GRANT_CONDITION, [obj, row]) => pawn.reducers().grant_condition(self_ref, t, *obj, *row),
                         _ => continue,
                     };
                     if let Err(err) = r {
@@ -757,13 +790,33 @@ async fn main() {
                         reject("no tile under the target");
                         continue;
                     };
-                    let offered = bundle.tile_affordances(kr >> 4).iter().any(|(a, _)| {
-                        bundle.affordance_params(a).is_some_and(|p| p.interaction == iname)
-                    });
-                    if !offered {
-                        reject("the tile does not afford this interaction (F8: on-tile only)");
+                    // F8 "on" under the stat-model carrier binding (F9): the tile's def must
+                    // OFFER this interaction directly.
+                    if !bundle.tile_interactions(kr >> 4).iter().any(|(i, _)| i == &iname) {
+                        reject("the tile does not offer this interaction (F8: on-tile only)");
                         continue;
                     }
+                    // The pawn's gameplay rows: traits + stored conditions from the payload
+                    // sidecar, needs from the `needs` sub-table (stat-model F1/F2).
+                    let (trait_rows, cond_rows) = pawn
+                        .db()
+                        .payload()
+                        .iter()
+                        .find(|r| r.entity_reference == target)
+                        .map(|r| {
+                            (
+                                resonantdust_codec::payload::payload_traits(&r.payload),
+                                resonantdust_codec::payload::payload_conditions(&r.payload),
+                            )
+                        })
+                        .unwrap_or_default();
+                    let need_rows: Vec<(u32, u16)> = pawn
+                        .db()
+                        .needs()
+                        .iter()
+                        .filter(|r| r.entity_reference == target)
+                        .map(|r| (r.need, r.set_tic))
+                        .collect();
                     // The effect must queue BEYOND the event shard's TIC_GAP barrier (queue_at
                     // rejects anything nearer than master+3, and the SDK error is async —
                     // invisible here). t+1 raced the clock and LOST ~half the sips (seen live,
@@ -771,26 +824,101 @@ async fn main() {
                     // tics_per_tile out. Satisfaction is computed AT the target tic so the
                     // stored row is self-consistent.
                     let effect_tic = tic_add(master, 4);
-                    // Current satisfaction from the composed payload (I3: a read-modify-write on
-                    // a lazy value — benign while this relay is the single writer, recorded, not
-                    // assumed away), then the SIGNED amount, clamped to the authored domain.
-                    let Some(paw) = pawn.db().payload().iter().find(|r| r.entity_reference == target)
-                    else {
-                        reject("target has no payload sidecar");
+                    // The affordance PREDICATE gate (stat-model F5/F8): every gate on the
+                    // interaction must pass for the target's DERIVED stats — the same
+                    // `interaction_available` the npc asks, so the two cannot disagree (I2).
+                    let active = resonantdust_content::needs_eval::active_conditions(
+                        &bundle, &trait_rows, &need_rows, &cond_rows, effect_tic,
+                    );
+                    if !resonantdust_content::stat_eval::interaction_available(
+                        &bundle, &iname, &trait_rows, &active,
+                    ) {
+                        reject("an affordance predicate fails for the target (stat-model F5)");
                         continue;
-                    };
-                    let rows = resonantdust_codec::payload::payload_needs(&paw.payload);
-                    let Some(&(_, s0, set_tic)) = rows.iter().find(|(r, _, _)| *r == need_ref) else {
+                    }
+                    // Current satisfaction from the sub-table row (I3: a read-modify-write on
+                    // a lazy value — benign while this relay is the single writer, recorded,
+                    // not assumed away) through the PIECEWISE eval, then the SIGNED amount
+                    // clamped to the EFFECTIVE domain and quantized ONCE (F4).
+                    use resonantdust_codec::object::{gameplay_row_data, pack_gameplay_row};
+                    let need_key = need_ref & 0xFFFF;
+                    let Some(&(nrow, set_tic)) =
+                        need_rows.iter().find(|(r, _)| r & 0xFFFF == need_key)
+                    else {
                         reject("target carries no row for the need");
                         continue;
                     };
-                    let now_sat =
-                        resonantdust_content::needs_eval::satisfaction_at(s0, set_tic, &np, effect_tic);
-                    let new_sat = (now_sat + f64::from(amount)).clamp(np.min, np.max) as f32;
-                    let mut program = vec![PROMOTE, SET_NEED, target, need_ref, new_sat.to_bits()];
+                    let (_, need_name) = bundle.gameplay_lookup(need_ref).expect("resolved above");
+                    let value = f64::from(resonantdust_codec::value::dequantize(
+                        gameplay_row_data(nrow),
+                        np.min as f32,
+                        np.max as f32,
+                    ));
+                    let windows = resonantdust_content::needs_eval::rate_windows(
+                        &bundle, &need_name, &trait_rows, &cond_rows, set_tic,
+                    );
+                    let now_sat = resonantdust_content::needs_eval::satisfaction_at(
+                        value, set_tic, &np, effect_tic, &windows,
+                    );
+                    let (lo, hi) = resonantdust_content::needs_eval::need_bounds(
+                        &bundle, &need_name, &np, &trait_rows, &cond_rows, effect_tic,
+                    );
+                    let new_sat = (now_sat + f64::from(amount)).clamp(lo, hi);
+                    let q = resonantdust_codec::value::quantize(
+                        new_sat as f32,
+                        np.min as f32,
+                        np.max as f32,
+                    );
+                    let mut program =
+                        vec![PROMOTE, SET_NEED, target, pack_gameplay_row(need_ref, q)];
+                    // Grants carry remaining-at-write = the condition's authored duration
+                    // (F3). The RE-STAMP duty is THIS composer's (F7/I12): any need a granted
+                    // condition modifies that this program doesn't already SET gets its
+                    // current value re-stamped beside the grant.
                     for g in &params.grants {
-                        if let Some(cref) = bundle.gameplay_reference("condition", g) {
-                            program.extend_from_slice(&[PROMOTE, GRANT_CONDITION, target, cref]);
+                        let Some(cref) = bundle.gameplay_reference("condition", g) else { continue };
+                        let Some(cp) = bundle.condition_params(g) else { continue };
+                        program.extend_from_slice(&[
+                            PROMOTE,
+                            GRANT_CONDITION,
+                            target,
+                            pack_gameplay_row(cref, cp.duration as u16),
+                        ]);
+                        for m in &cp.needs {
+                            if m.need == need_name {
+                                continue; // already re-stamped by the satisfy SET_NEED
+                            }
+                            let Some(mref) = bundle.gameplay_reference("need", &m.need) else {
+                                continue;
+                            };
+                            let Some(mp) = bundle.need_params_by_ref(mref) else { continue };
+                            let Some(&(mrow, mset)) =
+                                need_rows.iter().find(|(r, _)| r & 0xFFFF == mref & 0xFFFF)
+                            else {
+                                continue; // the pawn doesn't carry this need — nothing to stamp
+                            };
+                            let mvalue = f64::from(resonantdust_codec::value::dequantize(
+                                gameplay_row_data(mrow),
+                                mp.min as f32,
+                                mp.max as f32,
+                            ));
+                            let mwindows = resonantdust_content::needs_eval::rate_windows(
+                                &bundle, &m.need, &trait_rows, &cond_rows, mset,
+                            );
+                            let msat = resonantdust_content::needs_eval::satisfaction_at(
+                                mvalue, mset, &mp, effect_tic, &mwindows,
+                            );
+                            let mq = resonantdust_codec::value::quantize(
+                                msat as f32,
+                                mp.min as f32,
+                                mp.max as f32,
+                            );
+                            program.extend_from_slice(&[
+                                PROMOTE,
+                                SET_NEED,
+                                target,
+                                pack_gameplay_row(mref, mq),
+                            ]);
                         }
                     }
                     if let Err(err) = event.reducers().queue_at(program, effect_tic) {

@@ -16,7 +16,7 @@ pub(super) struct GrantConditionArgs {
     pub worker: u8,
     pub tic: u16,
     pub entity_reference: u32,
-    pub condition_id: u32,
+    pub row: u32,
 }
 
 impl From<GrantConditionArgs> for super::Reducer {
@@ -25,7 +25,7 @@ impl From<GrantConditionArgs> for super::Reducer {
             worker: args.worker,
             tic: args.tic,
             entity_reference: args.entity_reference,
-            condition_id: args.condition_id,
+            row: args.row,
 }
 }
 }
@@ -48,9 +48,9 @@ pub trait grant_condition {
     fn grant_condition(&self, worker: u8,
 tic: u16,
 entity_reference: u32,
-condition_id: u32,
+row: u32,
 ) -> __sdk::Result<()> {
-        self.grant_condition_then(worker, tic, entity_reference, condition_id,  |_, _| {})
+        self.grant_condition_then(worker, tic, entity_reference, row,  |_, _| {})
     }
 
     /// Request that the remote module invoke the reducer `grant_condition` to run as soon as possible,
@@ -64,7 +64,7 @@ condition_id: u32,
         worker: u8,
 tic: u16,
 entity_reference: u32,
-condition_id: u32,
+row: u32,
 
         callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
             + Send
@@ -78,13 +78,13 @@ impl grant_condition for super::RemoteReducers {
         worker: u8,
 tic: u16,
 entity_reference: u32,
-condition_id: u32,
+row: u32,
 
         callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
             + Send
             + 'static,
     ) -> __sdk::Result<()> {
-        self.imp.invoke_reducer_with_callback(GrantConditionArgs { worker, tic, entity_reference, condition_id,  }, callback)
+        self.imp.invoke_reducer_with_callback(GrantConditionArgs { worker, tic, entity_reference, row,  }, callback)
     }
 }
 

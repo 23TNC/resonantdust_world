@@ -77,6 +77,11 @@ pub enum ServerMsg {
     QueueOk { cid: u32 },
     /// The intent was rejected (not logged in, malformed program, upstream error). Correlates `cid`.
     QueueErr { cid: u32, error: String },
+    /// One `needs` sub-table row (stat-model F2) — a pawn's single need, fanned ALONE so a
+    /// sip never drags the whole payload. `need` is the packed gameplay row
+    /// `value:16 | kind:12 | variant:4` (u16 fixed-point on the need's authored domain);
+    /// `set_tic` anchors the lazy eval. Joined by `entity_reference`.
+    Need { entity_reference: u32, zone: u16, need: u32, set_tic: u16 },
     /// A composed entity in a subscribed zone — sent on insert and update. The client interpolates by
     /// `tic`. `zone` is the row's `macro_position_reference`, echoed so a client tracking several
     /// zones can bucket it.

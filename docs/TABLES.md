@@ -422,9 +422,10 @@ left with the `needs` sub-table); it joins the gc when the volume warrants.
 
 **Payload-entry verbs:** `GRANT_CONDITION` splices ONE entry — the pawn module's
 `grant_condition` reducer reads the current payload, upserts by the row's low 16 bits
-(kind|variant) and writes log + projection in one transaction, RE-STAMPING the granted
-condition's affected need rows in the same transaction (stat-model F7 — the re-stamp law).
-`SET_NEED` targets the `needs` sub-table below. The MODULE composes, the worker relays; the
+(kind|variant) and writes log + projection in one transaction. The re-stamp law (stat-model
+F7) binds the COMPOSER, not the reducer (no corpus in the module — [I12](work/2026-08-06-stat-model/issues.md#i12)):
+grant-queuers queue the re-stamping `SET_NEED`s beside the grant. `SET_NEED` targets the
+`needs` sub-table below. The MODULE composes, the worker relays; the
 verb's `obj` is a Write operand so the entity's claim still serialises these with its movement
 writes. Idempotent on replay (same tic → same word; the log row upserts by uid).
 

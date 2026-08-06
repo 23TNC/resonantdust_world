@@ -29,6 +29,7 @@ use tokio::sync::{mpsc, oneshot};
 use crate::bindings;
 use crate::bindings::data_shard::entity_state_table::EntityStateTableAccess as _;
 use crate::bindings::pawn::entity_state_table::EntityStateTableAccess as _;
+use crate::bindings::pawn::needs_table::NeedsTableAccess as _;
 use crate::bindings::pawn::payload_table::PayloadTableAccess as _;
 use crate::bindings::event_shard::event_table::EventTableAccess as _;
 use crate::bindings::thing::seed as _; // reducer trait → thing.reducers().seed
@@ -365,6 +366,11 @@ async fn build_world(pool: &Arc<Pool>, out_tx: &mpsc::UnboundedSender<String>) -
         p.db().payload().on_insert(move |_ctx, row| send(&o, payload_frame(row)));
         let o = out_tx.clone();
         p.db().payload().on_update(move |_ctx, _old, row| send(&o, payload_frame(row)));
+        // The needs sub-table (stat-model F2): a sip updates ONE row here and nothing else.
+        let o = out_tx.clone();
+        p.db().needs().on_insert(move |_ctx, row| send(&o, need_frame(row)));
+        let o = out_tx.clone();
+        p.db().needs().on_update(move |_ctx, _old, row| send(&o, need_frame(row)));
     }
 
     if let Some(e) = &event {
@@ -556,6 +562,16 @@ fn payload_frame(row: &bindings::pawn::Payload) -> ServerMsg {
     }
 }
 
+/// One `needs` sub-table row → the `Need` wire frame (stat-model F2).
+fn need_frame(row: &bindings::pawn::Needs) -> ServerMsg {
+    ServerMsg::Need {
+        entity_reference: row.entity_reference,
+        zone: row.macro_position_reference,
+        need: row.need,
+        set_tic: row.set_tic,
+    }
+}
+
 /// The verbs a CLIENT may queue (movement-hardening F2 — the first, deliberately tiny,
 /// authorization seam: a verb-set check, NOT an ownership model). Everything else is
 /// server-only: `MOVE_STEP` carries a trip-serial that clients could stomp to steer pawns
@@ -658,10 +674,15 @@ fn handle_subscribe(
                 for row in ctx.db.payload().iter().filter(|r| r.macro_position_reference == zone) {
                     send(&o, payload_frame(&row));
                 }
+                // …and the needs sub-table rows (stat-model F2), same delivery guarantee.
+                for row in ctx.db.needs().iter().filter(|r| r.macro_position_reference == zone) {
+                    send(&o, need_frame(&row));
+                }
             })
             .subscribe([
                 format!("SELECT * FROM entity_state WHERE macro_position_reference = {zone}"),
                 format!("SELECT * FROM payload WHERE macro_position_reference = {zone}"),
+                format!("SELECT * FROM needs WHERE macro_position_reference = {zone}"),
             ])
     });
     // Settled events (the movement INTENT channel). Same delivery guarantee as the cold

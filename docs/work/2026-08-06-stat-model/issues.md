@@ -81,3 +81,15 @@ Delete-don't-deprecate applied to readers: payload NEED parsing, f32-word entry 
 fields are DELETED in the same commits that replace them. Acceptance greps are part of the
 phase items — a straggler reading the old shape reports zeros silently, which is worse than a
 compile error.
+
+## I12 — the re-stamp duty lands on COMPOSERS; the eval hardens for the derivable case {#i12}
+
+Found designing P3: P0's ACTIONS/TABLES text said the `grant_condition` REDUCER re-stamps
+affected need rows — but the module holds no corpus and cannot know which needs a condition
+modifies. The duty moves to the COMPOSER (the worker's interaction arm queues the re-stamping
+`SET_NEED`s beside `GRANT_CONDITION`; the npc's drill lane does the same), and the EVAL is
+hardened for the one derivable gap: a stored condition row whose `written_tic` is AFTER the
+need row's `set_tic` gets a rate window STARTING at that offset, not at 0 — so a lone
+unpaired grant still evaluates exactly. What stays non-derivable (and so still demands the
+re-stamp law): RE-grants (the row overwrites its own history), trait-level changes, and
+revocations. ACTIONS.md/TABLES.md amended.

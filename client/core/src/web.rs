@@ -601,6 +601,15 @@ impl Engine {
                     payload,
                 });
             }
+            // One needs sub-table row (stat-model F2) — a sip lands as exactly this frame.
+            ServerMsg::Need { entity_reference, zone, need, set_tic } => {
+                self.emit(Event::PawnNeed {
+                    macro_position: zone,
+                    entity_reference,
+                    need,
+                    set_tic,
+                });
+            }
             // A settled, promoted event — the INTENT channel. Anchor the tic estimate and
             // surface any movement intents for the host to speculate from.
             ServerMsg::Event { zone, tic, actions, .. } => {
