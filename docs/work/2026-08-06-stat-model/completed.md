@@ -1,5 +1,21 @@
 # Completed — stat-model
 
+## 2026-08-06 · P5 — the verdict (2/2; 21/21 — the user's eyes close the stream)
+
+The truth pass: the I11 delete-greps run EMPTY (no payload NEED reader/composer, no
+`requires`/`variants`, no string-set availability — two explanatory comments are all that
+mention the old names); component docs were already clean; memories rewritten to the
+delivered reality (needs-moodlets → fixed-point/sub-table/piecewise, stat-model-delivered
+written, interactions-delivered marked superseded-in-part, index rows updated). The cold
+boot: edge re-exec'd + master/orchestrator/worker/npc bounced together — the master
+re-seeded 193 definitions idempotently (no collisions), the worker loaded the corpus, the
+npc resolved `0x30010070`/12/`0x80010010` with def_traits `[(biological_lifeform,1),
+(walks,2)]` and ADOPTED its existing wolf, which woke Thirsty+Quenched off its PERSISTED
+sub-table row (the 49.97% drill value had lazily drained to 33.46 across the downtime —
+the lazy eval spanning a restart), walked 3 hops to the water and sipped to 36.46
+UNPROMPTED; the cold-loaded panel shows **Quenched +0.20 3388t** at mood 70%. What remains
+is the user's look.
+
 ## 2026-08-06 · P3 + P4 — the tables, the worker, the fan, the drinking wolf (4/4 + 3/3)
 
 **The pawn shard**: the `needs` table (uid = `entity:32|key:16`, zone-slaved alongside

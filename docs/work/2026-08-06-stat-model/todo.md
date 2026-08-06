@@ -137,9 +137,18 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P5 — the verdict
 
-- [ ] Docs + memory truth pass; the I11 delete-greps run clean (no payload NEED, no f32-word
+- [x] Docs + memory truth pass; the I11 delete-greps run clean (no payload NEED, no f32-word
       composers, no `requires`/`variants`, no string-set availability). Acceptance:
-      `bin/rd docs-check` green; greps recorded in completed.md.
-- [ ] Cold-boot the stack; standing drills (trips, thirst crossing, panel) + the unprompted
+      `bin/rd docs-check` green; greps recorded in completed.md. → greps EMPTY (two doc
+      comments only); component docs already clean (P0 moved the authoritative text);
+      memories: needs-moodlets rewritten (fixed-point/sub-table/piecewise),
+      stat-model-delivered written, interactions-delivered superseded-in-part, index rows
+      updated. docs-check green.
+- [x] Cold-boot the stack; standing drills (trips, thirst crossing, panel) + the unprompted
       drink arc on the NEW model green together; **the user's eyes close the stream**.
-      Acceptance: captures + logs in completed.md.
+      Acceptance: captures + logs in completed.md. → edge re-exec + master/orch/worker/npc
+      bounced together: registry re-seeded idempotently (193, no collisions), corpus loaded,
+      the EXISTING wolf ADOPTED (no re-mint) and woke Thirsty off its PERSISTED row (49.97%
+      lazily drained to 33.46 across the downtime), walked to (102,68), sipped to 36.46
+      UNPROMPTED, Quenched mood 0.7; the cold-loaded panel shows **Quenched +0.20 3388t**.
+      **The user's look is the remaining close.**
