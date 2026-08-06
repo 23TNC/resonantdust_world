@@ -530,36 +530,85 @@ variants is taken, so no variant is clipped.
 **`internal_padding` was deleted into this** — a uniform inset *is* a uniform subframe, so a linked
 tile grid authors its inset as a subframe like everything else.
 
-## Needs & conditions (`shared/content` → shard / npc / `client/webgl`)
+## Pawn gameplay state — stats, needs, traits, conditions (`shared/content` → shard / npc / `client/webgl`)
 
-**The pawn's hidden state and its displayed consequences.** Work streams:
-[`work/2026-08-03-needs-moodlets`](work/2026-08-03-needs-moodlets/README.md) (the model),
-[`work/2026-08-04-conditions`](work/2026-08-04-conditions/README.md) (the word — `moodlet` was
-renamed to **condition** everywhere; no wire value moved) and
-[`work/2026-08-06-interactions`](work/2026-08-06-interactions/README.md) (f32 values, registry
-ids, the drink producer). A **need** is an **f32 SATISFACTION on its OWN authored domain**
-(`min..max` — interactions F7; the corpus decides range and sign, the system stores and CLAMPS)
-depleting toward `min` (needs-moodlets F1 — one dialect for every need; bad states are LOW; the
-player never sees the scalar). A **condition** is what displays: a label plus its effects. Mood
-is `clamp(0.5 + Σ active offsets, 0..1)` (F5).
+**A pawn HAS four things** (work [`2026-08-06-stat-model`](work/2026-08-06-stat-model/README.md)
+F1, user — reworking [`2026-08-03-needs-moodlets`](work/2026-08-03-needs-moodlets/README.md),
+[`2026-08-04-conditions`](work/2026-08-04-conditions/README.md) and
+[`2026-08-06-interactions`](work/2026-08-06-interactions/README.md)). Three are STORED rows; the
+fourth is DERIVED:
 
-**A condition's effects are an OPEN set** (conditions F6) — `mood` is the FIRST of them, not the
-definition of the thing. Conditions act on pawn state, and the user's own framing is that they
-reach further than mood: a need's depletion rate, later a stat. Add fields beside `mood`; do not
-write code or docs that assume a condition *is* a mood offset. The effect table is the successor
-stream's charter, alongside the still-pending drink action.
+- **Traits** — leveled stat contributors ("traits/skills"): walks level 2 contributes its
+  level-2 value to `ground_speed`. Minted at CREATE from the thing def's bindings (F11).
+- **Conditions** — timed stat/need modifiers plus the displayed cards; what `quenched` is.
+- **Needs** — depleting values on authored domains; what `thirst` is.
+- **Stats** — DERIVED ONLY, never stored, never fanned (F8): computed from the trait/condition
+  rows + corpus anywhere they're needed. Affordances are PREDICATES over stats.
+
+**The packed row** (F1): within a family every def shares `type = gameplay` + the category
+subtype, so a stored row spends its u32 as **`data:16 | kind:12 | variant:4`** — the LOW 16 bits
+are exactly the low 16 of the def's `definition_reference` (kind/variant in place), and the HIGH
+16 carry the family's payload: trait `level` (0 = absent — a stored row is ≥ 1), condition
+`remaining_at_write`, need `value`. Reconstruct the full reference as
+`TYPE_GAMEPLAY<<28 | subtype<<16 | (row & 0xFFFF)`.
+
+**The need value is u16 FIXED-POINT on the AUTHORED domain** (F4): `0..65535` maps linearly onto
+the need's authored `min..max` — `q = round((v − min) / (max − min) · 65535)` clamped, exact
+inverse `v = min + q/65535 · (max − min)` (round = half away from zero; defined ONCE in codec).
+TOML and event inputs stay HUMAN f32 (authored units, f32 bit patterns in u32 lanes); the ONE
+quantization happens at write. The mapping domain is ALWAYS the authored global `min..max` —
+modifiers narrow the effective clamp *within* it, never re-scale the encoding.
+
+**The combiner** (F6, user): a stat or a need domain collects modifier contributions from the
+pawn's traits (per-level values) and active conditions.
+
+- **Additive values SUM** (base 0 for stats): a stat = `Σ add contributions`.
+- **Ranges INTERSECT**: combined min = max of contributed mins, combined max = min of
+  contributed maxes, all inside the def's authored global `min`/`max` (safety bounds).
+- **An EMPTY intersection** (combined min > combined max) is decided by the def's authored
+  `winner` — `"min"`: the combined minimum stands (the value pins there); `"max"`: the combined
+  maximum stands. User's example: 3..7 ∧ 4..8 → 4..7; 2..3 ∧ 4..5 → `winner = "min"` pins 4,
+  `"max"` pins 3.
+- **Rate multipliers MULTIPLY** (a product, clamped ≥ 0): quenched's `rate = 0.5` on thirst
+  halves depletion; two halvings quarter it.
+
+The whole pipeline — pack/unpack, quantize, stat derivation, predicate check, needs eval — ships
+ONCE in `shared/content` + codec and is bit-identical across worker/npc/wasm (stat-model I2).
+
+**Nothing ticks, still — and the RE-STAMP LAW makes that survive modifiers** (F7): a need row is
+`(value, set_tic)` — value-as-of-a-moment; observers compute `satisfaction_at(now)` from the
+corpus rate × the pawn's active multipliers. Lazy evaluation is only correct while the rate is
+constant over the window, so **every mutation of the modifier set re-stamps the affected need
+rows** (write the evaluated value + the mutation tic in the same transaction: a condition GRANT
+re-stamps; a trait change re-stamps). A condition EXPIRY needs no write — the expiry tic is
+derivable from the row, and the eval integrates PIECEWISE across it.
+
+**Worked window** (the numbers stat-model P1's eval test reuses): thirst `0..100`,
+`deplete = 21600` (base rate `100/21600` per tic). At tic 1000 a sip re-stamps thirst at 40.0
+(`q = 26214`, dequantized `39.9994`) and grants quenched (`rate = 0.5`,
+`remaining_at_write = 3600` → derived expiry 4600). Read at tic 6000: segment 1 = 3600 tics at
+the halved rate → `3600 · 100/43200 = 8.3333`; segment 2 = 1400 tics at base →
+`1400 · 100/21600 = 6.4815`; `satisfaction ≈ 39.9994 − 8.3333 − 6.4815 = 25.1846`.
+
+**A condition's time is REMAINING-AT-WRITE** (F3, user): the row stores the remaining tics AT
+the write beside the written tic — remaining-now = `remaining_at_write − (now − written_tic)`,
+derived at read, u16 wrap under the half-window guard. Backward-looking (a fact about a past
+write), never a stored countdown and never a forecast. A re-grant refreshes the row.
 
 ```
-[[need]]       name/label · min/max (the authored value domain, f32) ·
+[[stat]]       name/label · min/max (authored GLOBAL safety bounds, f32) ·
+               winner = "min"|"max" (the empty-intersection rule)
+[[need]]       name/label · min/max (the authored value domain, f32) · winner ·
                deplete (TICS max→min; 0 = never drains) ·
                band = [{ condition, lo, hi }]  in the need's OWN units — exclusive, ≤1 active
 [[condition]]  name/label · mood (-1..1) · duration (TICS a TIMED grant lives; 0 = DERIVED) ·
-               priority (sort key; see below)
-[[thing]]      needs = ["thirst", …] · traits = ["biological_lifeform", …]
+               priority · stats/needs modifier lists (§ TOML content schema)
+[[trait]]      name/label · per-LEVEL stats/needs modifier lists (§ TOML content schema)
+[[thing]]      needs = ["thirst", …] · traits = ["biological_lifeform", { name = "walks", level = 2 }]
 ```
 (TOML spellings — § TOML content schema. Ids are REGISTRY-allocated from the derived
-`gameplay/<category>/<name>/default` taxonomy — interactions F1/F9; payload words and event
-inputs carry the full u32 `definition_reference`.)
+`gameplay/<category>/<name>/default` taxonomy — interactions F1/F9; event inputs carry full u32
+`definition_reference`s, stored rows the packed low-16 form above.)
 
 Exposed as `need_params_all()` / `condition_params_all()` (registry order) and
 `thing_needs_table()` — **stride 8** per kind of u32 need `definition_reference`s, `0` = empty
@@ -579,14 +628,15 @@ places between evaluations. `pawnConditions` (wasm) returns **stride 4** —
 *shown*, not to be re-sorted. Do not derive priority from `|mood|`: it cannot express "mild but
 urgent", and it degenerates entirely once a condition's effect is a need rather than a mood.
 
-**Nothing ticks a need** (F4): a pawn's shard row is `(satisfaction: f32, set_tic)`; observers
-compute `satisfaction_at(tic)` and every band-crossing tic from `deplete` over the authored
-`min..max` domain. The two kinds of condition:
+**A condition's effects are an OPEN set** (conditions F6), and the stat-model realizes it:
+`mood` (offset; mood = `clamp(0.5 + Σ active offsets, 0..1)`, needs-moodlets F5) sits beside the
+`stats`/`needs` modifier lists — a condition caps a stat, floors a need, or scales a rate through
+the SAME combiner traits use. The two kinds of condition:
 **DERIVED (`duration 0`)** — a band on a need's satisfaction, computed from `(row, tic, corpus)` by
 every observer identically, with no grant events at all (F2); **TIMED (`duration > 0`)** — stored
-grants `(pawn, condition_id, grant_tic)` expiring `duration` tics later (the action stream's kind).
-The word *conditional* is retired for this pair (conditions F4): it would now read as "a conditional
-condition".
+rows (`remaining_at_write` + written tic, stat-model F3) whose expiry is derived at read (the
+drink stream's kind). The word *conditional* is retired for this pair (conditions F4): it would
+now read as "a conditional condition".
 
 **Indexed slots are bare digits** (`band.0`, `needs.3`) — the `packed.<i>` shape. Safe because
 these nodes never hold a scalar sibling (the `rotation_key` I8 hazard); do not add one.
@@ -689,9 +739,9 @@ padding = 0.5               # internal padding, UNITS of the 16-unit cell (linke
 packed = [                  # up to 4 material channel bindings, index = RGBA channel
   { material = "mottle", tint = "#6b6b6b" },
 ]
-affordances = [             # affordance bindings: the reference + THIS carrier's parameters
-  { name = "drink_water", magnitude = 3 },   # (tiles and things alike; interactions F2)
-]
+interactions = [            # the interactions this carrier OFFERS + its parameters
+  { name = "drink", magnitude = 3 },   # (tiles and things alike; stat-model F5/F9 — the
+]                           #  interaction carries its own affordance gate)
 
 # ── things.toml — flora, walls' kinds, PAWNS (a pawn is a thing with parts) ──
 [[thing]]
@@ -700,9 +750,12 @@ kind = "wolf"
 subType = ["animal"]        # applicability array
 variant = ["0"]             # applicability array
 name = "wolf"
-speed = 12                  # TICS per tile (optional; movement default applies)
+speed = 12                  # TICS per tile (optional; DIES with the move_to rewire — stat-model F12)
 needs = ["thirst"]          # the needs this kind carries (optional)
-traits = ["biological_lifeform"]   # the traits this kind carries (optional; interactions F6)
+traits = [                  # starting trait bindings, minted at CREATE (stat-model F11);
+  "biological_lifeform",    #   a bare string = level 1
+  { name = "walks", level = 2 },
+]
 light = {                   # the kind's emitted light (optional; reach>0 = lit)
   r = 1.0, g = 0.8, b = 0.5, intensity = 1.0, reach = 16, radius = 0.25,
   height = 0.5, cast = true, hot = false, flicker = false }
@@ -759,53 +812,71 @@ warm_cool_bias = 0.2        # −1..1 cool..warm
 sample_space = "world"      # "uv" (default) | "world"
 detail = { field = "grain", amp = 0.4, scale = 1.0 }   # normal detail (optional)
 
-# ── gameplay defs — needs, conditions, traits, interactions, affordances ─────
+# ── gameplay defs — stats, needs, conditions, traits, interactions, affordances ─
 # (needs.toml, interactions.toml — ANY file; the category table is what matters.)
-# NO ids and NO authored taxonomy (F9): the tuple derives as
+# NO ids and NO authored taxonomy (interactions F9): the tuple derives as
 # `gameplay/<category>/<name>/default`, and the registry numbers it like any def.
+[[stat]]                    # a DERIVED quantity (stat-model F8) — never stored, never fanned
+name = "ground_speed"
+label = "Ground Speed"
+min = 0                     # authored GLOBAL safety bounds (f32) — the outermost clamp
+max = 240
+winner = "min"              # empty-intersection rule (F6): "min" = the combined minimum
+                            #   (max-of-mins) stands; "max" = the combined maximum stands
+
 [[need]]
 name = "thirst"
 label = "Thirst"
-min = 0                     # the authored value domain (f32; interactions F7) —
-max = 100                   # min can be negative: min/max IS the sign treatment
-deplete = 21600             # TICS max→min; 0/absent = never drains
+min = 0                     # the authored value domain (f32; interactions F7) — ALSO the
+max = 100                   # fixed-point encoding domain (stat-model F4); min can be negative
+winner = "min"              # same combiner as stats (F6); default "min"
+deplete = 21600             # TICS max→min at BASE rate; 0/absent = never drains
 band = [                    # exclusive ranges in the need's OWN units; ≤1 active
   { condition = "thirsty",    lo = 10, hi = 35 },
   { condition = "dehydrated", lo = 0,  hi = 10 },
 ]
 
 [[condition]]
-name = "thirsty"
-label = "Thirsty"
-mood = -0.15                # offset while active; mood = clamp(0.5 + Σ)
-duration = 0                # TICS a TIMED grant lives; 0 = DERIVED (band-computed)
-priority = 0                # card sort key, desc; absent = 0
+name = "quenched"
+label = "Quenched"
+mood = 0.2                  # offset while active; mood = clamp(0.5 + Σ)
+duration = 3600             # TICS a TIMED grant lives; 0 = DERIVED (band-computed)
+priority = 10               # card sort key, desc; absent = 0
+# modifier lists (both optional; conditions contribute SCALARS — no levels):
+#   add SUMS into the stat; min/max join the range intersection; rate multiplies
+stats = [ { stat = "metabolism", add = 0.0 } ]          # (illustrative shapes)
+needs = [ { need = "thirst", rate = 0.5 } ]             # quenched halves thirst depletion
 
-[[trait]]                   # a capability class a pawn HAS (kinds author `traits = [...]`)
-name = "biological_lifeform"
-label = "Biological Lifeform"
+[[trait]]                   # a LEVELED stat contributor — "traits/skills" (stat-model F1/F5)
+name = "walks"
+label = "Walks"
+# per-LEVEL modifier lists: array index = level − 1 (level 0 = the trait absent);
+# a pawn's row stores its level; same fields as conditions, but arrays
+stats = [ { stat = "ground_speed", add = [24, 12, 6] } ]   # tics/tile at level 1/2/3
+# needs = [ { need = "thirst", rate = [1.0, 0.9] } ]       # need modifiers take levels too
 
 [[interaction]]             # something a pawn can DO (interactions F5)
 name = "drink"
 label = "Drink"
+affordances = ["can_drink"] # the gates (stat-model F5): EVERY listed predicate must pass
 inputs = ["pawn", "need", "amount"]   # the SIGNATURE — event inputs bind these IN ORDER
 # effects: operands are `"@input"` references or constants; `amount` is signed f32,
-# clamped to the need's authored min/max on apply
+# clamped to the need's effective min/max on apply
 satisfy = { target = "@pawn", need = "@need", amount = "@amount" }
 grant = ["quenched"]        # TIMED condition grants on execute (expiry from the condition)
 location = "on"             # this turn's only rule: the target stands ON a carrier tile (F8)
 duration = 0                # reserved — interactions are instantaneous (interactions I9)
 
-[[affordance]]              # WHO may do WHAT (availability; interactions F2)
-name = "drink_water"
-requires = ["biological_lifeform"]    # trait gate
-interaction = "drink"
-variants = ["default"]      # which variations of the interaction this affordance offers
-# carriers bind their parameters where they are defined (tile/thing blocks above):
-#   affordances = [{ name = "drink_water", magnitude = 3 }]
+[[affordance]]              # a named PREDICATE over pawn stats (stat-model F5/F10)
+name = "can_drink"
+label = "Can Drink"
+check = { stat = "metabolism", above = 0.0 }   # above|below, EXCLUSIVE; stat must exist
+# carriers bind the INTERACTIONS they offer where they are defined (tile/thing blocks
+# above): interactions = [{ name = "drink", magnitude = 3 }]
 # worked example: drinking at the water tile executes drink with amount = +3.0 —
-# satisfaction moves from `satisfaction_at(now)` to `clamp(sat + 3.0, 0, 100)` on
-# thirst's authored domain, and `quenched` is granted at the composing tic.
+# satisfaction moves from `satisfaction_at(now)` to `clamp(sat + 3.0, lo, hi)` on
+# thirst's EFFECTIVE domain (authored bounds ∩ modifier ranges), quantized ONCE to
+# u16 fixed-point at write, and `quenched` is granted at the composing tic.
 ```
 
 ## Removed

@@ -373,22 +373,26 @@ which is why the id is recorded, not computed (`ACTIONS.md` §`CREATE`).
 
 ### `payload_log` + `payload` — the growable per-pawn opcode stream, SLAVED to state (public)
 
-Human-pawns P0 (user F1/F5): a pawn's open-ended state (part defs; later inventory / stats /
-needs / …) lives in a SIDECAR pair, NOT on the entity rows — movement hops never copy it.
+Human-pawns P0 (user F1/F5): a pawn's open-ended state (part defs, traits, conditions; later
+inventory / …) lives in a SIDECAR pair, NOT on the entity rows — movement hops never copy it.
+NEEDS live in their own sub-table below (stat-model F2): they churn per sip, so they fan alone.
 
 **Encoding** — a flat `Vec<u32>` of entries, each a header `opcode:16 | count:16` followed by
 `count` operand words, entries concatenated (the command-buffer shape). A reader skips unknown
-opcodes by `count`. Opcodes (append-only):
+opcodes by `count`. Opcodes (append-only; a retired VALUE is never reused — old rows must read
+as unknown, not misread):
 
 | opcode | value | count | operands | meaning |
 |---|---|---|---|---|
 | `PART` | 1 | 2 | `slot`, `definition_reference` | the FULL def part slot `slot` draws (body = slot 0, head = slot 1; an equip verb later swaps a slot's def) |
-| `NEED` | 2 | 3 | `need:definition_reference` · `satisfaction` (f32 BITS) · `set_tic:16` | one need's row (needs-moodlets F7, reshaped by interactions F1/F3/I1): the need is its full u32 gameplay `definition_reference`; satisfaction is an f32 bit pattern on the need's authored `min..max` domain, NEVER ticked — observers compute `satisfaction_at(tic)` from the corpus `deplete` rate (F4). `SET_NEED` upserts by the def reference |
-| `CONDITION` | 3 | 2 | `condition:definition_reference` · `grant_tic:16` | one TIMED condition grant (F2, reshaped by interactions F1/I1): expiry = `grant_tic + duration` from the corpus, DERIVED never stored; a re-grant refreshes the entry. DERIVED (band) conditions never appear here. Renamed from `MOODLET` by `2026-08-04-conditions`; the opcode VALUE is unchanged |
+| `NEED` | 2 | — | — | **RETIRED** (stat-model I1): needs moved to the `needs` sub-table |
+| `CONDITION` | 3 | — | — | **RETIRED** (stat-model I1): the f32-era shape (`def_ref · grant_tic`); replaced by opcode 4 |
+| `CONDITION` | 4 | 2 | `remaining_at_write:16 \| kind:12 \| variant:4` · `written_tic:16` | one TIMED condition (stat-model F1/F3): the packed gameplay row — remaining-now = `remaining_at_write − (now − written_tic)`, expiry DERIVED at read, never stored; a re-grant refreshes the row. DERIVED (band) conditions never appear here |
+| `TRAIT` | 5 | 1 | `level:16 \| kind:12 \| variant:4` | one trait/skill the pawn carries at `level ≥ 1` (stat-model F1/F5); minted at CREATE from the thing def's bindings (F11), static until the grant/revoke verbs (recorded successor) |
 
-_The NEED/CONDITION reshape (interactions I1) is NOT read-compatible with the old packed-`u8`-id
-words: rows written before it are invalid and dev pawns RE-MINT their needs (the npc's init
-path); no in-place converter exists._
+_Reshapes are NOT read-compatible, by policy (stat-model I1): a reshape RETIRES the opcode value
+and claims a new one, so pre-reshape rows read as unknown entries and are skipped whole; dev
+pawns RE-MINT (the npc's init path). No in-place converter exists._
 
 `payload_log` — the write-history sidecar of `entity_state_log`; one row per payload-carrying
 state write (spawn / future equips — NOT movement):
@@ -413,15 +417,34 @@ state write (spawn / future equips — NOT movement):
 lock, and every write here rides a state-write transaction: `spawn` inserts both rows (an
 EMPTY payload inserts neither), and the `entity_tables!` `state_hook` drags the `payload`
 row's zone key along inside every `entity_state` upsert, so a zone-crossing can never leave
-the sidecar behind. `payload_log` is currently un-gc'd (volume = spawns + equips + need
-sets, not hops); it joins the gc when the volume warrants.
+the sidecar behind. `payload_log` is currently un-gc'd (volume = spawns + equips — need churn
+left with the `needs` sub-table); it joins the gc when the volume warrants.
 
-**Payload-entry verbs (needs-moodlets F7):** `SET_NEED` / `GRANT_CONDITION` splice ONE entry —
-the pawn module's `set_need` / `grant_condition` reducers read the current payload, upsert by
-id (`resonantdust_codec::payload::upsert_need/upsert_condition`) and write log + projection in
-one transaction. The MODULE composes, the worker relays; the verb's `obj` is a Write operand
-so the entity's claim still serialises these with its movement writes. Idempotent on replay
-(same tic → same word; the log row upserts by uid).
+**Payload-entry verbs:** `GRANT_CONDITION` splices ONE entry — the pawn module's
+`grant_condition` reducer reads the current payload, upserts by the row's low 16 bits
+(kind|variant) and writes log + projection in one transaction, RE-STAMPING the granted
+condition's affected need rows in the same transaction (stat-model F7 — the re-stamp law).
+`SET_NEED` targets the `needs` sub-table below. The MODULE composes, the worker relays; the
+verb's `obj` is a Write operand so the entity's claim still serialises these with its movement
+writes. Idempotent on replay (same tic → same word; the log row upserts by uid).
+
+### `needs` — the per-(pawn, need) row table (public)
+
+Stat-model F2 (user): needs churn on every sip and every re-stamp, so they fan ALONE instead of
+dragging the whole payload. One row per `(entity, need kind|variant)`:
+
+| column | type | key | notes |
+|---|---|---|---|
+| `uid` | `u64` | PK | `entity_reference:32 \| need_key:16` (`need_key` = the packed row's low 16: kind:12\|variant:4) |
+| `entity_reference` | `u32` | idx | |
+| `macro_position_reference` | `u16` | idx | the zone-subscription key — SLAVED to the entity's zone exactly like `payload` (the state_hook drags it) |
+| `need` | `u32` | | the packed gameplay row: `value:16 \| kind:12 \| variant:4` — value is u16 FIXED-POINT on the need's authored domain (stat-model F4) |
+| `set_tic` | `u16` | | the write moment; observers compute `satisfaction_at(now)` lazily (never ticked), piecewise across derived condition expiries (F7) |
+
+Rows mint at CREATE from the thing def's `needs` list (full value); `SET_NEED` upserts by `uid`
+with the ONE quantization at write; every modifier-set mutation re-stamps `(value, set_tic)`
+(F7). No log twin, deliberately: the need's history is reconstructible from `payload_log`'s
+grants + the event stream, and the churn is exactly what was evicted from `payload_log`.
 
 ### Not shaped yet
 

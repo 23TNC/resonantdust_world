@@ -5,21 +5,29 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P0 — the schema, documented before parsed
 
-- [ ] Write the four-family pawn model into `VARIABLES.md`: packed rows `kind:12|variant:4|data:16`
+- [x] Write the four-family pawn model into `VARIABLES.md`: packed rows `kind:12|variant:4|data:16`
       (trait level / condition remaining-at-write / need value), the u16 fixed-point mapping
       ([F4](forks.md#f4)), and the `[[stat]]` schema (global bounds + `min_wins`/`max_wins`).
-      Acceptance: every field P2 authors has a spelling here first.
-- [ ] Document the reworked defs: `[[trait]]` per-level stat contributions + need modifiers,
+      Acceptance: every field P2 authors has a spelling here first. → §Pawn gameplay state
+      rewritten; row = `data:16 | kind:12 | variant:4` (low 16 ≡ the def ref's low 16); winner
+      field spelled `winner = "min"|"max"`.
+- [x] Document the reworked defs: `[[trait]]` per-level stat contributions + need modifiers,
       `[[affordance]]` as a structured predicate ([F10](forks.md#f10)) listed BY `[[interaction]]`,
       carrier `interactions = [{name, magnitude}]`, thing `traits` bindings with level
       ([F5](forks.md#f5)/[F9](forks.md#f9)/[F11](forks.md#f11)). Acceptance: walks +
-      can_move_ground worked example in the doc.
-- [ ] Document the combiner law ([F6](forks.md#f6)) and the re-stamp law ([F7](forks.md#f7)) with
+      can_move_ground worked example in the doc. → schema block rewritten (walks
+      `add = [24, 12, 6]` so the wolf's level-2 value equals its `speed` — I10); carriers moved
+      to `interactions = [...]`.
+- [x] Document the combiner law ([F6](forks.md#f6)) and the re-stamp law ([F7](forks.md#f7)) with
       a hand-computed quenched piecewise window ([I4](issues.md#i4)). Acceptance: the worked
-      window's numbers appear in the doc and P1's eval test reuses them.
-- [ ] TABLES.md: the needs sub-table row `(entity, packed, set_tic)`; payload TRAIT(count 1) /
+      window's numbers appear in the doc and P1's eval test reuses them. → sums/intersections/
+      winner/rate-product rules + the 39.9994 − 8.3333 − 6.4815 ≈ 25.1846 window in VARIABLES.
+- [x] TABLES.md: the needs sub-table row `(entity, packed, set_tic)`; payload TRAIT(count 1) /
       CONDITION(count 2) entries; NEED leaves the payload ([I1](issues.md#i1)). ACTIONS.md:
-      SET_NEED/GRANT_CONDITION operand meanings. Acceptance: `bin/rd docs-check` green.
+      SET_NEED/GRANT_CONDITION operand meanings. Acceptance: `bin/rd docs-check` green. →
+      opcodes RETIRE values (NEED 2 + CONDITION 3 dead; CONDITION=4, TRAIT=5), `needs` table
+      documented (uid = entity:32|need_key:16, zone-slaved, no log twin); SET_NEED arity 3→2;
+      docs-check green.
 
 ## P1 — codec + the shared evals
 
