@@ -5,14 +5,17 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P0 — the reader recurses, and the fingerprint stops colliding
 
-- [ ] Make `read_content_dir` walk `content/**/*.toml`, yielding the RELATIVE path as each source's
+- [x] Make `read_content_dir` walk `content/**/*.toml`, yielding the RELATIVE path as each source's
       name, sorted. Acceptance: a crate test over a `a.toml` + `mods/foo/b.toml` fixture returns
-      both, named `a.toml` and `mods/foo/b.toml`, in that order.
-- [ ] Hash the relative PATH in `content_version`, not the basename ([F3](forks.md#f3)).
+      both, named `a.toml` and `mods/foo/b.toml`, in that order. → `read_tree`; sorted by NAME not
+      traversal order (`read_dir` order is filesystem-defined), separators normalized to `/`.
+- [x] Hash the relative PATH in `content_version`, not the basename ([F3](forks.md#f3)).
       Acceptance: a test shows `mods/a/x.toml` and `mods/b/x.toml` with identical text now
-      fingerprint DIFFERENTLY, and that moving a file changes the version.
-- [ ] Prove the real corpus is unchanged by the walk. Acceptance: the golden fixture passes with no
-      re-bless — every current file is at the root, so its relative name equals its basename.
+      fingerprint DIFFERENTLY, and that moving a file changes the version. → both asserted; the
+      old "a dir-prefix change doesn't move it" case was inverted, since that IS the collision.
+- [x] Prove the real corpus is unchanged by the walk. Acceptance: the golden fixture passes with no
+      re-bless — every current file is at the root, so its relative name equals its basename. →
+      passes untouched; 23 content tests + 63 codec green.
 
 ## P1 — the edge serves a tree, and biomes stay server-only by DATA
 
