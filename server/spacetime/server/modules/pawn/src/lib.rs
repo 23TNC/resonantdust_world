@@ -110,8 +110,11 @@ fn write_payload_entry(ctx: &ReducerContext, tic: u16, entity: u32, edit: impl F
     }
 }
 
-/// `SET_NEED` — upsert one need's `(satisfaction, set_tic)` word (`set_tic` = this tic;
-/// observers compute the current value from the corpus deplete rate, F4).
+/// `SET_NEED` — upsert one need's `(satisfaction, set_tic)` entry (`set_tic` = this tic;
+/// observers compute the current value from the corpus deplete rate, F4). `need_id` is the
+/// full u32 gameplay `definition_reference` and `satisfaction` an f32 BIT PATTERN on the
+/// need's authored domain (interactions F1/F3) — the reducer signature is unchanged, only
+/// the composed entry shape moved (TABLES.md § payload).
 #[spacetimedb::reducer]
 pub fn set_need(
     ctx: &ReducerContext,
@@ -122,13 +125,14 @@ pub fn set_need(
     satisfaction: u32,
 ) -> Result<(), String> {
     write_payload_entry(ctx, tic, entity_reference, |p| {
-        resonantdust_codec::payload::upsert_need(p, need_id as u8, satisfaction as u8, tic);
+        resonantdust_codec::payload::upsert_need(p, need_id, f32::from_bits(satisfaction), tic);
     });
     Ok(())
 }
 
 /// `GRANT_CONDITION` — upsert one stored (timed) condition grant (`grant_tic` = this tic;
 /// expiry is DERIVED from the corpus duration, never stored; a re-grant refreshes).
+/// `condition_id` is the full u32 gameplay `definition_reference` (interactions F1).
 #[spacetimedb::reducer]
 pub fn grant_condition(
     ctx: &ReducerContext,
@@ -138,7 +142,7 @@ pub fn grant_condition(
     condition_id: u32,
 ) -> Result<(), String> {
     write_payload_entry(ctx, tic, entity_reference, |p| {
-        resonantdust_codec::payload::upsert_condition(p, condition_id as u8, tic);
+        resonantdust_codec::payload::upsert_condition(p, condition_id, tic);
     });
     Ok(())
 }

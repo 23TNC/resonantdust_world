@@ -43,13 +43,19 @@ pub struct ActiveCondition {
 /// The current satisfaction of a need row at `now`, on the need's authored domain:
 /// `clamp(sat0) − elapsed·(max−min)/deplete`, floored at `min` (interactions F7). A
 /// `deplete` of 0 (unauthored) never drains.
+///
+/// A row stamped IN THE FUTURE (within the wrap half-window) reads as elapsed 0, not as
+/// ancient: effects land at their COMPOSE tic, which can sit a few tics ahead of an
+/// observer's learned clock — without this guard a fresh drink read as a wrapped-past row
+/// and flashed a phantom Dehydrated (seen live, interactions P4).
 pub fn satisfaction_at(satisfaction: f32, set_tic: u16, np: &NeedParams, now: u16) -> f64 {
     let s0 = f64::from(satisfaction).clamp(np.min, np.max);
     if np.deplete <= 0.0 {
         return s0;
     }
     let rate = (np.max - np.min) / np.deplete;
-    let elapsed = f64::from(now.wrapping_sub(set_tic));
+    let raw = now.wrapping_sub(set_tic);
+    let elapsed = if raw > u16::MAX / 2 { 0.0 } else { f64::from(raw) };
     (s0 - elapsed * rate).max(np.min)
 }
 
@@ -386,6 +392,19 @@ mood = -0.15
         let both = active_conditions(&b, &[(need_ref(&b, "thirst"), 0.251, 1000)], &grants, 1050);
         assert_eq!(both.len(), 2);
         assert!((mood(&both) - 0.55).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_future_stamped_row_reads_as_fresh_not_ancient() {
+        // An effect lands at its COMPOSE tic, which can be a few tics AHEAD of an
+        // observer's learned clock. It must read as elapsed-0, never as wrapped-past
+        // (which clamped to min and flashed a phantom Dehydrated live).
+        let b = fixture();
+        let p = np(&b, "thirst");
+        let s = satisfaction_at(0.8, 105, &p, 100);
+        assert!((s - 0.8).abs() < 1e-6, "5 tics in the future = fresh (got {s})");
+        let c = active_conditions(&b, &[(need_ref(&b, "thirst"), 0.8, 105)], &[], 100);
+        assert!(c.is_empty(), "0.8 is band-free — no phantom Dehydrated");
     }
 
     #[test]

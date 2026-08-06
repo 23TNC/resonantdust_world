@@ -79,3 +79,15 @@ precedent cited — not a default inherited by whatever category comes next.
 Thirst full→empty is 21600 tics (1 h wall). Drills seed near band edges via the existing
 `NPC_THIRST` lane; authored corpus numbers stay production values. Every live acceptance in
 P3/P4 states its drill seed so observed numbers are reproducible.
+
+## I11 — a `queue_at(t+1)` continuation silently loses against the TIC_GAP barrier {#i11}
+
+_Found live in P3._ The event shard's `queue_at` REJECTS any tic nearer than `master + 3`, and
+the SDK surfaces that error asynchronously — a fire-and-forget caller never sees it. The
+interaction effects queued at `t+1` and lost ~half their sips to the race (payload_log showed
+writes at 5165/5171 but nothing for the 4740/5177/5183 queues); the movement chains never hit
+it only because they queue `tics_per_tile` (12) out. **BUILD_WALL had the same latent bug** —
+its per-tile `PROMOTE SET`s queued at `t+1`, so walls could silently drop tiles under load.
+Both fixed: effects queue at `master + 4` and compute their values AT that tic. The standing
+rule this leaves behind: **anything calling `queue_at` must target past the barrier, and a
+caller that cannot see the async error must not pretend `Ok` means queued.**

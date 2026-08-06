@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use client::world::tile_to_position;
 use client::Event;
-use resonantdust_codec::action::{CREATE, GRANT_CONDITION, PROMOTE, SET_NEED};
+use resonantdust_codec::action::{CREATE, EXECUTE_INTERACTION, GRANT_CONDITION, PROMOTE, SET_NEED};
 use resonantdust_codec::object::{def_sans_variant, position_macro, TYPE_PAWN};
 use resonantdust_codec::payload::payload_needs;
 use resonantdust_codec::refs::entity_ref_type_id;
@@ -50,8 +50,11 @@ pub struct Wolves {
     /// The content corpus (needs-moodlets P4) — the def/needs authority AND the eval's
     /// parameter source (F3: the SAME `needs_eval` the client reaches through wasm).
     bundle: Option<Bundle>,
-    /// The wolf kind's thirst `need_id` (from `&thing.needs`; `0` = kind carries none).
-    thirst: u8,
+    /// The wolf kind's thirst need — a u32 gameplay `definition_reference` (interactions F1;
+    /// `0` = kind carries none).
+    thirst: u32,
+    /// The wolf kind's trait names (interactions F6) — the availability gate's input.
+    traits: Vec<String>,
     /// Latest RAW payload per entity — buffered pre-adoption too (the zone snapshot may
     /// fan `Payload` before the `StateObject` this brain adopts on; either order is legal).
     payloads: HashMap<u32, Vec<u32>>,
@@ -62,23 +65,36 @@ pub struct Wolves {
     /// Single-shot latch for the SET_NEED mint (the splice upserts, so a replay is safe —
     /// the latch only stops US from re-queueing every tick).
     init_queued: bool,
-    /// The ACTIVE condition ids at the last evaluation — the transition detector.
-    active: Vec<u16>,
-    /// The decision context the successor action stream reads: current mood.
+    /// The ACTIVE condition refs at the last evaluation — the transition detector.
+    active: Vec<u32>,
+    /// The decision context: current mood.
     pub mood: f64,
-    /// **Drill** (env `NPC_THIRST`, `0..=255`): the satisfaction the mint writes instead of
-    /// full. Thirst depletes over 21600 tics (1 h wall at 6 Hz), so waiting for a real band
-    /// crossing is not a test loop — `NPC_THIRST=20` puts the wolf inside Dehydrated at once.
-    /// Unset = the authored behaviour, full (`255`).
-    thirst_drill: Option<u8>,
-    /// **Drill** (env `NPC_GRANT`, comma-separated condition ids): TIMED grants to queue once
-    /// after the mint, through `GRANT_CONDITION`. Nothing in the game issues that verb yet —
-    /// the drink action is the successor stream — so this is the only way to exercise the
-    /// stored-grant lane end to end, and the only way to put enough conditions on one pawn to
-    /// test the details panel's card strip.
-    grant_drill: Vec<u32>,
+    /// **Drill** (env `NPC_THIRST`, f32 in the need's OWN units — thirst authors `0..100`):
+    /// the satisfaction the mint writes instead of full. Thirst depletes over 21600 tics
+    /// (1 h wall at 6 Hz), so waiting for a real band crossing is not a test loop —
+    /// `NPC_THIRST=12` puts the wolf inside Thirsty at once. Unset = full (the need's `max`).
+    thirst_drill: Option<f32>,
+    /// **Drill** (env `NPC_GRANT`, comma-separated condition NAMES, e.g. `quenched`): TIMED
+    /// grants to queue once after the mint, through `GRANT_CONDITION` — the forcing lane for
+    /// the stored-grant machinery and the panel's card strip.
+    grant_drill: Vec<String>,
     /// Single-shot latch for `grant_drill`.
     grants_queued: bool,
+    // ── the DRINK behaviour (interactions P4) ──
+    /// The water tile the wolf is heading to drink at, if thirst drove it there.
+    drink_target: Option<(i32, i32)>,
+    /// The drink pacing latch: set when a drink event is issued, cleared when the thirst
+    /// ROW advances (the sip landed — `set_tic` moved) or the band set changes. The wolf
+    /// therefore SIPS sequentially (+3 per landed drink) until the thirst band clears.
+    drink_issued: bool,
+    /// The thirst row's last seen `set_tic` — the sip-landed detector.
+    last_row_tic: Option<u16>,
+    /// **Drill** (env `NPC_INTERACT`, an affordance name, e.g. `drink_water`): fire ONE
+    /// `EXECUTE_INTERACTION` immediately after init, WHEREVER the wolf stands — the forcing
+    /// lane for the worker's validation arm (an off-water fire must be refused and logged).
+    interact_drill: Option<String>,
+    /// Single-shot latch for `interact_drill`.
+    interact_fired: bool,
 }
 
 impl Wolves {
@@ -105,6 +121,7 @@ impl Wolves {
             created: false,
             bundle: None,
             thirst: 0,
+            traits: Vec::new(),
             payloads: HashMap::new(),
             init_after: std::time::Instant::now(),
             init_queued: false,
@@ -113,9 +130,14 @@ impl Wolves {
             thirst_drill: std::env::var("NPC_THIRST").ok().and_then(|s| s.trim().parse().ok()),
             grant_drill: std::env::var("NPC_GRANT")
                 .ok()
-                .map(|s| s.split(',').filter_map(|p| p.trim().parse().ok()).collect())
+                .map(|s| s.split(',').map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect())
                 .unwrap_or_default(),
             grants_queued: false,
+            drink_target: None,
+            drink_issued: false,
+            last_row_tic: None,
+            interact_drill: std::env::var("NPC_INTERACT").ok().filter(|s| !s.is_empty()),
+            interact_fired: false,
         }
     }
 
@@ -139,50 +161,160 @@ impl Wolves {
         let payload = self.payloads.get(&wolf).cloned().unwrap_or_default();
 
         // Mint: no thirst row after the snapshot grace → this wolf was never initialised.
+        // (Old-shape rows read as "no row" — the re-mint posture, interactions I1: a wolf
+        // carrying pre-f32 words simply gets a fresh entry beside the dead ones.)
         if self.thirst != 0 && !self.init_queued && std::time::Instant::now() > self.init_after {
-            let has_thirst = payload_needs(&payload).iter().any(|&(id, _, _)| id == self.thirst);
-            if !has_thirst {
-                let sat = self.thirst_drill.unwrap_or(255);
-                let program = vec![SET_NEED, wolf, u32::from(self.thirst), u32::from(sat)];
+            let has_thirst = payload_needs(&payload).iter().any(|&(r, _, _)| r == self.thirst);
+            // A DRILL seed overrides an existing row on purpose — the env is the explicit
+            // forcing lane; the no-row grace protects only undrilled runs.
+            if !has_thirst || self.thirst_drill.is_some() {
+                let full = bundle.need_params_by_ref(self.thirst).map(|np| np.max as f32).unwrap_or(1.0);
+                let sat = self.thirst_drill.unwrap_or(full);
+                let program = vec![SET_NEED, wolf, self.thirst, sat.to_bits()];
                 if bot.client.queue(program).is_err() {
                     tracing::error!("engine gone during thirst init");
                     return;
                 }
-                tracing::info!(wolf = format!("{wolf:#010x}"), need = self.thirst, satisfaction = sat,
-                               drill = self.thirst_drill.is_some(),
+                tracing::info!(wolf = format!("{wolf:#010x}"), need = format!("{:#010x}", self.thirst),
+                               satisfaction = sat, drill = self.thirst_drill.is_some(),
                                "thirst initialised (no row after the snapshot grace)");
             }
             self.init_queued = true;
         }
 
-        // Drill: queue the requested TIMED grants once (`NPC_GRANT=3` etc.). One program per
-        // grant — `GRANT_CONDITION` takes a single condition id and upserts by it.
+        // Drill: queue the requested TIMED grants once (`NPC_GRANT=quenched` etc.). One
+        // program per grant — `GRANT_CONDITION` takes a condition ref and upserts by it.
         if !self.grants_queued && !self.grant_drill.is_empty() && self.init_queued {
-            for &id in &self.grant_drill {
-                if bot.client.queue(vec![GRANT_CONDITION, wolf, id]).is_err() {
+            for name in &self.grant_drill {
+                let Some(cref) = bundle.gameplay_reference("condition", name) else {
+                    tracing::warn!(condition = %name, "grant drill: unknown condition — skipped");
+                    continue;
+                };
+                if bot.client.queue(vec![GRANT_CONDITION, wolf, cref]).is_err() {
                     tracing::error!("engine gone during the grant drill");
                     return;
                 }
-                tracing::info!(wolf = format!("{wolf:#010x}"), condition = id,
+                tracing::info!(wolf = format!("{wolf:#010x}"), condition = %name,
                                "GRANT_CONDITION queued (drill)");
             }
             self.grants_queued = true;
+        }
+
+        // Drill: fire ONE EXECUTE_INTERACTION wherever the wolf stands (`NPC_INTERACT=
+        // drink_water`) — the forcing lane for the worker's validation arm: an off-water
+        // fire must be REFUSED there and logged, never half-executed.
+        if !self.interact_fired && self.init_queued {
+            if let Some(name) = self.interact_drill.clone() {
+                self.fire_interaction(bot, &name, 3.0);
+                self.interact_fired = true;
+            }
         }
 
         // Evaluate — needs nothing but the row, the tic, and the corpus.
         let Some(now) = bot.now_tic() else { return };
         let needs = payload_needs(&payload);
         let grants = resonantdust_codec::payload::payload_conditions(&payload);
+        // Sip-landed detector: the thirst row's `set_tic` advancing means the last drink
+        // (or any write) landed — re-arm the latch so a still-thirsty wolf sips again.
+        let row_tic = needs.iter().find(|(r, _, _)| *r == self.thirst).map(|&(_, _, t)| t);
+        if row_tic != self.last_row_tic {
+            self.last_row_tic = row_tic;
+            self.drink_issued = false;
+        }
         let active = needs_eval::active_conditions(bundle, &needs, &grants, now);
         self.mood = needs_eval::mood(&active);
-        let ids: Vec<u16> = active.iter().map(|m| m.condition_id).collect();
-        if ids != self.active {
-            let names: Vec<&str> =
-                ids.iter().filter_map(|&id| bundle.condition_name(id)).collect();
+        let refs: Vec<u32> = active.iter().map(|m| m.condition_id).collect();
+        if refs != self.active {
+            let names: Vec<String> = refs
+                .iter()
+                .filter_map(|&r| bundle.gameplay_lookup(r).map(|(_, n)| n))
+                .collect();
             let next = needs_eval::next_crossing_tic(bundle, &needs, &grants, now);
             tracing::info!(tic = now, conditions = ?names, mood = self.mood, next_crossing = ?next,
                            "condition band change");
-            self.active = ids;
+            self.active = refs;
+            // A band change re-arms the drink latch (interactions P4: once per crossing).
+            self.drink_issued = false;
+        }
+    }
+
+    /// Whether the wolf's CURRENT band set says it should drink: any active DERIVED band of
+    /// the thirst need (Thirsty / Dehydrated — read from the corpus, never hard-coded).
+    fn is_thirsty(&self) -> bool {
+        let Some(bundle) = &self.bundle else { return false };
+        let Some(np) = bundle.need_params_by_ref(self.thirst) else { return false };
+        np.bands.iter().any(|b| {
+            bundle
+                .gameplay_reference("condition", &b.condition)
+                .is_some_and(|r| self.active.contains(&r))
+        })
+    }
+
+    /// The first affordance on tile kind `kind` this wolf's traits make AVAILABLE
+    /// (interactions F2/F6), with its bound magnitude.
+    fn usable_affordance(&self, kind: u16) -> Option<(String, f64)> {
+        let bundle = self.bundle.as_ref()?;
+        bundle
+            .tile_affordances(kind)
+            .into_iter()
+            .find(|(a, _)| bundle.affordance_available(a, &self.traits))
+    }
+
+    /// Compose + queue `EXECUTE_INTERACTION` for `affordance` at `magnitude` on this wolf's
+    /// thirst — the F4 event, the user's layout verbatim: `[op, interaction, version, count,
+    /// inputs…]` with value inputs as f32 bit patterns.
+    fn fire_interaction(&self, bot: &Bot, affordance: &str, magnitude: f64) {
+        let Some(wolf) = self.wolf else { return };
+        let Some(bundle) = &self.bundle else { return };
+        let Some(a) = bundle.affordance_params(affordance) else {
+            tracing::warn!(%affordance, "fire_interaction: unknown affordance");
+            return;
+        };
+        let Some(iref) = bundle.gameplay_reference("interaction", &a.interaction) else {
+            tracing::warn!(interaction = %a.interaction, "fire_interaction: unresolvable interaction");
+            return;
+        };
+        // drink's signature is (pawn, need, amount) — inputs bind IN ORDER (F5).
+        let program = vec![
+            EXECUTE_INTERACTION, iref, 0, 3, wolf, self.thirst, (magnitude as f32).to_bits(),
+        ];
+        if bot.client.queue(program).is_err() {
+            tracing::error!("engine gone during interaction fire");
+            return;
+        }
+        tracing::info!(wolf = format!("{wolf:#010x}"), %affordance, magnitude, at = ?self.at,
+                       "EXECUTE_INTERACTION queued");
+    }
+
+    /// The drink pass (interactions P4): when a thirst band is active and unhandled, walk to
+    /// the nearest AVAILABLE water and fire the interaction on arrival. Unreachable or
+    /// unknown water logs and leaves the wolf to its wander — never a spin.
+    fn mind_drink(&mut self, bot: &Bot) {
+        if self.thirst == 0 || self.drink_issued || !self.is_thirsty() {
+            return;
+        }
+        // Standing on a usable carrier already? Drink here.
+        if let Some(kind) = bot.tile_kind_at(self.at) {
+            if let Some((affordance, magnitude)) = self.usable_affordance(kind) {
+                self.fire_interaction(bot, &affordance, magnitude);
+                self.drink_issued = true;
+                self.drink_target = None;
+                return;
+            }
+        }
+        // Otherwise head for the nearest tile whose affordances this wolf can use.
+        let target = bot.nearest_tile(self.at, |kind| self.usable_affordance(kind).is_some());
+        match target {
+            Some(t) => {
+                if self.drink_target != Some(t) || self.dest.is_none() {
+                    tracing::info!(water = ?t, from = ?self.at, "thirsty — heading to water");
+                    self.drink_target = Some(t);
+                    self.issue_move(bot, t);
+                }
+            }
+            None => {
+                tracing::debug!("thirsty but no known water tile in the streamed zones");
+            }
         }
     }
 
@@ -218,11 +350,15 @@ impl Brain for Wolves {
                     Ok((def, speed)) => {
                         self.def = def;
                         self.speed = speed;
-                        // The kind's authored needs (`&thing.needs`) — thirst is the first.
+                        // The kind's authored needs (`needs = [...]`) — thirst is the first —
+                        // and its traits (interactions F6: the availability gate's input).
                         let kind = bundle.thing_object_id("wolf").unwrap_or(0);
-                        self.thirst = bundle.thing_needs(kind).first().copied().unwrap_or(0) as u8;
-                        tracing::info!(def = format!("{def:#010x}"), speed, thirst_need = self.thirst,
-                                       "wolf def + speed + needs resolved from the content corpus");
+                        self.thirst = bundle.thing_needs(kind).first().copied().unwrap_or(0);
+                        self.traits = bundle.thing_traits(kind);
+                        tracing::info!(def = format!("{def:#010x}"), speed,
+                                       thirst_need = format!("{:#010x}", self.thirst),
+                                       traits = ?self.traits,
+                                       "wolf def + speed + needs + traits resolved from the corpus");
                         self.bundle = Some(bundle);
                     }
                     Err(err) => {
@@ -322,10 +458,15 @@ impl Brain for Wolves {
             return;
         }
         self.mind_needs(bot);
+        self.mind_drink(bot);
         match self.dest {
             None => {
-                let dest = self.pick_dest();
-                self.issue_move(bot, dest);
+                // A drink trip owns the destination slot — the wander yields to it
+                // (mind_drink re-issues the water trip on its own).
+                if self.drink_target.is_none() {
+                    let dest = self.pick_dest();
+                    self.issue_move(bot, dest);
+                }
             }
             Some(dest) if std::time::Instant::now() > self.deadline => {
                 // SAFE under chain supersession (movement-hardening F1): the new intent's

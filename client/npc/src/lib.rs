@@ -88,6 +88,12 @@ pub struct Bot {
     /// engine's LEARNED rate estimate (never raw `TIC_HZ`), stamped at event receipt. Feeds
     /// [`Bot::now_tic`], which is what lets a brain evaluate lazy needs (needs-moodlets F4).
     tic_anchor: Option<(u16, std::time::Instant, f64)>,
+    /// The known-zone TILE map (interactions P4): zone → 256 `kind_reference` slots (index =
+    /// `pack_tile_reference(x, y)`), from the layer-0 `ColdTiles` baseline. What
+    /// [`Bot::nearest_tile`] scans — a brain's "where is water" question.
+    tiles: std::collections::HashMap<u16, Vec<u16>>,
+    /// Cold OVERLAY overrides (built walls etc.): `(zone, cell)` → `kind_reference`.
+    tile_overlays: std::collections::HashMap<(u16, u8), u16>,
 }
 
 impl Bot {
@@ -98,7 +104,15 @@ impl Bot {
         let client = Client::spawn(config, move |event: Event| {
             let _ = ev_tx.send(event);
         });
-        let mut bot = Bot { client, events, paused: false, server_url: None, tic_anchor: None };
+        let mut bot = Bot {
+            client,
+            events,
+            paused: false,
+            server_url: None,
+            tic_anchor: None,
+            tiles: std::collections::HashMap::new(),
+            tile_overlays: std::collections::HashMap::new(),
+        };
         if bot.client.login(name).is_err() {
             tracing::error!("client engine failed to start");
             return None;
@@ -177,8 +191,94 @@ impl Bot {
             Event::TicAnchor { tic, tics_per_sec, .. } => {
                 self.tic_anchor = Some((*tic, std::time::Instant::now(), *tics_per_sec));
             }
+            // The known-zone tile map (interactions P4). Layer 0 is the ground baseline; a
+            // zone streams ONE ROW PER BIOME (subtype), each carrying only its own cells —
+            // so rows MERGE cell-wise, nonzero winning (seen live: zone 99 = 3 rows).
+            Event::ColdTiles { macro_position, layer_id: 0, tiles, .. } => {
+                let slot = self.tiles.entry(*macro_position).or_insert_with(|| vec![0; 256]);
+                for (i, &kr) in tiles.iter().enumerate().take(slot.len()) {
+                    if kr != 0 {
+                        slot[i] = kr;
+                    }
+                }
+            }
+            Event::ColdState {
+                macro_position,
+                position_reference,
+                definition_reference,
+                removed,
+                ..
+            } => {
+                use resonantdust_codec::object as obj;
+                if obj::def_type_id(*definition_reference) == obj::TYPE_BIOME_TILE {
+                    let cell = (obj::position_micro(*position_reference) >> 8) as u8;
+                    if *removed {
+                        self.tile_overlays.remove(&(*macro_position, cell));
+                    } else {
+                        self.tile_overlays.insert(
+                            (*macro_position, cell),
+                            obj::def_kind_reference(*definition_reference),
+                        );
+                    }
+                }
+            }
+            Event::ZoneClosed { macro_position } => {
+                self.tiles.remove(macro_position);
+                self.tile_overlays.retain(|(z, _), _| z != macro_position);
+            }
             _ => {}
         }
+    }
+
+    /// The composed `kind_id` (baseline ⊕ overlay) of the known tile at world `at`, or
+    /// `None` if its zone hasn't streamed.
+    pub fn tile_kind_at(&self, at: (i32, i32)) -> Option<u16> {
+        use resonantdust_codec::object as obj;
+        for (&zone, slots) in &self.tiles {
+            let (ox, oy) = obj::macro_world_origin(zone);
+            let (dx, dy) = (at.0 - ox, at.1 - oy);
+            if !(0..16).contains(&dx) || !(0..16).contains(&dy) {
+                continue;
+            }
+            let cell = obj::pack_tile_reference(dx as u8, dy as u8);
+            let kr = self
+                .tile_overlays
+                .get(&(zone, cell))
+                .copied()
+                .unwrap_or_else(|| slots.get(cell as usize).copied().unwrap_or(0));
+            return (kr != 0).then_some(kr >> 4);
+        }
+        None
+    }
+
+    /// The nearest known tile (Chebyshev, world coords) whose composed `kind_id`
+    /// (baseline ⊕ overlay) satisfies `pred` — the brain's "nearest water" scan
+    /// (interactions P4). `None` while no zone has streamed or nothing matches.
+    pub fn nearest_tile(&self, from: (i32, i32), pred: impl Fn(u16) -> bool) -> Option<(i32, i32)> {
+        use resonantdust_codec::object as obj;
+        let mut best: Option<((i32, i32), i32)> = None;
+        for (&zone, slots) in &self.tiles {
+            let (ox, oy) = obj::macro_world_origin(zone);
+            for x in 0u8..16 {
+                for y in 0u8..16 {
+                    let cell = obj::pack_tile_reference(x, y);
+                    let kr = self
+                        .tile_overlays
+                        .get(&(zone, cell))
+                        .copied()
+                        .unwrap_or_else(|| slots.get(cell as usize).copied().unwrap_or(0));
+                    if kr == 0 || !pred(kr >> 4) {
+                        continue;
+                    }
+                    let world = (ox + i32::from(x), oy + i32::from(y));
+                    let d = (world.0 - from.0).abs().max((world.1 - from.1).abs());
+                    if best.is_none_or(|(_, bd)| d < bd) {
+                        best = Some((world, d));
+                    }
+                }
+            }
+        }
+        best.map(|(w, _)| w)
     }
 
     /// The current sim tic, extrapolated from the latest anchor at its LEARNED rate — `None`

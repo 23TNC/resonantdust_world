@@ -73,10 +73,20 @@ pub const BUILD_WALL: u32 = 9;
 /// relays, so the verb adds nothing to the worker's read set.
 pub const SET_NEED: u32 = 10;
 /// Grant one STORED (timed) condition to a pawn (needs-moodlets F2/F7). Operands: `obj`
-/// (write), `condition_id` (imm, 1-based corpus id). `grant_tic` = the composing tic; expiry
-/// is DERIVED (`grant_tic + duration` from the corpus), never stored. A re-grant refreshes
-/// the timer. DERIVED (band) conditions have no verb — they are computed, not granted.
+/// (write), `condition_id` (imm, u32 gameplay `definition_reference` — interactions F1).
+/// `grant_tic` = the composing tic; expiry is DERIVED (`grant_tic + duration` from the
+/// corpus), never stored. A re-grant refreshes the timer. DERIVED (band) conditions have no
+/// verb — they are computed, not granted.
 pub const GRANT_CONDITION: u32 = 11;
+/// Execute a corpus-defined interaction (interactions F4 — the user's layout verbatim).
+/// Operands: `interaction` (imm, gameplay `definition_reference`) · `version` (imm) ·
+/// `count` (imm) · `inputs×count` (imm — untyped words; value inputs are f32 BIT PATTERNS,
+/// meaning comes from the interaction's corpus input SIGNATURE). The third variable-arity
+/// verb (`INIT_ZONE`, `CREATE`); `count` sits third in all three. **Writes NOTHING itself**
+/// (the `BUILD_WALL` pattern): the worker resolves + validates and queues
+/// `PROMOTE SET_NEED`/`PROMOTE GRANT_CONDITION`, whose typed operands carry the real write
+/// set — so the untyped input words never need top-byte routing.
+pub const EXECUTE_INTERACTION: u32 = 12;
 
 /// What an operand is, for deriving the write/read sets. Only `entity_reference` operands matter to
 /// the sets; `Imm` operands (numbers, positions, definitions) are neither.
@@ -117,8 +127,11 @@ pub fn signature(action: u32) -> Option<&'static [OperandKind]> {
         MOVE_STEP => &[ReadWrite, Imm, Imm], // obj, dest, trip-serial (worker-only chain hop)
         SET => &[Write, Imm, Imm, Imm, Imm], // cold_row, type_id, tile_reference, kind_reference, data
         BUILD_WALL => &[Imm, Imm, Imm], // start, end, object — writes nothing; the worker queues SETs
-        SET_NEED => &[Write, Imm, Imm], // obj, need_id, satisfaction (0..=255)
-        GRANT_CONDITION => &[Write, Imm], // obj, condition_id
+        SET_NEED => &[Write, Imm, Imm], // obj, need def ref, satisfaction (f32 bits)
+        GRANT_CONDITION => &[Write, Imm], // obj, condition def ref
+        // EXECUTE_INTERACTION is variable-arity (interaction, version, count, inputs×count —
+        // all Imm; writes ride the verbs the worker queues) — framed in the reader like
+        // CREATE/INIT_ZONE, no fixed signature.
         _ => return None,
     })
 }
@@ -168,10 +181,11 @@ impl<'a> Iterator for Program<'a> {
             return None;
         }
         let action = self.words[self.pos];
-        // The **variable-arity** verbs: `INIT_ZONE cold_row type_id count item×count` (F12) and
-        // `CREATE def position count payload×count` (human-pawns F2). Both carry their `count`
-        // as the third operand (`pos + 3`), so arity is `3 + count`. Every other verb is fixed.
-        let ar = if action == INIT_ZONE || action == CREATE {
+        // The **variable-arity** verbs: `INIT_ZONE cold_row type_id count item×count` (F12),
+        // `CREATE def position count payload×count` (human-pawns F2) and `EXECUTE_INTERACTION
+        // interaction version count inputs×count` (interactions F4). All three carry their
+        // `count` as the third operand (`pos + 3`), so arity is `3 + count`. Others are fixed.
+        let ar = if action == INIT_ZONE || action == CREATE || action == EXECUTE_INTERACTION {
             match self.words.get(self.pos + 3) {
                 Some(&count) => 3 + count as usize,
                 None => {
@@ -226,8 +240,10 @@ fn collect_operands(
             continue;
         }
         // CREATE is variable-arity with EVERY operand imm (the write is the minted id, which is
-        // not an operand) — it contributes nothing to either set.
-        if inst.action == CREATE {
+        // not an operand) — it contributes nothing to either set. EXECUTE_INTERACTION likewise:
+        // its inputs are UNTYPED words (an f32 bit pattern can alias any nibble), and its real
+        // writes ride the typed verbs the worker queues (interactions F4).
+        if inst.action == CREATE || inst.action == EXECUTE_INTERACTION {
             continue;
         }
         let sig = signature(inst.action).expect("parsed, so known");
@@ -295,6 +311,8 @@ pub fn target_routes(words: &[u32]) -> Result<Vec<(u32, Route)>, ProgramError> {
             // CREATE def position count payload×count — no routed target (the minted id is the
             // write, handled by the worker's spawn arm, not the claim machinery).
             CREATE => {}
+            // EXECUTE_INTERACTION — no routed target either: untyped inputs, queued-verb writes.
+            EXECUTE_INTERACTION => {}
             // Hot verbs: every Write/ReadWrite operand routes by its own nibble.
             _ => {
                 let sig = signature(inst.action).expect("parsed, so known");
@@ -443,6 +461,28 @@ mod tests {
         // Nothing enters the sets — every word is imm, the minted id is not an operand.
         assert_eq!(write_targets(&p).unwrap(), Vec::<u32>::new());
         assert_eq!(read_targets(&p).unwrap(), Vec::<u32>::new());
+    }
+
+    #[test]
+    fn execute_interaction_frames_and_contributes_no_targets() {
+        // EXECUTE_INTERACTION interaction version count=3 [pawn, need, amount(f32 bits)]
+        // (interactions F4): frames like CREATE, and NOTHING enters the sets — the pawn
+        // input is untyped (an f32 bit pattern can alias any nibble); the real writes ride
+        // the verbs the worker queues.
+        let amount = 3.0f32.to_bits();
+        let p = vec![
+            EXECUTE_INTERACTION, 0x8004_0010, 0, 3, 0x3080_0000, 0x8001_0010, amount,
+            PROMOTE_EVENT,
+        ];
+        let insts: Vec<_> = program(&p).map(|r| r.unwrap()).collect();
+        assert_eq!(insts.len(), 2, "the count frames the tail");
+        assert_eq!(insts[0], Instruction {
+            action: EXECUTE_INTERACTION,
+            operands: &[0x8004_0010, 0, 3, 0x3080_0000, 0x8001_0010, amount],
+        });
+        assert_eq!(write_targets(&p).unwrap(), Vec::<u32>::new());
+        assert_eq!(read_targets(&p).unwrap(), Vec::<u32>::new());
+        assert!(target_routes(&p).unwrap().is_empty());
     }
 
     #[test]
