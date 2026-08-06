@@ -9,14 +9,15 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
       subtypes trait/interaction/affordance/need/condition, kind, variant `default`; registry
       numbers the tuple, NO authored ids — the needs/conditions blocks rewritten off `id = N`
       ([F1](forks.md#f1)). Acceptance: every field P2 authors has a spelling here first.
-- [ ] Document the value domain: satisfaction = −128-biased i8 (full 127, empty 0, negative =
-      deficit, [F3](forks.md#f3)/[F7](forks.md#f7)); bands/deplete/magnitudes in RAW units; the
-      NEED/CONDITION payload entries grown to u32 def ids ([I1](issues.md#i1)). Acceptance: the
-      schema states drink 3's exact stored delta (+3) and the new entry layouts.
+- [ ] Document the value domain: satisfaction and magnitudes are f32; each need authors
+      `min`/`max` + sign treatment ([F3](forks.md#f3)/[F7](forks.md#f7)); the NEED/CONDITION
+      payload entries grown to u32 def ids + an f32 satisfaction word ([I1](issues.md#i1)).
+      Acceptance: the schema states drink 3's exact effect (+3.0, clamped to thirst's authored
+      max) and the new entry layouts.
 - [ ] Document the `EXECUTE_INTERACTION` event: `[op, interaction_id, version, input_count,
-      inputs…]`, inputs bias-encoded i32, the input signature declared by the interaction def
-      ([F4](forks.md#f4)/[F5](forks.md#f5)). Acceptance: layout in VARIABLES before any codec
-      change; docs-check green.
+      inputs…]`, value inputs as f32 BIT PATTERNS in the u32 lanes, the input signature declared
+      by the interaction def ([F4](forks.md#f4)/[F5](forks.md#f5)). Acceptance: layout in
+      VARIABLES before any codec change; docs-check green.
 
 ## P1 — the loader + the registry
 
@@ -24,9 +25,9 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
       `deny_unknown_fields`; needs/conditions migrate off explicit ids to taxonomy; duplicate
       `(taxonomy, version)` refuses. Acceptance: crate tests — round-trip per category; a
       duplicate tuple refuses loudly.
-- [ ] `needs_eval` moves to the i8 domain: raw-unit bands, deplete = TICS for 127→0 continuing
-      below zero, biased-storage helpers used by every caller ([I2](issues.md#i2)). Acceptance:
-      crate tests + translated probes green; no fraction math survives grep.
+- [ ] `needs_eval` moves to f32 + per-need authored domains: clamp to `min`/`max`, deplete =
+      TICS for the max→min traverse, bands in the need's own units ([I2](issues.md#i2)).
+      Acceptance: crate tests + translated probes green; no 255-scale math survives grep.
 - [ ] Registry: the index module numbers `gameplay` tuples like things ([F1](forks.md#f1)).
       Acceptance: registry rows exist for the P2 defs; a consumer resolves
       `gameplay/interaction/drink/default` → its u32.
@@ -47,26 +48,26 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
       `["default"]`) — comments carrying the model. Acceptance: loads; `rd content-check` green.
 - [ ] Re-author `content/needs.toml` to the gameplay taxonomy (no ids) and assign the ends: wolf
       `traits = ["biological_lifeform"]`, water tile `affordances = [{ name = "drink_water",
-      magnitude = 3 }]`, bands in raw i8 units. Acceptance: the golden re-bless shows exactly
-      these rows.
+      magnitude = 3 }]`, thirst on its authored `0..100` domain with bands in those units
+      ([F7](forks.md#f7)). Acceptance: the golden re-bless shows exactly these rows.
 - [ ] Classify the gameplay TOMLs as client-served at the filter site, biomes precedent cited
       ([I9](issues.md#i9)). Acceptance: `/content` lists interactions.toml; biomes still
       withheld.
 
 ## P3 — the payload, the event, the worker
 
-- [ ] Codec + pawn module: NEED/CONDITION payload entries grow to carry u32 def ids + biased i8
-      satisfaction; splice composers follow; dev wolves re-mint through the npc's existing path
-      ([I1](issues.md#i1)). Acceptance: a fresh wolf's payload holds registry ids; no old-shape
-      rows remain live.
+- [ ] Codec + pawn module: NEED/CONDITION payload entries grow to carry u32 def ids + an f32
+      satisfaction word; splice composers follow; dev wolves re-mint through the npc's existing
+      path ([I1](issues.md#i1)). Acceptance: a fresh wolf's payload holds registry ids + f32
+      satisfaction; no old-shape rows remain live.
 - [ ] Codec + edge: `EXECUTE_INTERACTION` as a variable-arity event (the CREATE precedent)
       through the edge queue; nothing existing moves. Acceptance: codec round-trip test; the
       edge relays the event from an uplink client.
 - [ ] Worker executes: resolve the def (corpus + registry manifest), validate count + decode
-      biased inputs ([I6](issues.md#i6)), check the pawn stands ON a carrier tile
-      ([F8](forks.md#f8)), then `needs_eval` read-modify-write + `SET_NEED` +
+      f32 inputs rejecting non-finite ([I6](issues.md#i6)), check the pawn stands ON a carrier
+      tile ([F8](forks.md#f8)), then `needs_eval` read-modify-write + `SET_NEED` +
       `GRANT_CONDITION`(quenched) ([I3](issues.md#i3)). Acceptance: a hand-injected drink moves
-      satisfaction by exactly +3; off-water logs a refusal and splices nothing.
+      satisfaction by exactly +3.0; off-water logs a refusal and splices nothing.
 - [ ] Wrap-window drill: one hand-injected drink with `set_tic` across a u16 wrap seam
       ([I5](issues.md#i5)). Acceptance: the result matches an offline `needs_eval` computation;
       no stale quench.

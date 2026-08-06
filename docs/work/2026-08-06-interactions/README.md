@@ -37,10 +37,12 @@ interaction variants, with the affordance specifying which are available.
   ([F2](forks.md#f2)): the water tile authors `affordances = [{ name = "drink_water",
   magnitude = 3 }]`; a future waterskin authors 1 or 5.
 
-**Values are signed, one bias rule** ([F3](forks.md#f3), user): satisfaction is a −128-biased
-i8 in its u8 lane (full = 127, empty = 0, negative = deficit — [F7](forks.md#f7), mine);
-"drink 3" means +3 raw satisfaction units; event inputs are u32 words carrying bias-encoded i32
-values. Damage-a-need is the same mechanism as satisfy.
+**Values are float32** ([F3](forks.md#f3), user): satisfaction and magnitudes are f32; an event
+input word is the float's bit pattern in its u32 lane. Each need authors its OWN domain — min,
+max, sign treatment ([F7](forks.md#f7), user) — with thirst provisionally `0..100` (a percent
+scale), so "drink 3" = +3.0 of a 100-full thirst; decimals make percentages and per-tic
+gain/loss rates first-class, and signed effects mean damage-a-need is the same mechanism as
+satisfy.
 
 **Execution is a queued EVENT** ([F4](forks.md#f4), user):
 `EXECUTE_INTERACTION [interaction_id, version, input_count, inputs…]` rides the existing
@@ -56,8 +58,9 @@ issues the event on arrival; deeper authority is a later refinement ([I4](issues
 - One eval, still: satisfaction math goes through `needs_eval` on the worker exactly as in npc
   and the client. No second computation of "current satisfaction" may exist.
 - The payload consequence is faced, not dodged ([I1](issues.md#i1)): u32 registry ids outgrow
-  the 8-bit payload id lanes, so the NEED/CONDITION entries restructure and dev-world wolves
-  re-mint. The i8 domain remap lands everywhere in one phase ([I2](issues.md#i2)).
+  the 8-bit payload id lanes, so the NEED/CONDITION entries restructure (def-id word + f32
+  satisfaction word) and dev-world wolves re-mint. The f32 domain migration lands everywhere in
+  one phase ([I2](issues.md#i2)).
 - Instantaneous interactions only ([F8](forks.md#f8)/[I9 of the schema](forks.md#f5)): the npc
   moves the wolf, then issues the event on arrival. The recorded destination — a queued
   "move to and execute" against `unit.x/y/z` so sequenced actions dodge the arrival round-trip —

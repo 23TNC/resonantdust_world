@@ -25,18 +25,22 @@ variants are available, per F1) ONCE; a carrier def references it with ITS value
 a future waterskin. **Rejected**: inlining the binding per carrier — restates the trait gate
 everywhere (the two-copies class, in data).
 
-## F3 — magnitudes are RAW satisfaction units, signed; wire words are BIAS-encoded {#f3}
+## F3 — values are FLOAT32; the event's u32 lanes carry f32 bit patterns {#f3}
 
-_2026-08-06, **user**: "Needs will be held as u8, and have -128 bias, so we can essentially hold
-an i8. … We will treat the input as i32 so we can handle +/- 3 etc. So we subtract from whatever
-we pass it."_
+_2026-08-06, **user**: "We have a full u32 in our event. I've changed my mind lets use float32.
+This then allows us to define how we handle the float32, as our need definition can determine
+maximum/minimum how we treat sign etc. We then have decimals so we can easily handle percentages
+and rates of gain/loss etc."_
 
-**Chosen (user)**: no unit multiplier — "drink 3" means +3 in the satisfaction domain itself.
-The satisfaction lane stays u8 STORED but carries a −128-biased i8 VALUE; event inputs are u32
-words carrying bias-encoded i32 values, decoded by subtraction at the consumer. One rule, both
-widths: stored = value + bias; effects are signed, so damage-a-need is the same mechanism as
-satisfy. **Supersedes** the first draft's `magnitude × unit` — the scale question it solved is
-now [F7](#f7)'s domain mapping instead.
+**Chosen (user)**: satisfaction and interaction magnitudes are **f32**. An event input word is
+the float's BIT PATTERN in its u32 lane (`to_bits`/`from_bits` — no bias arithmetic); the stored
+satisfaction becomes an f32 word of its own in the grown payload entry ([I1](issues.md#i1)).
+The SYSTEM stores, transports and clamps; the NEED DEFINITION owns meaning — authored
+min/max and sign treatment ([F7](#f7)) — and decimals make percentages and per-tic gain/loss
+rates first-class. Effects are signed, so damage-a-need is the same mechanism as satisfy.
+**Supersedes**, in turn, the first draft's `magnitude × unit` and the earlier −128-biased i8.
+Wire hygiene becomes a validation duty: non-finite floats (NaN/±inf) are rejected at the worker
+([I6](issues.md#i6)).
 
 ## F4 — execution is an EVENT queued through the edge; the worker interprets it {#f4}
 
@@ -74,16 +78,17 @@ thing def, like `needs`. The availability check takes A TRAIT SET, resolution bu
 opcode, per the human-pawns payload design) move nothing. **Rejected**: kind-lookup hard-coded
 at gate sites.
 
-## F7 — the i8 satisfaction domain: full = 127, empty = 0, negative = deficit {#f7}
+## F7 — each NEED definition authors its OWN domain: min/max + sign treatment {#f7}
 
-_2026-08-06, mine — flagged for the user's veto._ F3 fixes the STORAGE (biased i8) but not the
-MAP. **Chosen**: full satisfaction = 127, the depletion target = 0, and the negative half is
-DEFICIT territory (a need driven below empty by effects or future mechanics); `deplete` stays
-TICS for the full→empty traverse (127→0), the rate continuing below zero; band `lo`/`hi` and
-magnitudes author in the SAME raw units (thirsty = `lo 13, hi 45` replacing 0.1/0.35 of the old
-255 scale). One domain everywhere kills the fraction↔raw conversion class. **Rejected**: keeping
-fractional bands over a signed domain (fractions of WHAT range? — every consumer must agree on
-an answer the corpus no longer states).
+_2026-08-06, **user** (the [F3](#f3) quote): "our need definition can determine maximum/minimum
+how we treat sign etc."_
+
+**Chosen (user)**: no global map — the previous resolution here (a fixed i8 full-127 scale) dies
+with the i8. Each `[[need]]` authors `min`/`max`; the eval and the worker CLAMP to them;
+`deplete` stays TICS for the max→min traverse; bands and magnitudes author in the need's own
+units. The corpus-side PROVISIONAL choice (data, freely tunable): thirst authors `0..100` — a
+percent scale, so the user's "drink 3" reads as +3 of a 100-full thirst, and the old fractional
+bands become `thirsty lo 10 hi 35`, `dehydrated lo 0 hi 10`.
 
 ## F8 — this turn's location rule is ON the tile; unit.x/y/z is the recorded generalization {#f8}
 

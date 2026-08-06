@@ -14,14 +14,14 @@ sat/tic word), the pawn module's splice composers move with them, and LIVE pawn 
 shape are invalid. Migration = dev-world re-mint: wolves re-initialise their needs through the
 npc's existing mint path; no in-place converter is built.
 
-## I2 — the i8 domain remap touches every satisfaction consumer at once {#i2}
+## I2 — the f32 migration touches every satisfaction consumer at once {#i2}
 
-[F3](forks.md#f3)/[F7](forks.md#f7) change the VALUE domain (255-scale fractions → raw i8,
-full = 127, bands as raw units). `needs_eval` (crossing math, deplete rate), the corpus bands,
-the panel's display math, npc logging, and the golden probes all speak the old scale today.
-This is ONE migration done everywhere in the same phase — a consumer left on the 255 scale
-reads full as deficit. The golden fixture is the net: its needs section reshapes entirely and
-the re-bless diff must be read line-by-line ([I8](#i8)).
+[F3](forks.md#f3)/[F7](forks.md#f7) change both STORAGE (the u8 lane → an f32 payload word) and
+DOMAIN (the implicit 0..255 fraction → each need's authored min/max). `needs_eval` (crossing
+math, deplete rate, clamping), the corpus bands, the panel's display math, npc logging, and the
+golden probes all speak the old scale today. This is ONE migration done everywhere in the same
+phase — a consumer left on the 255 scale reads garbage. The golden fixture is the net: its
+needs section reshapes entirely and the re-bless diff must be read line-by-line ([I8](#i8)).
 
 ## I3 — satisfy is a read-modify-write on a LAZY value {#i3}
 
@@ -50,8 +50,10 @@ ad-hoc subtraction at the execute site. A P3 drill runs one drink across a wrap 
 The event carries `input_count` + raw words ([F4](forks.md#f4)); meaning comes from the
 interaction's declared signature ([F5](forks.md#f5)). A mis-ordered input is silent garbage —
 an entity id read as a magnitude. The worker validates count against the signature and
-type-checks what it can (an entity input must resolve to a live pawn; a def input must exist in
-the registry); a mismatch logs and drops the event, never half-executes.
+type-checks what it can: an entity input must resolve to a live pawn, a def input must exist in
+the registry, and an f32 input must be FINITE (NaN/±inf from the wire poison every downstream
+computation — reject, per [F3](forks.md#f3)). A mismatch logs and drops the event, never
+half-executes.
 
 ## I7 — double-drink refreshes quenched; it does not stack {#i7}
 
