@@ -173,3 +173,27 @@ the best thing rather than litigate it.
 
 **Rejected — 768 "because e07 used it".** Copying the winner's incidental constraint is
 cargo-culting a limitation we no longer have.
+
+## F7 — Comparison IS a goal now; a defined run matrix {#f7}
+_2026-08-04 · **re-resolves [F2](#f2) on the user's instruction** — "define several training runs so
+that we can compare and hopefully close on a lora"_
+
+[F2](#f2) banned controlled variants because the user wanted sprites, not knowledge. That has
+flipped: they now want a comparison set to converge with. So variants are back — but each run must
+answer ONE question, or it is just more GPU time.
+
+**What is already settled and must NOT be re-varied:** the two-stage structure (general corpus →
+specialist), `animagine` as the stage-1 base, 768, `dim 64 / alpha 64`, batch 4, bf16, AdamW, and
+the pinned prompts/seeds. Runs 6–9 spent ~8 GPU-hours on the alpha/LR axis before
+[I11](issues.md#i11)/[I12](issues.md#i12) showed the real problem was structural. Do not reopen it.
+
+**The question the matrix exists to answer:** run-11 showed stage 2 *degrading* after g08 — the
+wolf-south collapses into a sliver, and subjects drift pale. Something in the specialist stage
+overwrites what stage one learned. R12 and R13 test the two plausible mechanisms; R14 tests the
+base we never trained; R15 is reserved for the winner.
+
+**Reframed by measurement, so nobody chases it:** the game **re-tints downstream via the layer
+maps** (lineart-lora README), so the LoRA's HUE is discarded — but BRIGHTNESS survives the layer
+split to ~1/255. The corpus measures **saturation 0.187, value 114/255, 47% near-greyscale, 0%
+pale**. Our output is desaturated *and* pale. So saturation is already correct; the real defect is
+**value**, and only value is worth a run.

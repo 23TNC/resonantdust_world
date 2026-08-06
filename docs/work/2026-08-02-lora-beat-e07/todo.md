@@ -44,3 +44,16 @@ headroom**, **the user selects**. This stream changes many variables at once on 
 - [ ] Run the anteater generalisation check on the candidate. Acceptance: its three views reviewed by eye — a species with no corpus analogue is the honest test.
 - [ ] Ship it or state plainly that it lost. Acceptance: `completed.md` carries the verdict and its sheet; a loss is recorded as a result, not retried by reflex.
 - [ ] Run `bin/rd docs-check` and close the stream. Acceptance: tree green, index row updated, `generate.py` left pointing at whatever actually ships.
+
+## P5 — The run matrix (F7) — one question per run, everything else frozen
+
+Frozen across all four: two-stage structure, 768, `dim 64 / alpha 64`, batch 4, bf16, AdamW,
+pinned prompts + seeds, samples every generation. Stage-1 warm start is `rd_full_anima_r10_g08`
+unless the row says otherwise. **R11 (already trained) is the control.**
+
+- [ ] R12 — stage 2 from g08 at **LR 2.5e-5** (halved), 15 gens. Question: does a gentler specialist stop stage 1's knowledge being overwritten? Acceptance: wolf-south still has a body at g12+, or it does not.
+- [ ] R13 — stage 2 from g08 on the **full 701 corpus** instead of quad-only, LR 5e-5, 15 gens. Question: does keeping the body-plan contrast alive in stage 2 prevent the drift? Acceptance: compare wolf-south and subject value against R11 at matched generations.
+- [ ] R14 — **stage 1 on Illustrious-XL**, full corpus, fresh, otherwise identical to run-10, 20 gens. Question: the P1 probe measured Illustrious's PRIOR, never what it LEARNS. Acceptance: a stage-1 grid directly comparable to run-10's.
+- [ ] R15 — stage 2 on whichever of R12/R13/R14 the user picks, settings inherited from that winner. Acceptance: held until the first three are judged; do not launch blind.
+- [ ] Build ONE cross-run sheet: R11/R12/R13 at matched generations, same prompts and seeds. Acceptance: the user can compare runs in a single image rather than four.
+- [ ] Record the winner and why in `completed.md`. Acceptance: names the run, the generation, and what decided it — silhouette mass, value, and wolf-south body, not anatomy.
