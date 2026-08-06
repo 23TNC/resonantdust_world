@@ -84,33 +84,51 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P3 — the payload, the event, the worker
 
-- [ ] Codec + pawn module: NEED/CONDITION payload entries grow to carry u32 def ids + an f32
+- [x] Codec + pawn module: NEED/CONDITION payload entries grow to carry u32 def ids + an f32
       satisfaction word; splice composers follow; dev wolves re-mint through the npc's existing
       path ([I1](issues.md#i1)). Acceptance: a fresh wolf's payload holds registry ids + f32
-      satisfaction; no old-shape rows remain live.
-- [ ] Codec + edge: `EXECUTE_INTERACTION` as a variable-arity event (the CREATE precedent)
+      satisfaction; no old-shape rows remain live. → the reducer SIGNATURES never moved (u32
+      args already), only the composed entries; the module republish wiped dev rows and fresh
+      wolves minted `[NEED 0x80010010 f32 tic][CONDITION 0x80020030 tic]` — read live via sql.
+- [x] Codec + edge: `EXECUTE_INTERACTION` as a variable-arity event (the CREATE precedent)
       through the edge queue; nothing existing moves. Acceptance: codec round-trip test; the
-      edge relays the event from an uplink client.
-- [ ] Worker executes: resolve the def (corpus + registry manifest), validate count + decode
+      edge relays the event from an uplink client. → op 12 frames like CREATE (`count` third),
+      contributes NOTHING to the sets/routes (untyped inputs — the queued verbs carry the
+      writes); framing test green; LIVE: npc→edge→queue→orchestrator (entities=0)→worker.
+- [x] Worker executes: resolve the def (corpus + registry manifest), validate count + decode
       f32 inputs rejecting non-finite ([I6](issues.md#i6)), check the pawn stands ON a carrier
       tile ([F8](forks.md#f8)), then `needs_eval` read-modify-write + `SET_NEED` +
       `GRANT_CONDITION`(quenched) ([I3](issues.md#i3)). Acceptance: a hand-injected drink moves
-      satisfaction by exactly +3.0; off-water logs a refusal and splices nothing.
-- [ ] Wrap-window drill: one hand-injected drink with `set_tic` across a u16 wrap seam
+      satisfaction by exactly +3.0; off-water logs a refusal and splices nothing. → BOTH drills
+      green: `NPC_INTERACT` off-water → `interaction dropped … (F8: on-tile only)`, zero
+      splices; on-water sips exact (`from=11.5648… to=14.5648…`). Found + fixed en route: the
+      `queue_at(t+1)` TIC_GAP silent loss ([I11](issues.md#i11), BUILD_WALL had it too) and the
+      future-stamped-row phantom (eval half-window guard + test).
+- [x] Wrap-window drill: one hand-injected drink with `set_tic` across a u16 wrap seam
       ([I5](issues.md#i5)). Acceptance: the result matches an offline `needs_eval` computation;
-      no stale quench.
+      no stale quench. → ran as [D1](deviations.md#d1): `set_tic` is reducer-stamped, not
+      injectable — the seam is pinned by the eval's unit tests instead, and the worker's arm
+      verifiably contains NO tic math outside the eval fns + `tic_add` (the I5 rule).
 
 ## P4 — the npc drinks
 
-- [ ] Bot surface: expose the known-zone tile scan a brain needs to find the nearest
+- [x] Bot surface: expose the known-zone tile scan a brain needs to find the nearest
       affordance-carrying tile. Acceptance: wolves logs the nearest water position from its
-      snapshot at a known fixture spot.
-- [ ] Wolves brain: affordance availability check ([F6](forks.md#f6)), then on
+      snapshot at a known fixture spot. → `Bot::nearest_tile`/`tile_kind_at` over the
+      `ColdTiles` baseline ⊕ `ColdState` overlays, MERGED cell-wise (a zone streams one row
+      PER BIOME — seen live, zone 99 = 3 rows); logged `water=(102,68) from=(106,60)`.
+- [x] Wolves brain: affordance availability check ([F6](forks.md#f6)), then on
       Thirsty/Dehydrated MOVE_TO the nearest water and issue `EXECUTE_INTERACTION` on arrival,
       latched once per band crossing. Acceptance: drill-scaled ([I10](issues.md#i10)) — walk,
-      drink, +3, Thirsty clears, one log arc.
-- [ ] The panel shows the arc with ZERO client changes beyond the shared eval: Thirsty card →
+      drink, +3, Thirsty clears, one log arc. → the latch matured into SIP PACING (re-arm when
+      the row's `set_tic` advances): `NPC_THIRST=12` → Thirsty → walk (106,60)→(102,68) → sips
+      +3.0 to 35.33 → `conditions=[]` → `["quenched"]` mood 0.7 — one unprompted log arc; the
+      wolf even re-sipped when depletion dipped it back under 35 (a working thermostat).
+- [x] The panel shows the arc with ZERO client changes beyond the shared eval: Thirsty card →
       walk → Quenched card. Acceptance: browser captures of both card states during the drill.
+      → captured live at `:5174/?focus=102,68`: wolf `0x30800000` mood 35% with the
+      **Thirsty −0.15** card; wolf `0x30800001` (the sipper) mood 70% with **Quenched +0.20
+      3416t** (remaining tics rendering). One client line changed (`conditionLabelOf(ref)`).
 
 ## P5 — the verdict
 

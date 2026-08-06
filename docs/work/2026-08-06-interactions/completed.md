@@ -1,5 +1,41 @@
 # Completed — interactions
 
+## 2026-08-06 · P3 + P4 — the event, the worker, the drinking wolf (4/4 + 3/3)
+
+**The wire**: `EXECUTE_INTERACTION = 12` frames like CREATE (`count` third), contributes
+nothing to the write/read sets or routes (untyped inputs — the queued verbs carry the writes),
+joins the edge's CLIENT_VERBS; the pawn module's reducers moved to the new entries with their
+SIGNATURES untouched (u32 args already — no published-schema churn). Codec framing test +
+live relay npc→edge→queue→orchestrator (`entities=0`, correctly target-less)→worker.
+
+**The worker arm**: corpus + registry resolution (`interaction_params_by_ref`), count/finite/
+live-pawn validation, the F8 on-tile check against the tile shard's baseline ⊕ overlay (one
+row PER BIOME — merged, not first-found), the ONE `needs_eval` for current satisfaction, then
+`PROMOTE SET_NEED` + `PROMOTE GRANT_CONDITION` queued as one program. New read surfaces: the
+pawn shard's composed `entity_state`+`payload` and the tile shard's `entity_state`+`overlay`
+(dev-scale; tree-occupancy's per-zone worker state is the scoping successor).
+
+**Two real defects found by the drills, both fixed**:
+[I11](issues.md#i11) — `queue_at(t+1)` silently loses against the event shard's TIC_GAP
+barrier (the SDK error is async); ~half the sips vanished; BUILD_WALL had the same latent bug;
+both now queue at `master+4` and compute AT that tic. And the future-stamped-row phantom: an
+effect lands at compose tic a few tics AHEAD of an observer's learned clock, and
+`wrapping_sub` read it as ancient → clamped to `min` → a flash of Dehydrated; fixed with the
+half-window guard IN THE EVAL (+ pinned test).
+
+**The drills** (all seeds stated per [I10](issues.md#i10)): `NPC_INTERACT=drink_water`
+off-water → `interaction dropped … (F8: on-tile only)`, zero splices. `NPC_THIRST=12
+NPC_HOME=100,62` → Thirsty at 4644 → `heading to water water=(102,68)` → sips of exactly
++3.0 off the LAZILY-depleted value (`from=11.5648 to=14.5648`, the 0.44 walked off en route)
+→ 35.33 → `conditions=[]` → `["quenched"] mood=0.7` — and when depletion dipped it back
+under 35 the wolf re-sipped unprompted: the need loop is a working thermostat. The payload
+row read back by sql: `[NEED 0x80010010 f32 tic][CONDITION 0x80020030 grant_tic]`, the
+quenched grant REFRESHED by each sip. Wrap drill per [D1](deviations.md#d1).
+
+**The panel** (zero client changes beyond `conditionLabelOf(ref)`): live captures at
+`:5174/?focus=102,68` — wolf `0x30800000` mood 35% showing **Thirsty −0.15**; wolf
+`0x30800001` mood 70% showing **Quenched +0.20 3416t**.
+
 ## 2026-08-06 · P1 + P2 — the loader, the registry, the corpus (6/6 + 3/3)
 
 One build unit by necessity: removing `id` from the needs schema makes the old corpus refuse

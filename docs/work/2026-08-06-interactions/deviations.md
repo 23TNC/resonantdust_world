@@ -1,7 +1,5 @@
 # Deviations — interactions
 
-_None._
-
 ## D1 — the wrap drill runs in the eval's tests, not live {#d1}
 
 _2026-08-06, P3._ The item asked for a hand-injected drink with `set_tic` across a u16 wrap
