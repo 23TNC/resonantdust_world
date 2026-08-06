@@ -5,18 +5,25 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P0 — the contract, documented before built
 
-- [ ] VARIABLES.md § TOML schema: `menu_text` (default = label), location `"target"`
+- [x] VARIABLES.md § TOML schema: `menu_text` (default = label), location `"target"`
       ([F4](forks.md#f4)), the `move` effect ([F6](forks.md#f6)), the RESERVED input
       vocabulary (`pawn`/`destination`/`amount`, [F5](forks.md#f5)), drink's re-authored
       two-input signature, `speed`'s removal. Acceptance: every P1 field has a spelling first.
-- [ ] ACTIONS.md: `MOVE_TO` marked WORKER-ONLY (leaves `CLIENT_VERBS`; the interaction arm its
+      → the schema block gained a full `[[interaction]] move_to` sample beside the re-authored
+      drink; the wolf sample's `speed` line replaced by the derived-ground_speed note; the
+      water carrier sample shows `{ name = "move_to" }` + the walls-don't-carry-it note.
+- [x] ACTIONS.md: `MOVE_TO` marked WORKER-ONLY (leaves `CLIENT_VERBS`; the interaction arm its
       only composer — [F3](forks.md#f3)); §Movement's front door re-written around
       `EXECUTE_INTERACTION(move_to)`; the seed's serial/speculation notes updated
-      ([I1](issues.md#i1)/[I2](issues.md#i2)). Acceptance: `bin/rd docs-check` green.
-- [ ] The INPUT contract into `docs/components/client/webgl/design/` (right = active
+      ([I1](issues.md#i1)/[I2](issues.md#i2)). Acceptance: `bin/rd docs-check` green. → the
+      verb row + §Movement rewritten (front door, derived-stat spacing, seed serial = the
+      worker-queued event's reference, MoveIntent's event_tic = master+4); the stale
+      "continuation `MOVE_TO`" wording fixed to `MOVE_STEP` in passing. docs-check green.
+- [x] The INPUT contract into `docs/components/client/webgl/design/` (right = active
       selection, left = context pie menu, dismissal rules, one menu, DOM overlay —
       [F1](forks.md#f1)/[F7](forks.md#f7)). Acceptance: docs-check green; the user's spelling
-      quoted.
+      quoted. → `design/input-model.md`: the button table, menu content/composition/
+      presentation/lifecycle, the empty-set rule, and the recorded non-goals.
 
 ## P1 — loader + corpus
 

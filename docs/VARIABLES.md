@@ -741,7 +741,9 @@ packed = [                  # up to 4 material channel bindings, index = RGBA ch
 ]
 interactions = [            # the interactions this carrier OFFERS + its parameters
   { name = "drink", magnitude = 3 },   # (tiles and things alike; stat-model F5/F9 — the
-]                           #  interaction carries its own affordance gate)
+  { name = "move_to" },                #  interaction carries its own affordance gate)
+]                           # ground tiles carry move_to; WALLS deliberately don't —
+                            # soft passability by authoring (input-rework F9)
 
 # ── things.toml — flora, walls' kinds, PAWNS (a pawn is a thing with parts) ──
 [[thing]]
@@ -750,7 +752,8 @@ kind = "wolf"
 subType = ["animal"]        # applicability array
 variant = ["0"]             # applicability array
 name = "wolf"
-speed = 12                  # TICS per tile (optional; DIES with the move_to rewire — stat-model F12)
+# (`speed` is GONE — input-rework F8: a pawn's pace is the DERIVED `ground_speed`
+#  stat, in tics/tile, contributed by its `walks` level. No walks → cannot ground-move.)
 needs = ["thirst"]          # the needs this kind carries (optional)
 traits = [                  # starting trait bindings, minted at CREATE (stat-model F11);
   "biological_lifeform",    #   a bare string = level 1
@@ -858,14 +861,38 @@ stats = [ { stat = "ground_speed", add = [24, 12, 6] } ]   # tics/tile at level 
 [[interaction]]             # something a pawn can DO (interactions F5)
 name = "drink"
 label = "Drink"
+menu_text = "Drink"         # the pie-menu label (input-rework F1); default = label
 affordances = ["can_drink"] # the gates (stat-model F5): EVERY listed predicate must pass
-inputs = ["pawn", "need", "amount"]   # the SIGNATURE — event inputs bind these IN ORDER
+# The SIGNATURE — event inputs bind these IN ORDER. Input names are a RESERVED
+# vocabulary the pie menu binds (input-rework F5): `pawn` = the active selection,
+# `destination` = the clicked tile's position_reference, `amount` = the carrier
+# binding's magnitude (f32 bits). A signature outside the vocabulary is not
+# menu-composable (the npc may still compose it by hand).
+inputs = ["pawn", "amount"]
 # effects: operands are `"@input"` references or constants; `amount` is signed f32,
-# clamped to the need's effective min/max on apply
-satisfy = { target = "@pawn", need = "@need", amount = "@amount" }
+# clamped to the need's effective min/max on apply. drink's need is BAKED (a generic
+# menu cannot guess a need input — input-rework F5).
+satisfy = { target = "@pawn", need = "thirst", amount = "@amount" }
 grant = ["quenched"]        # TIMED condition grants on execute (expiry from the condition)
-location = "on"             # this turn's only rule: the target stands ON a carrier tile (F8)
+location = "on"             # the ACTING pawn must stand ON a carrier tile (interactions F8)
 duration = 0                # reserved — interactions are instantaneous (interactions I9)
+
+[[interaction]]             # movement as an interaction (input-rework F2/F6)
+name = "move_to"
+label = "Move To"
+menu_text = "Move To"
+affordances = ["can_move_ground"]
+inputs = ["pawn", "destination"]
+# The `move` effect (the third effect kind, beside satisfy/grant): walk `target` to
+# `to` — the worker queues the movement-chain seed; chain spacing derives from the
+# pawn's `ground_speed` stat (input-rework F8: the `speed` field is DELETED).
+move = { target = "@pawn", to = "@destination" }
+# location "target" (input-rework F4): the DESTINATION tile is the carrier — it must
+# offer this interaction ("on" requires standing on the carrier instead). The pie
+# menu enforces the same rule: "on" options show only while standing on the clicked
+# tile. An interaction must author at least one effect (`satisfy` or `move`).
+location = "target"
+duration = 0
 
 [[affordance]]              # a named PREDICATE over pawn stats (stat-model F5/F10)
 name = "can_drink"

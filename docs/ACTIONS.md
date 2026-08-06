@@ -89,7 +89,7 @@ slot is grouped/claimed) or **read** (in the read set → the worker blocks on i
 |---|---|---|---|
 | `CREATE` | 3 | variable | `def:definition_reference` (imm) · `position:position_reference` (imm) · `count` (imm) · `payload×count` (imm) → **mints** a new entity — THE creation verb for any object (human-pawns F2; no separate spawn action). The packed def's `type_id` **routes** the mint to its type's shard arm (`TYPE_PAWN` today; any other type is rejected by name in the worker, never silently pawned). `payload` is the minted entity's opcode-stream sidecar ([`TABLES.md` §payload](TABLES.md)) — e.g. a human's `PART(0, body def)`/`PART(1, head def)`; empty for the wolf. The written target is the *minted* id, not an operand. The second variable-arity verb (with `INIT_ZONE`); the `count` word sits third in both. |
 | `PLACE` | 4 | 2 | `obj:entity_reference` (**write**) · `position:position_reference` (imm) — set `obj`'s position absolutely. |
-| `MOVE_TO` | 5 | 2 | `obj:entity_reference` (**write** + **read**) · `dest:position_reference` (imm) — the CLIENT-issued move verb, always the SEED: stamps the trip-serial, turns facing toward the path, promotes the current position when `PROMOTE`-prefixed, steps NOTHING. The worker chains `MOVE_STEP` hops from it — §Movement. |
+| `MOVE_TO` | 5 | 2 | `obj:entity_reference` (**write** + **read**) · `dest:position_reference` (imm) — the movement-chain SEED, **WORKER-ONLY since input-rework F3** (it left `CLIENT_VERBS`; the worker's `move_to` interaction arm is its only composer — clients move by queueing `EXECUTE_INTERACTION(move_to)`). The seed's mechanics are unchanged: stamps the trip-serial, turns facing toward the path, promotes the current position when `PROMOTE`-prefixed, steps NOTHING; the worker chains `MOVE_STEP` hops from it — §Movement. |
 | `SET` | 6 | 5 | `cold_row:cold_row_reference` (**write**) · `type_id` (imm) · `tile_reference` (imm) · `kind_reference` (imm, `0`=clear) · `data` (imm) — **override one cold cell** through the `overlay` tier. The `cold_row` is spelled (so concurrent `SET`s to one row **group** — see routing below) and `type_id` names the shard (a `cold_row_reference` carries no type nibble). Replaces the old per-cell `cold_entity_reference` SET. |
 | `INIT_ZONE` | 7 | variable | `cold_row:cold_row_reference` (**write**) · `type_id` (imm) · `count` (imm) · `item×count` (imm) — build a zone's **whole baseline row** and write it to `entity_state_log` (`ColdBaseline` tier); `PROMOTE INIT_ZONE …` projects it visible. The first variable-arity verb (F12; `CREATE` is the second). Built. |
 | `MOVE_STEP` | 8 | 3 | `obj:entity_reference` (**write** + **read**) · `dest:position_reference` (imm) · `serial` (imm) — one chain hop, **WORKER-ONLY** (the edge rejects it from clients — movement-hardening F2): step `obj` one tile toward `dest` and re-queue, but ONLY while `serial` still matches the trip-serial in `obj`'s `data` — a mismatch means the chain was superseded, and the hop dies silently. §Movement. |
@@ -125,24 +125,32 @@ continuation** `MOVE_TO obj dest` for the tic the object reaches the next tile. 
 
 ## Movement, and the client's tic estimate
 
-**Built** (first-pawns, 2026-07-28). The sync philosophy this implements: the server fans out
-authoritative state, clients issue commands against whatever they think state is, and the edge +
-workers validate/execute against authoritative state — never lockstep.
+**Built** (first-pawns, 2026-07-28; the front door re-hung by input-rework, 2026-08-06). The
+sync philosophy this implements: the server fans out authoritative state, clients issue commands
+against whatever they think state is, and the edge + workers validate/execute against
+authoritative state — never lockstep.
+
+**The FRONT DOOR is the `move_to` INTERACTION** (input-rework F2/F3): a client (browser pie
+menu, npc brain) queues `EXECUTE_INTERACTION(move_to, [pawn, destination])`; the worker
+validates it — the destination tile OFFERS `move_to` (location `"target"`, F4; walls don't
+carry it, F9), the pawn's `can_move_ground` predicate passes — and queues the
+`PROMOTE_EVENT PROMOTE MOVE_TO pawn dest` seed at `master+4` (the I11 barrier rule). From the
+seed down, everything below is unchanged.
 
 `MOVE_TO` is a self-perpetuating chain: each hop writes one tile and queues the next, until `dest`.
 The step is a **greedy straight line** behind an explicit seam (`one function`, replaced by
 pathfinding when it lands). Two capabilities the chain uses:
 
 - **A verb that queues an event.** A non-final `MOVE_TO` hop makes the worker queue the
-  continuation `MOVE_TO obj dest` — baked into the verb, not a general `QUEUE` action (yet).
-- **Queue-at-a-future-tic.** The next hop lands `k` tics out, `k` = the kind's `tics_per_tile`.
-  **Speed is CONTENT, authored in TICS PER TILE** (user, 2026-07-28 — supersedes the wall-time
-  authoring rule): each kind's `:data` facet authors its speed in the DSL corpus (wolf = 12 →
-  2 s/tile at 6 Hz); `shared/codec::speed` holds only the DEFAULT for unauthored kinds and the
-  resolution rule. Every consumer — the worker's continuation spacing, the client's speculation
-  rate, the npc's trip deadline — resolves the SAME per-kind value through the corpus/bundle, or
-  speculation drifts by design. The accepted consequence: a `TIC_HZ` change changes wall-clock
-  movement speed, because the game's time unit IS the tic — content reads in tics, not seconds.
+  continuation `MOVE_STEP obj dest serial` — baked into the verb, not a general `QUEUE` action (yet).
+- **Queue-at-a-future-tic.** The next hop lands `k` tics out, `k` = the pawn's pace in TICS PER
+  TILE — since input-rework F8 the DERIVED **`ground_speed` stat** (the pawn's `walks` level's
+  authored tics/tile through the ONE `stat_eval`; the old per-kind `speed` field is DELETED).
+  Every consumer — the worker's continuation spacing, the client's speculation rate, the npc's
+  trip deadline — derives the SAME value from the pawn's rows + corpus, or speculation drifts by
+  design. `shared/codec::speed` holds only the degenerate-fallback default. The accepted
+  consequence: a `TIC_HZ` change changes wall-clock movement speed, because the game's time unit
+  IS the tic — content reads in tics, not seconds.
   So `queue` accepts `event_tic ≥ master + 3`, not exactly `+3`. The completeness barrier is
   unaffected — a tic's set is frozen at `T-2` regardless of *when* its events were born.
 
@@ -172,17 +180,20 @@ avoiding. The cadence:
   destination, broad agreement along the path — mid-route events publish their own resolved
   positions, so the chase always has fresh truth to converge on.
 
-So the initial program is `PROMOTE_EVENT PROMOTE MOVE_TO obj dest`; the self-queued continuations
-are bare `MOVE_STEP obj dest serial`; the hop that reaches `dest` is
-`PROMOTE MOVE_STEP obj dest serial`.
+So the seed program (worker-queued, from the interaction) is
+`PROMOTE_EVENT PROMOTE MOVE_TO obj dest`; the self-queued continuations are bare
+`MOVE_STEP obj dest serial`; the hop that reaches `dest` is `PROMOTE MOVE_STEP obj dest serial`.
+The client's speculation `MoveIntent` is manufactured from that fanned seed exactly as before
+(input-rework I1) — its `event_tic` is now the seed's `master+4` queue tic.
 
 **Chains have identity — at most ONE lives per pawn** (movement-hardening F1, closing
-pawn-movement I7). The seed stamps a 6-bit **trip-serial** (the seed event's
-`event_reference & 0x3F` — unique even for two same-tic intents, where a tic-derived serial
+pawn-movement I7). The seed stamps a 6-bit **trip-serial** (the SEED event's
+`event_reference & 0x3F` — since input-rework F3 that is the worker-queued effect event's
+reference, still unique even for two same-tic intents, where a tic-derived serial
 would let both chains live) into the pawn's `data` low bits (`TABLES.md` § pawn); every
 continuation carries that serial and checks
 it against the pawn before stepping — a mismatch means a NEWER intent re-stamped the pawn, and
-the stale hop dies silently (no step, no re-queue). So a new `MOVE_TO` intent CANCELS the old
+the stale hop dies silently (no step, no re-queue). So a new `move_to` order CANCELS the old
 chain by construction: no cancel machinery, no queue scans, and a driver's deadline re-issue is
 safe (the measured alternative was two live chains fighting over the pawn — per-hop promotes
 and 10-tile landing errors). Serial collisions don't matter: a superseded chain dies at its
@@ -195,7 +206,7 @@ and extrapolates elapsed tics at a rate LEARNED from the stream (pawn-movement F
 `TIC_HZ`, refined from the anchor history, because the true rate measurably drifts from the
 authored one; anchors age out so a wrong estimate can always correct) — a loose wall↔tic mapping
 refined by the stream itself (implicit sync, not the ping/pong that never worked). It walks the pawn fractionally along the
-line at the kind's authored `tics_per_tile`, and authoritative `state` snaps/reseeds it
+line at the pawn's DERIVED `ground_speed` (tics/tile), and authoritative `state` snaps/reseeds it
 (corrections log their error — the data the re-anchor knob will be tuned on). Best-effort by
 construction — the server dictates truth, the client makes it smooth.
 
