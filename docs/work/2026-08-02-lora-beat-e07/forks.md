@@ -197,3 +197,28 @@ maps** (lineart-lora README), so the LoRA's HUE is discarded — but BRIGHTNESS 
 split to ~1/255. The corpus measures **saturation 0.187, value 114/255, 47% near-greyscale, 0%
 pale**. Our output is desaturated *and* pale. So saturation is already correct; the real defect is
 **value**, and only value is worth a run.
+
+### F7 addendum — R11b, the missing control
+_2026-08-04 · **the user's question**: "Will re-running the same exact settings provide the same
+output? I suspect not, as its a learning process."_
+
+I defined a comparison matrix with **no repeatability control**, which would have made every row in
+it uninterpretable: if R12 differs from R11, is that the halved LR, or is it what two identical
+runs do anyway? R11b re-runs run-11 with **zero** config changes and measures exactly that.
+
+**What the script does and does not pin.** `--seed=42` is set, so data order, caption shuffling and
+noise sampling are reproducible. But `--sdpa` selects attention kernels at runtime,
+`--max_data_loader_n_workers=2 --persistent_data_loader_workers` can vary batch assembly order, and
+backward-pass atomics reduce in non-deterministic order on GPU. There is no `--deterministic` flag.
+So the *algorithm* is seeded while the *arithmetic* is not, and tiny float differences compound
+across 2880 steps.
+
+**Prediction, recorded before the run so it can be wrong:** not bit-identical, and I do not know the
+magnitude. There is already precedent at inference — [P0.4](todo.md) measured the first sample after
+a model load differing by max |Δ| 34/255 over 23% of pixels while every later sample was bit-exact.
+Training is a different mechanism, but the same class of non-determinism.
+
+**Why it runs FIRST.** If the noise floor turns out to be large, the honest conclusion is that
+single-run comparisons cannot resolve the differences we are chasing, and the matrix needs repeats
+per condition rather than one run each. Better to learn that in two hours than after three runs of
+confidently reading noise.

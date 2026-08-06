@@ -49,8 +49,9 @@ headroom**, **the user selects**. This stream changes many variables at once on 
 
 Frozen across all four: two-stage structure, 768, `dim 64 / alpha 64`, batch 4, bf16, AdamW,
 pinned prompts + seeds, samples every generation. Stage-1 warm start is `rd_full_anima_r10_g08`
-unless the row says otherwise. **R11 (already trained) is the control.**
+unless the row says otherwise. **R11 (already trained) is the control, and R11b re-runs it to measure the noise floor.**
 
+- [ ] R11b — **re-run run-11 byte-identically**, no config change at all. Question (the user's): does the same settings give the same LoRA? Acceptance: R11b vs R11 at matched generations — the gap IS the noise floor every other comparison must clear.
 - [ ] R12 — stage 2 from g08 at **LR 2.5e-5** (halved), 15 gens. Question: does a gentler specialist stop stage 1's knowledge being overwritten? Acceptance: wolf-south still has a body at g12+, or it does not.
 - [ ] R13 — stage 2 from g08 on the **full 701 corpus** instead of quad-only, LR 5e-5, 15 gens. Question: does keeping the body-plan contrast alive in stage 2 prevent the drift? Acceptance: compare wolf-south and subject value against R11 at matched generations.
 - [ ] R14 — **stage 1 on Illustrious-XL**, full corpus, fresh, otherwise identical to run-10, 20 gens. Question: the P1 probe measured Illustrious's PRIOR, never what it LEARNS. Acceptance: a stage-1 grid directly comparable to run-10's.
