@@ -49,3 +49,26 @@ and no client ever refetches. Deleted, not patched — a duplicate has to be kep
 this change and every future one, which is how the `.rd` walk went stale in this same file.
 
 Verified: all 18 edge tests green.
+
+## 2026-08-05 · P2 — the publisher and the client embed stop enumerating (2/2)
+
+`bin/content` syncs the tree: the `--exclude "*/*"` is gone from both directions, so a package
+round-trips as a package. `_check_relpath` went from "a flat file name" to "a path at any depth" —
+`mods/foo/things.toml` validates, `../escape.toml` is still refused, since an upload arg becomes a
+bucket key and must stay inside the corpus.
+
+**The client embed globs.** Four named `?raw` imports could not see `content/mods/foo/` — and a
+package that only worked once you were online would be a trap, since the embed is precisely the
+offline path. `import.meta.glob("@content/**/*.toml", { eager: true })`, eager because this is the
+no-network path and must not depend on the network.
+
+Two details worth stating:
+
+- Names are made **relative to the content root and sorted**, so the embed presents the corpus
+  exactly as `/content` does — same names, same order.
+- Biome definitions **do** ride along in the embed, where the server strips them
+  ([F2](forks.md#f2)). Harmless — the loader ignores what it has no use for — and the alternative is
+  shipping a TOML parser in the bundle to remove them.
+
+Verified: `npx tsc --noEmit` clean, and the client boots from the embed with the **same 6 tiles and
+11 things** it had before.

@@ -35,11 +35,14 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P2 — the publisher and the client embed stop enumerating
 
-- [ ] Drop `--exclude "*/*"` from `bin/content`'s upload and download so a package tree round-trips.
+- [x] Drop `--exclude "*/*"` from `bin/content`'s upload and download so a package tree round-trips.
       Acceptance: `bin/content --help` describes a tree; the sync commands carry no root-only flag.
-- [ ] Replace `contentBoot.ts`'s four `?raw` imports with `import.meta.glob("@content/**/*.toml")`.
+      → and `_check_relpath` now takes a PATH: `mods/foo/things.toml` validates, `../escape.toml`
+      is still refused.
+- [x] Replace `contentBoot.ts`'s four `?raw` imports with `import.meta.glob("@content/**/*.toml")`.
       Acceptance: `npx tsc --noEmit` clean and the client boots offline from the embed with the
-      same def count it has today.
+      same def count it has today. → tsc clean; the client boots with the SAME 6 tiles / 11 things.
+      `eager: true` because this is the no-network path and must not need one.
 
 ## P3 — a package proves it, then the docs say so
 

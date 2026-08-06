@@ -30,14 +30,18 @@ import { assertLinkedCellTable } from "../world/linkedCell";
 // build-walls P0 (D1): pin the neighbor→cell formula against the authored 16-row table at
 // boot — 16 comparisons, throws on drift, so a wrong formula can never ship silently.
 assertLinkedCellTable();
-// The TOML corpus embedded as raw strings — the OFFLINE FALLBACK only (the server's
-// `/content` is the source of truth; ids are explicit, so order is immaterial —
-// toml-content P6). `biomes.toml` is server-only worldgen and stays out, matching
-// what `/content` serves.
-import tilesToml from "@content/tiles.toml?raw";
-import thingsToml from "@content/things.toml?raw";
-import materialsToml from "@content/materials.toml?raw";
-import needsToml from "@content/needs.toml?raw";
+// The TOML corpus embedded as raw strings — the OFFLINE FALLBACK only (the server's `/content` is
+// the source of truth). Glob rather than four named imports, because the corpus is a TREE and a
+// folder is a package (content-packages F1): a hand-written list cannot see `content/mods/foo/`,
+// and a package that only worked once you were online would be a trap.
+//
+// `eager` so the strings are in the bundle rather than behind a dynamic import — this is the path
+// taken when the network is unavailable, so it cannot depend on the network.
+const EMBEDDED_SOURCES = import.meta.glob("@content/**/*.toml", {
+  query: "?raw",
+  import: "default",
+  eager: true,
+}) as Record<string, string>;
 
 /** The server's `/content` payload: a version fingerprint plus the ordered
  *  `[name, text]` source pairs the client feeds to `new Content(names, sources)`. */
@@ -46,17 +50,23 @@ interface ContentPayload {
   toml: [string, string][];
 }
 
-/** The build-time embed, used only when the server is unreachable. `version` is
- *  a sentinel distinct from any served fingerprint, so the first successful poll
- *  always reconciles a fallback boot up to the server's real corpus. */
+/** The build-time embed, used only when the server is unreachable. `version` is a sentinel distinct
+ *  from any served fingerprint, so the first successful poll always reconciles a fallback boot up to
+ *  the server's real corpus.
+ *
+ *  Names are made RELATIVE to the content root and sorted, so the embed presents the corpus exactly
+ *  as `/content` does — same names, same order. Biome definitions ride along here where the server
+ *  strips them (F2); harmless, since the client's loader ignores what it has no use for, and the
+ *  alternative is a TOML parser in the bundle to remove them. */
 const EMBEDDED: ContentPayload = {
   version: "embedded",
-  toml: [
-    ["materials.toml", materialsToml],
-    ["needs.toml", needsToml],
-    ["things.toml", thingsToml],
-    ["tiles.toml", tilesToml],
-  ],
+  toml: Object.entries(EMBEDDED_SOURCES)
+    .map(([path, text]): [string, string] => {
+      // Vite keys the glob by resolved path; keep the part after `content/`.
+      const i = path.lastIndexOf("/content/");
+      return [i >= 0 ? path.slice(i + "/content/".length) : path.replace(/^.*[/\\]/, ""), text];
+    })
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
 };
 
 /** The live corpus + its version. `content` is null until {@link loadContent}. */

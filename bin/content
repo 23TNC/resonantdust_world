@@ -6,8 +6,8 @@ set -euo pipefail
 #
 # Ported from the old game's bin/dsl (renamed here: the DSL it was named after was
 # deleted on 2026-08-04 — content-toml-only F7). Two adaptations for this world:
-#   - Layout: the corpus is FLAT — content/*.toml and nothing else (the old game
-#     used data/visuals/locales folders; this world's folders died with the DSL).
+#   - Layout: the corpus is a TREE — content/**/*.toml, walked recursively, so a folder is a
+#     PACKAGE (content-packages F1). Drop content/mods/foo/ in and its defs are part of the world.
 #   - Namespace: every R2 key is under $R2_PREFIX/ (as bin/art does for
 #     textures), so this world's uploads never clobber the old game's bucket.
 #
@@ -108,21 +108,22 @@ _refresh_server() {
   fi
 }
 
-# Validate a single-file argument: a corpus file is a top-level `content/<name>.toml`.
-# No directories (there are none) and no `..` escape. Echoes the name on success.
-_check_relpath() {  # name
+# Validate a single-file argument: a path relative to content/, at any depth, ending in `.toml`.
+# Rejects a `..` escape — an upload arg is a path we hand to the bucket, so it must stay inside the
+# corpus. Echoes the cleaned path on success.
+_check_relpath() {  # relpath
   local rel=$1
   case "$rel" in
-    */*) echo "content: the corpus is flat — pass a file name, not a path ('$rel')" >&2; return 1 ;;
-    *..*) echo "content: name must not contain '..' ('$rel')" >&2; return 1 ;;
+    /*)   echo "content: pass a path relative to content/, not an absolute one ('$rel')" >&2; return 1 ;;
+    *..*) echo "content: path must not contain '..' ('$rel')" >&2; return 1 ;;
     *.toml) ;;
     *) echo "content: the corpus is TOML — '$rel' is not a *.toml file" >&2; return 1 ;;
   esac
   echo "$rel"
 }
 
-# Sync the corpus — every top-level content/*.toml — up to R2 under
-# $R2_PREFIX/content/. Incremental. The `--exclude "*/*"` keeps it to the root.
+# Sync the corpus — every content/**/*.toml, at any depth — up to R2 under $R2_PREFIX/content/,
+# preserving the tree so a package round-trips as a package. Incremental.
 _upload_root_toml() {
   echo "content: uploading content/*.toml -> s3://$R2_BUCKET/$R2_PREFIX/content/ ..."
   docker run --rm \
@@ -133,7 +134,7 @@ _upload_root_toml() {
     -v "$REPO_ROOT/content:/data:ro" \
     "$R2_AWSCLI_IMAGE" \
     s3 sync /data "s3://$R2_BUCKET/$R2_PREFIX/content" \
-      --exclude "*" --include "*.toml" --exclude "*/*" \
+      --exclude "*" --include "*.toml" \
       --endpoint-url "$R2_ENDPOINT" --no-progress
 }
 
@@ -151,7 +152,7 @@ _download_root_toml() {
     -v "$REPO_ROOT/content:/data" \
     "$R2_AWSCLI_IMAGE" \
     s3 sync "s3://$R2_BUCKET/$R2_PREFIX/content" /data \
-      --exclude "*" --include "*.toml" --exclude "*/*" \
+      --exclude "*" --include "*.toml" \
       --endpoint-url "$R2_ENDPOINT" --no-progress
 }
 
@@ -233,22 +234,24 @@ usage() {
 usage: content <command>
 
 commands:
-  upload [name…]      Sync the corpus up to the Cloudflare R2 asset bucket via a
-                      dockerized aws-cli. With no arg, uploads every top-level
-                      content/*.toml. Incremental, never deletes. Each arg is one
-                      corpus file name, routed to upload_file.
+  upload [path…]      Sync the corpus up to the Cloudflare R2 asset bucket via a
+                      dockerized aws-cli. With no arg, uploads every
+                      content/**/*.toml, tree intact. Incremental, never deletes.
+                      Each arg is one corpus path, routed to upload_file.
 
-  download [name…]    Pull the corpus from R2 down into content/, OVERWRITING the
-                      local copy. With no arg, pulls every content/*.toml. Each
-                      arg is one corpus file name, routed to download_file.
+  download [path…]    Pull the corpus from R2 down into content/, OVERWRITING the
+                      local copy. With no arg, pulls the whole tree. Each arg is
+                      one corpus path, routed to download_file.
 
-  upload_file <name>    Upload ONE corpus file to R2, e.g. tiles.toml.
+  upload_file <path>    Upload ONE corpus file to R2, e.g. tiles.toml or
+                        mods/foo/things.toml.
 
-  download_file <name>  Download ONE corpus file from R2, overwriting the local
-                        copy. Same form, e.g. tiles.toml.
+  download_file <path>  Download ONE corpus file from R2, overwriting the local
+                        copy. Same form.
 
-The corpus is FLAT: content/*.toml and nothing else. bin/art's texture manifests
-publish with the masters (textures/manifest/), not through here.
+The corpus is a TREE: content/**/*.toml, and a FOLDER IS A PACKAGE — drop
+content/mods/foo/ in and its definitions are part of the world. bin/art's texture
+manifests publish with the masters (textures/manifest/), not through here.
 
 R2 keys are namespaced under $R2_PREFIX/content/. Needs S3 creds in
 bin/keys/r2.env (gitignored). The world SERVER serves this corpus at GET /content
