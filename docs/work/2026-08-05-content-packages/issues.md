@@ -52,3 +52,25 @@ detection), and every one of those is a design conversation rather than a loader
 Left out on purpose. The failure mode of guessing here is a precedence system nobody asked for that
 later has to be unpicked; the failure mode of waiting is that someone asks for it and we build the
 shape they actually need.
+
+## I4 — the edge had a SECOND private copy of the fingerprint {#i4}
+
+_2026-08-05, P1. Found because a test that should have broken did not._
+
+After [F3](forks.md#f3) changed `content_version` to hash the relative path, the edge's
+`version_uses_basename_not_path` test still passed. It should have failed — and the reason it did
+not is that `server/edge/src/content.rs` carried its **own** `content_version`, byte-for-byte the
+shared one, still hashing basenames.
+
+So the edge would have kept the collision F3 exists to remove: two packages' `things.toml` producing
+one fingerprint, and moving a file between packages moving nothing — meaning `/content-version`
+would not change and no client would ever refetch.
+
+Deleted rather than patched. A duplicate would have had to be kept in lockstep through this change
+and every future one, which is precisely how the `.rd` facet walk went stale in this same file
+([content-toml-only I5](../2026-08-04-content-toml-only/issues.md#i5)) — that was the *third* private
+copy of the content walk, and this is the second of the fingerprint. The edge now calls
+`resonantdust_content::content::content_version`.
+
+Worth naming as a pattern: **this file attracts private copies**, because it is the one place that
+both reads content and serves it. A change to corpus semantics should grep it specifically.

@@ -12,11 +12,16 @@
 //! `/content` and hot-swaps — no reload. `POST /content/refresh` forces the poll
 //! immediately (so `bin/content upload` can ping the gate).
 //!
-//! **What's served.** Every root `content/*.toml` except `biomes.toml`, sorted — the
-//! client's `Content` bundle. Biomes are server-only worldgen and are never sent to
-//! clients. Both sources ([`load_disk`], [`content_keys`]) apply that one rule, so the
-//! served corpus is identical whether it came off disk or out of the bucket. Def ids are
-//! explicit in the TOML, so load order carries no id meaning.
+//! **What's served.** Every `content/**/*.toml`, sorted by relative path — a TREE, so a folder
+//! dropped in is a package (content-packages F1). Both sources ([`load_disk`], [`content_keys`])
+//! walk it the same way, so the served corpus is identical whether it came off disk or out of the
+//! bucket.
+//!
+//! **Server-only content is stripped by what the DATA IS, not by filename** (F2): every source goes
+//! through `strip_server_only`, which removes `[[biome]]` blocks and withholds a biome-only file
+//! entirely. The old rule — `name != "biomes.toml"` — was defeated by a package writing
+//! `mods/foo/my-biomes.toml`, which would have shipped worldgen to every client with nothing to
+//! notice. Def ids come from the registry, so load order carries no id meaning.
 
 use crate::lock::RwRecover;
 use std::io;
@@ -24,18 +29,17 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-/// Ordered `(name, text)` source pairs, sorted by name. `name` is the corpus basename
-/// (e.g. `"tiles.toml"`), used for the version fingerprint and passed through to the
-/// client for error messages.
+/// Ordered `(name, text)` source pairs, sorted by name. `name` is the path RELATIVE to the content
+/// root (`"tiles.toml"`, `"mods/foo/things.toml"`), used for the version fingerprint and passed
+/// through to the client for error messages.
 type Sources = Vec<(String, String)>;
 
 /// Where the gateway reads the corpus from.
 pub enum ContentSource {
-    /// A local content directory (dev — the bind-mounted `content/`). Reads
-    /// top-level `*.toml`, sorted.
+    /// A local content directory (dev — the bind-mounted `content/`). Walks the whole tree.
     Disk(PathBuf),
-    /// The Cloudflare R2 asset bucket (deployed). Lists `<prefix>/content/` and
-    /// reads every root `*.toml` key it holds — the bucket is its own index.
+    /// The Cloudflare R2 asset bucket (deployed). Lists `<prefix>/content/` and reads every
+    /// `*.toml` key it holds at any depth — the bucket is its own index.
     R2(R2Config),
 }
 
@@ -70,43 +74,45 @@ impl ContentSource {
     }
 }
 
-/// Read the served corpus from a content dir: top-level `*.toml`, sorted, minus
-/// `biomes.toml` (server-only worldgen; ids are explicit, so serving order carries no id
-/// meaning).
+/// Read the served corpus from a content dir: the whole TREE, sorted by relative path, with
+/// server-only definitions stripped from every source (F2).
 ///
-/// Root-only and TOML-only, matching [`content_keys`] on the R2 side. The `.rd` facet walk
-/// (`data` → `visual` → `material`) that used to sit under this as a fallback was a fourth
-/// private copy of the content walk and died with the dialect (content-toml-only I5).
+/// Delegates the walk to `resonantdust_content::content::read_content_dir` rather than keeping its
+/// own — this file has hosted a private copy of the content walk before and it went stale
+/// (content-toml-only I5). One reader, one set of rules.
 fn load_disk(root: &Path) -> io::Result<Sources> {
-    let mut toml: Vec<PathBuf> = std::fs::read_dir(root)?
-        .filter_map(Result::ok)
-        .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|x| x == "toml"))
-        .filter(|p| p.file_name().is_some_and(|n| n != "biomes.toml"))
-        .collect();
-    toml.sort();
-    let mut out = Sources::new();
-    for path in toml {
-        let text = std::fs::read_to_string(&path)?;
-        let file = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
-        out.push((file.to_string(), text));
-    }
-    Ok(out)
+    let all = resonantdust_content::content::read_content_dir(root)?;
+    Ok(serve_only(all))
 }
 
-/// Reduce raw bucket keys to the served corpus: strip the `<prefix>/content/` prefix,
-/// keep root-level `*.toml` only, drop `biomes.toml`, sort. **The bucket is the index**
-/// (content-toml-only F4) — there is no manifest file to go stale, so this must apply
-/// exactly `load_disk`'s rules or the two sources would serve different corpora.
+/// Apply the client-facing filter to a set of sources: strip server-only definitions, drop a source
+/// left with nothing. A source that fails to parse is passed through UNCHANGED — the loader will
+/// report the parse error with a proper message, and silently withholding a broken file would make
+/// the client's corpus quietly incomplete instead.
+fn serve_only(sources: Sources) -> Sources {
+    sources
+        .into_iter()
+        .filter_map(|(name, text)| match resonantdust_content::content::strip_server_only(&text) {
+            Ok(Some(kept)) => Some((name, kept)),
+            Ok(None) => None,
+            Err(_) => Some((name, text)),
+        })
+        .collect()
+}
+
+/// Reduce raw bucket keys to the corpus: strip the `<prefix>/content/` prefix, keep `*.toml` at
+/// ANY depth, sort by relative path. **The bucket is the index** (content-toml-only F4) — there is
+/// no manifest file to go stale, so this must produce the same relative names `load_disk` does or
+/// the two sources would serve different corpora.
 ///
-/// Keys arriving from a subdirectory are dropped rather than flattened: the disk walk is
-/// root-only, and a nested key would collide with a root basename in the fingerprint
-/// (which hashes basenames, not paths).
+/// Nested keys are KEPT now (content-packages F1): a package is a folder, on disk and in the
+/// bucket alike. The server-only filter is applied after fetching, on the data, not here on the
+/// name — a key tells you nothing about what is inside it.
 fn content_keys(keys: &[String], key_prefix: &str) -> Vec<String> {
     let mut names: Vec<String> = keys
         .iter()
         .filter_map(|k| k.strip_prefix(key_prefix))
-        .filter(|rel| !rel.contains('/') && rel.ends_with(".toml") && *rel != "biomes.toml")
+        .filter(|rel| rel.ends_with(".toml"))
         .map(str::to_string)
         .collect();
     names.sort();
@@ -125,6 +131,7 @@ async fn load_r2(cfg: &R2Config) -> Result<Sources, String> {
         let text = r2_get_text(cfg, &name).await?;
         out.push((name, text));
     }
+    let out = serve_only(out);
     if out.is_empty() {
         return Err(format!("R2 LIST {key_prefix}: no *.toml corpus keys"));
     }
@@ -201,28 +208,6 @@ async fn r2_get_text(cfg: &R2Config, rel: &str) -> Result<String, String> {
     resp.text().await.map_err(|e| format!("R2 GET {key} body: {e}"))
 }
 
-/// A deterministic corpus fingerprint — FNV-1a over each source's `basename` and
-/// `text` (separated by NULs), in load order. No paths or timestamps, so it's
-/// identical across machines and moves iff a served corpus file's name or bytes
-/// change. The same hash the old game used, so the semantics carry over.
-fn content_version(sources: &Sources) -> u64 {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325; // FNV-1a offset basis
-    let mut feed = |bytes: &[u8]| {
-        for &b in bytes {
-            h ^= b as u64;
-            h = h.wrapping_mul(0x0000_0100_0000_01b3); // FNV prime
-        }
-    };
-    for (name, text) in sources {
-        let base = name.rsplit('/').next().unwrap_or(name);
-        feed(base.as_bytes());
-        feed(b"\0");
-        feed(text.as_bytes());
-        feed(b"\0");
-    }
-    h
-}
-
 /// The immutable snapshot the store hands out: the version + the pre-serialized
 /// `/content` JSON (built once per load, so serving a request is a clone, not a
 /// re-serialize).
@@ -238,7 +223,11 @@ struct Snapshot {
 /// ago. Renamed with all three consumers in one commit (F6); there is one server and one
 /// client, deployed together, so no dual-read window was needed.
 fn build_snapshot(sources: &Sources) -> Snapshot {
-    let version = content_version(sources);
+    // The SHARED fingerprint, not a private copy. This file carried its own until
+    // content-packages P1 — a duplicate that would have had to be kept in lockstep through F3's
+    // basename→path change, which is exactly how the `.rd` facet walk went stale here before
+    // (content-toml-only I5). One definition, one place.
+    let version = resonantdust_content::content::content_version(sources);
     let payload = serde_json::json!({
         "version": format!("{version:016x}"),
         "toml": sources,
@@ -317,29 +306,6 @@ mod tests {
     }
 
     #[test]
-    fn version_is_deterministic_and_sensitive() {
-        let a = srcs(&[("things.toml", "grass"), ("tiles.toml", "#fff")]);
-        assert_eq!(content_version(&a), content_version(&a), "same corpus → same hash");
-
-        // a text change moves the fingerprint
-        let b = srcs(&[("things.toml", "grass"), ("tiles.toml", "#000")]);
-        assert_ne!(content_version(&a), content_version(&b));
-
-        // order matters — it is part of the corpus identity
-        let c = srcs(&[("tiles.toml", "#fff"), ("things.toml", "grass")]);
-        assert_ne!(content_version(&a), content_version(&c));
-    }
-
-    #[test]
-    fn version_uses_basename_not_path() {
-        // Disk serves bare basenames and R2 strips its key prefix to the same, so the
-        // two sources agree by construction; the basename keying makes that explicit.
-        let disk = srcs(&[("tiles.toml", "#fff")]);
-        let keyed = srcs(&[("some/prefix/tiles.toml", "#fff")]);
-        assert_eq!(content_version(&disk), content_version(&keyed));
-    }
-
-    #[test]
     fn snapshot_payload_shape() {
         let snap = build_snapshot(&srcs(&[("tiles.toml", "grass")]));
         let v: serde_json::Value = serde_json::from_str(&snap.payload_json).unwrap();
@@ -349,7 +315,7 @@ mod tests {
     }
 
     #[test]
-    fn content_keys_keeps_root_toml_only() {
+    fn content_keys_keeps_toml_at_any_depth() {
         // What a real bucket listing looks like after `toml-content`: the corpus, the
         // server-only biome file, the art manifests bin/content used to push, and the dead
         // index. Only root `*.toml` minus `biomes.toml` is the served corpus.
@@ -358,40 +324,57 @@ mod tests {
             "rd/content/things.toml",
             "rd/content/materials.toml",
             "rd/content/needs.toml",
-            "rd/content/biomes.toml",     // server-only worldgen — never served
-            "rd/content/manifest.json",   // the index this stream deleted
-            "rd/content/visual/tiles.rd", // a dead dialect, still in the bucket
-            "rd/content/visual/x.toml",   // nested: the disk walk is root-only
-            "rd/textures/wolf/albedo.png", // outside the prefix entirely
+            "rd/content/biomes.toml",       // kept as a KEY — the biome filter is on data, not name
+            "rd/content/manifest.json",     // not TOML
+            "rd/content/visual/tiles.rd",   // a dead dialect, still in the bucket
+            "rd/content/mods/foo/things.toml", // a PACKAGE — kept now (F1)
+            "rd/textures/wolf/albedo.png",  // outside the prefix entirely
         ]
         .iter()
         .map(|s| s.to_string())
         .collect();
 
         let got = content_keys(&keys, "rd/content/");
-        assert_eq!(got, ["materials.toml", "needs.toml", "things.toml", "tiles.toml"]);
+        assert_eq!(
+            got,
+            [
+                "biomes.toml",
+                "materials.toml",
+                "mods/foo/things.toml",
+                "needs.toml",
+                "things.toml",
+                "tiles.toml"
+            ],
+            "TOML at any depth; the server-only filter runs on the DATA after fetching"
+        );
     }
 
     #[test]
-    fn load_disk_reads_root_toml_sorted() {
+    fn load_disk_walks_the_tree_and_strips_server_only_by_data() {
         let dir = std::env::temp_dir().join(format!("gw-content-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        for (file, body) in [
-            ("tiles.toml", "t"),
-            ("things.toml", "th"),
-            ("biomes.toml", "should-be-skipped"), // server-only worldgen
-            ("manifest.json", "not-corpus"),
-        ] {
-            std::fs::write(dir.join(file), body).unwrap();
-        }
-        // A nested TOML is invisible: the walk is root-only, matching `content_keys`.
-        std::fs::create_dir_all(dir.join("visual")).unwrap();
-        std::fs::write(dir.join("visual/nested.toml"), "nope").unwrap();
+        std::fs::create_dir_all(dir.join("mods/foo")).unwrap();
+
+        std::fs::write(dir.join("tiles.toml"), "[[tile]]\nname = \"grass\"\n").unwrap();
+        // A biome-ONLY file at the root: withheld entirely, as `biomes.toml` always was.
+        std::fs::write(dir.join("biomes.toml"), "[[biome]]\nname = \"forest\"\n").unwrap();
+        std::fs::write(dir.join("manifest.json"), "not-corpus").unwrap();
+        // A PACKAGE, whose file is named nothing like "biomes" yet carries biome rules alongside a
+        // thing. F2: the old basename check shipped this to every client.
+        std::fs::write(
+            dir.join("mods/foo/stuff.toml"),
+            "[[biome]]\nname = \"tundra\"\n\n[[thing]]\nname = \"snowdrift\"\n",
+        )
+        .unwrap();
 
         let got = load_disk(&dir).unwrap();
         let names: Vec<&str> = got.iter().map(|(n, _)| n.as_str()).collect();
-        assert_eq!(names, ["things.toml", "tiles.toml"]);
+        assert_eq!(names, ["mods/foo/stuff.toml", "tiles.toml"], "the tree, minus the biome-only file");
+
+        let package = &got.iter().find(|(n, _)| n.starts_with("mods/")).unwrap().1;
+        assert!(package.contains("snowdrift"), "the package's own defs survive: {package}");
+        assert!(!package.contains("tundra"), "its biome rules must NOT reach a client: {package}");
+
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

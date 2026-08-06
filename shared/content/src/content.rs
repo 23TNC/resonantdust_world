@@ -56,6 +56,33 @@ pub fn content_version(sources: &[(String, String)]) -> u64 {
   h
 }
 
+/// Strip SERVER-ONLY definitions from a source, returning the text a client may receive — or
+/// `None` when nothing client-facing remains (a file that was only server-only content).
+///
+/// Today that means `[[biome]]`: worldgen rules the client has no use for. **The filter is on what
+/// the data IS, not on what the file is called** (work `2026-08-05-content-packages` F2). The edge
+/// used to withhold biomes with `name != "biomes.toml"`, which a package defeats by writing
+/// `mods/foo/my-biomes.toml` — silently shipping worldgen to every client, forever, with nothing to
+/// notice. A rule about content cannot be defeated by naming.
+///
+/// It lives here rather than in the edge because what the corpus MEANS is this crate's business;
+/// the edge's business is serving whatever it is handed. The returned text is reserialized, so
+/// comments and key order are lost — the client parses it and never reads it, and the authored file
+/// on disk is untouched.
+pub fn strip_server_only(text: &str) -> Result<Option<String>, toml::de::Error> {
+  let mut value: toml::Value = toml::from_str(text)?;
+  let Some(table) = value.as_table_mut() else { return Ok(Some(text.to_string())) };
+  if table.remove("biome").is_none() {
+    // Nothing server-only in here — hand back the AUTHORED text, so the common case ships the
+    // author's own formatting and comments rather than a round-tripped copy.
+    return Ok(Some(text.to_string()));
+  }
+  if table.is_empty() {
+    return Ok(None); // a biome-only file: nothing left to serve
+  }
+  Ok(Some(toml::to_string(&value).unwrap_or_default()))
+}
+
 /// Recurse `dir`, pushing `(relative_path, text)` for every `*.toml` found at any depth. A missing
 /// directory is not an error. Paths are normalized to `/` separators so a source's name is the same
 /// string on every platform — it is hashed into the corpus fingerprint and shipped to clients.
@@ -108,6 +135,26 @@ mod tests {
     // Moving a file is a change.
     let root = srcs(&[("things.toml", "wolf")]);
     assert_ne!(content_version(&root), content_version(&a), "root vs package is a change");
+  }
+
+  #[test]
+  fn server_only_content_is_stripped_by_data_not_by_filename() {
+    use super::strip_server_only;
+    // F2: the file can be called ANYTHING. A package's `mods/foo/whatever.toml` carrying biomes
+    // must not ship them, and the old basename check could not see that.
+    let mixed = "[[biome]]\nname = \"forest\"\nsubtype = 6\ntile = \"grass\"\n\n\
+                 [[tile]]\nname = \"grass\"\n";
+    let out = strip_server_only(mixed).unwrap().expect("tiles remain");
+    assert!(!out.contains("[[biome]]"), "biomes must not reach a client: {out}");
+    assert!(out.contains("grass"), "the file's other defs must survive: {out}");
+
+    // A file that is ONLY biomes is not served at all.
+    let only = "[[biome]]\nname = \"forest\"\nsubtype = 6\ntile = \"grass\"\n";
+    assert!(strip_server_only(only).unwrap().is_none(), "a biome-only file is withheld entirely");
+
+    // A file with no server-only content comes back BYTE-IDENTICAL — comments and all.
+    let plain = "# a comment the author wrote\n[[tile]]\nname = \"dirt\"\n";
+    assert_eq!(strip_server_only(plain).unwrap().as_deref(), Some(plain));
   }
 
   #[test]

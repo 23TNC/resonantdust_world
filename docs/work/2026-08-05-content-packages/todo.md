@@ -19,15 +19,19 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P1 — the edge serves a tree, and biomes stay server-only by DATA
 
-- [ ] Recurse in the edge's `load_disk`, keeping relative paths as source names. Acceptance: a unit
+- [x] Recurse in the edge's `load_disk`, keeping relative paths as source names. Acceptance: a unit
       test with a nested `mods/foo/things.toml` sees it served; the existing root files keep their
-      names.
-- [ ] Strip `[[biome]]` blocks from every served source rather than dropping `biomes.toml` by name
+      names. → `load_disk` now DELEGATES to `read_content_dir` rather than keeping its own walk;
+      found and deleted a second private `content_version` while there ([I4](issues.md#i4)).
+- [x] Strip `[[biome]]` blocks from every served source rather than dropping `biomes.toml` by name
       ([F2](forks.md#f2)). Acceptance: a test where biomes live in `mods/foo/anything.toml` shows
-      the client payload carries that file's non-biome defs and NO biome rules.
-- [ ] Allow nested keys in the R2 `content_keys` filter. Acceptance: its test keeps
+      the client payload carries that file's non-biome defs and NO biome rules. →
+      `strip_server_only` in the CONTENT crate (corpus meaning is its business); a file with nothing
+      server-only comes back byte-identical, so the common case keeps the author's formatting.
+- [x] Allow nested keys in the R2 `content_keys` filter. Acceptance: its test keeps
       `mods/foo/things.toml`, still drops `manifest.json` and a `.rd`, and still yields sorted
-      relative names.
+      relative names. → and it now keeps `biomes.toml` as a KEY, because the server-only filter
+      runs on the fetched DATA — a key tells you nothing about what is inside it.
 
 ## P2 — the publisher and the client embed stop enumerating
 
