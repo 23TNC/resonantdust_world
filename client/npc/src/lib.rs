@@ -291,15 +291,15 @@ impl Bot {
     }
 }
 
-/// Resolve a pawn kind's `(packed definition_reference, tics-per-tile)` from the world server's
-/// `/content` corpus — the SAME corpus the browser renders with (first-pawns F5: content is the
-/// authority; a pinned `KIND_*` constant drifts the moment `things.toml` reorders). The def is the
-/// REAL packed form (human-pawns P0): `TYPE_PAWN | species | kind | variant 0`, taken whole from
-/// the DEFINITION REGISTRY — the taxonomy the corpus authors, numbered by the server. It used to be
-/// reassembled here from the texture stem's second segment via a code palette. Speed is content too (pawn-movement F1/F5): the
-/// authored tics-per-tile, already resolved through `codec::speed::resolve` (unauthored →
-/// default). The payload is `{ "toml": [[name, source], …] }`, loaded through shared/content.
-pub async fn resolve_thing(server_url: &str, name: &str) -> Result<(u32, u16), String> {
+/// Resolve a pawn kind's packed `definition_reference` from the world server's `/content`
+/// corpus — the SAME corpus the browser renders with (first-pawns F5: content is the
+/// authority; a pinned `KIND_*` constant drifts the moment `things.toml` reorders). The def is
+/// the REAL packed form (human-pawns P0): `TYPE_PAWN | species | kind | variant 0`, taken
+/// whole from the DEFINITION REGISTRY — the taxonomy the corpus authors, numbered by the
+/// server. Speed is no longer resolved here (input-rework F8): a pawn's pace is the DERIVED
+/// `ground_speed` stat, evaluated from its rows by whoever needs it. The payload is
+/// `{ "toml": [[name, source], …] }`, loaded through shared/content.
+pub async fn resolve_thing(server_url: &str, name: &str) -> Result<u32, String> {
     let bundle = fetch_corpus(server_url).await?;
     resolve_thing_in(&bundle, name)
 }
@@ -404,13 +404,13 @@ async fn fetch_registry(
     Ok(out)
 }
 
-/// Resolve a pawn kind's `(packed definition_reference, tics-per-tile)` from an already-loaded
-/// corpus — [`resolve_thing`]'s body, split so a brain that keeps the [`Bundle`] resolves
-/// through the one it holds.
-pub fn resolve_thing_in(bundle: &resonantdust_content::loader::Bundle, name: &str) -> Result<(u32, u16), String> {
-    let kind = bundle
-        .thing_object_id(name)
-        .ok_or_else(|| format!("thing `{name}` not in the corpus"))?;
+/// Resolve a pawn kind's packed `definition_reference` from an already-loaded corpus —
+/// [`resolve_thing`]'s body, split so a brain that keeps the [`Bundle`] resolves through the
+/// one it holds.
+pub fn resolve_thing_in(bundle: &resonantdust_content::loader::Bundle, name: &str) -> Result<u32, String> {
+    if bundle.thing_object_id(name).is_none() {
+        return Err(format!("thing `{name}` not in the corpus"));
+    }
     // The def comes from the REGISTRY (definition-registry P5): its id already carries the whole
     // taxonomy — type, species, kind, variant — because that is what the registry numbers. The
     // species nibble used to be recovered by splitting the texture stem on `/` and looking the
@@ -420,10 +420,9 @@ pub fn resolve_thing_in(bundle: &resonantdust_content::loader::Bundle, name: &st
     // No registry (an older server, an unseeded index) is a HARD error rather than a guess: a
     // mis-subtyped pawn would be adopted and rendered wrong forever, so fail at resolve, not at
     // draw — the same stance the stem-parsing took, for the same reason.
-    let def = bundle.definition_reference(false, name).ok_or_else(|| {
+    bundle.definition_reference(false, name).ok_or_else(|| {
         format!("pawn `{name}`: not in the definition registry (unseeded index, or an older server)")
-    })?;
-    Ok((def, resonantdust_codec::speed::resolve(bundle.thing_speed(kind))))
+    })
 }
 
 /// Log one client event at an appropriate level (concise — an npc mostly cares about the
@@ -504,8 +503,28 @@ mod def_fixture {
         let mut map = std::collections::HashMap::new();
         map.insert((false, "wolf".to_string()), 0x3001_0070u32);
         let bundle = bundle.with_registry(map);
-        let (def, speed) = super::resolve_thing_in(&bundle, "wolf").expect("wolf");
+        let def = super::resolve_thing_in(&bundle, "wolf").expect("wolf");
         assert_eq!(def, 0x3001_0070, "the wolf's packed def moved");
-        assert_eq!(speed, 12);
+    }
+
+    #[test]
+    fn the_wolfs_derived_ground_speed_is_the_old_authored_pace() {
+        // input-rework F8: the `speed` field is gone — the wolf's pace is the DERIVED
+        // `ground_speed` from its walks binding. 12 tics/tile is the value every stored trip
+        // was spaced by; this pin catches a corpus retune moving it silently.
+        let Some(bundle) = corpus() else { return };
+        let kind = bundle.thing_object_id("wolf").expect("wolf kind");
+        let rows: Vec<u32> = bundle
+            .thing_traits(kind)
+            .iter()
+            .map(|(name, level)| {
+                resonantdust_codec::object::pack_gameplay_row(
+                    bundle.gameplay_reference("trait", name).expect("trait ref"),
+                    *level,
+                )
+            })
+            .collect();
+        let v = resonantdust_content::stat_eval::stat_value(&bundle, "ground_speed", &rows, &[]);
+        assert_eq!(v, 12.0);
     }
 }

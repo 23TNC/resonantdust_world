@@ -6,7 +6,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use client::ClientConfig;
-use npc::brains::{wildlife::Wildlife, wolves::Wolves};
+use npc::brains::wolves::Wolves;
 use npc::{run_brain, Bot, Rng};
 
 fn env_or(key: &str, default: &str) -> String {
@@ -42,9 +42,10 @@ async fn main() {
         .unwrap_or(0x9E37_79B9_7F4A_7C15)
         | 1);
 
+    // wildlife (the legacy client-minted pack fixture) was DELETED by input-rework F10 —
+    // it drove raw MOVE_TO through the door this stream closed.
     match brain.as_str() {
-        "wildlife" => run_brain(bot, Wildlife::new(rng), tick_ms).await,
         "wolves" => run_brain(bot, Wolves::new(rng), tick_ms).await,
-        other => tracing::error!(%other, "unknown brain (have: wolves, wildlife)"),
+        other => tracing::error!(%other, "unknown brain (have: wolves)"),
     }
 }

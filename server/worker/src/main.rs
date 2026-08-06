@@ -27,7 +27,7 @@ use spacetimedb_sdk::{DbContext, Table as _};
 
 use resonantdust_codec::action::{
     self, Route, BUILD_WALL, CREATE, EXECUTE_INTERACTION, GRANT_CONDITION, INIT_ZONE, MOVE_STEP,
-    MOVE_TO, PLACE, PROMOTE, SET, SET_NEED,
+    MOVE_TO, PLACE, PROMOTE, PROMOTE_EVENT, SET, SET_NEED,
 };
 use resonantdust_codec::object::{
     cold_row_layer_id, cold_row_macro_position, cold_row_subtype, data_rotation, def_kind_id,
@@ -73,35 +73,20 @@ enum Shard {
     Thing,
 }
 
-/// The corpus, loaded once at startup: the per-kind tics-per-tile table
-/// (`speeds[object_id - 1]`, pre-resolved through [`speed::resolve`] so no zero entries)
-/// plus the whole [`Bundle`] — the execute arm resolves interactions/needs/affordances from
-/// it (interactions P3). Reads through THE shared `read_content_dir` (toml-content P6 —
-/// this fn was a third private copy of the content walk, and it broke the moment the
-/// dialect moved; ids agree because the reader does). Gameplay refs resolve through the
-/// SEED fallback here, which the allocator-agreement test pins equal to the registry.
-fn load_corpus(root: &str) -> Result<(Vec<u16>, resonantdust_content::loader::Bundle), String> {
+/// The corpus, loaded once at startup — the execute arm resolves interactions/needs/
+/// affordances from it (interactions P3) and the movement chain derives `ground_speed`
+/// from it (input-rework F8; the per-kind speeds table is GONE with the `speed` field).
+/// Reads through THE shared `read_content_dir` (toml-content P6). Gameplay refs resolve
+/// through the SEED fallback here, which the allocator-agreement test pins equal to the
+/// registry.
+fn load_corpus(root: &str) -> Result<resonantdust_content::loader::Bundle, String> {
     let sources = resonantdust_content::content::read_content_dir(std::path::Path::new(root))
         .map_err(|e| format!("read {root}: {e}"))?;
     if sources.is_empty() {
         return Err(format!("no content sources under {root}"));
     }
-    let bundle = resonantdust_content::loader::load(&sources)
-        .map_err(|errs| format!("corpus load: {} error(s), first: {:?}", errs.len(), errs.first()))?;
-    let speeds = (1..=bundle.thing_names().len() as u16)
-        .map(|id| speed::resolve(bundle.thing_speed(id)))
-        .collect();
-    Ok((speeds, bundle))
-}
-
-/// A pawn's hop cost by its `definition_reference`. A packed pawn def (human-pawns P0) keys by
-/// its `kind_id` (= the content `object_id`); a legacy raw-object_id def (pre-packed rows, type
-/// nibble 0) keys as-is; `0` (PLACE-only rows) → the default.
-fn tics_for(speeds: &[u16], def: u32) -> u16 {
-    let kind = if def_type_id(def) == TYPE_PAWN { def_kind_id(def) as u32 } else { def };
-    kind.checked_sub(1)
-        .and_then(|i| speeds.get(i as usize).copied())
-        .unwrap_or(speed::DEFAULT_TICS_PER_TILE)
+    resonantdust_content::loader::load(&sources)
+        .map_err(|errs| format!("corpus load: {} error(s), first: {:?}", errs.len(), errs.first()))
 }
 
 /// The CREATE sidecars a def implies (stat-model F11): TRAIT payload entries + full-value
@@ -177,17 +162,17 @@ async fn main() {
     let thing_db = env_or("THING_DB", "resonantdust-dev-thing-0");
     tracing::info!(%uri, self_ref = format!("{self_ref:#04x}"), realm, %index_db, %event_db, %data_db, %pawn_db, %tile_db, %thing_db, "worker starting");
 
-    // Speed is CONTENT (pawn-movement F1/F5): resolve each kind's authored tics-per-tile from
-    // the disk corpus once at startup (the sim container mounts the repo; def-ids agree with
-    // the edge because the file order mirrors its `load_disk`). A missing/broken corpus is a
-    // MISCONFIG, not an outage — running anyway would step every pawn at the default while
-    // clients speculate authored speeds, so exit for the restart policy instead of drifting.
+    // The corpus, once at startup (the sim container mounts the repo). Speed is now the
+    // DERIVED `ground_speed` stat (input-rework F8) — evaluated per hop from each pawn's
+    // fanned rows through this bundle. A missing/broken corpus is a MISCONFIG, not an
+    // outage — running anyway would step every pawn at the default while clients speculate
+    // derived speeds, so exit for the restart policy instead of drifting.
     let content_dir = env_or("CONTENT_DIR", "/workspace/content");
-    let (speeds, bundle) = match load_corpus(&content_dir) {
-        Ok((s, b)) => {
-            tracing::info!(%content_dir, kinds = s.len(),
+    let bundle = match load_corpus(&content_dir) {
+        Ok(b) => {
+            tracing::info!(%content_dir, kinds = b.thing_names().len(),
                 interactions = b.interaction_names().len(), "corpus loaded");
-            (s, b)
+            b
         }
         Err(err) => {
             tracing::error!(%err, %content_dir, "content corpus load failed; exiting for the restart policy to retry");
@@ -614,6 +599,39 @@ async fn main() {
             // CHOICE: a failed queue kills the chain (the driver re-issues on timeout — SAFE now,
             // supersession makes the re-issue cancel any survivor); deferring the tic would
             // re-queue on the re-pass and DUPLICATE the chain, which multiplies. Never defer here.
+            //
+            // Hop spacing is the pawn's DERIVED `ground_speed` (input-rework F8): evaluated
+            // per hop from its fanned rows, so a mid-trip condition that slows a stat slows
+            // the chain. The default is the degenerate fallback only — the `can_move_ground`
+            // gate refuses a 0-derived pawn at the front door.
+            let ground_speed_tics = |entity: u32, now: u16| -> u16 {
+                let (trait_rows, cond_rows) = pawn
+                    .db()
+                    .payload()
+                    .iter()
+                    .find(|r| r.entity_reference == entity)
+                    .map(|r| {
+                        (
+                            resonantdust_codec::payload::payload_traits(&r.payload),
+                            resonantdust_codec::payload::payload_conditions(&r.payload),
+                        )
+                    })
+                    .unwrap_or_default();
+                let need_rows: Vec<(u32, u16)> = pawn
+                    .db()
+                    .needs()
+                    .iter()
+                    .filter(|r| r.entity_reference == entity)
+                    .map(|r| (r.need, r.set_tic))
+                    .collect();
+                let active = resonantdust_content::needs_eval::active_conditions(
+                    &bundle, &trait_rows, &need_rows, &cond_rows, now,
+                );
+                let v = resonantdust_content::stat_eval::stat_value(
+                    &bundle, "ground_speed", &trait_rows, &active,
+                );
+                if v >= 1.0 { v.round() as u16 } else { speed::DEFAULT_TICS_PER_TILE }
+            };
             for (event_reference, actions) in &events {
                 for inst in action::program(actions) {
                     let Ok(inst) = inst else { break };
@@ -632,7 +650,7 @@ async fn main() {
                     if d == 0 {
                         continue; // arrived — the chain ends
                     }
-                    let next_tic = tic_add(t, tics_for(&speeds, p.definition_reference));
+                    let next_tic = tic_add(t, ground_speed_tics(obj, t));
                     let program = if d == 1 {
                         vec![PROMOTE, MOVE_STEP, obj, dest, serial]
                     } else {
@@ -714,61 +732,51 @@ async fn main() {
                         reject("input count does not match the corpus signature");
                         continue;
                     }
-                    // The satisfy effect (F5) — the only effect built; operands resolve against
-                    // the event's inputs or the def's baked constants.
-                    let Some(satisfy) = &params.satisfy else {
-                        reject("no satisfy effect — nothing else is built");
-                        continue;
-                    };
                     use resonantdust_content::loader::Operand;
-                    let target = match &satisfy.target {
-                        Operand::Input(i) => inputs[*i],
-                        _ => {
-                            reject("satisfy.target must bind an entity input");
-                            continue;
-                        }
-                    };
-                    let need_ref = match &satisfy.need {
-                        Operand::Input(i) => inputs[*i],
-                        Operand::Name(n) => match bundle.gameplay_reference("need", n) {
-                            Some(r) => r,
-                            None => {
-                                reject("satisfy.need names an unknown need");
-                                continue;
-                            }
-                        },
-                        Operand::Value(_) => {
-                            reject("satisfy.need cannot be a number");
-                            continue;
-                        }
-                    };
-                    let amount = match &satisfy.amount {
-                        Operand::Input(i) => f32::from_bits(inputs[*i]),
-                        Operand::Value(v) => *v as f32,
-                        Operand::Name(_) => {
-                            reject("satisfy.amount cannot be a name");
-                            continue;
-                        }
-                    };
-                    if !amount.is_finite() {
-                        reject("non-finite amount (I6: NaN/inf poison downstream math)");
-                        continue;
-                    }
-                    let Some(np) = bundle.need_params_by_ref(need_ref) else {
-                        reject("unknown need def");
+                    use resonantdust_codec::object::{gameplay_row_data, pack_gameplay_row};
+                    // The acting PAWN comes from whichever effect binds it — both use the
+                    // reserved `pawn` input (input-rework F5); satisfy and move agree by
+                    // authoring.
+                    let target_op = params
+                        .satisfy
+                        .as_ref()
+                        .map(|s| &s.target)
+                        .or(params.move_effect.as_ref().map(|m| &m.target));
+                    let Some(&Operand::Input(ti)) = target_op else {
+                        reject("no effect binds an entity input as its target");
                         continue;
                     };
-                    // The target must be a live pawn — its composed row is the F8 position.
+                    let target = inputs[ti];
+                    // The move destination (a position_reference), when the interaction has one.
+                    let dest = params.move_effect.as_ref().and_then(|m| match &m.to {
+                        Operand::Input(i) => Some(inputs[*i]),
+                        _ => None,
+                    });
+                    // The target must be a live pawn — its composed row anchors the location.
                     let Some(prow) =
                         pawn.db().entity_state().iter().find(|r| r.entity_reference == target)
                     else {
                         reject("target is not a live pawn");
                         continue;
                     };
-                    // F8 "on": the tile UNDER the pawn (baseline ⊕ overlay) must bind an
-                    // affordance offering this interaction. Adjacency etc. are later rules.
-                    let zone = prow.macro_position_reference;
-                    let cell = (prow.micro_position_reference >> 8) as usize;
+                    // The CARRIER tile by the location rule (input-rework F4): "on" = the tile
+                    // UNDER the pawn; "target" = the move destination's tile.
+                    let (zone, cell) = match params.location.as_str() {
+                        "on" => {
+                            (prow.macro_position_reference, (prow.micro_position_reference >> 8) as usize)
+                        }
+                        "target" => match dest {
+                            Some(d) => (position_macro(d), (position_micro(d) >> 8) as usize),
+                            None => {
+                                reject("location `target` needs a move destination input");
+                                continue;
+                            }
+                        },
+                        _ => {
+                            reject("unknown location rule");
+                            continue;
+                        }
+                    };
                     // A zone's ground is one row PER BIOME (subtype), each carrying only its
                     // own cells — scan them all, a nonzero cell wins.
                     let mut kind_ref: Option<u16> = tile
@@ -787,13 +795,13 @@ async fn main() {
                         }
                     }
                     let Some(kr) = kind_ref else {
-                        reject("no tile under the target");
+                        reject("no tile at the carrier position");
                         continue;
                     };
-                    // F8 "on" under the stat-model carrier binding (F9): the tile's def must
-                    // OFFER this interaction directly.
+                    // The carrier's def must OFFER this interaction (stat-model F9 binding;
+                    // walls not carrying move_to is exactly this refusal — input-rework F9).
                     if !bundle.tile_interactions(kr >> 4).iter().any(|(i, _)| i == &iname) {
-                        reject("the tile does not offer this interaction (F8: on-tile only)");
+                        reject("the carrier tile does not offer this interaction (F4 location rule)");
                         continue;
                     }
                     // The pawn's gameplay rows: traits + stored conditions from the payload
@@ -836,41 +844,93 @@ async fn main() {
                         reject("an affordance predicate fails for the target (stat-model F5)");
                         continue;
                     }
-                    // Current satisfaction from the sub-table row (I3: a read-modify-write on
-                    // a lazy value — benign while this relay is the single writer, recorded,
-                    // not assumed away) through the PIECEWISE eval, then the SIGNED amount
+                    let mut program: Vec<u32> = Vec::new();
+                    let mut satisfied_need: Option<String> = None;
+                    let mut log_from = f64::NAN;
+                    let mut log_to = f64::NAN;
+                    // The satisfy effect: current satisfaction from the sub-table row (I3: a
+                    // read-modify-write on a lazy value — benign while this relay is the
+                    // single writer) through the PIECEWISE eval, then the SIGNED amount
                     // clamped to the EFFECTIVE domain and quantized ONCE (F4).
-                    use resonantdust_codec::object::{gameplay_row_data, pack_gameplay_row};
-                    let need_key = need_ref & 0xFFFF;
-                    let Some(&(nrow, set_tic)) =
-                        need_rows.iter().find(|(r, _)| r & 0xFFFF == need_key)
-                    else {
-                        reject("target carries no row for the need");
-                        continue;
-                    };
-                    let (_, need_name) = bundle.gameplay_lookup(need_ref).expect("resolved above");
-                    let value = f64::from(resonantdust_codec::value::dequantize(
-                        gameplay_row_data(nrow),
-                        np.min as f32,
-                        np.max as f32,
-                    ));
-                    let windows = resonantdust_content::needs_eval::rate_windows(
-                        &bundle, &need_name, &trait_rows, &cond_rows, set_tic,
-                    );
-                    let now_sat = resonantdust_content::needs_eval::satisfaction_at(
-                        value, set_tic, &np, effect_tic, &windows,
-                    );
-                    let (lo, hi) = resonantdust_content::needs_eval::need_bounds(
-                        &bundle, &need_name, &np, &trait_rows, &cond_rows, effect_tic,
-                    );
-                    let new_sat = (now_sat + f64::from(amount)).clamp(lo, hi);
-                    let q = resonantdust_codec::value::quantize(
-                        new_sat as f32,
-                        np.min as f32,
-                        np.max as f32,
-                    );
-                    let mut program =
-                        vec![PROMOTE, SET_NEED, target, pack_gameplay_row(need_ref, q)];
+                    if let Some(satisfy) = &params.satisfy {
+                        let need_ref = match &satisfy.need {
+                            Operand::Input(i) => inputs[*i],
+                            Operand::Name(n) => match bundle.gameplay_reference("need", n) {
+                                Some(r) => r,
+                                None => {
+                                    reject("satisfy.need names an unknown need");
+                                    continue;
+                                }
+                            },
+                            Operand::Value(_) => {
+                                reject("satisfy.need cannot be a number");
+                                continue;
+                            }
+                        };
+                        let amount = match &satisfy.amount {
+                            Operand::Input(i) => f32::from_bits(inputs[*i]),
+                            Operand::Value(v) => *v as f32,
+                            Operand::Name(_) => {
+                                reject("satisfy.amount cannot be a name");
+                                continue;
+                            }
+                        };
+                        if !amount.is_finite() {
+                            reject("non-finite amount (I6: NaN/inf poison downstream math)");
+                            continue;
+                        }
+                        let Some(np) = bundle.need_params_by_ref(need_ref) else {
+                            reject("unknown need def");
+                            continue;
+                        };
+                        let need_key = need_ref & 0xFFFF;
+                        let Some(&(nrow, set_tic)) =
+                            need_rows.iter().find(|(r, _)| r & 0xFFFF == need_key)
+                        else {
+                            reject("target carries no row for the need");
+                            continue;
+                        };
+                        let (_, need_name) =
+                            bundle.gameplay_lookup(need_ref).expect("resolved above");
+                        let value = f64::from(resonantdust_codec::value::dequantize(
+                            gameplay_row_data(nrow),
+                            np.min as f32,
+                            np.max as f32,
+                        ));
+                        let windows = resonantdust_content::needs_eval::rate_windows(
+                            &bundle, &need_name, &trait_rows, &cond_rows, set_tic,
+                        );
+                        let now_sat = resonantdust_content::needs_eval::satisfaction_at(
+                            value, set_tic, &np, effect_tic, &windows,
+                        );
+                        let (lo, hi) = resonantdust_content::needs_eval::need_bounds(
+                            &bundle, &need_name, &np, &trait_rows, &cond_rows, effect_tic,
+                        );
+                        let new_sat = (now_sat + f64::from(amount)).clamp(lo, hi);
+                        let q = resonantdust_codec::value::quantize(
+                            new_sat as f32,
+                            np.min as f32,
+                            np.max as f32,
+                        );
+                        program.extend_from_slice(&[
+                            PROMOTE,
+                            SET_NEED,
+                            target,
+                            pack_gameplay_row(need_ref, q),
+                        ]);
+                        satisfied_need = Some(need_name);
+                        log_from = now_sat;
+                        log_to = new_sat;
+                    }
+                    // The move effect (input-rework F3/F6): queue the movement-chain SEED —
+                    // the exact program the client used to send. PROMOTE_EVENT latches the
+                    // intent fan (the speculation MoveIntent channel, I1); PROMOTE anchors
+                    // the start; apply stamps the trip serial from THIS queued event's
+                    // reference, so supersession works unchanged (I2).
+                    if params.move_effect.is_some() {
+                        let d = dest.expect("the location checks above guarantee a destination");
+                        program.extend_from_slice(&[PROMOTE_EVENT, PROMOTE, MOVE_TO, target, d]);
+                    }
                     // Grants carry remaining-at-write = the condition's authored duration
                     // (F3). The RE-STAMP duty is THIS composer's (F7/I12): any need a granted
                     // condition modifies that this program doesn't already SET gets its
@@ -885,7 +945,7 @@ async fn main() {
                             pack_gameplay_row(cref, cp.duration as u16),
                         ]);
                         for m in &cp.needs {
-                            if m.need == need_name {
+                            if satisfied_need.as_deref() == Some(m.need.as_str()) {
                                 continue; // already re-stamped by the satisfy SET_NEED
                             }
                             let Some(mref) = bundle.gameplay_reference("need", &m.need) else {
@@ -925,8 +985,10 @@ async fn main() {
                         tracing::warn!(%err, tic = t, "interaction effect queue failed — dropped");
                     } else {
                         tracing::info!(tic = t, effect_tic, interaction = %iname,
-                            target = format!("{target:#010x}"), need = format!("{need_ref:#010x}"),
-                            from = now_sat, to = new_sat, amount,
+                            target = format!("{target:#010x}"),
+                            satisfied = ?satisfied_need, from = log_from, to = log_to,
+                            moved = params.move_effect.is_some(),
+                            dest = dest.map(|d| format!("{:?}", position_to_tile(d))),
                             grants = params.grants.len(), "interaction executed");
                     }
                 }

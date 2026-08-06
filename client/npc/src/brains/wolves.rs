@@ -35,9 +35,6 @@ pub struct Wolves {
     radius: i32,
     /// The wolf's def (resolved from the corpus at start; `0` until then).
     def: u32,
-    /// The wolf's authored tics-per-tile (corpus, pawn-movement F1 — same value the worker
-    /// spaces hops with), for deadline arithmetic.
-    speed: u16,
     /// The adopted minted wolf, once its first `StateObject` lands.
     wolf: Option<u32>,
     /// The current trip's destination, if one is in flight.
@@ -122,7 +119,6 @@ impl Wolves {
             home,
             radius,
             def: 0,
-            speed: DEFAULT_TICS_PER_TILE,
             wolf: None,
             dest: None,
             deadline: std::time::Instant::now(),
@@ -384,17 +380,42 @@ impl Wolves {
         }
     }
 
-    /// Issue one A→B move and arm the give-up deadline from the trip length.
+    /// The wolf's pace in tics/tile: the DERIVED `ground_speed` from its payload rows +
+    /// active conditions (input-rework F8 — the `speed` field is gone). The codec default
+    /// covers only the pre-fan window.
+    fn derived_speed(&self) -> u16 {
+        let Some(bundle) = &self.bundle else { return DEFAULT_TICS_PER_TILE };
+        let rows = self
+            .wolf
+            .and_then(|w| self.payloads.get(&w))
+            .map(|p| payload_traits(p))
+            .unwrap_or_default();
+        let v = stat_eval::stat_value(bundle, "ground_speed", &rows, &self.active_set);
+        if v >= 1.0 { v.round() as u16 } else { DEFAULT_TICS_PER_TILE }
+    }
+
+    /// Issue one A→B move — through the `move_to` INTERACTION (input-rework F2/F3: the raw
+    /// MOVE_TO door is closed; this is the same event the pie menu composes) — and arm the
+    /// give-up deadline from the trip length.
     fn issue_move(&mut self, bot: &Bot, dest: (i32, i32)) {
         let Some(wolf) = self.wolf else { return };
-        if bot.client.move_entity(wolf, dest.0, dest.1).is_err() {
+        let Some(bundle) = &self.bundle else { return };
+        let Some(iref) = bundle.gameplay_reference("interaction", "move_to") else {
+            tracing::error!("move_to is not in the corpus — cannot move");
+            return;
+        };
+        // move_to's signature is (pawn, destination) — inputs bind IN ORDER (F5).
+        let program = vec![
+            EXECUTE_INTERACTION, iref, 0, 2, wolf, tile_to_position(dest.0, dest.1),
+        ];
+        if bot.client.queue(program).is_err() {
             tracing::error!("engine gone during move");
             return;
         }
         let hops = (dest.0 - self.at.0).abs().max((dest.1 - self.at.1).abs()).max(1) as u64;
         // `hops + 1`: the seed hop promotes the start WITHOUT stepping (ACTIONS.md §Movement),
         // so the first step lands one tics_per_tile after the intent.
-        let trip_ms = (hops + 1) * self.speed as u64 * 1000 / TIC_HZ as u64;
+        let trip_ms = (hops + 1) * self.derived_speed() as u64 * 1000 / TIC_HZ as u64;
         self.deadline = std::time::Instant::now() + Duration::from_millis(trip_ms + 5000);
         self.dest = Some(dest);
         tracing::info!(wolf = format!("{wolf:#010x}"), from = ?self.at, to = ?dest, hops, "trip issued");
@@ -413,18 +434,18 @@ impl Brain for Wolves {
         match &bot.server_url {
             Some(url) => match fetch_corpus(url).await {
                 Ok(bundle) => match resolve_thing_in(&bundle, "wolf") {
-                    Ok((def, speed)) => {
+                    Ok(def) => {
                         self.def = def;
-                        self.speed = speed;
                         // The kind's authored needs (`needs = [...]`) — thirst is the first.
                         // Trait TRUTH is the pawn's payload rows (stat-model F11 — minted at
                         // CREATE); the def's bindings are logged for the boot record only.
+                        // Speed is DERIVED per trip (input-rework F8), never resolved here.
                         let kind = bundle.thing_object_id("wolf").unwrap_or(0);
                         self.thirst = bundle.thing_needs(kind).first().copied().unwrap_or(0);
-                        tracing::info!(def = format!("{def:#010x}"), speed,
+                        tracing::info!(def = format!("{def:#010x}"),
                                        thirst_need = format!("{:#010x}", self.thirst),
                                        def_traits = ?bundle.thing_traits(kind),
-                                       "wolf def + speed + needs resolved from the corpus");
+                                       "wolf def + needs resolved from the corpus");
                         self.bundle = Some(bundle);
                     }
                     Err(err) => {

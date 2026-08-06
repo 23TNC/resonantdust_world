@@ -47,16 +47,28 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P2 — the server rewire
 
-- [ ] Worker: the `move` arm — resolve the effect, validate location `"target"` (the
+- [x] Worker: the `move` arm — resolve the effect, validate location `"target"` (the
       DESTINATION tile offers the interaction, per-biome merged read — [I6](issues.md#i6)),
       gate on predicates, queue `PROMOTE MOVE_TO pawn dest` at `master+4`. Acceptance: a
       hand-fired event walks the wolf; two rapid fires leave ONE chain ([I2](issues.md#i2)).
-- [ ] Worker: chain spacing from the DERIVED `ground_speed` (the pawn's fanned rows + corpus
+      → the arm generalized (target from either effect, carrier tile BY the location rule,
+      satisfy scoped, the seed `[PROMOTE_EVENT, PROMOTE, MOVE_TO, pawn, dest]` appended);
+      LIVE: `interaction executed … moved=true dest=(97,64)` and the wolf WALKED (npc trips
+      below). The two-rapid-fires supersession re-drill rides P4's browser items (I2 — no
+      natural supersession occurred this soak; the machinery is untouched).
+- [x] Worker: chain spacing from the DERIVED `ground_speed` (the pawn's fanned rows + corpus
       through `stat_eval`); the speeds table + `tics_for` deleted ([F8](forks.md#f8)).
-      Acceptance: hop spacing 12 tics in the logs; `grep` finds no speeds table.
-- [ ] npc: wander + drink trips compose `EXECUTE_INTERACTION(move_to)`; deadlines from the
+      Acceptance: hop spacing 12 tics in the logs; `grep` finds no speeds table. → the
+      `ground_speed_tics` closure (per-hop derivation — a mid-trip stat change slows the
+      chain); `load_corpus` returns just the Bundle; LIVE: a 7-hop trip took 16 s = 8
+      hop-slots × 12 tics at 6 Hz, exactly the derived pace; `speeds`/`tics_for` gone.
+- [x] npc: wander + drink trips compose `EXECUTE_INTERACTION(move_to)`; deadlines from the
       derived stat; the legacy `wildlife` brain DELETED ([F10](forks.md#f10)). Acceptance:
-      the soak runs trips + the unprompted drink arc through the new door only.
+      the soak runs trips + the unprompted drink arc through the new door only. →
+      `issue_move` composes the F5 two-input event; `derived_speed()` from payload rows +
+      active set; `resolve_thing_in` returns the def alone (the speed half gone; the pin
+      test now derives 12.0 from the walks binding); wildlife.rs deleted with its dispatch
+      arm. LIVE: wander trips + arrivals flow, ONE MoveIntent per trip (I1 ✓).
 - [ ] Edge: `MOVE_TO` leaves `CLIENT_VERBS` ([I3](issues.md#i3) — LAST, after both callers).
       Acceptance: a hand-queued raw MOVE_TO is rejected at the door; trips still flow.
 
