@@ -51,6 +51,7 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
       resolves the new def by name; the package is DELETED before the phase closes. → registry
       182→183, edge 17→18, `kind_ids_used` 11→12, `moonpetal` → `0x20000010` in the browser, and
       the package's OWN biome file did not reach the client. Deleted; golden green again.
-- [ ] Write the package model into `VARIABLES.md` § TOML content schema: a folder is a package, no
+- [x] Write the package model into `VARIABLES.md` § TOML content schema: a folder is a package, no
       manifest, collisions are load errors, biomes are stripped by data. Acceptance: docs-check
-      green; `rd content-check` still passes on the nested tree.
+      green; `rd content-check` still passes on the nested tree. → both green; the gate was checked
+      against a STAGED `content/mods/probe/x.toml` (7 files, clean) rather than assumed.

@@ -586,9 +586,28 @@ these nodes never hold a scalar sibling (the `rotation_key` I8 hazard); do not a
 ## TOML content schema (`content/*.toml` → `shared` loader → every consumer)
 
 **The corpus is DATA** (work [`2026-08-04-toml-content`](work/2026-08-04-toml-content/README.md)):
-one record per def (F6 — the `:data`/`:visual` facet split died with the DSL hooks), organized by
-category — `content/tiles.toml`, `things.toml` (pawns included), `biomes.toml`, `materials.toml`,
-`needs.toml`. The loader produces the SAME `Bundle` accessor surface the `.rd` corpus did (F2).
+one record per def, organized by category — `tiles.toml`, `things.toml` (pawns included),
+`biomes.toml`, `materials.toml`, `needs.toml`, `subtypes.toml`.
+
+**The corpus is a TREE, and a FOLDER IS A PACKAGE**
+([`2026-08-05-content-packages`](work/2026-08-05-content-packages/README.md) F1). The loader reads
+`content/**/*.toml` at any depth, sorted by path relative to `content/`. Drop `content/mods/foo/` in
+and its definitions are part of the world — **no manifest, no registration, no declared load
+order**:
+
+- **Ids come from the registry, not corpus position**, so file order cannot renumber anything in a
+  running world. Sorting exists for determinism across machines, not for identity.
+- **A collision is a LOAD ERROR by construction.** Two packages claiming one
+  `(type, subType, kind, variant, version)` fails the load — never a silent last-writer-wins.
+- **Server-only content is filtered by what the DATA IS, not what the file is called** (F2). The
+  edge strips `[[biome]]` blocks from every source it serves and withholds a biome-only file
+  entirely, so a package may name its files anything without leaking worldgen rules to clients.
+- **To change an existing definition, a package authors a new VERSION of it** — which coexists with
+  the original and wins name resolution by being newest. There is no override mechanism, deliberately
+  ([I3](work/2026-08-05-content-packages/issues.md#i3)).
+
+`rd content-check` enforces the one rule that remains: every tracked file under `content/`, at any
+depth, is a `*.toml` a human wrote.
 
 **The corpus DESCRIBES; the server NUMBERS** (work
 [`2026-08-04-definition-registry`](work/2026-08-04-definition-registry/README.md) F1). A def authors

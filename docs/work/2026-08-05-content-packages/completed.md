@@ -72,3 +72,38 @@ Two details worth stating:
 
 Verified: `npx tsc --noEmit` clean, and the client boots from the embed with the **same 6 tiles and
 11 things** it had before.
+
+## 2026-08-05 · P3 — a package proves it, and the docs say so (2/2)
+
+**The drill.** A throwaway `content/mods/example/` defining a `moonpetal` thing, plus its own
+`biomes.toml` — deliberately named the thing a basename check *would* have caught, to show the
+filter no longer depends on the name:
+
+| | before | after |
+|---|---|---|
+| registry rows | 182 | **183** |
+| edge `definitions=` | 17 | **18** |
+| `kind_ids_used` | 11 | **12** |
+
+In the browser: `mods/example/things.toml` appears in the served payload, `moonpetal` resolves to
+`0x20000010`, and **no `[[biome]]` block reached the client at all** — neither the root file nor the
+package's own. Package deleted afterwards; golden green again.
+
+**[I5](issues.md#i5) — the third private content reader, and the worst one.** Adding the package
+should have failed the golden instantly. It passed, because `golden.rs`'s `corpus()` had its own
+flat `read_dir` and had simply gone blind to packages. It would have kept passing while a mod added
+definitions it never checked. An oracle that reads the corpus differently from the code is not an
+oracle. Fixed, and it failed correctly on the next run — `moonpetal` where it expected `tree`.
+
+That is three private copies across two streams (the edge's `.rd` facet walk, the edge's
+`content_version`, this), each invisible until something that should have broken didn't. The rule
+worth carrying: **a change to how content is read must grep every reader, tests included.**
+
+**[I6](issues.md#i6)**: a package sorts before the base corpus and shifts a *fresh* world's seed
+numbering. Benign — positional numbering is only the seed, and `ensure_definition` refuses to
+renumber a running world — but it looks alarming in a diff, so it is written down.
+
+`VARIABLES.md` now states the model: the corpus is a tree, a folder is a package, no manifest,
+collisions are load errors, server-only content is filtered by data, and a package changes an
+existing def by authoring a new **version** rather than overriding it. `rd content-check` verified
+against a genuinely staged nested file rather than assumed.
