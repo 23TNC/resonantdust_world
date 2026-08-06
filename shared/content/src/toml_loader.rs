@@ -138,8 +138,6 @@ struct ThingToml {
   #[serde(default)]
   variant: Vec<String>,
   #[serde(default)]
-  speed: Option<u16>,
-  #[serde(default)]
   needs: Vec<String>,
   /// STARTING trait bindings (stat-model F11) — a bare string = level 1.
   #[serde(default)]
@@ -1405,7 +1403,6 @@ fn thing_def(
     name: t.name.clone(),
     color: visual.as_ref().map(|v| v.tint),
     visual,
-    speed: t.speed,
     needs,
     traits,
     interactions: interaction_binds(&t.interactions, interaction_exists, "thing", &t.name, errors),
@@ -1484,7 +1481,6 @@ sample_space = "world"
 
 [[thing]]
 name = "wolf"
-speed = 12
 needs = ["thirst"]
 [[thing.part]]
 texture = "pawn/animal/wolf"
@@ -1538,9 +1534,8 @@ scatter = [ { salt = 6, p = 0.99, thing = "wolf" } ]
     assert_eq!(b.tile_packed_channels()[1][0].material_id, 1);
     assert_eq!(b.tile_packed_channels()[1][0].tint, 0x6b6b6b);
 
-    // the wolf: speed, needs, subframe chain (default + e + v2 compose per component)
+    // the wolf: needs, subframe chain (default + e + v2 compose per component)
     assert_eq!(b.thing_object_id("wolf"), Some(1));
-    assert_eq!(b.thing_speed(1), Some(12));
     // needs are u32 gameplay refs now (interactions F1) — the seed packs
     // gameplay(8) | need(1) | position(1) | default(0).
     let thirst = b.gameplay_reference("need", "thirst").expect("thirst ref");
@@ -1816,23 +1811,27 @@ interactions = [ { name = "move_to" } ]
   fn only_simulation_visible_fields_bump_a_version() {
     // F12's boundary, and the invariant it buys: **same id ⇒ same behaviour**. A tint or a texture
     // change must NOT move the fingerprint (a re-master already propagates through the texture
-    // manifest's own hash); a speed or a height change must.
-    let base = "[[thing]]\nname = \"wolf\"\nspeed = 12\n[[thing.part]]\ntint = \"#ffffff\"\n";
+    // manifest's own hash); a needs/traits change must. (`speed` left the schema —
+    // input-rework F8: pace is the derived stat, whose inputs — trait bindings — fingerprint.)
+    let base = "[[thing]]\nname = \"wolf\"\n[[thing.part]]\ntint = \"#ffffff\"\n";
     let v = |t: &str| load(&[src("t.toml", t)]).unwrap().thing_sim_version(1).unwrap();
 
     // ART: a different tint, same behaviour → same version.
-    let recoloured = "[[thing]]\nname = \"wolf\"\nspeed = 12\n[[thing.part]]\ntint = \"#ff0000\"\n";
+    let recoloured = "[[thing]]\nname = \"wolf\"\n[[thing.part]]\ntint = \"#ff0000\"\n";
     assert_eq!(v(base), v(recoloured), "a recolour must NOT bump a version");
-
-    // DATA: a different speed is a different wolf to the simulation → different version.
-    let faster = "[[thing]]\nname = \"wolf\"\nspeed = 6\n[[thing.part]]\ntint = \"#ffffff\"\n";
-    assert_ne!(v(base), v(faster), "a speed change MUST bump a version");
 
     // The apple case in miniature: needs are simulation state too.
     let thirsty = "[[need]]\nname = \"thirst\"\n\
-                   [[thing]]\nname = \"wolf\"\nspeed = 12\nneeds = [\"thirst\"]\n\
+                   [[thing]]\nname = \"wolf\"\nneeds = [\"thirst\"]\n\
                    [[thing.part]]\ntint = \"#ffffff\"\n";
     assert_ne!(v(base), v(thirsty), "gaining a need MUST bump a version");
+
+    // A trait-binding change (the pace input) is simulation-visible too.
+    let leveled = "[[stat]]\nname = \"ground_speed\"\nmax = 240\n\
+                   [[trait]]\nname = \"walks\"\nstats = [ { stat = \"ground_speed\", add = [24, 12] } ]\n\
+                   [[thing]]\nname = \"wolf\"\ntraits = [ { name = \"walks\", level = 2 } ]\n\
+                   [[thing.part]]\ntint = \"#ffffff\"\n";
+    assert_ne!(v(base), v(leveled), "a trait binding MUST bump a version");
   }
 
   #[test]
@@ -1852,13 +1851,15 @@ interactions = [ { name = "move_to" } ]
     let b = load(&[src(
       "t.toml",
       r##"
+[[need]]
+name = "thirst"
+
 [[thing]]
 name = "wolf"
 type = "pawn"
 kind = "wolf"
 subType = ["animal"]
 variant = ["0"]
-speed = 12
 
 [[thing]]
 name = "wolf"
@@ -1867,15 +1868,15 @@ kind = "wolf"
 subType = ["animal"]
 variant = ["0"]
 version = 1
-speed = 9
+needs = ["thirst"]
 "##,
     )])
     .unwrap();
     // Both are present, at their own positions, with their OWN behaviour.
     assert_eq!(b.thing_version(1), Some(0));
-    assert_eq!(b.thing_speed(1), Some(12), "v0 keeps the old speed");
+    assert_eq!(b.thing_needs(1), Vec::<u32>::new(), "v0 keeps the old behaviour");
     assert_eq!(b.thing_version(2), Some(1));
-    assert_eq!(b.thing_speed(2), Some(9), "v1 has the new one");
+    assert_eq!(b.thing_needs(2).len(), 1, "v1 has the new one");
     // Same taxonomy, so they are versions of ONE definition rather than two definitions.
     assert_eq!(b.thing_taxonomy(1).unwrap().kind, b.thing_taxonomy(2).unwrap().kind);
   }

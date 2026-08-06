@@ -232,7 +232,6 @@ export class MoverLayer {
   private thingLayout: Float64Array = new Float64Array();
   private thingPacked: Float64Array = new Float64Array();
   /** Per-kind authored tics-per-tile (`0` = unauthored → {@link defaultTicsPerTile}). */
-  private thingSpeed: Float64Array = new Float64Array();
 
   /** Payload part slots per entity (`slot → def`), joined from `PawnParts` events — either
    *  side of the join may arrive first (human-pawns P3). */
@@ -333,7 +332,7 @@ export class MoverLayer {
       const gy = ty - m.ry;
       const gap = Math.max(Math.abs(gx), Math.abs(gy));
       if (gap > 0) {
-        const tilesPerSec = this.client.ticsPerSec() / this.speedFor(m.kind);
+        const tilesPerSec = this.client.ticsPerSec() / this.speedFor(key);
         const step = gap > CHASE_SNAP_TILES
           ? gap // hopeless — snap
           : tilesPerSec * Math.min(CHASE_CAP, 1 + gap * CHASE_GAIN) * dtSec;
@@ -405,7 +404,7 @@ export class MoverLayer {
     return {
       kind: m.kind, stem: this.thingStems[m.kind - 1] ?? "?",
       tileX: m.authX, tileY: m.authY, facing: m.facing,
-      macroPosition: m.macroPosition, moving: !!m.spec, ticsPerTile: this.speedFor(m.kind),
+      macroPosition: m.macroPosition, moving: !!m.spec, ticsPerTile: this.speedFor(entity),
     };
   }
 
@@ -470,7 +469,6 @@ export class MoverLayer {
     this.thingStems = this.content.thingTextureStems();
     this.thingLayout = this.content.thingLayout();
     this.thingPacked = this.content.thingPackedChannels();
-    this.thingSpeed = this.content.thingSpeed();
     this.slotCounts.clear();
   }
 
@@ -487,11 +485,16 @@ export class MoverLayer {
     return n;
   }
 
-  /** The kind's tics-per-tile — the speculation rate, from the content bundle so it matches
-   *  the worker's continuation spacing exactly (one speed authority, keyed by kind). */
-  private speedFor(kind: number): number {
-    const s = this.thingSpeed[kind - 1];
-    return s > 0 ? s : defaultTicsPerTile();
+  /** The pawn's tics-per-tile — its DERIVED `ground_speed` from the fanned rows
+   *  (input-rework F8), through the SAME `stat_eval` the worker spaces hops with; one
+   *  speed authority, now keyed by ENTITY. The default covers only the pre-fan window. */
+  private speedFor(entity: number): number {
+    const payload = this.payloads.get(entity) ?? new Uint32Array(0);
+    const needs = this.pawnNeeds(entity);
+    const d = this.client.ticDelta(0);
+    const now = d === null ? 0 : ((Math.floor(d) % 0x10000) + 0x10000) % 0x10000;
+    const s = this.content.pawnGroundSpeed(payload, needs, now);
+    return s >= 1 ? Math.round(s) : defaultTicsPerTile();
   }
 
   /** Slice a pawn's up-to-4 packed-channel material bindings out of the stride-8 per-def table
@@ -526,7 +529,7 @@ export class MoverLayer {
       }
       return;
     }
-    const tpt = this.speedFor(m.kind);
+    const tpt = this.speedFor(intent.entityReference);
     // The `event` table replays HISTORY on subscribe (no retention yet — first-pawns I2), and
     // deliveries can arrive out of order — so guard: an intent whose move must already be over
     // ⇒ the authoritative rows carry the outcome; an intent serially older than the live spec

@@ -55,8 +55,6 @@ torch Some(16767392)
 torch_blue Some(10537215)
 human_female Some(16777215)
 human_male Some(16777215)
-== thing speeds (0 = unauthored) ==
-0.0 0.0 0.0 0.0 0.0 0.0 12.0 0.0 0.0 16.0 16.0
 == tile_texture_stems ==
 white
 white
@@ -249,8 +247,8 @@ flora traits=[] interactions=[]
 wolf traits=[("biological_lifeform", 1), ("walks", 2)] interactions=[]
 torch traits=[] interactions=[]
 torch_blue traits=[] interactions=[]
-human_female traits=[] interactions=[]
-human_male traits=[] interactions=[]
+human_female traits=[("biological_lifeform", 1), ("walks", 1)] interactions=[]
+human_male traits=[("biological_lifeform", 1), ("walks", 1)] interactions=[]
 == thing visual parts ==
 tree: 1 part(s) [(0, 1.0, Some("biome-thing/default/conifer"))]
 shrub: 1 part(s) [(0, 1.0, Some("white"))]

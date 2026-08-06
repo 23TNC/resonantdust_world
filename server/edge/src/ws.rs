@@ -574,15 +574,15 @@ fn need_frame(row: &bindings::pawn::Needs) -> ServerMsg {
 
 /// The verbs a CLIENT may queue (movement-hardening F2 — the first, deliberately tiny,
 /// authorization seam: a verb-set check, NOT an ownership model). Everything else is
-/// server-only: `MOVE_STEP` carries a trip-serial that clients could stomp to steer pawns
-/// past validation, and `INIT_ZONE` is worldgen (the edge's own path calls the reducer
-/// directly, not through this door).
+/// server-only: `MOVE_TO` is the chain SEED the worker's `move_to` interaction arm queues
+/// (input-rework F3 — clients move via `EXECUTE_INTERACTION`), `MOVE_STEP` carries a
+/// trip-serial that clients could stomp to steer pawns past validation, and `INIT_ZONE` is
+/// worldgen (the edge's own path calls the reducer directly, not through this door).
 const CLIENT_VERBS: &[u32] = &[
     resonantdust_codec::action::PROMOTE,
     resonantdust_codec::action::PROMOTE_EVENT,
     resonantdust_codec::action::CREATE,
     resonantdust_codec::action::PLACE,
-    resonantdust_codec::action::MOVE_TO,
     resonantdust_codec::action::SET,
     resonantdust_codec::action::BUILD_WALL, // build-walls D5: the client-issued build order
     // needs-moodlets P2: open like MOVE_TO while no ownership model exists — the npc mints

@@ -82,21 +82,15 @@ pub enum Command {
     /// Remove the anchor named `name`, closing any subscriptions only it held.
     RemoveAnchor { name: String },
     /// Queue a raw action program (`docs/ACTIONS.md`) into the simulation — the general world door.
-    /// The typed helpers ([`Move`](Command::Move) / [`Place`](Command::Place)) compile to this. An
-    /// `npc` driving pawns can send programs directly. Requires a live session; ignored otherwise.
+    /// The typed helpers ([`Place`](Command::Place) / [`BuildWall`](Command::BuildWall)) compile to
+    /// this; movement rides it too since input-rework F3 (the host composes
+    /// `EXECUTE_INTERACTION(move_to)` — the raw `MOVE_TO` door is closed at the edge).
+    /// Requires a live session; ignored otherwise.
     Queue { actions: Vec<u32> },
     /// Seed the tic estimator's RATE with a persisted hint (movement-hardening F5): a host that
     /// remembered the last learned `tics_per_sec` skips the ~60 s cold-page warmup. A HINT only —
     /// clamped to the estimator's band, ignored once the stream has anchored.
     SeedTicRate { tics_per_sec: f64 },
-    /// Move `entity` toward global tile `(tile_x, tile_y)` — compiles to a `MOVE_TO` program. Any
-    /// live session may move any entity (no ownership model yet). `entity` is the
-    /// `entity_reference`. Requires a live session; ignored otherwise.
-    Move {
-        entity: u32,
-        tile_x: i32,
-        tile_y: i32,
-    },
     /// Order walls built on the PERIMETER of the `(start..end)` tile rect (build-walls D5) —
     /// compiles to a `BUILD_WALL` program; the worker expands + queues the per-tile SETs.
     /// `object` is the wall kind's definition reference. Requires a live session.

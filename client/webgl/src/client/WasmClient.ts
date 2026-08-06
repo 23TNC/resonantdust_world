@@ -11,9 +11,9 @@
 //! The chat / call-stat / sub-stat hooks are still inert stubs the ported UI
 //! reaches for; they return no-op unsubscribes until those subsystems return.
 
-import { WorldClient, ticHz, defaultTicsPerTile } from "./wasm";
+import { WorldClient, ticHz, defaultTicsPerTile, tileToPosition, composeInteraction } from "./wasm";
 
-export { ticHz, defaultTicsPerTile };
+export { ticHz, defaultTicsPerTile, tileToPosition, composeInteraction };
 import { assetBaseFromServerUrl } from "./environments";
 
 /** Shared render delay `D`, in ms. Every client renders the world as of
@@ -520,10 +520,8 @@ export class WasmClient {
     this.world?.queue(actions);
   }
 
-  /** Move `entity` (an `entity_reference`) toward global tile `(tileX, tileY)`. No-op before login. */
-  moveEntity(entity: number, tileX: number, tileY: number): void {
-    this.world?.moveEntity(entity, tileX, tileY);
-  }
+  // `moveEntity` DIED with the raw MOVE_TO door (input-rework F3): movement composes
+  // `composeInteraction(move_to, [pawn, destination])` and rides `queue`.
 
   /** build-walls D5: order walls on the `(start..end)` tile rect's perimeter. */
   buildWall(startX: number, startY: number, endX: number, endY: number, object: number): void {
@@ -540,13 +538,6 @@ export class WasmClient {
    *  (objects `1..n`). `0` before login (no session). */
   private selfEntity(): number {
     return this.playerId ? 0x30_00_00_00 + (this.playerId & 0xff_ffff) : 0;
-  }
-
-  /** Move the session's own pawn toward global tile `(tileX, tileY)` (left-click). No-op if not
-   *  logged in or the pawn hasn't been placed yet. */
-  moveSelf(tileX: number, tileY: number): void {
-    const e = this.selfEntity();
-    if (e) this.moveEntity(e, tileX, tileY);
   }
 
   /** Place + promote the session's own pawn at global tile `(tileX, tileY)` (right-click) — the

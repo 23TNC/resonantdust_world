@@ -70,3 +70,13 @@ A menu-driven move and the npc's wander both issue trips for the same wolf (no o
 interactions I4 still open). Chain supersession makes the LAST order win mechanically, but the
 npc re-issues on its deadline — a player-ordered wolf will wander off afterward. Accepted this
 stream (ownership is the recorded successor); the drill just needs to expect it.
+
+## I11 — FOUND LIVE: universal carriers broke the npc's drink filter {#i11}
+
+With `move_to` on every ground tile, the wolves brain's "first usable interaction on this
+tile" matched GRASS: standing anywhere, it fired `move_to` through its drink-shaped
+3-input composer (`input count does not match the corpus signature` at the worker) and
+latched `drink_issued` — the wolf wandered Thirsty forever. Two fixes: the drink pass
+filters to interactions that SATISFY (has a `satisfy` effect), and `fire_interaction` binds
+by the F5 reserved vocabulary (`pawn`/`amount`) instead of the hardcoded three-input drink
+shape — the same generalization the pie menu composer uses, which the drill then re-proved.

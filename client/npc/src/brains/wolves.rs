@@ -312,34 +312,48 @@ impl Wolves {
         })
     }
 
-    /// The first interaction tile kind `kind` OFFERS that this wolf may use, with its bound
-    /// magnitude (stat-model F5/F9): the carrier binds interactions, and availability is
-    /// the SAME predicate gate the worker enforces — derived stats from the wolf's trait
-    /// rows + active conditions (I2: one implementation, no ghost refusals).
-    fn usable_interaction(&self, kind: u16) -> Option<(String, f64)> {
+    /// The first interaction tile kind `kind` OFFERS that would SATISFY a need and that
+    /// this wolf may use (input-rework I11: with `move_to` on every ground tile, "any
+    /// usable interaction" matched GRASS — the drink pass filters to `satisfy` carriers).
+    /// Availability is the SAME predicate gate the worker enforces (stat-model I2).
+    fn usable_drink(&self, kind: u16) -> Option<(String, f64)> {
         let bundle = self.bundle.as_ref()?;
         let wolf = self.wolf?;
         let trait_rows = self.payloads.get(&wolf).map(|p| payload_traits(p)).unwrap_or_default();
-        bundle
-            .tile_interactions(kind)
-            .into_iter()
-            .find(|(i, _)| stat_eval::interaction_available(bundle, i, &trait_rows, &self.active_set))
+        bundle.tile_interactions(kind).into_iter().find(|(i, _)| {
+            bundle.interaction_params(i).is_some_and(|ip| ip.satisfy.is_some())
+                && stat_eval::interaction_available(bundle, i, &trait_rows, &self.active_set)
+        })
     }
 
-    /// Compose + queue `EXECUTE_INTERACTION` for `interaction` at `magnitude` on this
-    /// wolf's thirst — the F4 event, the user's layout verbatim: `[op, interaction,
-    /// version, count, inputs…]` with value inputs as f32 bit patterns.
+    /// Compose + queue `EXECUTE_INTERACTION` for `interaction`, binding its signature by
+    /// the F5 RESERVED vocabulary (`pawn` = this wolf, `amount` = `magnitude` as f32 bits)
+    /// — the same rule the pie menu's composer applies. An unbindable name refuses loudly
+    /// (input-rework I11: the hardcoded 3-input drink shape mis-fired move_to live).
     fn fire_interaction(&self, bot: &Bot, interaction: &str, magnitude: f64) {
         let Some(wolf) = self.wolf else { return };
         let Some(bundle) = &self.bundle else { return };
-        let Some(iref) = bundle.gameplay_reference("interaction", interaction) else {
+        let (Some(iref), Some(ip)) = (
+            bundle.gameplay_reference("interaction", interaction),
+            bundle.interaction_params(interaction),
+        ) else {
             tracing::warn!(%interaction, "fire_interaction: unresolvable interaction");
             return;
         };
-        // drink's signature is (pawn, need, amount) — inputs bind IN ORDER (F5).
-        let program = vec![
-            EXECUTE_INTERACTION, iref, 0, 3, wolf, self.thirst, (magnitude as f32).to_bits(),
-        ];
+        let mut inputs = Vec::with_capacity(ip.inputs.len());
+        for name in &ip.inputs {
+            match name.as_str() {
+                "pawn" => inputs.push(wolf),
+                "amount" => inputs.push((magnitude as f32).to_bits()),
+                other => {
+                    tracing::warn!(%interaction, input = other,
+                                   "fire_interaction: unbindable input — not fired");
+                    return;
+                }
+            }
+        }
+        let mut program = vec![EXECUTE_INTERACTION, iref, 0, inputs.len() as u32];
+        program.extend_from_slice(&inputs);
         if bot.client.queue(program).is_err() {
             tracing::error!("engine gone during interaction fire");
             return;
@@ -355,17 +369,17 @@ impl Wolves {
         if self.thirst == 0 || self.drink_issued || !self.is_thirsty() {
             return;
         }
-        // Standing on a usable carrier already? Drink here.
+        // Standing on a satisfying carrier already? Drink here.
         if let Some(kind) = bot.tile_kind_at(self.at) {
-            if let Some((interaction, magnitude)) = self.usable_interaction(kind) {
+            if let Some((interaction, magnitude)) = self.usable_drink(kind) {
                 self.fire_interaction(bot, &interaction, magnitude);
                 self.drink_issued = true;
                 self.drink_target = None;
                 return;
             }
         }
-        // Otherwise head for the nearest tile offering an interaction this wolf may use.
-        let target = bot.nearest_tile(self.at, |kind| self.usable_interaction(kind).is_some());
+        // Otherwise head for the nearest tile offering a SATISFYING interaction (I11).
+        let target = bot.nearest_tile(self.at, |kind| self.usable_drink(kind).is_some());
         match target {
             Some(t) => {
                 if self.drink_target != Some(t) || self.dest.is_none() {

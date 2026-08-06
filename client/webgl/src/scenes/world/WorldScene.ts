@@ -21,6 +21,8 @@ import { LogManager } from "../../game/panels/chat/LogManager";
 import { PanelManager } from "../../ui/panels/PanelManager";
 import { SQUARE } from "../../game/viewport/squareMath";
 import { SelectionModel, type Selection } from "../../game/world/SelectionModel";
+import { PieMenu, type PieMenuOption } from "../../game/panels/PieMenu";
+import { tileToPosition, composeInteraction } from "../../client/WasmClient";
 import type { OutlineItem } from "../../game/viewport/outlineOverlay";
 import { onContentReloaded, getContent } from "../../game/definitions/contentBoot";
 import { parseUrl, type UrlCommand } from "../../debug/urlParams";
@@ -54,6 +56,8 @@ export class WorldScene extends Scene {
   private lastClientY = 0;
   /** ui-select P0 (D1): THE selection — outline/details/title-bar/move-order all read this. */
   readonly selection = new SelectionModel();
+  /** The one context pie menu (input-rework F1/F7 — at most one, self-dismissing). */
+  private readonly pieMenu = new PieMenu();
   /** A pending left CLICK (down seen, up not yet) — up within {@link CLICK_SLOP_PX} selects.
    *  The future drag-box replaces "discard on move" with "start the box" right here. */
   private clickId: number | null = null;
@@ -217,6 +221,7 @@ export class WorldScene extends Scene {
     }
     this.contentUnsub?.();
     this.contentUnsub = null;
+    this.pieMenu.dispose();
     this.chat?.destroy();
     this.details?.destroy();
     this.details = null;
@@ -365,6 +370,10 @@ export class WorldScene extends Scene {
   // is the move order's. preventDefault on middle stops the browser's autoscroll widget.
   // build-walls P2 (D4): an active placement mode reroutes left (start the rect) and right
   // (exit the mode); middle-pan stays live.
+  // input-rework F1 (`design/input-model.md`): RIGHT click = the ACTIVE selection (the
+  // whole former left-click behavior); LEFT click = the context pie menu (resolved on UP
+  // through the same slop test, so a future drag-box keeps its branch); middle = pan.
+  // The PieMenu dismisses itself on any other input (document-capture listeners).
   private readonly onPointerDown = (e: PointerEvent): void => {
     if (this.buildMode && e.button === 0) {
       this.buildDragStart = this.tileAt(e.clientX, e.clientY);
@@ -382,7 +391,7 @@ export class WorldScene extends Scene {
       return;
     }
     if (e.button === 2) {
-      this.issueMoveOrder(e.clientX, e.clientY);
+      this.selectAt(e.clientX, e.clientY);
       return;
     }
     if (e.button !== 1) return;
@@ -419,12 +428,12 @@ export class WorldScene extends Scene {
       this.bridge.buildWall(start.x, start.y, end.x, end.y, this.buildMode.defId);
       return;
     }
-    // A pending left click resolves on UP: within the slop it SELECTS; past it, it was a drag
-    // (the future drag-box claims exactly this branch).
+    // A pending left click resolves on UP: within the slop it opens the CONTEXT MENU
+    // (input-rework F1); past it, it was a drag (the future drag-box claims this branch).
     if (this.clickId === e.pointerId) {
       this.clickId = null;
       if (Math.abs(e.clientX - this.clickX) <= CLICK_SLOP_PX && Math.abs(e.clientY - this.clickY) <= CLICK_SLOP_PX) {
-        this.selectAt(e.clientX, e.clientY);
+        this.openContextMenu(e.clientX, e.clientY);
       }
       return;
     }
@@ -491,13 +500,54 @@ export class WorldScene extends Scene {
     this.selection.replace(sel);
   }
 
-  /** ui-select P0 (D3): right click + a selected PAWN → a MOVE_TO from the pawn's location to
-   *  the clicked tile, through core → edge (the npc's own verb). No selection → no-op. */
-  private issueMoveOrder(cx: number, cy: number): void {
+  /** input-rework F1/F4/F5: the LEFT-click context pie menu — what the ACTIVE pawn can do
+   *  with the clicked object. Availability comes WHOLE from the wasm `tileMenuOptions`
+   *  (predicates + the location rule — the same questions the worker enforces); an empty
+   *  set opens NOTHING (F7). Thing targets offer nothing this stream (I9 — no thing
+   *  carries interactions, and prims don't expose their kind yet); pawn targets are the
+   *  recorded social successor. */
+  private openContextMenu(cx: number, cy: number): void {
+    this.pieMenu.close();
     const primary = this.selection.primary;
     if (!primary || primary.kind !== "pawn") return;
+    const actor = primary.entity;
+    const info = this.moverLayer.pawnInfo(actor);
+    if (!info) return;
     const w = this.clientToWorld(cx, cy);
-    this.bridge.moveEntity(primary.entity, Math.floor(w.x / SQUARE), Math.floor(w.y / SQUARE));
+    if (this.moverLayer.pawnAt(w.x, w.y) || this.panel.view.thingAt(w.x, w.y)) return;
+    const tileX = Math.floor(w.x / SQUARE);
+    const tileY = Math.floor(w.y / SQUARE);
+    const defId = this.bridge.tileDefAt(tileX, tileY);
+    if (defId === 0) return; // unstreamed ground — nothing to offer
+    const d = this.ctx.client.ticDelta(0);
+    if (d === null) return;
+    const now = ((Math.floor(d) % 0x10000) + 0x10000) % 0x10000;
+    const payload = this.moverLayer.pawnPayload(actor) ?? new Uint32Array(0);
+    const needs = this.moverLayer.pawnNeeds(actor);
+    const standingOn = info.tileX === tileX && info.tileY === tileY;
+    const options = getContent().tileMenuOptions(defId, payload, needs, now, standingOn) as unknown as PieMenuOption[];
+    this.pieMenu.open(cx, cy, options, (o) => this.fireOption(o, actor, tileX, tileY));
+  }
+
+  /** input-rework F5: bind an option's input SIGNATURE by the reserved vocabulary and
+   *  queue the `EXECUTE_INTERACTION` event. An unbindable name refuses loudly — the wasm
+   *  filter should never have offered it. */
+  private fireOption(o: PieMenuOption, actor: number, tileX: number, tileY: number): void {
+    const inputs = new Uint32Array(o.inputs.length);
+    for (let i = 0; i < o.inputs.length; i++) {
+      const name = o.inputs[i];
+      if (name === "pawn") inputs[i] = actor;
+      else if (name === "destination") inputs[i] = tileToPosition(tileX, tileY);
+      else if (name === "amount") {
+        const f = new Float32Array(1);
+        f[0] = o.magnitude;
+        inputs[i] = new Uint32Array(f.buffer)[0];
+      } else {
+        console.warn(`pie menu: unbindable input '${name}' on ${o.name}`);
+        return;
+      }
+    }
+    this.ctx.client.queue(composeInteraction(o.reference, inputs));
   }
 
   // ── scroll-to-zoom (about the cursor, through the bridge) ─────────────────────────

@@ -8,7 +8,7 @@
 //! (`region:8 | zone:8`) throughout — the anchor manager, the render events, and the subscription
 //! frames all speak macro, so there is no `zone_id` to convert.
 
-use resonantdust_codec::action::{MOVE_TO, PLACE, PROMOTE, PROMOTE_EVENT};
+use resonantdust_codec::action::{MOVE_TO, PLACE, PROMOTE};
 
 use crate::api::Event;
 use crate::protocol::StateRow;
@@ -23,13 +23,9 @@ pub fn facing(data: u8) -> u8 {
     data >> 6
 }
 
-/// The action program for [`crate::api::Command::Move`] — the movement cadence's INITIAL program
-/// (`ACTIONS.md` §Movement): `PROMOTE_EVENT` announces the intent once (clients speculate from
-/// it), `PROMOTE` seeds the start position, `MOVE_TO` steps the first tile. The worker self-queues
-/// the continuations (bare; the final hop `PROMOTE`d) — per-hop state never fans out.
-pub fn move_to_program(entity: u32, tile_x: i32, tile_y: i32) -> Vec<u32> {
-    vec![PROMOTE_EVENT, PROMOTE, MOVE_TO, entity, tile_to_position(tile_x, tile_y)]
-}
+// `move_to_program` DIED with the raw MOVE_TO front door (input-rework F3): hosts compose
+// `EXECUTE_INTERACTION(move_to)` and the WORKER queues the seed. The speculation intent
+// (`move_intents` below) still reads the fanned seed — that channel is unchanged.
 
 /// The action program for [`crate::api::Command::Place`]: `PROMOTE` (prefix) then `PLACE entity dest`
 /// — place the entity and make it client-visible in one event.

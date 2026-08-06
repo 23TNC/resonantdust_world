@@ -38,9 +38,9 @@ pub fn tic_hz_js() -> u16 {
     resonantdust_codec::tic::TIC_HZ
 }
 
-/// Tics one tile-hop takes for a kind that authors no `speed` (`codec::speed`). Per-kind
-/// speeds come from the bundle's `thingSpeed` table (pawn-movement F1/F5 — speed is content,
-/// authored in tics per tile); this is only the fallback for a `0`/out-of-range entry.
+/// The degenerate-fallback hop pace (`codec::speed`). A pawn's real pace is the DERIVED
+/// `ground_speed` stat (input-rework F8 — `pawnGroundSpeed`); this covers only the
+/// pre-fan window and a 0-derived pawn nothing should be moving anyway.
 #[cfg(feature = "js")]
 #[wasm_bindgen(js_name = defaultTicsPerTile)]
 pub fn default_tics_per_tile_js() -> u16 {
@@ -53,6 +53,22 @@ pub fn default_tics_per_tile_js() -> u16 {
 #[wasm_bindgen(js_name = tileToPosition)]
 pub fn tile_to_position_js(tile_x: i32, tile_y: i32) -> u32 {
     resonantdust_codec::object::tile_to_position(tile_x, tile_y)
+}
+
+/// Compose an `EXECUTE_INTERACTION` program (interactions F4's layout verbatim:
+/// `[op, reference, version, count, inputs…]`) from a resolved gameplay reference + bound
+/// input words — the pie menu's send path (`WorldClient.queue` takes the result).
+#[cfg(feature = "js")]
+#[wasm_bindgen(js_name = composeInteraction)]
+pub fn compose_interaction_js(reference: u32, inputs: Vec<u32>) -> Vec<u32> {
+    let mut p = vec![
+        resonantdust_codec::action::EXECUTE_INTERACTION,
+        reference,
+        0,
+        inputs.len() as u32,
+    ];
+    p.extend_from_slice(&inputs);
+    p
 }
 
 /// A taxonomy flattened for the JS boundary: `[type, subType, kind, variant]`, taking the FIRST
@@ -367,13 +383,57 @@ impl Content {
         self.bundle.thing_light()
     }
 
-    /// Per-kind movement speed in **tics per tile**, `object_id` order (index 0 →
-    /// object_id 1); `0` = unauthored → the host resolves the default
-    /// (`defaultTicsPerTile`). The ONE value speculation must share with the worker's
-    /// continuation spacing (pawn-movement F1/F5 — speed is content, measured in tics).
-    #[wasm_bindgen(js_name = thingSpeed)]
-    pub fn thing_speed(&self) -> Vec<f64> {
-        self.bundle.thing_speeds()
+    /// A pawn's DERIVED `ground_speed` in **tics per tile** (input-rework F8): the ONE
+    /// value speculation must share with the worker's continuation spacing, computed from
+    /// the pawn's fanned rows (`payload` + stride-2 `needs`) through the shared
+    /// `stat_eval`. `0` = no walks / rows not fanned yet — the host falls back to
+    /// `defaultTicsPerTile`.
+    #[wasm_bindgen(js_name = pawnGroundSpeed)]
+    pub fn pawn_ground_speed(&self, payload: Vec<u32>, needs: Vec<u32>, now_tic: u16) -> f64 {
+        let (traits, conditions) = decode_payload(&payload);
+        let need_rows = decode_need_rows(&needs);
+        let active = resonantdust_content::needs_eval::active_conditions(
+            &self.bundle, &traits, &need_rows, &conditions, now_tic,
+        );
+        resonantdust_content::stat_eval::stat_value(&self.bundle, "ground_speed", &traits, &active)
+    }
+
+    /// The pie-menu options for a clicked TILE (input-rework F1/F4/F5): the tile def's
+    /// carried interactions, filtered by the acting pawn's affordance PREDICATES (its
+    /// fanned rows in — the SAME `interaction_available` the worker enforces) and the
+    /// LOCATION rule (`"on"` offers only while `standing_on`). Returns an array of
+    /// `{ name, menuText, reference, magnitude, inputs }` objects; empty = no menu.
+    #[wasm_bindgen(js_name = tileMenuOptions)]
+    pub fn tile_menu_options(
+        &self,
+        tile_def_id: u16,
+        payload: Vec<u32>,
+        needs: Vec<u32>,
+        now_tic: u16,
+        standing_on: bool,
+    ) -> js_sys::Array {
+        menu_options(&self.bundle, self.bundle.tile_interactions(tile_def_id), payload, needs, now_tic, standing_on)
+    }
+
+    /// The same for a clicked THING's kind (`object_id`) — empty today (no thing carries
+    /// interactions yet), wired so a waterskin is a TOML edit.
+    #[wasm_bindgen(js_name = thingMenuOptions)]
+    pub fn thing_menu_options(
+        &self,
+        object_id: u16,
+        payload: Vec<u32>,
+        needs: Vec<u32>,
+        now_tic: u16,
+        standing_on: bool,
+    ) -> js_sys::Array {
+        menu_options(&self.bundle, self.bundle.thing_interactions(object_id), payload, needs, now_tic, standing_on)
+    }
+
+    /// A gameplay def's u32 `definition_reference` (registry-first, seed fallback) — the
+    /// menu's event composer resolves interaction refs through this.
+    #[wasm_bindgen(js_name = gameplayReference)]
+    pub fn gameplay_reference_js(&self, category: String, name: String) -> Option<u32> {
+        self.bundle.gameplay_reference(&category, &name)
     }
 
     /// Every tile's 4 packed-map channel material bindings, in `def_id` order — a
@@ -646,6 +706,54 @@ impl Content {
 /// `mover_prim`). Straight from `object::macro_world_origin` — the same helper
 /// worldgen samples, so generation and render place a cell identically.
 #[cfg(feature = "js")]
+/// The pie-menu filter (input-rework F1/F4/F5), ONE implementation for tile and thing
+/// carriers: bindings → location rule → the shared predicate gate → option objects.
+#[cfg(feature = "js")]
+fn menu_options(
+    bundle: &dsl::loader::Bundle,
+    binds: Vec<(String, f64)>,
+    payload: Vec<u32>,
+    needs: Vec<u32>,
+    now_tic: u16,
+    standing_on: bool,
+) -> js_sys::Array {
+    let (traits, conditions) = decode_payload(&payload);
+    let need_rows = decode_need_rows(&needs);
+    let active = resonantdust_content::needs_eval::active_conditions(
+        bundle, &traits, &need_rows, &conditions, now_tic,
+    );
+    let out = js_sys::Array::new();
+    for (name, magnitude) in binds {
+        let Some(ip) = bundle.interaction_params(&name) else { continue };
+        // The location rule (F4): an "on" interaction is offered only while the acting
+        // pawn STANDS ON the clicked carrier — the menu must never offer what the worker
+        // would refuse.
+        if ip.location == "on" && !standing_on {
+            continue;
+        }
+        if !resonantdust_content::stat_eval::interaction_available(bundle, &name, &traits, &active)
+        {
+            continue;
+        }
+        let Some(reference) = bundle.gameplay_reference("interaction", &name) else { continue };
+        let obj = js_sys::Object::new();
+        let set = |key: &str, value: &JsValue| {
+            let _ = js_sys::Reflect::set(&obj, &JsValue::from_str(key), value);
+        };
+        set("name", &JsValue::from_str(&name));
+        set("menuText", &JsValue::from_str(&ip.menu_text));
+        set("reference", &JsValue::from_f64(f64::from(reference)));
+        set("magnitude", &JsValue::from_f64(magnitude));
+        let inputs = js_sys::Array::new();
+        for i in &ip.inputs {
+            inputs.push(&JsValue::from_str(i));
+        }
+        set("inputs", &inputs.into());
+        out.push(&obj.into());
+    }
+    out
+}
+
 /// Decode a pawn payload into its (trait rows, condition rows) — the stat-model shapes.
 fn decode_payload(payload: &[u32]) -> (Vec<u32>, Vec<(u32, u16)>) {
     (
@@ -759,10 +867,8 @@ impl WorldClient {
 
     /// Move `entity` (an `entity_reference`) toward global tile `(tile_x, tile_y)` — compiles to a
     /// `MOVE_TO` program. No-op before login / if disconnected.
-    #[wasm_bindgen(js_name = moveEntity)]
-    pub fn move_entity(&self, entity: u32, tile_x: i32, tile_y: i32) {
-        let _ = self.inner.move_entity(entity, tile_x, tile_y);
-    }
+    // `moveEntity` DIED with the raw MOVE_TO door (input-rework F3): the host composes
+    // `composeInteraction(move_to_ref, [pawn, destination])` and sends it through `queue`.
 
     /// Order walls on the `(start..end)` tile rect's PERIMETER (build-walls D5) — compiles to a
     /// `BUILD_WALL` program; the worker expands + queues the per-tile SETs. No-op offline.

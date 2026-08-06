@@ -143,6 +143,15 @@ fn log_event(event: &Event) {
                 "pawn parts"
             )
         }
+        Event::PawnNeed { macro_position, entity_reference, need, set_tic } => {
+            info!(
+                macro_position = format!("{macro_position:#06x}"),
+                entity_reference = format!("{entity_reference:#010x}"),
+                need = format!("{need:#010x}"),
+                set_tic,
+                "pawn need row"
+            )
+        }
         Event::ColdTiles { macro_position, subtype_id, layer_id, tic, tiles } => {
             info!(macro_position = format!("{macro_position:#06x}"), subtype_id, layer_id, tic, tiles = tiles.len(), "cold tiles")
         }

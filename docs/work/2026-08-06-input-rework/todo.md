@@ -69,39 +69,69 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
       active set; `resolve_thing_in` returns the def alone (the speed half gone; the pin
       test now derives 12.0 from the walks binding); wildlife.rs deleted with its dispatch
       arm. LIVE: wander trips + arrivals flow, ONE MoveIntent per trip (I1 ✓).
-- [ ] Edge: `MOVE_TO` leaves `CLIENT_VERBS` ([I3](issues.md#i3) — LAST, after both callers).
-      Acceptance: a hand-queued raw MOVE_TO is rejected at the door; trips still flow.
+- [x] Edge: `MOVE_TO` leaves `CLIENT_VERBS` ([I3](issues.md#i3) — LAST, after both callers).
+      Acceptance: a hand-queued raw MOVE_TO is rejected at the door; trips still flow. →
+      EXECUTED AFTER P3's client swap per I3 (the plan's in-P2 position was the I3 hazard —
+      re-ordered, not skipped). FOUND LIVE en route: the first drill's raw MOVE_TO WALKED
+      the wolf — the redeploy's edge build hit the docker/WSL2 MTIME MISS ([[docker-cargo-
+      mtime-miss]] verbatim; `touch` + rebuild showed `Compiling edge`). On the really-new
+      binary: raw MOVE_TO → no chain, wolf stationary 6 s+; menu + npc trips flow.
 
 ## P3 — the client rewire
 
-- [ ] WorldScene: RIGHT click = `selectAt` (panel + outlines — the whole current left-click
+- [x] WorldScene: RIGHT click = `selectAt` (panel + outlines — the whole current left-click
       behavior); the left-click select path removed; middle-pan + build-mode branches
       unchanged. Acceptance: browser — right-click selects pawn/thing/tile, the panel follows.
-- [ ] Speculation speed from the derived stat: a wasm accessor over `(payload, needs, now)`
+      → verified live: button-2 pointerdown selects a tile (panel `tile 101, 62`) and the
+      wolf (silhouette outline + full pawn panel). NOTE: the MCP browser's `right_click`
+      doesn't deliver pointerdown — drilled via synthetic `PointerEvent{button: 2}` through
+      the same handler a human's right-click reaches.
+- [x] Speculation speed from the derived stat: a wasm accessor over `(payload, needs, now)`
       for `ground_speed`; `MoverLayer.speedFor` moves onto it; `speed` field +
       `thing_speed(s)`/`thingSpeed` + stat-model's I10 guard DELETED ([F8](forks.md#f8)/
       [I7](issues.md#i7)). Acceptance: the glide still runs 12 tics/tile; delete-greps clean.
-- [ ] The client move path composes `EXECUTE_INTERACTION(move_to)` (corpus-resolved ref);
+      → `pawnGroundSpeed(payload, needs, now)`; `speedFor` keyed by ENTITY; the panel shows
+      `speed 12 tics/tile` DERIVED and menu-ordered trips glide; humans re-bound to walks
+      level 1 (24 t/t — the old 16 has no walks slot; noted). Golden: speeds section gone.
+- [x] The client move path composes `EXECUTE_INTERACTION(move_to)` (corpus-resolved ref);
       `move_to_program`/`Command::Move`/`moveEntity` deleted through core/wasm/TS.
-      Acceptance: grep `move_to_program` empty; a scripted move from the console glides.
+      Acceptance: grep `move_to_program` empty; a scripted move from the console glides. →
+      `composeInteraction` (wasm) + the F5 vocabulary composer in `WorldScene.fireOption`;
+      `Command::Move`/`move_to_program`/`moveEntity`/`moveSelf` deleted through
+      core/wasm/WasmClient/WorldBridge; menu-driven moves glide (spec armed to the dest).
 
 ## P4 — the pie menu
 
-- [ ] Availability: for a left-clicked tile/thing, the carrier's interactions filtered by the
+- [x] Availability: for a left-clicked tile/thing, the carrier's interactions filtered by the
       ACTIVE pawn's predicates (`interaction_available` via wasm over its fanned rows) AND the
       location rule ([F4](forks.md#f4)/[I4](issues.md#i4)). Acceptance: wolf selected — water
       under it yields Drink + Move To; water elsewhere yields Move To only; no selection →
-      nothing.
-- [ ] The overlay: `menu_text` rounded rects at a fixed radius, equal angles from 12 o'clock,
+      nothing. → `tileMenuOptions`/`thingMenuOptions` (ONE wasm filter; the carrier lookup is
+      the bridge's autotile `tileKindAt` map, exposed as `tileDefAt`); LIVE: water
+      not-standing = ["Move To"], standing = ["Drink", "Move To"], no selection/thing/pawn
+      target/unstreamed ground = nothing.
+- [x] The overlay: `menu_text` rounded rects at a fixed radius, equal angles from 12 o'clock,
       anchored at the click, ConditionCards DOM pattern, ONE menu ([F7](forks.md#f7)).
-      Acceptance: browser captures at 1 and 2 options.
-- [ ] Dismissal + execution ([I5](issues.md#i5)): a rect click composes (reserved vocabulary,
+      Acceptance: browser captures at 1 and 2 options. → `PieMenu.ts`; captures — one option
+      ("Move To" at 12 o'clock) and two (Drink at 12, Move To at 6, radius 72). Found+fixed
+      live: the rects rendered UNDER the canvas (panel z-bands reach 50k — the menu sits at
+      60k) and drifted off-cursor (#app is a transformed containing block — hosted on BODY).
+- [x] Dismissal + execution ([I5](issues.md#i5)): a rect click composes (reserved vocabulary,
       [F5](forks.md#f5)) + queues + hides; ANY other input hides; menu clicks never reach the
       canvas. Acceptance: browser — Move To walks the wolf, Drink sips it, a stray click just
-      closes the menu.
-- [ ] The npc soak + panel run unchanged beside menu use ([I10](issues.md#i10) accepted: the
+      closes the menu. → REAL mouse clicks: Move To → `move_to … dest=(102,68)` executed and
+      the wolf walked+glided there; Drink → `satisfied=Some("thirst") from=18.48 to=21.48
+      grants=1`; a canvas click closed the menu (document-capture listeners); TWO rapid
+      orders → ONE chain survived (rest at the second dest exactly — I2 supersession under
+      the worker-queued seed serials).
+- [x] The npc soak + panel run unchanged beside menu use ([I10](issues.md#i10) accepted: the
       wolf wanders off after a player order — supersession, not a bug). Acceptance: standing
-      drills green in the same session as menu-driven orders.
+      drills green in the same session as menu-driven orders. → npc trips (wolf …001) and a
+      menu order (wolf …000 → (105,64)) executing side by side in the worker log; the drink
+      thermostat + panel cards ran all session. FOUND+FIXED live ([I11](issues.md#i11)): the
+      universal move_to carrier broke the npc's drink filter — it fired move_to with the
+      3-input drink shape; the drink pass now filters to SATISFY carriers and
+      `fire_interaction` binds by the F5 vocabulary.
 
 ## P5 — the verdict
 

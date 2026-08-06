@@ -126,11 +126,10 @@ type = "pawn"
 kind = "wolf"
 subType = ["animal"]
 variant = ["0"]
-speed = 12
 needs = ["thirst"]
 # Starting trait bindings (stat-model F11), minted as payload rows at CREATE: a bare
-# string = level 1. walks level 2 contributes 12 tics/tile to ground_speed — equal to
-# `speed` above until the input stream rewires movement onto the stat (F12/I10).
+# string = level 1. walks level 2 = 12 tics/tile into ground_speed — the wolf's pace
+# (the `speed` field is GONE, input-rework F8: the derived stat IS the speed).
 traits = ["biological_lifeform", { name = "walks", level = 2 }]
 
   [[thing.part]]
@@ -184,7 +183,9 @@ type = "pawn"
 kind = "female"
 subType = ["human"]
 variant = ["0"]
-speed = 16
+# input-rework F8: pace = derived ground_speed. Level 1 = 24 tics/tile (the old
+# `speed = 16` slot has no walks level; humans are the ambling debug fixture).
+traits = ["biological_lifeform", { name = "walks", level = 1 }]
 
   [[thing.part]]
   tint = "#ffffff"
@@ -217,7 +218,7 @@ type = "pawn"
 kind = "male"
 subType = ["human"]
 variant = ["0"]
-speed = 16
+traits = ["biological_lifeform", { name = "walks", level = 1 }]
 
   [[thing.part]]
   tint = "#ffffff"

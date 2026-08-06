@@ -482,7 +482,6 @@ pub(crate) struct ThingDef {
   pub taxonomy: Option<Taxonomy>,
   pub color: Option<u32>,
   pub visual: Option<VisualParts>,
-  pub speed: Option<u16>,
   /// The need NAMES this kind carries (`needs = [...]`), load-validated; consumers read
   /// gameplay refs through [`Bundle::thing_needs`] (interactions F1).
   pub needs: Vec<String>,
@@ -774,12 +773,12 @@ impl Bundle {
     Some(h)
   }
 
-  /// The same for a thing: `speed` (hop cost) and `needs` (what it depletes). Not its art.
+  /// The same for a thing: its `needs`, traits and interactions (what the simulation
+  /// reads). Not its art. (`speed` left the schema — input-rework F8.)
   pub fn thing_sim_version(&self, object_id: u16) -> Option<u64> {
     let d = self.things.get(object_id.checked_sub(1)? as usize)?;
     let mut h = FNV_OFFSET;
     fnv_str(&mut h, &d.name);
-    fnv_bytes(&mut h, &d.speed.unwrap_or(0).to_le_bytes());
     for n in &d.needs {
       fnv_str(&mut h, n);
     }
@@ -969,16 +968,6 @@ impl Bundle {
     out
   }
 
-  /// A thing's movement speed in **tics per tile** (pawn-movement F1: speed is
-  /// content, measured in tics). `None` when unauthored — the caller resolves the
-  /// default (`codec::speed`); the corpus never invents one.
-  pub fn thing_speed(&self, object_id: u16) -> Option<u16> {
-    self.things.get(object_id.checked_sub(1)? as usize)?.speed
-  }
-  /// Every thing's speed in `object_id` order, `0` = unauthored.
-  pub fn thing_speeds(&self) -> Vec<f64> {
-    self.things.iter().map(|d| f64::from(d.speed.unwrap_or(0))).collect()
-  }
   /// Every thing's 4 packed-channel material bindings in `object_id` order.
   pub fn thing_packed_channels(&self) -> Vec<[PackedChannel; 4]> {
     self.things.iter().map(|d| d.visual.as_ref().map(|v| v.packed).unwrap_or_default()).collect()

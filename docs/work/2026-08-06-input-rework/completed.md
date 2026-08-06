@@ -1,5 +1,43 @@
 # Completed — input-rework
 
+## 2026-08-06 · P2 + P3 + P4 — the door re-hung, the buttons swapped, the menu lives (4/4 + 3/3 + 4/4)
+
+**The server** (P2): the worker's interaction arm generalized — the acting pawn from either
+effect, the CARRIER tile by the location rule (`"on"` = under the pawn, `"target"` = the
+move destination, per-biome merged read), satisfy scoped, the `move` effect queueing the
+same `PROMOTE_EVENT PROMOTE MOVE_TO` seed the client used to send; chain spacing derives
+`ground_speed` PER HOP (a mid-trip stat change slows the chain); the speeds table,
+`tics_for`, and `load_corpus`'s speeds half deleted. The npc composes
+`EXECUTE_INTERACTION(move_to)` for every trip, derives its deadlines, and the legacy
+`wildlife` brain is gone (F10). LIVE: trips through the new door only, one MoveIntent per
+trip (I1), a 7-hop trip in exactly 8×12 tics.
+
+**The client** (P3): right click = the whole former selection behavior (verified live —
+pawn silhouette + panel, tile box + title); speculation reads `pawnGroundSpeed` (the panel
+shows the DERIVED `12 tics/tile`); `Command::Move`/`move_to_program`/`moveEntity`/
+`moveSelf` deleted through core/wasm/TS; humans re-bound to walks level 1 (24 t/t — the
+old `speed = 16` has no walks slot; an accepted pace change to a debug fixture).
+
+**The menu** (P4): `PieMenu.ts` (rects at radius 72, equal angles from 12 o'clock, body-
+hosted, z 60000, document-capture dismissal), `tileMenuOptions` as THE one availability
+filter (predicates + location — fed by the bridge's autotile `tileKindAt` map via
+`tileDefAt`), and the F5 vocabulary composer (`pawn`/`destination`/`amount` →
+`composeInteraction`). LIVE, real mouse: water-not-standing = Move To only; standing =
+Drink + Move To (captured, with the wolf Thirsty); Move To walked the wolf to (102,68)
+with the glide; Drink sipped `18.48 → 21.48` + quenched; two rapid orders left ONE chain
+(rest at the second dest — I2); npc + menu orders side by side (I10 as accepted).
+
+**Found live, all fixed**: [I11](issues.md#i11) — the universal `move_to` carrier broke
+the npc's drink filter (fired move_to through the 3-input drink composer; the drink pass
+now filters to SATISFY carriers and `fire_interaction` binds by the vocabulary);
+the pie menu rendered UNDER the canvas (panel z-bands reach 50k → menu at 60k) and
+drifted off-cursor (#app is a transformed containing block → body-hosted); and the
+FIRST edge-door drill FAILED OPEN — the redeploy's edge build hit the docker/WSL2 MTIME
+MISS (the memory's exact failure: `Finished` with no `Compiling`; a raw MOVE_TO walked
+the wolf toward nowhere) — `touch` + rebuild + re-exec, after which the raw verb is
+rejected and the wolf stays put. The edge item ran AFTER P3's client swap per I3 (the
+plan's in-P2 position was itself the I3 hazard).
+
 ## 2026-08-06 · P1 — loader + corpus (3/3)
 
 **Loader**: `InteractionParams` gains `menu_text` (default = label) and

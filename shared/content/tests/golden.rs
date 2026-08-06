@@ -112,11 +112,8 @@ fn dump(b: &Bundle) -> String {
             .join("\n"),
         &mut out,
     );
-    sec(
-        "thing speeds (0 = unauthored)",
-        floats(&b.thing_speeds()),
-        &mut out,
-    );
+    // (the "thing speeds" section left with the `speed` field — input-rework F8: pace is
+    // the DERIVED ground_speed, whose inputs are already dumped as trait bindings.)
 
     // ── flat tables, exactly as consumers fetch them ──
     sec("tile_texture_stems", b.tile_texture_stems().join("\n"), &mut out);
@@ -345,24 +342,6 @@ fn the_dump_is_deterministic() {
     assert_eq!(dump(&b), dump(&b), "two dumps of one bundle must be byte-identical");
 }
 
-#[test]
-fn the_wolfs_derived_ground_speed_equals_its_speed_field() {
-    // stat-model I10: until the input stream rewires movement onto the stat (F12), the
-    // wolf carries BOTH `speed = 12` and walks-level-N. This guard makes the two values
-    // unable to drift during the window; the input stream deletes the field AND this test.
-    let Some(b) = corpus() else { return };
-    let kind = b.thing_object_id("wolf").expect("wolf kind");
-    let rows: Vec<u32> = b
-        .thing_traits(kind)
-        .iter()
-        .map(|(name, level)| {
-            resonantdust_codec::object::pack_gameplay_row(
-                b.gameplay_reference("trait", name).expect("trait ref"),
-                *level,
-            )
-        })
-        .collect();
-    let derived = resonantdust_content::stat_eval::stat_value(&b, "ground_speed", &rows, &[]);
-    let authored = b.thing_speed(kind).expect("wolf speed") as f64;
-    assert_eq!(derived, authored, "walks level table vs the speed field (I10)");
-}
+// (stat-model I10's derived-vs-authored speed guard died WITH the `speed` field — the
+// derived-value pin lives in the npc crate's `the_wolfs_derived_ground_speed_is_the_old_
+// authored_pace`, which asserts walks level 2 still derives 12.0.)

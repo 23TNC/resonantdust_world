@@ -448,12 +448,8 @@ export class WorldBridge {
     this.setAnchor(this.anchorX + dx, this.anchorY + dy);
   }
 
-  /** ui-select P0 (D3): the right-click MOVE ORDER — straight through to the wasm client's
-   *  `MOVE_TO` (edge-allowlisted; the same verb the npc drives wolves with). No ownership
-   *  model yet — any selected pawn obeys. */
-  moveEntity(entity: number, tileX: number, tileY: number): void {
-    this.client.moveEntity(entity, tileX, tileY);
-  }
+  // The right-click MOVE ORDER died with the raw MOVE_TO door (input-rework F1/F3):
+  // movement is the pie menu's `move_to` interaction, composed in WorldScene.fireOption.
 
   /** build-walls D5: the release-issued BUILD ORDER — walls on the `(start..end)` rect's
    *  perimeter, `object` = the wall kind's def. The worker expands + queues per-tile SETs. */
@@ -608,6 +604,13 @@ export class WorldBridge {
       // prim_presence slot 0 + definition_data, not per-prim records). The `tile.height`
       // lane + table stay authored for the successor stream.
     };
+  }
+
+  /** The ground tile's `def_id` at global tile `(x, y)`, or 0 while unstreamed — the pie
+   *  menu's carrier lookup (input-rework P4): the SAME drawn-kind map the autotiler keeps,
+   *  so what the menu offers is what the player sees. */
+  tileDefAt(tileX: number, tileY: number): number {
+    return this.tileKindAt.get(((tileX & 0xffff) << 16) | (tileY & 0xffff)) ?? 0;
   }
 
   /** The 4-neighbor same-kind mask for a tile (N/E/S/W bits — north is −y). */
