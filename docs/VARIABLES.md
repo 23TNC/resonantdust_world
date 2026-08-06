@@ -533,12 +533,15 @@ tile grid authors its inset as a subframe like everything else.
 ## Needs & conditions (`shared/content` → shard / npc / `client/webgl`)
 
 **The pawn's hidden state and its displayed consequences.** Work streams:
-[`work/2026-08-03-needs-moodlets`](work/2026-08-03-needs-moodlets/README.md) (the model) and
+[`work/2026-08-03-needs-moodlets`](work/2026-08-03-needs-moodlets/README.md) (the model),
 [`work/2026-08-04-conditions`](work/2026-08-04-conditions/README.md) (the word — `moodlet` was
-renamed to **condition** everywhere; no wire value moved). A **need** is a 0..1 SATISFACTION
-depleting toward zero (F1 — one dialect for every need; bad states are LOW; the player never sees
-the scalar). A **condition** is what displays: a label plus its effects. Mood is
-`clamp(0.5 + Σ active offsets, 0..1)` (F5).
+renamed to **condition** everywhere; no wire value moved) and
+[`work/2026-08-06-interactions`](work/2026-08-06-interactions/README.md) (f32 values, registry
+ids, the drink producer). A **need** is an **f32 SATISFACTION on its OWN authored domain**
+(`min..max` — interactions F7; the corpus decides range and sign, the system stores and CLAMPS)
+depleting toward `min` (needs-moodlets F1 — one dialect for every need; bad states are LOW; the
+player never sees the scalar). A **condition** is what displays: a label plus its effects. Mood
+is `clamp(0.5 + Σ active offsets, 0..1)` (F5).
 
 **A condition's effects are an OPEN set** (conditions F6) — `mood` is the FIRST of them, not the
 definition of the thing. Conditions act on pawn state, and the user's own framing is that they
@@ -547,16 +550,20 @@ write code or docs that assume a condition *is* a mood offset. The effect table 
 stream's charter, alongside the still-pending drink action.
 
 ```
-[[need]]       id/name/label · deplete (TICS full→empty; 0 = never drains) ·
-               band = [{ condition, lo, hi }]  exclusive ranges, ≤1 active per need
-[[condition]]  id/name/label · mood (-1..1) · duration (TICS a TIMED grant lives; 0 = DERIVED) ·
+[[need]]       name/label · min/max (the authored value domain, f32) ·
+               deplete (TICS max→min; 0 = never drains) ·
+               band = [{ condition, lo, hi }]  in the need's OWN units — exclusive, ≤1 active
+[[condition]]  name/label · mood (-1..1) · duration (TICS a TIMED grant lives; 0 = DERIVED) ·
                priority (sort key; see below)
-[[thing]]      needs = ["thirst", …]           the needs a kind carries
+[[thing]]      needs = ["thirst", …] · traits = ["biological_lifeform", …]
 ```
-(TOML spellings — § TOML content schema; ids are explicit and never renumber.)
+(TOML spellings — § TOML content schema. Ids are REGISTRY-allocated from the derived
+`gameplay/<category>/<name>/default` taxonomy — interactions F1/F9; payload words and event
+inputs carry the full u32 `definition_reference`.)
 
 Exposed as `need_params_all()` / `condition_params_all()` (registry order) and
-`thing_needs_table()` — **stride 8** per kind of 1-based need ids, `0` = empty slot.
+`thing_needs_table()` — **stride 8** per kind of u32 need `definition_reference`s, `0` = empty
+slot.
 
 **`priority` orders the display, and it is AUTHORED** (conditions F2). The details panel maximizes
 the top 4 conditions and minimizes the rest, so the ranking is a game-design decision and lives in
@@ -572,8 +579,9 @@ places between evaluations. `pawnConditions` (wasm) returns **stride 4** —
 *shown*, not to be re-sorted. Do not derive priority from `|mood|`: it cannot express "mild but
 urgent", and it degenerates entirely once a condition's effect is a need rather than a mood.
 
-**Nothing ticks a need** (F4): a pawn's shard row is `(satisfaction, set_tic)`; observers compute
-`satisfaction_at(tic)` and every band-crossing tic from `deplete`. The two kinds of condition:
+**Nothing ticks a need** (F4): a pawn's shard row is `(satisfaction: f32, set_tic)`; observers
+compute `satisfaction_at(tic)` and every band-crossing tic from `deplete` over the authored
+`min..max` domain. The two kinds of condition:
 **DERIVED (`duration 0`)** — a band on a need's satisfaction, computed from `(row, tic, corpus)` by
 every observer identically, with no grant events at all (F2); **TIMED (`duration > 0`)** — stored
 grants `(pawn, condition_id, grant_tic)` expiring `duration` tics later (the action stream's kind).
@@ -644,8 +652,19 @@ the new definition while **existing objects keep their old id forever** and keep
 did ([F6](work/2026-08-04-definition-registry/forks.md#f6)). An old apple stays an old apple — same
 weight, same expiry — until it is spent. There is no migration sweep, deliberately.
 
+**Gameplay definitions** (work
+[`2026-08-06-interactions`](work/2026-08-06-interactions/README.md) F1/F9): needs, conditions,
+traits, interactions and affordances are defs of `type = "gameplay"`, numbered by the SAME
+registry — their u32 `definition_reference`s ride payload words and event inputs. Their taxonomy
+is DERIVED, not authored (F9): `subType` = the category table's name (`need`, `condition`,
+`trait`, `interaction`, `affordance`), `kind` = the def's `name`, `variant` = `["default"]`
+unless authored — the lane for later variations (e.g. an `angry` drink), with the AFFORDANCE
+listing which variations it offers. Gameplay defs have no art: the taxonomy-is-texture-path rule
+does not apply to `type = "gameplay"`, and no stem derives from it.
+
 _Superseded: the explicit `id = N` law (toml-content F1) — correct while the LOADER owned identity,
-wrong once a registry does._
+wrong once a registry does. `needs.toml`'s ids were the last holdouts; interactions F1 pulls them
+through the registry too._
 
 Colours are `"#rrggbb"` strings. Fractions are `0..1`. Unstated fields keep the defaults the
 `.rd` loader used (documented per table below).
@@ -670,13 +689,20 @@ padding = 0.5               # internal padding, UNITS of the 16-unit cell (linke
 packed = [                  # up to 4 material channel bindings, index = RGBA channel
   { material = "mottle", tint = "#6b6b6b" },
 ]
+affordances = [             # affordance bindings: the reference + THIS carrier's parameters
+  { name = "drink_water", magnitude = 3 },   # (tiles and things alike; interactions F2)
+]
 
 # ── things.toml — flora, walls' kinds, PAWNS (a pawn is a thing with parts) ──
 [[thing]]
-id = 7                      # object_id (packed into thing entries + pawn defs)
+type = "pawn"               # taxonomy — the id is ALLOCATED from these, never authored
+kind = "wolf"
+subType = ["animal"]        # applicability array
+variant = ["0"]             # applicability array
 name = "wolf"
 speed = 12                  # TICS per tile (optional; movement default applies)
 needs = ["thirst"]          # the needs this kind carries (optional)
+traits = ["biological_lifeform"]   # the traits this kind carries (optional; interactions F6)
 light = {                   # the kind's emitted light (optional; reach>0 = lit)
   r = 1.0, g = 0.8, b = 0.5, intensity = 1.0, reach = 16, radius = 0.25,
   height = 0.5, cast = true, hot = false, flicker = false }
@@ -733,24 +759,53 @@ warm_cool_bias = 0.2        # −1..1 cool..warm
 sample_space = "world"      # "uv" (default) | "world"
 detail = { field = "grain", amp = 0.4, scale = 1.0 }   # normal detail (optional)
 
-# ── needs.toml — needs AND conditions (the pair is one model) ────────────────
+# ── gameplay defs — needs, conditions, traits, interactions, affordances ─────
+# (needs.toml, interactions.toml — ANY file; the category table is what matters.)
+# NO ids and NO authored taxonomy (F9): the tuple derives as
+# `gameplay/<category>/<name>/default`, and the registry numbers it like any def.
 [[need]]
-id = 1                      # the need_id inside NEED payload words
 name = "thirst"
 label = "Thirst"
-deplete = 21600             # TICS full→empty; 0/absent = never drains
-band = [                    # exclusive ranges; ≤1 active per need
-  { condition = "thirsty",    lo = 0.10, hi = 0.35 },
-  { condition = "dehydrated", lo = 0.00, hi = 0.10 },
+min = 0                     # the authored value domain (f32; interactions F7) —
+max = 100                   # min can be negative: min/max IS the sign treatment
+deplete = 21600             # TICS max→min; 0/absent = never drains
+band = [                    # exclusive ranges in the need's OWN units; ≤1 active
+  { condition = "thirsty",    lo = 10, hi = 35 },
+  { condition = "dehydrated", lo = 0,  hi = 10 },
 ]
 
 [[condition]]
-id = 1                      # the condition_id inside CONDITION payload words
 name = "thirsty"
 label = "Thirsty"
 mood = -0.15                # offset while active; mood = clamp(0.5 + Σ)
 duration = 0                # TICS a TIMED grant lives; 0 = DERIVED (band-computed)
 priority = 0                # card sort key, desc; absent = 0
+
+[[trait]]                   # a capability class a pawn HAS (kinds author `traits = [...]`)
+name = "biological_lifeform"
+label = "Biological Lifeform"
+
+[[interaction]]             # something a pawn can DO (interactions F5)
+name = "drink"
+label = "Drink"
+inputs = ["pawn", "need", "amount"]   # the SIGNATURE — event inputs bind these IN ORDER
+# effects: operands are `"@input"` references or constants; `amount` is signed f32,
+# clamped to the need's authored min/max on apply
+satisfy = { target = "@pawn", need = "@need", amount = "@amount" }
+grant = ["quenched"]        # TIMED condition grants on execute (expiry from the condition)
+location = "on"             # this turn's only rule: the target stands ON a carrier tile (F8)
+duration = 0                # reserved — interactions are instantaneous (interactions I9)
+
+[[affordance]]              # WHO may do WHAT (availability; interactions F2)
+name = "drink_water"
+requires = ["biological_lifeform"]    # trait gate
+interaction = "drink"
+variants = ["default"]      # which variations of the interaction this affordance offers
+# carriers bind their parameters where they are defined (tile/thing blocks above):
+#   affordances = [{ name = "drink_water", magnitude = 3 }]
+# worked example: drinking at the water tile executes drink with amount = +3.0 —
+# satisfaction moves from `satisfaction_at(now)` to `clamp(sat + 3.0, 0, 100)` on
+# thirst's authored domain, and `quenched` is granted at the composing tic.
 ```
 
 ## Removed

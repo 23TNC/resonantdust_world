@@ -383,8 +383,12 @@ opcodes by `count`. Opcodes (append-only):
 | opcode | value | count | operands | meaning |
 |---|---|---|---|---|
 | `PART` | 1 | 2 | `slot`, `definition_reference` | the FULL def part slot `slot` draws (body = slot 0, head = slot 1; an equip verb later swaps a slot's def) |
-| `NEED` | 2 | 1 | `need_id:8 \| satisfaction:8 \| set_tic:16` | one need's row (needs-moodlets F7): satisfaction quantised `0..=255`, NEVER ticked — observers compute `satisfaction_at(tic)` from the corpus `deplete` rate (F4). `SET_NEED` upserts by `need_id` |
-| `CONDITION` | 3 | 1 | `condition_id:8 \| 0:8 \| grant_tic:16` | one TIMED condition grant (F2): expiry = `grant_tic + duration` from the corpus, DERIVED never stored; a re-grant refreshes the entry. DERIVED (band) conditions never appear here. Renamed from `MOODLET` by `2026-08-04-conditions`; the opcode VALUE is unchanged |
+| `NEED` | 2 | 3 | `need:definition_reference` · `satisfaction` (f32 BITS) · `set_tic:16` | one need's row (needs-moodlets F7, reshaped by interactions F1/F3/I1): the need is its full u32 gameplay `definition_reference`; satisfaction is an f32 bit pattern on the need's authored `min..max` domain, NEVER ticked — observers compute `satisfaction_at(tic)` from the corpus `deplete` rate (F4). `SET_NEED` upserts by the def reference |
+| `CONDITION` | 3 | 2 | `condition:definition_reference` · `grant_tic:16` | one TIMED condition grant (F2, reshaped by interactions F1/I1): expiry = `grant_tic + duration` from the corpus, DERIVED never stored; a re-grant refreshes the entry. DERIVED (band) conditions never appear here. Renamed from `MOODLET` by `2026-08-04-conditions`; the opcode VALUE is unchanged |
+
+_The NEED/CONDITION reshape (interactions I1) is NOT read-compatible with the old packed-`u8`-id
+words: rows written before it are invalid and dev pawns RE-MINT their needs (the npc's init
+path); no in-place converter exists._
 
 `payload_log` — the write-history sidecar of `entity_state_log`; one row per payload-carrying
 state write (spawn / future equips — NOT movement):

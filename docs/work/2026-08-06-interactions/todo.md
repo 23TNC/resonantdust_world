@@ -5,19 +5,25 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P0 — the schema, documented before parsed
 
-- [ ] Write the gameplay taxonomy into `VARIABLES.md § TOML content schema`: `type = "gameplay"`,
+- [x] Write the gameplay taxonomy into `VARIABLES.md § TOML content schema`: `type = "gameplay"`,
       subtypes trait/interaction/affordance/need/condition, kind, variant `default`; registry
       numbers the tuple, NO authored ids — the needs/conditions blocks rewritten off `id = N`
-      ([F1](forks.md#f1)). Acceptance: every field P2 authors has a spelling here first.
-- [ ] Document the value domain: satisfaction and magnitudes are f32; each need authors
+      ([F1](forks.md#f1)). Acceptance: every field P2 authors has a spelling here first. →
+      landed WITH [F9](forks.md#f9): the taxonomy DERIVES from the category table (authoring it
+      twice is a drift lane); also fixed the stale `id = 7` wolf sample (pre-registry leftover).
+- [x] Document the value domain: satisfaction and magnitudes are f32; each need authors
       `min`/`max` + sign treatment ([F3](forks.md#f3)/[F7](forks.md#f7)); the NEED/CONDITION
       payload entries grown to u32 def ids + an f32 satisfaction word ([I1](issues.md#i1)).
       Acceptance: the schema states drink 3's exact effect (+3.0, clamped to thirst's authored
-      max) and the new entry layouts.
-- [ ] Document the `EXECUTE_INTERACTION` event: `[op, interaction_id, version, input_count,
+      max) and the new entry layouts. → VARIABLES worked example (`clamp(sat + 3.0, 0, 100)`) +
+      TABLES §payload rows NEED(count 3)/CONDITION(count 2) + the not-read-compatible re-mint note.
+- [x] Document the `EXECUTE_INTERACTION` event: `[op, interaction_id, version, input_count,
       inputs…]`, value inputs as f32 BIT PATTERNS in the u32 lanes, the input signature declared
       by the interaction def ([F4](forks.md#f4)/[F5](forks.md#f5)). Acceptance: layout in
-      VARIABLES before any codec change; docs-check green.
+      VARIABLES before any codec change; docs-check green. → landed in ACTIONS.md (the verb
+      table's authoritative home), op 12, as a BUILD_WALL-pattern verb: writes NOTHING itself,
+      the worker queues PROMOTE SET_NEED/GRANT_CONDITION — so grouping never routes untyped
+      input words. SET_NEED/GRANT_CONDITION rows amended to u32 def refs + f32 bits.
 
 ## P1 — the loader + the registry
 

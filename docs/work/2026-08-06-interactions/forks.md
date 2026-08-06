@@ -102,3 +102,17 @@ carries the affordance. Adjacency, passability, and other placements are LATER r
 documented destination is location generalized to `unit.x/y/z` (an interaction holding
 `self.unit.*` or other values) paired with a queued "move to and execute" event so arrival and
 execution need no round-trip — declared, NOT built this turn.
+
+## F9 — gameplay defs DERIVE their taxonomy from the category table {#f9}
+
+_2026-08-06, mine, during P0._ A `[[trait]]` block authoring `type = "gameplay"` +
+`subType = ["trait"]` states the category twice — the table name already says it, and a
+`subType = ["interaction"]` typo inside a `[[trait]]` block would be either a silent
+mis-taxonomy or a refusal the author can't see the point of.
+
+**Chosen**: the loader derives the tuple — `type = "gameplay"`, `subType` = the category table's
+name, `kind` = the def's `name`, `variant` = `["default"]` unless authored (the lane for later
+`angry`/`sad` variations). The registry receives the same full 4-name tuple as any other def;
+only the SPELLING is smaller. **Rejected**: authoring all four fields (the tile/thing spelling) —
+there the fields carry real applicability choices; here every one of them is determined by where
+the block sits, and a determined field an author can contradict is a drift lane, not a freedom.
