@@ -139,6 +139,10 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
       needs-moodlets-delivered rewritten to the f32/refs reality, interactions-delivered
       written, toml-content's stale explicit-id claim superseded, index rows updated; the
       work index row records delivery. docs-check green.
-- [ ] Cold-boot the stack; standing drills (wolf trip, thirst crossing, panel cards) + the
+- [x] Cold-boot the stack; standing drills (wolf trip, thirst crossing, panel cards) + the
       UNPROMPTED drink arc green together; **the user's eyes close the stream**. Acceptance:
-      captures + logs recorded in `completed.md`.
+      captures + logs recorded in `completed.md`. → edge + master/orch/worker + npc bounced
+      together: registry re-seeded (189), corpus loaded (interactions=1), the EXISTING wolf
+      ADOPTED (no re-mint), trips flowed, and the drink arc re-ran unprompted (Thirsty →
+      water → +3.0 sips at `effect_tic=master+2..4` → quenched); the cold-loaded panel shows
+      **Quenched +0.20 3043t** at mood 70%. **The user's look is the remaining close.**

@@ -1,5 +1,18 @@
 # Completed — interactions
 
+## 2026-08-06 · P5 — the verdict (2/2; 21/21 — the user's eyes close the stream)
+
+The truth pass: component docs were already clean (P0 moved the authoritative sections before
+any code); memories rewritten to the delivered reality (needs-moodlets → f32/refs,
+interactions-delivered written, toml-content's explicit-id claim superseded), index rows
+updated. The cold boot: edge + master/orchestrator/worker + npc bounced together — the master
+re-seeded 189 definitions (7 gameplay), the worker loaded the corpus (`interactions=1`), the
+npc resolved `0x30010070`/12/`0x80010010`/["biological_lifeform"] and ADOPTED its existing
+wolf (no re-mint — the drill seed is the only forced write), trips flowed, and the drink arc
+re-ran UNPROMPTED: Thirsty at adoption → `heading to water (102,68)` → sips of +3.0 landing
+at `effect_tic = master+2..4` (the I11 fix holding) → quenched. The cold-loaded browser panel
+shows the wolf at mood 70% with **Quenched +0.20 3043t**. What remains is the user's look.
+
 ## 2026-08-06 · P3 + P4 — the event, the worker, the drinking wolf (4/4 + 3/3)
 
 **The wire**: `EXECUTE_INTERACTION = 12` frames like CREATE (`count` third), contributes
