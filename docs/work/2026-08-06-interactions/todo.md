@@ -5,76 +5,89 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P0 — the schema, documented before parsed
 
-- [ ] Write `[[trait]]`/`[[interaction]]`/`[[affordance]]` + carrier `affordances` lists into
-      `VARIABLES.md § TOML content schema`, with the id-regime rule stated ([I1](issues.md#i1):
-      explicit iff the id rides wire/payload). Acceptance: docs-check green; every field P2
-      authors has a spelling here first.
-- [ ] Document the effect semantics: `satisfy` scaled by magnitude × `unit` ([F3](forks.md#f3))
-      with the drink-3 worked example (+77 u8, clamp 255), `grant` via the condition's own
-      `duration`, and the reserved `duration = 0` lane ([I9](issues.md#i9)). Acceptance: the
-      schema states drink 3's exact u8 delta.
+- [ ] Write the gameplay taxonomy into `VARIABLES.md § TOML content schema`: `type = "gameplay"`,
+      subtypes trait/interaction/affordance/need/condition, kind, variant `default`; registry
+      numbers the tuple, NO authored ids — the needs/conditions blocks rewritten off `id = N`
+      ([F1](forks.md#f1)). Acceptance: every field P2 authors has a spelling here first.
+- [ ] Document the value domain: satisfaction = −128-biased i8 (full 127, empty 0, negative =
+      deficit, [F3](forks.md#f3)/[F7](forks.md#f7)); bands/deplete/magnitudes in RAW units; the
+      NEED/CONDITION payload entries grown to u32 def ids ([I1](issues.md#i1)). Acceptance: the
+      schema states drink 3's exact stored delta (+3) and the new entry layouts.
+- [ ] Document the `EXECUTE_INTERACTION` event: `[op, interaction_id, version, input_count,
+      inputs…]`, inputs bias-encoded i32, the input signature declared by the interaction def
+      ([F4](forks.md#f4)/[F5](forks.md#f5)). Acceptance: layout in VARIABLES before any codec
+      change; docs-check green.
 
-## P1 — the loader (registries + tables)
+## P1 — the loader + the registry
 
-- [ ] Load the three categories into `Bundle` registries with the explicit-id law enforced
-      (duplicate/zero/missing refuse), `deny_unknown_fields` throughout. Acceptance: crate
-      tests — a minimal TOML round-trips each category; a duplicate id refuses loudly.
-- [ ] Flat consumer tables: per-kind trait sets (things), per-def affordance lists with
-      magnitudes (tiles + things), interaction effect params — same accessor posture as
-      `thing_needs_table` ([F2](forks.md#f2)/[F6](forks.md#f6)). Acceptance: a crate test reads
-      drink's scaled effect through the accessor a consumer will call.
-- [ ] Extend the golden dump with the new registries/tables and re-bless (`BLESS_GOLDEN=1`),
-      reviewing the diff as added-sections-only ([I8](issues.md#i8)). Acceptance: golden 3/3
-      green; the diff shows no byte moved in an existing section.
+- [ ] Loader: parse `[[trait]]`/`[[interaction]]`/`[[affordance]]` by taxonomy with
+      `deny_unknown_fields`; needs/conditions migrate off explicit ids to taxonomy; duplicate
+      `(taxonomy, version)` refuses. Acceptance: crate tests — round-trip per category; a
+      duplicate tuple refuses loudly.
+- [ ] `needs_eval` moves to the i8 domain: raw-unit bands, deplete = TICS for 127→0 continuing
+      below zero, biased-storage helpers used by every caller ([I2](issues.md#i2)). Acceptance:
+      crate tests + translated probes green; no fraction math survives grep.
+- [ ] Registry: the index module numbers `gameplay` tuples like things ([F1](forks.md#f1)).
+      Acceptance: registry rows exist for the P2 defs; a consumer resolves
+      `gameplay/interaction/drink/default` → its u32.
+- [ ] Flat consumer tables: per-kind trait sets, per-def affordance lists with magnitudes,
+      interaction signatures + effects ([F2](forks.md#f2)/[F5](forks.md#f5)/[F6](forks.md#f6)).
+      Acceptance: a crate test reads drink's signature and effect through the consumer accessor.
+- [ ] Extend the golden dump (new registries/tables; the reshaped needs section) and re-bless,
+      reviewing the diff section-by-section ([I8](issues.md#i8)). Acceptance: golden 3/3 green;
+      the review recorded in completed.md.
 - [ ] The 2-pass gate (native + wasm32) green with the new surface. Acceptance: `bin/rd`'s
       shared check green both passes.
 
 ## P2 — the corpus (the first three defs)
 
-- [ ] Author `content/interactions.toml`: trait `biological_lifeform` (id 1), interaction
-      `drink` (id 1, `unit = 0.1`, satisfy thirst, grant quenched, `duration = 0`), affordance
-      `drink_water` (id 1, requires biological_lifeform, interaction drink) — comments carrying
-      the model, as needs.toml does. Acceptance: loader accepts; `rd content-check` green.
-- [ ] Assign the ends: the wolf thing def gains `traits = ["biological_lifeform"]`; the water
-      tile def gains `affordances = [{ name = "drink_water", magnitude = 3 }]`. Acceptance: the
-      golden re-bless shows exactly the wolf's trait row + water's affordance row.
-- [ ] Add the new categories to the client-corpus filter EXPLICITLY as client-served
-      ([I10](issues.md#i10)). Acceptance: `/content` lists interactions.toml; biomes still
+- [ ] Author `content/interactions.toml`: trait `biological_lifeform`; interaction `drink`
+      (inputs pawn/need/amount, satisfy by signed amount, grant `quenched`, `duration = 0`
+      reserved); affordance `drink_water` (requires the trait, interaction drink, variants
+      `["default"]`) — comments carrying the model. Acceptance: loads; `rd content-check` green.
+- [ ] Re-author `content/needs.toml` to the gameplay taxonomy (no ids) and assign the ends: wolf
+      `traits = ["biological_lifeform"]`, water tile `affordances = [{ name = "drink_water",
+      magnitude = 3 }]`, bands in raw i8 units. Acceptance: the golden re-bless shows exactly
+      these rows.
+- [ ] Classify the gameplay TOMLs as client-served at the filter site, biomes precedent cited
+      ([I9](issues.md#i9)). Acceptance: `/content` lists interactions.toml; biomes still
       withheld.
 
-## P3 — the wire + the worker resolve
+## P3 — the payload, the event, the worker
 
-- [ ] Add `EXECUTE_INTERACTION = 12` (`&[Write, Imm]` — pawn, affordance id) to
-      `shared/codec/action.rs` + the edge verb allowlist; nothing existing moves. Acceptance:
-      codec test round-trips; the edge relays the verb from an uplink client.
-- [ ] Worker gate: resolve the affordance → trait check via the per-pawn-shaped API
-      ([F6](forks.md#f6)) → carrier def on the pawn's tile ∪ 4-neighborhood
-      ([I6](issues.md#i6)); refusals log the reason and splice nothing. Acceptance: a
-      hand-injected drink off-water logs the refusal; on-water passes the gate.
-- [ ] Worker effect: current satisfaction via the shared `needs_eval` at now-tic
-      ([I3](issues.md#i3)/[I5](issues.md#i5)), + magnitude×unit clamped to 255, then relay
-      `SET_NEED` + `GRANT_CONDITION`(quenched). Acceptance: drill — the row moves by exactly
-      +77 from the eval's computed value; quenched appears in the payload with corpus expiry.
-- [ ] Wrap-window drill: run one hand-injected drink with `set_tic` across a u16 wrap seam.
-      Acceptance: the computed satisfaction matches an offline `needs_eval` computation; no
-      stale quench.
+- [ ] Codec + pawn module: NEED/CONDITION payload entries grow to carry u32 def ids + biased i8
+      satisfaction; splice composers follow; dev wolves re-mint through the npc's existing path
+      ([I1](issues.md#i1)). Acceptance: a fresh wolf's payload holds registry ids; no old-shape
+      rows remain live.
+- [ ] Codec + edge: `EXECUTE_INTERACTION` as a variable-arity event (the CREATE precedent)
+      through the edge queue; nothing existing moves. Acceptance: codec round-trip test; the
+      edge relays the event from an uplink client.
+- [ ] Worker executes: resolve the def (corpus + registry manifest), validate count + decode
+      biased inputs ([I6](issues.md#i6)), check the pawn stands ON a carrier tile
+      ([F8](forks.md#f8)), then `needs_eval` read-modify-write + `SET_NEED` +
+      `GRANT_CONDITION`(quenched) ([I3](issues.md#i3)). Acceptance: a hand-injected drink moves
+      satisfaction by exactly +3; off-water logs a refusal and splices nothing.
+- [ ] Wrap-window drill: one hand-injected drink with `set_tic` across a u16 wrap seam
+      ([I5](issues.md#i5)). Acceptance: the result matches an offline `needs_eval` computation;
+      no stale quench.
 
 ## P4 — the npc drinks
 
 - [ ] Bot surface: expose the known-zone tile scan a brain needs to find the nearest
-      affordance-carrying tile ([I2](issues.md#i2)). Acceptance: wolves logs the nearest water
-      position from its snapshot at a known fixture spot.
-- [ ] Wolves brain: on Thirsty/Dehydrated, MOVE_TO the nearest water, `EXECUTE_INTERACTION` on
-      arrival, latched once per band crossing; unreached targets log and re-decide, never spin
-      ([I2](issues.md#i2)). Acceptance: drill-scaled ([I11](issues.md#i11)) — walk, drink,
-      satisfaction jump, Thirsty clears, all in one log arc.
-- [ ] The panel shows the arc with ZERO client changes: Thirsty card → walk → Quenched card.
-      Acceptance: browser captures of both card states during the live drill.
+      affordance-carrying tile. Acceptance: wolves logs the nearest water position from its
+      snapshot at a known fixture spot.
+- [ ] Wolves brain: affordance availability check ([F6](forks.md#f6)), then on
+      Thirsty/Dehydrated MOVE_TO the nearest water and issue `EXECUTE_INTERACTION` on arrival,
+      latched once per band crossing. Acceptance: drill-scaled ([I10](issues.md#i10)) — walk,
+      drink, +3, Thirsty clears, one log arc.
+- [ ] The panel shows the arc with ZERO client changes beyond the shared eval: Thirsty card →
+      walk → Quenched card. Acceptance: browser captures of both card states during the drill.
 
 ## P5 — the verdict
 
-- [ ] Docs + memory truth pass: component docs re-pointed where they touch actions/needs, the
-      stream memory written, index row updated. Acceptance: `bin/rd docs-check` green.
+- [ ] Docs + memory truth pass: component docs re-pointed where they touch needs/actions, the
+      needs-moodlets memory amended (i8 domain, registry ids), the stream memory written.
+      Acceptance: `bin/rd docs-check` green.
 - [ ] Cold-boot the stack; standing drills (wolf trip, thirst crossing, panel cards) + the
       UNPROMPTED drink arc green together; **the user's eyes close the stream**. Acceptance:
       captures + logs recorded in `completed.md`.
