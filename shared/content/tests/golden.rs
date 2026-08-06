@@ -25,21 +25,14 @@ fn corpus() -> Option<Bundle> {
     if !root.exists() {
         return None; // packaged build without the repo corpus — the oracle only runs in-repo
     }
-    let mut sources: Vec<(String, String)> = std::fs::read_dir(&root)
-        .expect("read content/")
-        .flatten()
-        .filter(|e| e.path().extension().is_some_and(|x| x == "toml"))
-        .map(|e| {
-            (
-                e.file_name().to_string_lossy().to_string(),
-                std::fs::read_to_string(e.path()).expect("read .toml"),
-            )
-        })
-        .collect();
+    // The SHARED reader (content-packages I5). This test had its own flat `read_dir`, so the
+    // moment the corpus became a tree the oracle stopped seeing packages — it would have passed
+    // happily while a mod added definitions it never checked. An oracle that reads the corpus
+    // differently from the code is not an oracle.
+    let sources = resonantdust_content::content::read_content_dir(&root).expect("read content/");
     if sources.is_empty() {
         return None;
     }
-    sources.sort();
     Some(load(&sources).expect("the TOML corpus loads clean"))
 }
 

@@ -46,9 +46,11 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P3 — a package proves it, then the docs say so
 
-- [ ] Add a throwaway `content/mods/example/` package defining one new thing, load the stack, and
+- [x] Add a throwaway `content/mods/example/` package defining one new thing, load the stack, and
       confirm it registers. Acceptance: the edge logs a higher `definitions=` count and the client
-      resolves the new def by name; the package is DELETED before the phase closes.
+      resolves the new def by name; the package is DELETED before the phase closes. → registry
+      182→183, edge 17→18, `kind_ids_used` 11→12, `moonpetal` → `0x20000010` in the browser, and
+      the package's OWN biome file did not reach the client. Deleted; golden green again.
 - [ ] Write the package model into `VARIABLES.md` § TOML content schema: a folder is a package, no
       manifest, collisions are load errors, biomes are stripped by data. Acceptance: docs-check
       green; `rd content-check` still passes on the nested tree.

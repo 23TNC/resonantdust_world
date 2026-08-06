@@ -74,3 +74,38 @@ copy of the content walk, and this is the second of the fingerprint. The edge no
 
 Worth naming as a pattern: **this file attracts private copies**, because it is the one place that
 both reads content and serves it. A change to corpus semantics should grep it specifically.
+
+## I5 — the GOLDEN had a private flat walk too, so the oracle went blind to packages {#i5}
+
+_2026-08-05, P3. Found because the drill package did not fail the fixture._
+
+Adding `content/mods/example/` should have failed the golden immediately — it defines a new thing.
+It passed. `shared/content/tests/golden.rs`'s `corpus()` had its **own** flat `read_dir`, so the
+moment the corpus became a tree the oracle stopped seeing packages: it would have gone on passing
+happily while a mod added definitions it never once checked.
+
+That is the worst of the three private copies this stream and the last one found, because it is the
+copy inside the thing whose whole job is noticing change. **An oracle that reads the corpus
+differently from the code is not an oracle.** Now calls `read_content_dir`; the package failed it
+on the next run, naming `moonpetal` where it expected `tree`.
+
+Third of a pattern, and worth stating as a rule: **a change to how content is read must grep for
+every reader**, including tests. The three found so far — the edge's `.rd` facet walk, the edge's
+`content_version`, and this — were each invisible until something that should have broken did not.
+
+## I6 — a package shifts the SEED numbering of a fresh world {#i6}
+
+_2026-08-05, P3. Observed, benign, worth knowing._
+
+Sources sort by relative path, so `mods/example/things.toml` loads **before** `things.toml` and its
+defs take the earlier positional slots — the golden reported `moonpetal` where it expected `tree` at
+line 9. Adding or renaming a package therefore changes what a **fresh** world's seed numbering looks
+like.
+
+Harmless, and by design: positional numbering is only the SEED. An existing world is protected by
+the registry, whose `ensure_definition` refuses a second id for one `(tuple, version)` — so no
+running world is renumbered by anyone installing a mod. A fresh database numbering differently is
+just a different world.
+
+Recorded because it is exactly the kind of thing that looks alarming in a diff. The number that
+matters is in `index.definitions`, not in corpus order.
