@@ -168,10 +168,16 @@ check = { stat = "ground_speed", above = 0.0 }
 name = "can_drink"
 check = { stat = "metabolism", above = 0.0 }
 
+[[need]]
+name = "thirst"
+min = 0
+max = 100
+
 [[interaction]]
 name = "drink"
 affordances = ["can_drink"]
-inputs = ["pawn", "need", "amount"]
+inputs = ["pawn", "amount"]
+satisfy = { target = "@pawn", need = "thirst", amount = "@amount" }
 "#;
 
     #[test]

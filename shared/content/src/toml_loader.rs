@@ -8,10 +8,10 @@
 
 use crate::loader::{
   AffordanceParams, BiomeBody, BiomeDef, BiomeRules, Bundle, Cmp, ConditionParams, DirFrame,
-  InteractionParams, LightParts, LoadError, MaterialParams, NeedBand, NeedModifier, NeedParams,
-  Operand, PackedChannel, SatisfyEffect, StatModifier, StatParams, Taxonomy, ThingDef, TileDef,
-  TraitLevel, TraitParams, VisualPart, VisualParts, NEEDS_PER_KIND, ROTATIONS_PER_DEF,
-  VARIANTS_PER_DEF,
+  InteractionParams, LightParts, LoadError, MaterialParams, MoveEffect, NeedBand, NeedModifier,
+  NeedParams, Operand, PackedChannel, SatisfyEffect, StatModifier, StatParams, Taxonomy,
+  ThingDef, TileDef, TraitLevel, TraitParams, VisualPart, VisualParts, NEEDS_PER_KIND,
+  ROTATIONS_PER_DEF, VARIANTS_PER_DEF,
 };
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -480,12 +480,23 @@ struct SatisfyToml {
   amount: OperandToml,
 }
 
+/// The move effect (input-rework F6): walk `target` to `to`.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MoveToml {
+  target: OperandToml,
+  to: OperandToml,
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct InteractionToml {
   name: String,
   #[serde(default)]
   label: Option<String>,
+  /// The pie-menu label (input-rework F1); default = label.
+  #[serde(default)]
+  menu_text: Option<String>,
   /// The affordance GATES (stat-model F5) — every listed predicate must pass.
   #[serde(default)]
   affordances: Vec<String>,
@@ -494,10 +505,13 @@ struct InteractionToml {
   inputs: Vec<String>,
   #[serde(default)]
   satisfy: Option<SatisfyToml>,
+  /// The move effect (input-rework F6). At least one of satisfy/move must be authored.
+  #[serde(default, rename = "move")]
+  move_: Option<MoveToml>,
   /// TIMED condition grants on execute.
   #[serde(default)]
   grant: Vec<String>,
-  /// The placement rule; `"on"` is this turn's only value (F8).
+  /// The placement rule (input-rework F4): `"on"` | `"target"`.
   #[serde(default = "on")]
   location: String,
   /// RESERVED (I9) — interactions are instantaneous; author 0.
@@ -907,6 +921,20 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
           });
         }
       }
+      let move_effect = i.move_.as_ref().map(|m| MoveEffect {
+        target: operand(&m.target, "move.target", &mut errors),
+        to: operand(&m.to, "move.to", &mut errors),
+      });
+      // An interaction must DO something (input-rework F6): at least one effect.
+      if satisfy.is_none() && move_effect.is_none() {
+        errors.push(LoadError {
+          file: String::new(),
+          message: format!(
+            "interaction `{}` authors no effect — at least one of `satisfy`/`move` is required",
+            i.name
+          ),
+        });
+      }
       for g in &i.grant {
         if !condition_exists(g) {
           errors.push(LoadError {
@@ -923,20 +951,24 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
           });
         }
       }
-      if i.location != "on" {
+      if i.location != "on" && i.location != "target" {
         errors.push(LoadError {
           file: String::new(),
           message: format!(
-            "interaction `{}`: location `{}` — `on` is the only rule built (interactions F8)",
+            "interaction `{}`: location `{}` — the built rules are `on` and `target` \
+             (input-rework F4)",
             i.name, i.location
           ),
         });
       }
+      let label = i.label.clone().unwrap_or_else(|| i.name.clone());
       (i.name.clone(), InteractionParams {
-        label: i.label.clone().unwrap_or_else(|| i.name.clone()),
+        menu_text: i.menu_text.clone().unwrap_or_else(|| label.clone()),
+        label,
         affordances: i.affordances.clone(),
         inputs: i.inputs.clone(),
         satisfy,
+        move_effect,
         grants: i.grant.clone(),
         location: i.location.clone(),
         duration: i.duration,
@@ -1658,7 +1690,9 @@ tint = "#ffffff"
     assert!(e.iter().any(|e| e.message.contains("unknown condition `ghost`")), "{e:?}");
     let e = load(&[src("t.toml", "[[interaction]]\nname = \"d\"\nlocation = \"adjacent\"\n")])
       .unwrap_err();
-    assert!(e.iter().any(|e| e.message.contains("only rule built")), "{e:?}");
+    assert!(e.iter().any(|e| e.message.contains("the built rules are")), "{e:?}");
+    // An interaction with NO effect refuses (input-rework F6).
+    assert!(e.iter().any(|e| e.message.contains("authors no effect")), "{e:?}");
     // A carrier binding a ghost interaction refuses too.
     let e = load(&[src("t.toml", "[[tile]]\nname = \"w\"\ninteractions = [{ name = \"x\" }]\n")])
       .unwrap_err();
@@ -1666,6 +1700,62 @@ tint = "#ffffff"
     // An inverted domain refuses.
     let e = load(&[src("t.toml", "[[need]]\nname = \"n\"\nmin = 5\nmax = 1\n")]).unwrap_err();
     assert!(e.iter().any(|e| e.message.contains("below max")), "{e:?}");
+  }
+
+  #[test]
+  fn the_input_rework_fields_round_trip() {
+    // input-rework P1: menu_text (default = label), location "target", the move effect
+    // with @ref resolution — the move_to shape verbatim.
+    let text = r##"
+[[stat]]
+name = "ground_speed"
+min = 0
+max = 240
+
+[[affordance]]
+name = "can_move_ground"
+check = { stat = "ground_speed", above = 0.0 }
+
+[[interaction]]
+name = "move_to"
+label = "Move To"
+menu_text = "Move To"
+affordances = ["can_move_ground"]
+inputs = ["pawn", "destination"]
+move = { target = "@pawn", to = "@destination" }
+location = "target"
+
+[[tile]]
+name = "grass"
+tint = "#4b573e"
+interactions = [ { name = "move_to" } ]
+"##;
+    let b = load(&[src("t.toml", text)]).expect("clean load");
+    let m = b.interaction_params("move_to").expect("move_to");
+    assert_eq!(m.menu_text, "Move To");
+    assert_eq!(m.location, "target");
+    let mv = m.move_effect.expect("move effect");
+    assert_eq!(mv.target, crate::loader::Operand::Input(0));
+    assert_eq!(mv.to, crate::loader::Operand::Input(1));
+    assert!(m.satisfy.is_none());
+    assert_eq!(b.tile_interactions(1), vec![("move_to".to_string(), 0.0)]);
+
+    // menu_text defaults to the label.
+    let b2 = load(&[src(
+      "t.toml",
+      "[[need]]\nname = \"n\"\n[[interaction]]\nname = \"i\"\nlabel = \"Sip\"\n\
+       satisfy = { target = \"@pawn\", need = \"n\", amount = 1 }\ninputs = [\"pawn\"]\n",
+    )])
+    .expect("loads");
+    assert_eq!(b2.interaction_params("i").unwrap().menu_text, "Sip");
+
+    // A dangling move @ref refuses like satisfy's.
+    let e = load(&[src(
+      "t.toml",
+      "[[interaction]]\nname = \"m\"\nmove = { target = \"@ghost\", to = \"@ghost\" }\n",
+    )])
+    .unwrap_err();
+    assert!(e.iter().any(|e| e.message.contains("@ghost")), "{e:?}");
   }
 
   #[test]

@@ -12,6 +12,9 @@ variant = ["0","1","2","3","4","5","6","7","8","9","10","11","12","13","14","15"
 texture = "white"
 tint = "#4b573e"
 receives_shadows = 2.0
+# Ground tiles carry move_to; walls deliberately DON'T (input-rework F9 — soft
+# passability by authoring).
+interactions = [ { name = "move_to" } ]
 
 [[tile]]
 name = "dirt"
@@ -22,6 +25,7 @@ variant = ["0","1","2","3","4","5","6","7","8","9","10","11","12","13","14","15"
 texture = "white"
 tint = "#653d00"
 receives_shadows = 2.0
+interactions = [ { name = "move_to" } ]
 
 [[tile]]
 name = "sand"
@@ -32,6 +36,7 @@ variant = ["0","1","2","3","4","5","6","7","8","9","10","11","12","13","14","15"
 texture = "white"
 tint = "#c2b280"
 receives_shadows = 2.0
+interactions = [ { name = "move_to" } ]
 
 [[tile]]
 name = "water"
@@ -45,7 +50,7 @@ receives_shadows = 2.0
 # The first interaction carrier (stat-model F5/F9): this tile OFFERS drink at +3
 # thirst (the need's 0..100 percent scale); the interaction carries its own gate
 # (can_drink ⇔ metabolism > 0).
-interactions = [ { name = "drink", magnitude = 3 } ]
+interactions = [ { name = "drink", magnitude = 3 }, { name = "move_to" } ]
 
 [[tile]]
 name = "stone"
@@ -56,6 +61,7 @@ variant = ["0","1","2","3","4","5","6","7","8","9","10","11","12","13","14","15"
 texture = "white"
 tint = "#6b6b6b"
 receives_shadows = 2.0
+interactions = [ { name = "move_to" } ]
 
 [[tile]]
 name = "wall_smooth"

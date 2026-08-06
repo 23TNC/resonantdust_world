@@ -203,6 +203,7 @@ biological_lifeform
 walks
 == interactions ==
 drink
+move_to
 == affordances ==
 can_drink
 can_move_ground
@@ -210,7 +211,8 @@ can_move_ground
 biological_lifeform: Some(TraitParams { label: "Biological Lifeform", levels: [TraitLevel { stats: [StatModifier { stat: "metabolism", add: 1.0, min: None, max: None }], needs: [] }] })
 walks: Some(TraitParams { label: "Walks", levels: [TraitLevel { stats: [StatModifier { stat: "ground_speed", add: 24.0, min: None, max: None }], needs: [] }, TraitLevel { stats: [StatModifier { stat: "ground_speed", add: 12.0, min: None, max: None }], needs: [] }, TraitLevel { stats: [StatModifier { stat: "ground_speed", add: 6.0, min: None, max: None }], needs: [] }] })
 == interaction_params ==
-drink: Some(InteractionParams { label: "Drink", affordances: ["can_drink"], inputs: ["pawn", "need", "amount"], satisfy: Some(SatisfyEffect { target: Input(0), need: Input(1), amount: Input(2) }), grants: ["quenched"], location: "on", duration: 0.0 })
+drink: Some(InteractionParams { label: "Drink", menu_text: "Drink", affordances: ["can_drink"], inputs: ["pawn", "amount"], satisfy: Some(SatisfyEffect { target: Input(0), need: Name("thirst"), amount: Input(1) }), move_effect: None, grants: ["quenched"], location: "on", duration: 0.0 })
+move_to: Some(InteractionParams { label: "Move To", menu_text: "Move To", affordances: ["can_move_ground"], inputs: ["pawn", "destination"], satisfy: None, move_effect: Some(MoveEffect { target: Input(0), to: Input(1) }), grants: [], location: "target", duration: 0.0 })
 == affordance_params ==
 can_drink: Some(AffordanceParams { label: "Can Drink", stat: "metabolism", above: Some(0.0), below: None })
 can_move_ground: Some(AffordanceParams { label: "Can Move Ground", stat: "ground_speed", above: Some(0.0), below: None })
@@ -225,16 +227,17 @@ gameplay/condition/quenched Some("0x80020030")
 gameplay/trait/biological_lifeform Some("0x80030010")
 gameplay/trait/walks Some("0x80030020")
 gameplay/interaction/drink Some("0x80040010")
+gameplay/interaction/move_to Some("0x80040020")
 gameplay/affordance/can_drink Some("0x80050010")
 gameplay/affordance/can_move_ground Some("0x80050020")
 gameplay/stat/ground_speed Some("0x80060010")
 gameplay/stat/metabolism Some("0x80060020")
 == tile interactions (name → bindings) ==
-grass []
-dirt []
-sand []
-water [("drink", 3.0)]
-stone []
+grass [("move_to", 0.0)]
+dirt [("move_to", 0.0)]
+sand [("move_to", 0.0)]
+water [("drink", 3.0), ("move_to", 0.0)]
+stone [("move_to", 0.0)]
 wall_smooth []
 == thing traits + interactions ==
 tree traits=[] interactions=[]

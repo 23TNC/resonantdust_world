@@ -60,19 +60,36 @@ stats = [ { stat = "ground_speed", add = [24, 12, 6] } ]
 
 # ── interactions ──────────────────────────────────────────────────────────────
 
+# Input names are the RESERVED pie-menu vocabulary (input-rework F5): `pawn` = the
+# active selection, `destination` = the clicked tile, `amount` = the carrier binding's
+# magnitude. drink's need is BAKED — a generic menu cannot guess a need input.
 [[interaction]]
 name = "drink"
 label = "Drink"
+menu_text = "Drink"
 affordances = ["can_drink"]
-inputs = ["pawn", "need", "amount"]
-satisfy = { target = "@pawn", need = "@need", amount = "@amount" }
+inputs = ["pawn", "amount"]
+satisfy = { target = "@pawn", need = "thirst", amount = "@amount" }
 grant = ["quenched"]
-# This turn's only placement rule (F8): the target stands ON a carrier tile. The
-# recorded generalization — unit.x/y/z locations + a queued "move to and execute" —
+# Placement (interactions F8 / input-rework F4): the ACTING pawn stands ON the carrier.
+# The recorded generalization — unit.x/y/z locations + a queued "move to and execute" —
 # is a later stream.
 location = "on"
 # RESERVED (I9): interactions are instantaneous; a timed "drinking" state must
 # negotiate with MOVE_STEP chain supersession and gets its own stream.
+duration = 0
+
+# Movement as an interaction (input-rework F2/F6): the worker validates (the DESTINATION
+# tile offers this — location "target") and queues the movement-chain seed; chain spacing
+# derives from the pawn's ground_speed stat. MOVE_TO itself is worker-only now (F3).
+[[interaction]]
+name = "move_to"
+label = "Move To"
+menu_text = "Move To"
+affordances = ["can_move_ground"]
+inputs = ["pawn", "destination"]
+move = { target = "@pawn", to = "@destination" }
+location = "target"
 duration = 0
 
 # ── affordances ───────────────────────────────────────────────────────────────

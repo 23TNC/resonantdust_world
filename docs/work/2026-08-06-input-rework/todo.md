@@ -27,17 +27,23 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P1 — loader + corpus
 
-- [ ] Loader: `menu_text`, the location set `{"on","target"}`, `MoveEffect` with `@ref`
+- [x] Loader: `menu_text`, the location set `{"on","target"}`, `MoveEffect` with `@ref`
       resolution, the no-effect refusal generalized (an interaction needs `satisfy` OR `move`).
-      Acceptance: crate tests per addition incl. refusals.
-- [ ] Corpus: `[[interaction]] move_to` (menu_text "Move To", `affordances =
+      Acceptance: crate tests per addition incl. refusals. → 39/39 lib tests;
+      `the_input_rework_fields_round_trip` covers menu_text default, "target", the resolved
+      move effect, the zero-magnitude carrier bind, and the dangling-@ref + no-effect refusals.
+- [x] Corpus: `[[interaction]] move_to` (menu_text "Move To", `affordances =
       ["can_move_ground"]`, `inputs = ["pawn","destination"]`, the move effect, location
       "target"); grass/dirt/sand/stone/water carry it, wall_smooth does NOT
       ([F9](forks.md#f9)); drink gains `menu_text = "Drink"` + the baked-need two-input
-      signature ([F5](forks.md#f5)). Acceptance: loads; `rd content-check` green.
-- [ ] Extend the golden dump (menu_text, move effects, locations, the new carrier lists,
+      signature ([F5](forks.md#f5)). Acceptance: loads; `rd content-check` green. → authored
+      exactly; content-check clean (7 files).
+- [x] Extend the golden dump (menu_text, move effects, locations, the new carrier lists,
       drink's signature) and re-bless; 2-pass gate green. Acceptance: every diff line
-      accounted for in completed.md ([I8](issues.md#i8)).
+      accounted for in completed.md ([I8](issues.md#i8)). → 9+/6−, all reviewed: move_to's
+      params + seed ref `0x80040020`, drink's `Name("thirst")` two-input satisfy, menu_text
+      on both, the five carrier lists, `wall_smooth []` byte-checked. Native 39+3, wasm32
+      pkg rebuilt clean.
 
 ## P2 — the server rewire
 

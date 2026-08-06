@@ -301,21 +301,36 @@ pub struct SatisfyEffect {
   pub amount: Operand,
 }
 
+/// The `move` effect (input-rework F6): walk `target` to `to` — the worker queues the
+/// movement-chain seed (`PROMOTE MOVE_TO`), spaced by the pawn's DERIVED `ground_speed`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MoveEffect {
+  pub target: Operand,
+  pub to: Operand,
+}
+
 /// An `[[interaction]]` def — something a pawn can DO (interactions F5): an input
 /// SIGNATURE plus declarative effects binding inputs or constants, gated by affordance
 /// PREDICATES (stat-model F5).
 #[derive(Debug, Clone, PartialEq)]
 pub struct InteractionParams {
   pub label: String,
+  /// The pie-menu label (input-rework F1); defaults to `label`.
+  pub menu_text: String,
   /// The affordance gates — EVERY listed predicate must pass for the acting pawn.
   pub affordances: Vec<String>,
-  /// The declared input signature — event input words bind these IN ORDER.
+  /// The declared input signature — event input words bind these IN ORDER. Names are the
+  /// RESERVED menu vocabulary (input-rework F5): `pawn`/`destination`/`amount`.
   pub inputs: Vec<String>,
   /// The satisfy effect, if the interaction moves a need.
   pub satisfy: Option<SatisfyEffect>,
+  /// The move effect, if the interaction walks the pawn (input-rework F6). At least one
+  /// of `satisfy`/`move_effect` must be authored.
+  pub move_effect: Option<MoveEffect>,
   /// TIMED condition grants on execute (expiry from each condition's own `duration`).
   pub grants: Vec<String>,
-  /// The placement rule — `"on"` this turn (F8): the target stands ON a carrier tile.
+  /// The placement rule (input-rework F4): `"on"` = the ACTING pawn stands on the carrier;
+  /// `"target"` = the DESTINATION tile is the carrier.
   pub location: String,
   /// RESERVED (interactions I9): interactions are instantaneous; authored 0.
   pub duration: f64,
