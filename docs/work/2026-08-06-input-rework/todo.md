@@ -135,9 +135,17 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P5 — the verdict
 
-- [ ] Docs + memory truth pass; delete-greps clean (`MOVE_TO` in CLIENT_VERBS,
+- [x] Docs + memory truth pass; delete-greps clean (`MOVE_TO` in CLIENT_VERBS,
       `move_to_program`, `moveEntity`, `thingSpeed`, `speed =` on things, wildlife).
-      Acceptance: `bin/rd docs-check` green; greps recorded in completed.md.
-- [ ] Cold-boot the stack; by-hand browser drills (right-click select, pie menu Move To +
+      Acceptance: `bin/rd docs-check` green; greps recorded in completed.md. → greps EMPTY
+      (stale comments swept: MoverLayer's header, npc lib prose, the `Wildlife` login-name
+      default); memories: input-rework-delivered written, ui-select/stat-model/pawn-movement/
+      automated-player rows + bodies amended. docs-check green.
+- [x] Cold-boot the stack; by-hand browser drills (right-click select, pie menu Move To +
       Drink) + the npc's unprompted arc green together; **the user's eyes close the stream**.
-      Acceptance: captures + logs in completed.md.
+      Acceptance: captures + logs in completed.md. → edge re-exec + master/orch/worker/npc
+      bounced together: registry re-seeded 194 (+move_to), corpus `interactions=2`, wolf
+      adopted, trips via the interaction door, the drill'd wolf ran THREE unprompted
+      thermostat drink cycles (each queue flips the band within tics), and on the reloaded
+      browser a button-2 pointerdown selected the wolf and the water menu opened (Move To).
+      **The user's look is the remaining close.**

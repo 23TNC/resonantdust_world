@@ -4,7 +4,7 @@
 //!
 //! One npc process is one automated player running ONE [`Brain`] (first-pawns P4): the harness
 //! ([`Bot`] + [`run_brain`]) owns login, anchoring, the event pump, and pause tracking; a brain
-//! owns only behavior. A wolves-brain wanders wildlife, a future villager-brain runs a
+//! owns only behavior. A wolves-brain wanders its wolf, a future villager-brain runs a
 //! village's settlers, a region-steward-brain minds a region in players' absence — each is an
 //! impl of the same trait, not a new harness. One container = one brain (`bin/sim run npc`).
 

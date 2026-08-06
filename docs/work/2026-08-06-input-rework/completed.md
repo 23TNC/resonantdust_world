@@ -1,5 +1,20 @@
 # Completed — input-rework
 
+## 2026-08-06 · P5 — the verdict (2/2; 19/19 — the user's eyes close the stream)
+
+The truth pass: the delete-greps run EMPTY (`move_to_program`/`moveEntity`/`moveSelf`/
+`thing_speed(s)`/`thingSpeed`/`speed::resolve`/wildlife — three stale COMMENTS swept in
+passing, plus the `Wildlife` login-name default); memories rewritten
+(input-rework-delivered; ui-select-delivered's button contract marked superseded;
+stat-model's F12 handoff marked closed; pawn-movement + automated-player rows updated).
+The cold boot: edge re-exec + master/orchestrator/worker/npc bounced together — the
+registry re-seeded 194 definitions (+`move_to`), the worker loaded `interactions=2`, the
+npc adopted its wolf and drove trips through the interaction door only, and the
+`NPC_THIRST=25` wolf ran THREE unprompted thermostat cycles (Thirsty → walk to (102,68) →
+drink → Quenched; each queued drink flips the band within tics). On the reloaded browser:
+a button-2 pointerdown selected the wolf (panel + outline) and the left-click water menu
+opened with Move To. What remains is the user's look.
+
 ## 2026-08-06 · P2 + P3 + P4 — the door re-hung, the buttons swapped, the menu lives (4/4 + 3/3 + 4/4)
 
 **The server** (P2): the worker's interaction arm generalized — the acting pawn from either

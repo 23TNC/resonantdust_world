@@ -13,10 +13,10 @@
 //! **Movement is SPECULATED** (first-pawns P3, `ACTIONS.md` §Movement): a promoted
 //! {@link MoveIntent} announces `entity → dest` once; per-hop state never fans out. Each frame
 //! ({@link tick}) the layer walks the pawn fractionally along the server's OWN stepping rule
-//! (greedy straight line, e/w-first facing) at the kind's authored tics-per-tile (the bundle's
-//! `thingSpeed` table — pawn-movement F1/F5: the SAME value the worker spaces hops with),
-//! driven by the client's wall↔tic estimate — so the wolf GLIDES between tiles with zero
-//! per-hop bandwidth.
+//! (greedy straight line, e/w-first facing) at the pawn's DERIVED `ground_speed` in
+//! tics-per-tile (input-rework F8 — `pawnGroundSpeed` over its fanned rows: the SAME
+//! `stat_eval` the worker spaces hops with), driven by the client's wall↔tic estimate — so
+//! the wolf GLIDES between tiles with zero per-hop bandwidth.
 //! Authoritative `State` rows snap/reseed the speculation and log the observed error (F8 —
 //! the data the re-anchor cadence will be tuned on); `ZoneClosed` drops it.
 

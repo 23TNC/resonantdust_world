@@ -23,7 +23,7 @@ async fn main() {
         .init();
 
     let brain = std::env::args().nth(1).unwrap_or_else(|| env_or("NPC_BRAIN", "wolves"));
-    let name = env_or("NPC_NAME", "Wildlife");
+    let name = env_or("NPC_NAME", "Wolves");
     let tick_ms: u64 = env_or("MOVE_MS", "1000").parse().unwrap_or(1000);
     let config = ClientConfig::from_env();
     tracing::info!(%brain, %name, tick_ms, gateway = %config.gateway_url, "npc starting");
