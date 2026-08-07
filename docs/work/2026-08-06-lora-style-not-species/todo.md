@@ -43,3 +43,15 @@ caption.**
 - [ ] Compare the chosen generation against `e07` on gate + `iou_ref` + the eye. Acceptance: the first head-to-head this project has actually run; numbers and images recorded together.
 - [ ] Ship it or state plainly that it lost. Acceptance: `completed.md` carries the verdict; a loss is a result, not a reason to retry by reflex.
 - [ ] Run `bin/rd docs-check` and close the stream. Acceptance: tree green, index row updated.
+
+## P6 — Direction: emphasis, then isolation (F2)
+
+Frozen across all three: animagine, 768, `dim 64 / alpha 64`, `LR 5e-5`, batch 4, bf16, AdamW,
+single stage, 12 generations / **2112 steps**, run-16's pinned sample file unchanged.
+
+- [ ] R20 — direction tag moved to caption head, repeated 3x, `keep_tokens=6`, full 701 corpus. Question: was I8 the cause? Acceptance: wolf-south at matched generations against r16 — the tail is a tail, or it is not.
+- [ ] R17 — south-only corpus, 234 images at repeats 3. Question: does isolating south from north fix it? Acceptance: wolf-south silhouette at g08/g10 against r16g08.
+- [ ] R18 — east-only corpus, 234 images at repeats 3. Question: is 234 above the data floor? Acceptance: east against r16g08-east, which is already known good — this is the control that makes R17 readable.
+- [ ] Build one sheet: r16g08 / R20 / R17 / R18 on the same wolf prompts and six seeds. Acceptance: the user can compare in a single image.
+- [ ] Record the winner and whether the split is needed at all. Acceptance: a line in `completed.md` naming which of emphasis-only, split, or neither fixed north/south.
+

@@ -166,3 +166,52 @@ predecessor stream.
 
 Recorded rather than silently run the invalid single-pass version, which would have produced a
 number that looked like a comparison and was not one.
+
+## I8 — `keep_tokens=3` shuffled the direction tag in 92% of captions {#i8}
+_2026-08-07 · found while answering the user's tag-weighting question · **config defect, present in
+every run of this stream and the predecessor**_
+
+`--shuffle_caption --keep_tokens=3` pins the first three comma-separated tokens and shuffles
+everything after them, every step. Measured position of `rd_east` / `rd_south` / `rd_north` across
+all 701 style-only captions:
+
+| position | captions |
+|---|---|
+| 2 | 5 |
+| 3 | 54 |
+| **4** | **573** |
+| **5** | **69** |
+
+**642 of 701 — 92% — sat at position 4 or later, so the direction tag was the FIRST token thrown
+into the shuffle.** It landed at a random sequence position on every step while CLIP weights early
+positions most heavily.
+
+`keep_tokens=3` was chosen to pin `rd_style, rd_animal, rd_<bodyplan>`. Nobody checked what token 4
+was. It is the direction — the exact token whose weakness the r16g08 north/south failures diagnose
+([I9](#i9)).
+
+**Not proven to be the cause**, only shown to be pointed the wrong way. Run-20 tests it directly:
+direction moved to the head of the caption, repeated 3×, `keep_tokens=6`. Same 701 images, same
+2112 steps, everything else run-16 unchanged.
+
+## I9 — north and south fail in EACH OTHER'S direction; east never does {#i9}
+_2026-08-07 · found on the r16g08 three-direction seed sweeps_
+
+Six seeds per direction on `rd_styl_anima_r16_g08` at strength 0.85, wolf, pinned prompt.
+
+| direction | result |
+|---|---|
+| **east** | 6/6 recognisable wolves in the convention. Best: 7700, 5555. Failures are pose (2222 sitting) or over-divergence (3333 loaf), never the tail. |
+| **south** | the tail resolves ABOVE the head as a second pair of ears (7700), or is absent (1111), correct-but-vignetted (4242), or an exploded halo (5555). |
+| **north** | 7700 renders *only two ear-lumps*, no body. 3333/5555 are pure tail plume with the body swallowed. Only 2222 is usable. |
+
+North and south are the two poses that share a silhouette axis — symmetric, vertical, animal
+aligned with the camera. Their captions differ only in the direction token plus three phrase
+tokens, under a shuffle that ([I8](#i8)) puts that token in a random position. East is visually
+distinct from both and is the only direction that holds.
+
+**Corroborating evidence the direction token is weak:** in the 2026-08-07 caption sweep one seed
+(3333) ignored `rd_south` outright and drew a side view.
+
+**No seed works across directions** — 5555 is the best east and among the worst north. So there is
+nothing to pin; the fix has to be in training or in ControlNet, not in seed selection.
