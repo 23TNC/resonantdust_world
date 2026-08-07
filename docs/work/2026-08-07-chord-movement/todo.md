@@ -51,12 +51,16 @@ anticipated-issue inventory in [`issues.md`](issues.md) (I#)._
 
 ## P4 — the client
 
-- [ ] Client: spec = the shared polyline + elapsed × tiles/tic, armed from the
+- [x] Client: spec = the shared polyline + elapsed × tiles/tic, armed from the
       CURRENT belief (no anchor snap); authX/authY go fractional (I6). Acceptance:
-      chord glide traces the polyline; landing error logged small.
-- [ ] Drill (I5): interrupt a trip mid-chord with a new order — the pawn continues
+      chord glide traces the polyline; landing error logged small. → StateObject
+      carries subX/subY; wasm `findChords`; walkPath = distance along chords; a
+      22-tile trip speculated as FOUR chords from belief (95.81, 73.94).
+- [x] Drill (I5): interrupt a trip mid-chord with a new order — the pawn continues
       from its mid-point, server (resolved subtile) AND client (no snap-back).
-      Acceptance: captures + worker resolve log + no-backtrack render trail.
+      Acceptance: captures + worker resolve log + no-backtrack render trail. → the
+      22-sample trail turns at (104.65, 67.7) with max step 0.4 tiles (walking
+      pace); the worker resolve logged the matching fractional start.
 
 ## P5 — the observers
 

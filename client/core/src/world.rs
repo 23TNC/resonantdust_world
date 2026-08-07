@@ -87,12 +87,15 @@ pub fn move_intents(zone: u16, event_tic: u16, actions: &[u32]) -> Vec<Event> {
 /// `removed` marks a delete (a `StateGone`).
 pub fn state_event(row: &StateRow, removed: bool) -> Event {
     let (tile_x, tile_y) = position_to_tile(row.position_reference);
+    let (sub_x, sub_y) = resonantdust_codec::object::position_subtile(row.position_reference);
     Event::StateObject {
         macro_position: row.zone,
         entity_reference: row.entity_reference,
         definition_reference: row.definition_reference,
         tile_x,
         tile_y,
+        sub_x,
+        sub_y,
         facing: facing(row.data),
         tic: row.tic,
         removed,
@@ -134,6 +137,8 @@ mod tests {
                 definition_reference,
                 tile_x,
                 tile_y,
+                sub_x,
+                sub_y,
                 facing,
                 tic,
                 removed,
@@ -141,6 +146,7 @@ mod tests {
                 assert_eq!(entity_reference, 0x3000_0007);
                 assert_eq!(macro_position, 0x0102); // the wire macro, carried through
                 assert_eq!((tile_x, tile_y), (300, 42));
+                assert_eq!((sub_x, sub_y), (0, 0), "a whole-tile position");
                 assert_eq!(definition_reference, 9);
                 assert_eq!(facing, 1);
                 assert_eq!(tic, 42);

@@ -522,6 +522,8 @@ impl Engine {
                     definition_reference: 0,
                     tile_x: 0,
                     tile_y: 0,
+                    sub_x: 0,
+                    sub_y: 0,
                     facing: 0,
                     tic: 0,
                     removed: true,

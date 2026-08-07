@@ -153,6 +153,10 @@ export interface StateObject {
   /** Global tile coordinates. */
   tileX: number;
   tileY: number;
+  /** Subtile sixteenths (chord-movement F1) — a walking pawn's rows land mid-tile;
+   *  0 for whole-tile positions. The fractional point = `tile + sub/16`. */
+  subX: number;
+  subY: number;
   /** Facing: 0=south, 1=east, 2=north, 3=west. */
   facing: number;
   tic: number;
@@ -246,6 +250,8 @@ type WorldEvent =
       definitionReference: number;
       tileX: number;
       tileY: number;
+      subX?: number;
+      subY?: number;
       facing: number;
       tic: number;
       removed: boolean;
@@ -782,6 +788,8 @@ export class WasmClient {
             definitionReference: ev.definitionReference,
             tileX: ev.tileX,
             tileY: ev.tileY,
+            subX: ev.subX ?? 0,
+            subY: ev.subY ?? 0,
             facing: ev.facing,
             tic: ev.tic,
             removed: ev.removed,

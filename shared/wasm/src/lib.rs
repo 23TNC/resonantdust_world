@@ -445,6 +445,43 @@ impl Content {
         }
     }
 
+    /// The SHARED chord polyline (chord-movement F5) over the same windowed grid as
+    /// [`Self::find_path`] — flat `[x0, y0, x1, y1, …]` waypoints exclusive of the start,
+    /// empty when no route (or already there). The speculation glides THESE.
+    #[wasm_bindgen(js_name = findChords)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn find_chords(
+        &self,
+        from_x: i32,
+        from_y: i32,
+        to_x: i32,
+        to_y: i32,
+        ox: i32,
+        oy: i32,
+        w: u32,
+        h: u32,
+        cells: Vec<u8>,
+    ) -> Vec<i32> {
+        let probe = |x: i32, y: i32| -> bool {
+            let (dx, dy) = (x - ox, y - oy);
+            if dx < 0 || dy < 0 || dx >= w as i32 || dy >= h as i32 {
+                return false;
+            }
+            cells
+                .get((dy as usize) * (w as usize) + dx as usize)
+                .is_some_and(|&b| b != 0)
+        };
+        match resonantdust_content::path_eval::find_chords(
+            (from_x, from_y),
+            (to_x, to_y),
+            0,
+            &probe,
+        ) {
+            Some(p) => p.into_iter().flat_map(|(x, y)| [x, y]).collect(),
+            None => Vec::new(),
+        }
+    }
+
     /// The next FUTURE tic the pawn's active-condition set can change WITHOUT a new write
     /// (band crossing under the PIECEWISE rate, or a stored row's expiry), or `-1` when
     /// nothing ahead changes — what lets the panel re-evaluate on a schedule (F4).
@@ -1129,6 +1166,8 @@ fn event_to_js(event: &client::Event) -> JsValue {
             definition_reference,
             tile_x,
             tile_y,
+            sub_x,
+            sub_y,
             facing,
             tic,
             removed,
@@ -1142,6 +1181,10 @@ fn event_to_js(event: &client::Event) -> JsValue {
             set("definitionReference", &JsValue::from_f64(*definition_reference as f64));
             set("tileX", &JsValue::from_f64(*tile_x as f64));
             set("tileY", &JsValue::from_f64(*tile_y as f64));
+            // Subtile sixteenths (chord-movement F1) — the host composes the FRACTIONAL
+            // authoritative point as `tile + sub/16`.
+            set("subX", &JsValue::from_f64(*sub_x as f64));
+            set("subY", &JsValue::from_f64(*sub_y as f64));
             set("facing", &JsValue::from_f64(*facing as f64));
             set("tic", &JsValue::from_f64(*tic as f64));
             set("removed", &JsValue::from_bool(*removed));

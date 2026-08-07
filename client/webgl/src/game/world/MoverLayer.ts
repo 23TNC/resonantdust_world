@@ -149,26 +149,31 @@ function walkGreedy(
   }
 }
 
-/** Fractional progress ALONG the shared path (pathfinding I1): `p` tiles of travel from
- *  `(fx, fy)` through the waypoints — each hop is one tile of progress, exactly the
- *  worker's hop cadence, so the glide traces the DETOUR the server walks. */
+/** DISTANCE-progress along the shared CHORD polyline (chord-movement F5/I1): `p` tiles
+ *  of ground covered from `(fx, fy)` through the waypoints — segments have arbitrary
+ *  Euclidean lengths now, exactly the worker's tiles/tic schedule, so the glide traces
+ *  the same chords at the same pace. */
 function walkPath(
   fx: number, fy: number, path: { x: number; y: number }[], p: number,
 ): { x: number; y: number; done: boolean } {
   if (path.length === 0) return { x: fx, y: fy, done: true };
-  if (p >= path.length) {
-    const last = path[path.length - 1];
-    return { x: last.x, y: last.y, done: true };
+  let prev = { x: fx, y: fy };
+  let left = p;
+  for (const next of path) {
+    const len = Math.hypot(next.x - prev.x, next.y - prev.y);
+    if (left < len) {
+      const f = len > 0 ? left / len : 0;
+      return {
+        x: prev.x + (next.x - prev.x) * f,
+        y: prev.y + (next.y - prev.y) * f,
+        done: false,
+      };
+    }
+    left -= len;
+    prev = next;
   }
-  const k = Math.floor(p);
-  const frac = p - k;
-  const prev = k === 0 ? { x: fx, y: fy } : path[k - 1];
-  const next = path[k];
-  return {
-    x: prev.x + (next.x - prev.x) * frac,
-    y: prev.y + (next.y - prev.y) * frac,
-    done: false,
-  };
+  const last = path[path.length - 1];
+  return { x: last.x, y: last.y, done: true };
 }
 
 /** One drawn part SLOT of a live pawn — its warm prim + the last-baked fields the eps/skip
@@ -448,7 +453,9 @@ export class MoverLayer {
     if (!m) return null;
     return {
       kind: m.kind, stem: this.thingStems[m.kind - 1] ?? "?",
-      tileX: m.authX, tileY: m.authY, facing: m.facing,
+      // The DISPLAY tile is the floor of the fractional point (chord-movement I2 —
+      // client flooring is advisory; the worker validates on its own resolves).
+      tileX: Math.floor(m.authX), tileY: Math.floor(m.authY), facing: m.facing,
       macroPosition: m.macroPosition, moving: !!m.spec, ticsPerTile: this.speedFor(entity),
     };
   }
@@ -585,7 +592,7 @@ export class MoverLayer {
         cells[y * w + x] = this.pathProbe(ox + x, oy + y) ? 1 : 0;
       }
     }
-    const flat = this.content.findPath(fx, fy, dx, dy, ox, oy, w, h, cells);
+    const flat = this.content.findChords(fx, fy, dx, dy, ox, oy, w, h, cells);
     if (flat.length === 0) return null;
     const path: { x: number; y: number }[] = [];
     for (let i = 0; i + 1 < flat.length; i += 2) path.push({ x: flat[i], y: flat[i + 1] });
@@ -616,16 +623,21 @@ export class MoverLayer {
     console.debug(
       `[mover] intent armed entity=${intent.entityReference.toString(16)} dest=(${intent.tileX},${intent.tileY}) tic=${intent.eventTic} d=${d.toFixed(1)}`,
     );
+    // chord-movement F4: the seed fans NO position — speculation arms from the CURRENT
+    // BELIEF (the rendered point), so an interrupted trip re-aims from where the pawn is
+    // DRAWN and can never snap back to a tile. Re-anchors and the landing correct.
+    const bx = m.rx;
+    const by = m.ry;
     m.spec = {
-      fromX: m.authX,
-      fromY: m.authY,
+      fromX: bx,
+      fromY: by,
       destX: intent.tileX,
       destY: intent.tileY,
       eventTic: intent.eventTic,
       ticsPerTile: tpt,
-      appliedX: m.authX,
-      appliedY: m.authY,
-      path: this.computePath(m.authX, m.authY, intent.tileX, intent.tileY),
+      appliedX: bx,
+      appliedY: by,
+      path: this.computePath(Math.floor(bx), Math.floor(by), intent.tileX, intent.tileY),
     };
     // speculative-direction P1: the INITIAL AIM — the pawn turns toward its path at the
     // seed (the greedy walk's e/w-first first leg), before any rendered delta exists. The
@@ -660,10 +672,14 @@ export class MoverLayer {
     // F8 — the authoritative row corrects speculation: log the observed error (the data the
     // re-anchor cadence is tuned on), then snap. The final tile clears the spec; an interim
     // authoritative resolve (another event touched the pawn) reseeds it.
+    // The FRACTIONAL authoritative point (chord-movement F1): tile + sixteenths. Every
+    // row is subtile-accurate now — mid-chord re-anchors land between tiles.
+    const ax = obj.tileX + (obj.subX ?? 0) / 16;
+    const ay = obj.tileY + (obj.subY ?? 0) / 16;
     let landedThisRow = false;
     if (m?.spec) {
       const s = m.spec;
-      const err = Math.max(Math.abs(s.appliedX - obj.tileX), Math.abs(s.appliedY - obj.tileY));
+      const err = Math.max(Math.abs(s.appliedX - ax), Math.abs(s.appliedY - ay));
       if (obj.tileX === s.destX && obj.tileY === s.destY) {
         console.debug(
           `[mover] spec landed e=${err.toFixed(2)} tiles entity=${key.toString(16)} tic=${obj.tic}`,
@@ -674,23 +690,23 @@ export class MoverLayer {
         console.debug(
           `[mover] spec reseed e=${err.toFixed(2)} tiles entity=${key.toString(16)} tic=${obj.tic}`,
         );
-        s.fromX = obj.tileX;
-        s.fromY = obj.tileY;
+        s.fromX = ax;
+        s.fromY = ay;
         s.eventTic = obj.tic;
-        s.appliedX = obj.tileX;
-        s.appliedY = obj.tileY;
+        s.appliedX = ax;
+        s.appliedY = ay;
         // The worker's per-hop recompute, mirrored at the reseed cadence (I1): the rest
-        // of the route re-paths from the fresh authoritative tile.
+        // of the route re-chords from the fresh authoritative POINT (its floor tile).
         s.path = this.computePath(obj.tileX, obj.tileY, s.destX, s.destY);
       }
     }
 
     if (m) {
-      // Existing mover: the authoritative row STEERS (auth tile, zone, kind); the render
+      // Existing mover: the authoritative row STEERS (auth point, zone, kind); the render
       // keeps chasing from wherever it is (F6 — no direct snap; `tick` closes the gap at
       // the capped rate, or snaps itself past the hopeless threshold).
-      m.authX = obj.tileX;
-      m.authY = obj.tileY;
+      m.authX = ax;
+      m.authY = ay;
       m.kind = kind;
       m.def = obj.definitionReference;
       m.macroPosition = obj.macroPosition;
@@ -698,7 +714,7 @@ export class MoverLayer {
       // rows that ARRIVE while resting. The landing row's facing is stale by construction
       // (it raced the trip), and a mid-motion row steers position but never the sprite.
       const resting = !m.spec &&
-        Math.max(Math.abs(obj.tileX - m.rx), Math.abs(obj.tileY - m.ry)) < 0.25;
+        Math.max(Math.abs(ax - m.rx), Math.abs(ay - m.ry)) < 0.25;
       if (resting && !landedThisRow && obj.facing !== m.facing) {
         console.debug(`[facing] ${m.facing}->${obj.facing} src=server-rest entity=${key.toString(16)}`);
         m.facing = obj.facing;
@@ -707,7 +723,7 @@ export class MoverLayer {
       }
       return;
     }
-    this.applyVisual(null, key, kind, obj.definitionReference, obj.tileX, obj.tileY, obj.facing, obj.macroPosition);
+    this.applyVisual(null, key, kind, obj.definitionReference, ax, ay, obj.facing, obj.macroPosition);
   }
 
   /** Create or mutate the pawn's warm PART prims at (possibly fractional) global tile

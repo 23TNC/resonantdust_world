@@ -153,6 +153,10 @@ pub enum Event {
         definition_reference: u32,
         tile_x: i32,
         tile_y: i32,
+        /// Subtile sixteenths (chord-movement F1) — a walking pawn's rows land mid-tile;
+        /// `(0, 0)` for whole-tile positions (and everything pre-chord).
+        sub_x: u8,
+        sub_y: u8,
         facing: u8,
         tic: u16,
         removed: bool,
