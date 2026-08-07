@@ -55,6 +55,8 @@ use index::MasterClockTableAccess as _;
 // (`SET` → `write_overlay`, reading the `overlay_log` base).
 use tile::{write as _, write_overlay as _, OverlayLogTableAccess as _};
 use thing::{write as _, write_overlay as _, OverlayLogTableAccess as _};
+// lumberjack I1: the interaction arm's THING-carrier offer probe reads the composed tiers.
+use thing::{EntityStateTableAccess as _, OverlayTableAccess as _};
 // P3: the cold shards (tile/thing) are now `cold_row_reference`-addressed (dense/sparse `entity_state`
 // + a sparse `overlay`) — a cold cell no longer has a per-entity `entity_state_log` slot the worker
 // composes. Cold writes go through the shards' direct `seed`/`set_*`/`fold` reducers for now; the
@@ -207,7 +209,12 @@ async fn main() {
     tile_sql.push("SELECT * FROM entity_state".to_string());
     tile_sql.push("SELECT * FROM overlay".to_string());
     let tile_up = resonantdust_uplink::subbed_uplink!(tile, "tile", uri, tile_db, tile_sql);
-    let thing_up = resonantdust_uplink::subbed_uplink!(thing, "thing", uri, thing_db, cold_sql.clone());
+    // The thing shard mirrors the tile's composed tiers (lumberjack I1): the interaction
+    // arm's THING-carrier offer probe (a tree offering cut_down) reads them.
+    let mut thing_sql = cold_sql.clone();
+    thing_sql.push("SELECT * FROM entity_state".to_string());
+    thing_sql.push("SELECT * FROM overlay".to_string());
+    let thing_up = resonantdust_uplink::subbed_uplink!(thing, "thing", uri, thing_db, thing_sql);
 
     for (name, ok) in [
         ("index", index_up.get().await.is_ok()),
@@ -734,24 +741,37 @@ async fn main() {
                     }
                     use resonantdust_content::loader::Operand;
                     use resonantdust_codec::object::{gameplay_row_data, pack_gameplay_row};
-                    // The acting PAWN comes from whichever effect binds it — both use the
-                    // reserved `pawn` input (input-rework F5); satisfy and move agree by
-                    // authoring.
+                    // The acting PAWN: whichever effect binds it, else the reserved `pawn`
+                    // input (input-rework F5) — a destroy-only interaction (cut_down) has
+                    // no satisfy/move to name it (lumberjack).
                     let target_op = params
                         .satisfy
                         .as_ref()
                         .map(|s| &s.target)
                         .or(params.move_effect.as_ref().map(|m| &m.target));
-                    let Some(&Operand::Input(ti)) = target_op else {
-                        reject("no effect binds an entity input as its target");
-                        continue;
+                    let target = match target_op {
+                        Some(&Operand::Input(ti)) => inputs[ti],
+                        _ => match params.inputs.iter().position(|n| n == "pawn") {
+                            Some(i) => inputs[i],
+                            None => {
+                                reject("no effect or `pawn` input names the acting pawn");
+                                continue;
+                            }
+                        },
                     };
-                    let target = inputs[ti];
-                    // The move destination (a position_reference), when the interaction has one.
-                    let dest = params.move_effect.as_ref().and_then(|m| match &m.to {
-                        Operand::Input(i) => Some(inputs[*i]),
-                        _ => None,
-                    });
+                    // The destination (a position_reference): the move effect's `to`, else
+                    // the reserved `destination` input — adjacency-gated interactions name
+                    // their carrier through it without moving (lumberjack).
+                    let dest = params
+                        .move_effect
+                        .as_ref()
+                        .and_then(|m| match &m.to {
+                            Operand::Input(i) => Some(inputs[*i]),
+                            _ => None,
+                        })
+                        .or_else(|| {
+                            params.inputs.iter().position(|n| n == "destination").map(|i| inputs[i])
+                        });
                     // The target must be a live pawn — its composed row anchors the location.
                     let Some(prow) =
                         pawn.db().entity_state().iter().find(|r| r.entity_reference == target)
@@ -759,17 +779,45 @@ async fn main() {
                         reject("target is not a live pawn");
                         continue;
                     };
-                    // The CARRIER tile by the location rule (input-rework F4): "on" = the tile
-                    // UNDER the pawn; "target" = the move destination's tile.
-                    let (zone, cell) = match params.location.as_str() {
-                        "on" => {
-                            (prow.macro_position_reference, (prow.micro_position_reference >> 8) as usize)
-                        }
+                    // The CARRIER candidates by the location rule (input-rework F4 /
+                    // lumberjack F2): "on" = the pawn's own cell; "target" = the
+                    // destination's; "adjacent" with a bound destination = that cell,
+                    // pawn within Chebyshev ≤ 1 INCLUSIVE — without one (drink), ANY
+                    // cell of the pawn's 3×3 may carry the offerer.
+                    let pawn_pos = pack_position_reference(
+                        prow.macro_position_reference,
+                        prow.micro_position_reference,
+                    );
+                    let (px, py) = position_to_tile(pawn_pos);
+                    let candidates: Vec<u32> = match params.location.as_str() {
+                        "on" => vec![pawn_pos],
                         "target" => match dest {
-                            Some(d) => (position_macro(d), (position_micro(d) >> 8) as usize),
+                            Some(d) => vec![d],
                             None => {
-                                reject("location `target` needs a move destination input");
+                                reject("location `target` needs a destination input");
                                 continue;
+                            }
+                        },
+                        "adjacent" => match dest {
+                            Some(d) => {
+                                let (dx, dy) = position_to_tile(d);
+                                let cheb = px.abs_diff(dx).max(py.abs_diff(dy));
+                                if !resonantdust_content::loader::location_in_range(
+                                    "adjacent", cheb,
+                                ) {
+                                    reject("the pawn is not adjacent to the destination carrier (lumberjack F2)");
+                                    continue;
+                                }
+                                vec![d]
+                            }
+                            None => {
+                                let mut v = Vec::with_capacity(9);
+                                for oy in -1i32..=1 {
+                                    for ox in -1i32..=1 {
+                                        v.push(tile_to_position(px + ox, py + oy));
+                                    }
+                                }
+                                v
                             }
                         },
                         _ => {
@@ -777,33 +825,87 @@ async fn main() {
                             continue;
                         }
                     };
-                    // A zone's ground is one row PER BIOME (subtype), each carrying only its
-                    // own cells — scan them all, a nonzero cell wins.
-                    let mut kind_ref: Option<u16> = tile
-                        .db()
-                        .entity_state()
-                        .iter()
-                        .filter(|r| r.macro_position_reference == zone)
-                        .find_map(|r| {
-                            r.items.get(cell).map(|i| i.kind_reference).filter(|&k| k != 0)
-                        });
-                    for o in tile.db().overlay().iter().filter(|r| r.macro_position_reference == zone) {
-                        for it in &o.items {
-                            if usize::from(it.tile_reference) == cell && it.kind_reference != 0 {
-                                kind_ref = Some(it.kind_reference);
+                    // The offer probe (lumberjack I1 — tile AND thing carriers, resolved
+                    // exactly like the client filter): a zone's ground is one row PER
+                    // BIOME (subtype), a nonzero cell wins; the thing layer is sparse
+                    // baseline ⊕ overlay where an overlay kind 0 SUPPRESSES (a felled
+                    // tree no longer offers).
+                    let tile_kind_at = |zone: u16, cell: u8| -> Option<u16> {
+                        let mut k = tile
+                            .db()
+                            .entity_state()
+                            .iter()
+                            .filter(|r| r.macro_position_reference == zone)
+                            .find_map(|r| {
+                                r.items
+                                    .get(usize::from(cell))
+                                    .map(|i| i.kind_reference)
+                                    .filter(|&k| k != 0)
+                            });
+                        for o in
+                            tile.db().overlay().iter().filter(|r| r.macro_position_reference == zone)
+                        {
+                            for it in &o.items {
+                                if it.tile_reference == cell && it.kind_reference != 0 {
+                                    k = Some(it.kind_reference);
+                                }
+                            }
+                        }
+                        k
+                    };
+                    let thing_kind_at = |zone: u16, cell: u8| -> Option<u16> {
+                        let mut k = thing
+                            .db()
+                            .entity_state()
+                            .iter()
+                            .filter(|r| r.macro_position_reference == zone)
+                            .find_map(|r| {
+                                r.items
+                                    .iter()
+                                    .find(|i| i.tile_reference == cell && i.kind_reference != 0)
+                                    .map(|i| i.kind_reference)
+                            });
+                        for o in
+                            thing.db().overlay().iter().filter(|r| r.macro_position_reference == zone)
+                        {
+                            for it in &o.items {
+                                if it.tile_reference == cell {
+                                    k = (it.kind_reference != 0).then_some(it.kind_reference);
+                                }
+                            }
+                        }
+                        k
+                    };
+                    // The first candidate whose def OFFERS this interaction wins
+                    // (stat-model F9 binding; walls not carrying move_to is exactly this
+                    // refusal — input-rework F9). Things probe first: a tree stands ON
+                    // grass, and the thing is the more specific carrier.
+                    let mut carrier: Option<(u32, bool)> = None; // (position, is_thing)
+                    for &c in &candidates {
+                        let zone = position_macro(c);
+                        let cell = (position_micro(c) >> 8) as u8;
+                        if let Some(kr) = thing_kind_at(zone, cell) {
+                            if bundle
+                                .thing_interactions(kr >> 4)
+                                .iter()
+                                .any(|(i, _)| i == &iname)
+                            {
+                                carrier = Some((c, true));
+                                break;
+                            }
+                        }
+                        if let Some(kr) = tile_kind_at(zone, cell) {
+                            if bundle.tile_interactions(kr >> 4).iter().any(|(i, _)| i == &iname) {
+                                carrier = Some((c, false));
+                                break;
                             }
                         }
                     }
-                    let Some(kr) = kind_ref else {
-                        reject("no tile at the carrier position");
+                    // `_carrier` feeds the destroy effect's cell addressing (P4).
+                    let Some(_carrier) = carrier else {
+                        reject("no carrier in range offers this interaction (F4/F2 location rule)");
                         continue;
                     };
-                    // The carrier's def must OFFER this interaction (stat-model F9 binding;
-                    // walls not carrying move_to is exactly this refusal — input-rework F9).
-                    if !bundle.tile_interactions(kr >> 4).iter().any(|(i, _)| i == &iname) {
-                        reject("the carrier tile does not offer this interaction (F4 location rule)");
-                        continue;
-                    }
                     // The pawn's gameplay rows: traits + stored conditions from the payload
                     // sidecar, needs from the `needs` sub-table (stat-model F1/F2).
                     let (trait_rows, cond_rows) = pawn

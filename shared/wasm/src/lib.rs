@@ -401,7 +401,8 @@ impl Content {
     /// The pie-menu options for a clicked TILE (input-rework F1/F4/F5): the tile def's
     /// carried interactions, filtered by the acting pawn's affordance PREDICATES (its
     /// fanned rows in — the SAME `interaction_available` the worker enforces) and the
-    /// LOCATION rule (`"on"` offers only while `standing_on`). Returns an array of
+    /// LOCATION rule via the shared `location_in_range` (`cheb_distance` = pawn↔clicked
+    /// cell in tiles — lumberjack F2). Returns an array of
     /// `{ name, menuText, reference, magnitude, inputs }` objects; empty = no menu.
     #[wasm_bindgen(js_name = tileMenuOptions)]
     pub fn tile_menu_options(
@@ -410,13 +411,13 @@ impl Content {
         payload: Vec<u32>,
         needs: Vec<u32>,
         now_tic: u16,
-        standing_on: bool,
+        cheb_distance: u32,
     ) -> js_sys::Array {
-        menu_options(&self.bundle, self.bundle.tile_interactions(tile_def_id), payload, needs, now_tic, standing_on)
+        menu_options(&self.bundle, self.bundle.tile_interactions(tile_def_id), payload, needs, now_tic, cheb_distance)
     }
 
-    /// The same for a clicked THING's kind (`object_id`) — empty today (no thing carries
-    /// interactions yet), wired so a waterskin is a TOML edit.
+    /// The same for a clicked THING's kind (`object_id`) — trees offer `cut_down` here
+    /// (lumberjack F6); a waterskin stays a TOML edit.
     #[wasm_bindgen(js_name = thingMenuOptions)]
     pub fn thing_menu_options(
         &self,
@@ -424,9 +425,9 @@ impl Content {
         payload: Vec<u32>,
         needs: Vec<u32>,
         now_tic: u16,
-        standing_on: bool,
+        cheb_distance: u32,
     ) -> js_sys::Array {
-        menu_options(&self.bundle, self.bundle.thing_interactions(object_id), payload, needs, now_tic, standing_on)
+        menu_options(&self.bundle, self.bundle.thing_interactions(object_id), payload, needs, now_tic, cheb_distance)
     }
 
     /// A gameplay def's u32 `definition_reference` (registry-first, seed fallback) — the
@@ -715,7 +716,7 @@ fn menu_options(
     payload: Vec<u32>,
     needs: Vec<u32>,
     now_tic: u16,
-    standing_on: bool,
+    cheb_distance: u32,
 ) -> js_sys::Array {
     let (traits, conditions) = decode_payload(&payload);
     let need_rows = decode_need_rows(&needs);
@@ -725,10 +726,10 @@ fn menu_options(
     let out = js_sys::Array::new();
     for (name, magnitude) in binds {
         let Some(ip) = bundle.interaction_params(&name) else { continue };
-        // The location rule (F4): an "on" interaction is offered only while the acting
-        // pawn STANDS ON the clicked carrier — the menu must never offer what the worker
-        // would refuse.
-        if ip.location == "on" && !standing_on {
+        // The location rule (F4 / lumberjack F2): the SHARED range check — the menu must
+        // never offer what the worker would refuse. `cheb_distance` is pawn↔clicked-cell
+        // in tiles. (The intent queue relaxes this for positional rules — P3.)
+        if !dsl::loader::location_in_range(&ip.location, cheb_distance) {
             continue;
         }
         if !resonantdust_content::stat_eval::interaction_available(bundle, &name, &traits, &active)

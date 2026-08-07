@@ -586,8 +586,10 @@ export class WorldScene extends Scene {
     const now = ((Math.floor(d) % 0x10000) + 0x10000) % 0x10000;
     const payload = this.moverLayer.pawnPayload(actor) ?? new Uint32Array(0);
     const needs = this.moverLayer.pawnNeeds(actor);
-    const standingOn = info.tileX === tileX && info.tileY === tileY;
-    const options = getContent().tileMenuOptions(defId, payload, needs, now, standingOn) as unknown as PieMenuOption[];
+    // lumberjack F2: the filter takes the Chebyshev pawn↔clicked-cell distance and runs
+    // the SHARED location_in_range — "on" = 0, "adjacent" ≤ 1 (inclusive).
+    const cheb = Math.max(Math.abs(info.tileX - tileX), Math.abs(info.tileY - tileY));
+    const options = getContent().tileMenuOptions(defId, payload, needs, now, cheb) as unknown as PieMenuOption[];
     this.pieMenu.open(cx, cy, options, (o) => this.fireOption(o, actor, tileX, tileY));
   }
 

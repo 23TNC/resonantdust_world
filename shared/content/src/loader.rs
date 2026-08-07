@@ -343,6 +343,37 @@ pub struct InteractionParams {
   pub duration: f64,
 }
 
+/// The ONE placement-rule range check (lumberjack F2), shared by the worker's
+/// EXECUTE_INTERACTION gate and the wasm pie-menu filter so the two cannot drift:
+/// `cheb` is the Chebyshev distance in tiles between the acting pawn and the carrier
+/// cell. `"on"` = standing on it; `"adjacent"` = on or beside (≤ 1, INCLUSIVE);
+/// `"target"` places no constraint on the pawn (movement's rule).
+pub fn location_in_range(location: &str, cheb: u32) -> bool {
+  match location {
+    "on" => cheb == 0,
+    "adjacent" => cheb <= 1,
+    _ => true,
+  }
+}
+
+#[cfg(test)]
+mod location_tests {
+  use super::location_in_range;
+
+  #[test]
+  fn the_placement_rules_range_exactly() {
+    // "on" is standing-on only; "adjacent" is INCLUSIVE Chebyshev ≤ 1 (lumberjack F2 —
+    // the wolf drinking while standing ON the pond stays legal); "target" never gates.
+    assert!(location_in_range("on", 0));
+    assert!(!location_in_range("on", 1));
+    assert!(location_in_range("adjacent", 0));
+    assert!(location_in_range("adjacent", 1));
+    assert!(!location_in_range("adjacent", 2));
+    assert!(location_in_range("target", 0));
+    assert!(location_in_range("target", 7));
+  }
+}
+
 /// An `[[affordance]]` def — a named PREDICATE over pawn stats (stat-model F5/F10):
 /// `can_move_ground` ⇔ `ground_speed > 0`. Structured, not an expression string; exactly
 /// one of `above`/`below` is authored (both thresholds EXCLUSIVE).

@@ -34,9 +34,16 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P2 — adjacency
 
-- [ ] `"adjacent"` in BOTH gates — worker location match + wasm menu offer (Chebyshev ≤ 1
+- [x] `"adjacent"` in BOTH gates — worker location match + wasm menu offer (Chebyshev ≤ 1
       inclusive); the worker resolves THING carriers from thing ⊕ overlay (I1).
-      Acceptance: shared-crate rule tests; native+wasm gates green.
+      Acceptance: shared-crate rule tests; native+wasm gates green. → ONE
+      `location_in_range` in shared/content (tested), the wasm filter takes
+      `cheb_distance` (both wrappers + WorldScene), the worker resolves CANDIDATES per
+      rule (adjacent+destination = that cell within 1; destless = the pawn's 3×3) and
+      probes tile AND thing carriers (things first; overlay kind-0 suppresses); acting
+      pawn/destination generalized to the reserved inputs (destroy-only interactions
+      have no satisfy/move); thing uplink subscribes the composed tiers. Gates:
+      shared+core+worker builds, 40+2 content tests, tsc clean.
 - [ ] Drill: a human drinks from the SHORE tile; the wolf's stand-on-water drink still
       lands (F2, I6). Acceptance: both `satisfied=Some("thirst")` in one worker log.
 
