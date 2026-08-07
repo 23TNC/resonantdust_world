@@ -29,9 +29,8 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P2 — the corpus
 
-- [ ] Content: needs hunger (bands + emotions — I8) + corpus; the LEVELED corpus
-      trait (`max = [1, 2]` — F2) + forager/herbivore/carnivore/omnivore with their
-      stats (F3); affordances can_forage/can_eat_plants/can_eat_meat/can_die.
+- [ ] Content: needs hunger (I8) + corpus; the LEVELED corpus trait (`max = [1, 2]`
+      — F2) + the four diet traits with their stats (F3); the four can_* affordances.
       Acceptance: golden diff = the authored rows.
 - [ ] Content: things bunny/meat/plant_matter (F9); interactions death, forage,
       eat_plant_matter, eat_meat (F7); trait assignments per the design — corpus 1
