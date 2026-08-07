@@ -6,8 +6,12 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P0 — the paper
 
-- [ ] VARIABLES.md: the interaction `queue = { … }` schema (F2) and the details panel's
-      shift-right + left vertical strip layout. Acceptance: docs-check green.
+- [x] VARIABLES.md: the interaction `queue = { … }` schema (F2) and the details panel's
+      shift-right + left vertical strip layout. Acceptance: docs-check green. → the
+      layout paragraph (strip left, content right, bottom = active, client-derived
+      ring) beside the panel-ordering law; the `queue` block documented on drink with
+      all seven fields, move_to (0.6/none) and cut_down authored in the schema
+      examples; green.
 - [ ] ACTIONS.md: `QUEUE_STATE` (worker-only, promoted — F1) and `CANCEL_INTENT pawn
       order_ref` with the phase-by-phase cancel law + the ephemeral cancelled-set
       caveat (F3/F4, I4). Acceptance: docs-check green.

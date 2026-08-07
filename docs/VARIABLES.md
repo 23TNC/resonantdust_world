@@ -628,6 +628,18 @@ places between evaluations. `pawnConditions` (wasm) returns **stride 4** —
 *shown*, not to be re-sorted. Do not derive priority from `|mood|`: it cannot express "mild but
 urgent", and it degenerates entirely once a condition's effect is a need rather than a mood.
 
+**The details panel layout** (intent-queue-ui): the panel's information content sits in a
+container SHIFTED RIGHT to clear a vertical **intent-queue strip** pinned along the
+panel's LEFT edge. The strip renders one CIRCLE per queue entry, stacked so the
+**bottom-most circle is the ACTIVE event** (what the pawn is carrying out now) and
+pending intents rise above it. Each circle's look — size, background, hover text, and
+the ACTIVE entry's progress ring (direction cw/ccw/none, color, fill-vs-empty) — comes
+from the interaction's `queue = { … }` table (schema below); the ring's percentage is
+CLIENT-DERIVED from the fanned `(started, fire)` tics through the learned tic estimate,
+computed fresh each frame (never incremented — a hidden tab must snap to truth on
+re-show). Clicking a circle sends `CANCEL_INTENT` with the entry's order
+`event_reference` (`ACTIONS.md` § The intent queue).
+
 **A condition's effects are an OPEN set** (conditions F6), and the stat-model realizes it:
 `mood` (offset; mood = `clamp(0.5 + Σ active offsets, 0..1)`, needs-moodlets F5) sits beside the
 `stats`/`needs` modifier lists — a condition caps a stat, floors a need, or scales a rate through
@@ -879,6 +891,16 @@ inputs = ["pawn", "amount"]
 # menu cannot guess a need input — input-rework F5).
 satisfy = { target = "@pawn", need = "thirst", amount = "@amount" }
 grant = ["quenched"]        # TIMED condition grants on execute (expiry from the condition)
+# The intent-queue DISPLAY block (intent-queue-ui F2) — every field optional:
+#   hover          tooltip text (default = the interaction's label)
+#   size           circle scale, 1.0 = standard (move_to authors 0.6 — visually distinct)
+#   background     circle fill color
+#   progress       the ACTIVE entry's ring: "cw" | "ccw" | "none" (default none)
+#   progress_color ring color
+#   progress_fill  true = the ring FILLS as the event progresses; false = it empties
+#   cancelable     may a CLICK cancel this interaction WHILE EXECUTING (pending entries
+#                  are always removable); default false
+queue = { hover = "Drinking", background = "#2e5a78", progress = "cw", progress_color = "#3ad64f", progress_fill = true, cancelable = true }
 # location rules (interactions F8 / input-rework F4 / lumberjack F2): where the ACTING
 # pawn must be, relative to the CARRIER (the def offering this interaction):
 #   "on"       — standing on the carrier's cell
@@ -907,6 +929,8 @@ move = { target = "@pawn", to = "@destination" }
 # interaction must author at least one effect (`satisfy`, `move`, or `destroy`).
 location = "target"
 duration = 0
+# Smaller + ringless in the queue strip (intent-queue-ui): walks are plumbing, not work.
+queue = { size = 0.6, progress = "none" }
 
 [[interaction]]             # timed work on the world (lumberjack F5/F7)
 name = "cut_down"
@@ -922,6 +946,7 @@ inputs = ["pawn", "destination"]
 destroy = "carrier"
 location = "adjacent"
 duration = 30               # ≈5 s at 6 Hz; the completion re-validates (see drink above)
+queue = { hover = "Cutting down", progress = "cw", progress_color = "#3ad64f", progress_fill = true, cancelable = true }
 
 [[affordance]]              # a named PREDICATE over pawn stats (stat-model F5/F10)
 name = "can_drink"
