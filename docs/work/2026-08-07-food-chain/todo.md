@@ -33,10 +33,9 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
       forager/herbivore/carnivore/omnivore with their stats (F3); affordances
       can_forage/can_eat_plants/can_eat_meat/can_die. Acceptance: golden diff = the
       authored rows.
-- [ ] Content: things bunny/meat/plant_matter (F9); interactions death (self,
-      can_die), forage (flora), eat_plant_matter, eat_meat (F7); humans
-      +forager+omnivore, wolves +carnivore+corpus_i, bunny's kit authored.
-      Acceptance: golden re-blessed; six consumers rebuilt (I6).
+- [ ] Content: things bunny/meat/plant_matter (F9); interactions death, forage,
+      eat_plant_matter, eat_meat (F7); trait assignments per the design (I6).
+      Acceptance: golden re-blessed; six consumers rebuilt.
 
 ## P3 — the worker executes
 
