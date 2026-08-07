@@ -60,6 +60,22 @@ completion re-validates cheb ≤ 1 — both keep working on floored tiles (I2), 
 walk DEST should become the chord-nearest point rather than tile-center where it
 matters. First pass: tile centers (correct, marginally longer); note the successor.
 
+## I10 — FOUND+FIXED: the resolve teleported a rested pawn (2026-08-07) {#i10}
+
+The first resolve implementation read the ACTIVE dest from the ephemeral queue — but
+the arm registers the NEW order's Running::Move before its seed fires, so a
+long-rested pawn (stale row tic) interpolated the whole first chord of its NEW route
+instantly (seen live: a 10-tile teleport at seed). Fix: the resolve's proof that a
+pawn is mid-walk is the OLD chain's still-PENDING hop event (dest + serial match,
+durable) — a resting pawn has no pending hop and resolves to its stored row.
+
+## I11 — FOUND+FIXED: queued events were invisible to the resolve (2026-08-07) {#i11}
+
+The worker's event subscription mirrored only `worker_reference = self` (assigned) —
+a future hop still QUEUED (unassigned) was invisible, so the resolve missed the walk
+whenever the interrupt landed before assignment. Fix: `OR worker_reference = 0` rides
+the subscription (the tile mirror's every-row posture, dev-scale).
+
 ## I9 — TicEstimate pacing vs variable hop intervals {#i9}
 
 Hop events now land at irregular intervals (per-chord durations). The client's rate

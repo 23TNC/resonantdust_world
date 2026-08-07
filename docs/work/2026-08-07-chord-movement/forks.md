@@ -1,5 +1,18 @@
 # Forks — chord movement (plan-time decisions; each is mine unless the user vetoes)
 
+## F8 — hops fire AT the re-anchor cadence, every hop PROMOTEs (resolved in execution) {#f8}
+
+F2's "one event per chord" and F4's "re-anchor every 32 tics" meet an economy fact:
+you cannot fan without an event, so the event cadence must be ≥ the re-anchor cadence
+anyway. Merged: a hop's STRIDE = `clamp(REANCHOR_TICS / tics_per_tile, 1, 8)` tiles —
+hops land every ≤32 tics, each writes its (possibly fractional) progress point, and
+EVERY hop promotes. That write IS the re-anchor; separate bare-hop + anchor events
+would cost strictly more. Fan ≈ one frame per 32 tics per MOVING pawn (0.19 Hz) — far
+under the per-tile fan-out the cadence law forbids. Fast pawns still get fewer, longer
+hops; the chord cap (I7) bounds the window.
+**Rejected**: per-chord hops with separate re-anchor events (more events, same fan);
+bare hops with rare promotes (late joiners drift up to a whole chord).
+
 ## F1 — the pawn's dead layer byte becomes SUBTILE nibbles {#f1}
 
 A `position_reference` low byte is `layer_reference` (`type_id:4 | layer_id:4`) —

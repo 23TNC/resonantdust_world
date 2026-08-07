@@ -38,7 +38,7 @@ use resonantdust_codec::object::{
 };
 use resonantdust_codec::speed;
 use resonantdust_codec::refs::entity_ref_type_id;
-use resonantdust_codec::status::{status_phase, EVENT_ASSIGNED};
+use resonantdust_codec::status::{status_phase, EVENT_ASSIGNED, EVENT_COMPLETE};
 use resonantdust_codec::tic::{tic_add, tic_after, tic_before};
 use resonantdust_st_bindings::{data_shard, event_shard, index, pawn, thing, tile};
 use resonantdust_uplink::acquire;
@@ -139,6 +139,71 @@ struct Payload {
     definition_reference: u32,
     position_reference: u32,
     data: u8,
+    /// The base row's write tic — the active chord's START time (chord-movement F3:
+    /// the mid-chord resolve interpolates from here). `0` for a never-written entity.
+    base_tic: u16,
+}
+
+/// The re-anchor cadence in tics (chord-movement F4/F8): hops fire — and PROMOTE — at
+/// most this far apart, so observer drift without a start anchor stays bounded.
+const REANCHOR_TICS: f64 = 32.0;
+/// The chord-segment cap in tiles (chord-movement I7): bounds a single hop's window.
+const CHORD_CAP_TILES: f64 = 8.0;
+
+/// One hop's stride in tiles (chord-movement F8): the re-anchor cadence translated to
+/// distance at this pawn's pace, clamped to [1, CHORD_CAP_TILES].
+fn hop_stride_tiles(tics_per_tile: f64) -> f64 {
+    (REANCHOR_TICS / tics_per_tile.max(1.0)).clamp(1.0, CHORD_CAP_TILES)
+}
+
+/// What movement composition needs beyond scratch (chord-movement F2/F3): the pathability
+/// probe, the pawn's ACTIVE walk `(obj, stamped_serial) → dest` — read from the OLD
+/// chain's still-PENDING hop event, the durable proof the pawn is actually mid-walk (a
+/// resting pawn has no pending hop and resolves to its stored row; seen live: reading
+/// the NEW order's dest instead teleported a rested pawn a whole chord) — and the pace.
+struct ApplyCtx<'a> {
+    pathable: &'a dyn Fn(i32, i32) -> bool,
+    active_dest: &'a dyn Fn(u32, u8) -> Option<u32>,
+    tics_per_tile: &'a dyn Fn(u32) -> f64,
+    now: u16,
+}
+
+/// The mid-chord RESOLVE (chord-movement F3): where a WALKING pawn actually is at `now` —
+/// its stored row is the chord's start, so interpolate `elapsed / tics_per_tile` tiles
+/// along the deterministically-recomputed first chord, quantized to subtile. A pawn with
+/// no active walk (or an unroutable one) resolves to its stored position. The half-window
+/// guard reads a future-stamped row as elapsed 0, never ancient (the needs-eval rule).
+fn resolve_walk_position_for(obj: u32, p: &Payload, ctx: &ApplyCtx) -> u32 {
+    use resonantdust_codec::object::{point_to_position, position_to_point};
+    let Some(dest) = (ctx.active_dest)(obj, pawn_trip_serial(p.data)) else {
+        return p.position_reference;
+    };
+    let start_tile = position_to_tile(p.position_reference);
+    let dest_tile = position_to_tile(dest);
+    if start_tile == dest_tile {
+        return p.position_reference;
+    }
+    let Some(chords) =
+        resonantdust_content::path_eval::find_chords(start_tile, dest_tile, 0, ctx.pathable)
+    else {
+        return p.position_reference;
+    };
+    let Some(&(wx, wy)) = chords.first() else { return p.position_reference };
+    let raw = ctx.now.wrapping_sub(p.base_tic);
+    let elapsed = if raw > u16::MAX / 2 { 0 } else { raw } as f64;
+    let pace = (ctx.tics_per_tile)(obj);
+    if pace < 1.0 {
+        return p.position_reference;
+    }
+    let walked = elapsed / pace;
+    let (sx, sy) = position_to_point(p.position_reference);
+    let (dxf, dyf) = (wx as f64 - sx, wy as f64 - sy);
+    let len = dxf.hypot(dyf);
+    if len <= f64::EPSILON {
+        return p.position_reference;
+    }
+    let f = (walked / len).min(1.0);
+    point_to_position(sx + dxf * f, sy + dyf * f)
 }
 
 /// One parked order in a pawn's EPHEMERAL intent queue (lumberjack F1 — ACTIONS.md
@@ -266,8 +331,11 @@ async fn main() {
     // startup and mid-run recovery are the same code path. ────────────────────────────────────
     let index_up = resonantdust_uplink::subbed_uplink!(index, "index", uri, index_db,
         vec![format!("SELECT * FROM master_clock WHERE realm = {realm}")]);
+    // chord-movement F3: `worker_reference = 0` (queued, not yet assigned) rides along so
+    // the mid-chord resolve can see the OLD chain's PENDING hop — the durable proof a pawn
+    // is mid-walk. Dev-scale acceptable, the same every-row posture the tile mirror takes.
     let event_up = resonantdust_uplink::subbed_uplink!(event_shard, "event_shard", uri, event_db,
-        vec![format!("SELECT * FROM event_log WHERE worker_reference = {self_ref}")]);
+        vec![format!("SELECT * FROM event_log WHERE worker_reference = {self_ref} OR worker_reference = 0")]);
     let hot_sql = |_: ()| format!("SELECT * FROM entity_state_log WHERE worker_reference = {self_ref} OR observer_reference = {self_ref}");
     let data_up = resonantdust_uplink::subbed_uplink!(data_shard, "data_shard", uri, data_db, vec![hot_sql(())]);
     // The pawn shard adds its COMPOSED public rows (interactions P3): `EXECUTE_INTERACTION`
@@ -395,6 +463,40 @@ async fn main() {
             let cell = (position_micro(pos) >> 8) as u8;
             tile_kind_at(zone, cell).is_none_or(|k| bundle.tile_pathable(k >> 4))
                 && thing_kind_at(zone, cell).is_none_or(|(k, _)| bundle.thing_pathable(k >> 4))
+        };
+
+        // Hop spacing is the pawn's DERIVED `ground_speed` (input-rework F8): evaluated
+        // per hop from its fanned rows, so a mid-trip condition that slows a stat slows
+        // the chain. The default is the degenerate fallback only — the `can_move_ground`
+        // gate refuses a 0-derived pawn at the front door. (Hoisted to pass level by
+        // chord-movement: the compose's resolves need it too.)
+        let ground_speed_tics = |entity: u32, now: u16| -> u16 {
+            let (trait_rows, cond_rows) = pawn
+                .db()
+                .payload()
+                .iter()
+                .find(|r| r.entity_reference == entity)
+                .map(|r| {
+                    (
+                        resonantdust_codec::payload::payload_traits(&r.payload),
+                        resonantdust_codec::payload::payload_conditions(&r.payload),
+                    )
+                })
+                .unwrap_or_default();
+            let need_rows: Vec<(u32, u16)> = pawn
+                .db()
+                .needs()
+                .iter()
+                .filter(|r| r.entity_reference == entity)
+                .map(|r| (r.need, r.set_tic))
+                .collect();
+            let active = resonantdust_content::needs_eval::active_conditions(
+                &bundle, &trait_rows, &need_rows, &cond_rows, now,
+            );
+            let v = resonantdust_content::stat_eval::stat_value(
+                &bundle, "ground_speed", &trait_rows, &active,
+            );
+            if v >= 1.0 { v.round() as u16 } else { speed::DEFAULT_TICS_PER_TILE }
         };
 
         // ── INTENT ADVANCEMENT, move half (lumberjack I4) ── a Move-running queue head
@@ -547,13 +649,43 @@ async fn main() {
                         definition_reference: r.definition_reference,
                         position_reference: r.position_reference,
                         data: r.data,
+                        base_tic: r.tic,
                     })
                     .unwrap_or_default();
                 scratch.insert(e, base);
             }
             let mut promote: HashSet<u32> = HashSet::new();
-            for (event_reference, actions) in &events {
-                apply(actions, &mut scratch, &mut promote, *event_reference, &cell_pathable);
+            {
+                // The compose's movement context (chord-movement F3): the resolve reads
+                // the ACTIVE walk from the OLD chain's still-PENDING hop event — durable,
+                // and a resting pawn (no pending hop with its stamped serial) resolves to
+                // its stored row.
+                let active_dest = |obj: u32, serial: u8| -> Option<u32> {
+                    event.db().event_log().iter().find_map(|e| {
+                        if status_phase(e.status) == EVENT_COMPLETE {
+                            return None;
+                        }
+                        for inst in action::program(&e.actions) {
+                            let Ok(inst) = inst else { break };
+                            if let (MOVE_STEP, [o, d, s]) = (inst.action, inst.operands) {
+                                if *o == obj && (*s & 0x3F) as u8 == serial {
+                                    return Some(*d);
+                                }
+                            }
+                        }
+                        None
+                    })
+                };
+                let tics_per_tile = |obj: u32| -> f64 { f64::from(ground_speed_tics(obj, t)) };
+                let ctx = ApplyCtx {
+                    pathable: &cell_pathable,
+                    active_dest: &active_dest,
+                    tics_per_tile: &tics_per_tile,
+                    now: t,
+                };
+                for (event_reference, actions) in &events {
+                    apply(actions, &mut scratch, &mut promote, *event_reference, &ctx);
+                }
             }
 
             // ── WRITE (hot) ── absolute finals, each to its OWN shard (pawn vs the data catch-all).
@@ -805,38 +937,6 @@ async fn main() {
             // supersession makes the re-issue cancel any survivor); deferring the tic would
             // re-queue on the re-pass and DUPLICATE the chain, which multiplies. Never defer here.
             //
-            // Hop spacing is the pawn's DERIVED `ground_speed` (input-rework F8): evaluated
-            // per hop from its fanned rows, so a mid-trip condition that slows a stat slows
-            // the chain. The default is the degenerate fallback only — the `can_move_ground`
-            // gate refuses a 0-derived pawn at the front door.
-            let ground_speed_tics = |entity: u32, now: u16| -> u16 {
-                let (trait_rows, cond_rows) = pawn
-                    .db()
-                    .payload()
-                    .iter()
-                    .find(|r| r.entity_reference == entity)
-                    .map(|r| {
-                        (
-                            resonantdust_codec::payload::payload_traits(&r.payload),
-                            resonantdust_codec::payload::payload_conditions(&r.payload),
-                        )
-                    })
-                    .unwrap_or_default();
-                let need_rows: Vec<(u32, u16)> = pawn
-                    .db()
-                    .needs()
-                    .iter()
-                    .filter(|r| r.entity_reference == entity)
-                    .map(|r| (r.need, r.set_tic))
-                    .collect();
-                let active = resonantdust_content::needs_eval::active_conditions(
-                    &bundle, &trait_rows, &need_rows, &cond_rows, now,
-                );
-                let v = resonantdust_content::stat_eval::stat_value(
-                    &bundle, "ground_speed", &trait_rows, &active,
-                );
-                if v >= 1.0 { v.round() as u16 } else { speed::DEFAULT_TICS_PER_TILE }
-            };
             for (event_reference, actions) in &events {
                 for inst in action::program(actions) {
                     let Ok(inst) = inst else { break };
@@ -851,21 +951,35 @@ async fn main() {
                     }
                     let (cx, cy) = position_to_tile(p.position_reference);
                     let (tx, ty) = position_to_tile(dest);
-                    if (cx, cy) == (tx, ty) {
+                    if (cx, cy) == (tx, ty) && p.position_reference == dest {
                         continue; // arrived — the chain ends
                     }
-                    let next_tic = tic_add(t, ground_speed_tics(obj, t));
-                    // The FINAL hop keys on the shared PATH's length, not cheb distance
-                    // (pathfinding F3): a detour's last tile is what earns the PROMOTE
-                    // anchor. A blocked path (`None`) queues a BARE hop — the chain idles
-                    // at pace, re-pathing every hop, and resumes if the blockage clears.
-                    let plen =
-                        resonantdust_content::path_eval::path_len((cx, cy), (tx, ty), &cell_pathable);
-                    let program = if plen == Some(1) {
-                        vec![PROMOTE, MOVE_STEP, obj, dest, serial]
-                    } else {
-                        vec![MOVE_STEP, obj, dest, serial]
+                    // The next hop lands one STRIDE along the first chord (chord-movement
+                    // F2/F6/F8): `k = ceil(dist × tics_per_tile)`, dist = min(chord len,
+                    // the re-anchor stride). EVERY hop PROMOTEs — hops fire AT the
+                    // re-anchor cadence, so each write IS the drift-bounding anchor (F4;
+                    // fan ≤ one frame per REANCHOR_TICS per moving pawn, never per tile).
+                    // A blocked route queues a BARE retry — the chain idles, re-routing
+                    // every fire, and resumes if the blockage clears.
+                    let pace = f64::from(ground_speed_tics(obj, t));
+                    let (program, k) = match resonantdust_content::path_eval::find_chords(
+                        (cx, cy),
+                        (tx, ty),
+                        0,
+                        &cell_pathable,
+                    ) {
+                        Some(chords) if !chords.is_empty() => {
+                            use resonantdust_codec::object::position_to_point;
+                            let (w0x, w0y) = chords[0];
+                            let (pxf, pyf) = position_to_point(p.position_reference);
+                            let len = (w0x as f64 - pxf).hypot(w0y as f64 - pyf);
+                            let dist = len.min(hop_stride_tiles(pace));
+                            let k = (dist * pace).ceil().max(4.0) as u16;
+                            (vec![PROMOTE, MOVE_STEP, obj, dest, serial], k)
+                        }
+                        _ => (vec![MOVE_STEP, obj, dest, serial], 8),
                     };
+                    let next_tic = tic_add(t, k);
                     if let Err(err) = event.reducers().queue_at(program, next_tic) {
                         tracing::warn!(%err, tic = t, obj = format!("{obj:#010x}"), "continuation queue failed — chain ends");
                     }
@@ -1122,6 +1236,40 @@ async fn main() {
                         prow.macro_position_reference,
                         prow.micro_position_reference,
                     );
+                    // chord-movement F3/I2: a WALKING pawn validates from its RESOLVED
+                    // mid-chord position, never the stale chord start — then floors.
+                    let pawn_pos = {
+                        let pp = Payload {
+                            definition_reference: prow.definition_reference,
+                            position_reference: pawn_pos,
+                            data: prow.data,
+                            base_tic: prow.tic,
+                        };
+                        let active_dest = |obj: u32, serial: u8| -> Option<u32> {
+                            event.db().event_log().iter().find_map(|e| {
+                                if status_phase(e.status) == EVENT_COMPLETE {
+                                    return None;
+                                }
+                                for inst in action::program(&e.actions) {
+                                    let Ok(inst) = inst else { break };
+                                    if let (MOVE_STEP, [o, d, s]) = (inst.action, inst.operands) {
+                                        if *o == obj && (*s & 0x3F) as u8 == serial {
+                                            return Some(*d);
+                                        }
+                                    }
+                                }
+                                None
+                            })
+                        };
+                        let pace = |obj: u32| -> f64 { f64::from(ground_speed_tics(obj, t)) };
+                        let rctx = ApplyCtx {
+                            pathable: &cell_pathable,
+                            active_dest: &active_dest,
+                            tics_per_tile: &pace,
+                            now: t,
+                        };
+                        resolve_walk_position_for(target, &pp, &rctx)
+                    };
                     let (px, py) = position_to_tile(pawn_pos);
                     // Out of place by DISTANCE alone → the intent queue composes
                     // [walk, act] instead of rejecting (lumberjack; ACTIONS.md § The
@@ -1302,7 +1450,9 @@ async fn main() {
                         });
                         if let Err(err) = event
                             .reducers()
-                            .queue_at(vec![PROMOTE_EVENT, PROMOTE, MOVE_TO, target, d], effect_tic)
+                            // chord-movement F4: the seed fans the INTENT, not the start
+                            // position — no PROMOTE prefix on MOVE_TO.
+                            .queue_at(vec![PROMOTE_EVENT, MOVE_TO, target, d], effect_tic)
                         {
                             tracing::warn!(%err, tic = t, "intent walk seed queue failed — queue dropped");
                             intent_queues.remove(&target);
@@ -1472,7 +1622,8 @@ async fn main() {
                             reject("move_to no-op: destination impathable or unreachable (pathfinding F5)");
                             continue;
                         }
-                        program.extend_from_slice(&[PROMOTE_EVENT, PROMOTE, MOVE_TO, target, d]);
+                        // chord-movement F4: intent only — the seed fans no position.
+                        program.extend_from_slice(&[PROMOTE_EVENT, MOVE_TO, target, d]);
                     }
                     // The destroy effect (lumberjack F5): clear the validated CARRIER's
                     // cell through the cold overlay — the build-walls SET path, kind 0 =
@@ -1661,7 +1812,7 @@ fn apply(
     scratch: &mut HashMap<u32, Payload>,
     promote: &mut HashSet<u32>,
     event_reference: u32,
-    pathable: &dyn Fn(i32, i32) -> bool,
+    ctx: &ApplyCtx,
 ) {
     let mut pending_promote = false; // set by a `PROMOTE` prefix; consumed by the next action
     for inst in action::program(actions) {
@@ -1685,15 +1836,27 @@ fn apply(
                 }
             }
             MOVE_TO => {
-                // MOVE_TO obj dest — ALWAYS the seed (ACTIONS.md §Movement): stamp the
-                // trip-serial (this event's low 6 bits — the chain's identity, killing any
-                // OLDER chain at its next hop), turn facing toward the path (e/w winning
-                // diagonals — side profiles read best), step NOTHING. The promoted write is
-                // the anchor that aligns every client to the server BEFORE speculation walks
-                // (pawn-movement I6: a stepping seed fanned start+1 — a snap opening every
-                // trip). The worker chains `MOVE_STEP` hops from the CONTINUE pass.
+                // MOVE_TO obj dest — ALWAYS the seed (ACTIONS.md §Movement): RESOLVE the
+                // pawn's mid-chord position first (chord-movement F3 — an interrupting
+                // order starts from where the pawn IS; the resolve reads the OLD chain's
+                // dest from worker memory), stamp the trip-serial (this event's low 6
+                // bits — the chain's identity, killing any OLDER chain at its next hop),
+                // turn facing toward the path, and step NOTHING further. The seed fans NO
+                // position (F4 — the start anchor retired; the client arms speculation
+                // from its own belief). The worker chains hops from the CONTINUE pass.
                 if let [obj, dest] = inst.operands {
                     let p = scratch.entry(*obj).or_default();
+                    let resolved = resolve_walk_position_for(*obj, p, ctx);
+                    if resolved != p.position_reference {
+                        tracing::info!(
+                            obj = format!("{obj:#010x}"),
+                            from = ?resonantdust_codec::object::position_to_point(p.position_reference),
+                            to = ?resonantdust_codec::object::position_to_point(resolved),
+                            "mid-chord resolve — the new order starts where the pawn is"
+                        );
+                        p.position_reference = resolved;
+                        p.base_tic = ctx.now;
+                    }
                     let (cx, cy) = position_to_tile(p.position_reference);
                     let (tx, ty) = position_to_tile(*dest);
                     let (sx, sy) = ((tx - cx).signum(), (ty - cy).signum());
@@ -1720,31 +1883,49 @@ fn apply(
                             "chain superseded — hop dies"
                         );
                     } else {
-                        let (cx, cy) = position_to_tile(p.position_reference);
+                        let cur_tile = position_to_tile(p.position_reference);
                         let (tx, ty) = position_to_tile(*dest);
-                        if (cx, cy) != (tx, ty) {
-                            // The shared path's FIRST hop (pathfinding F3) — recomputed
-                            // statelessly from the CURRENT cell, so supersession and
-                            // mid-trip world changes stay correct with no stored route.
-                            match resonantdust_content::path_eval::next_step(
-                                (cx, cy),
+                        if cur_tile == (tx, ty) {
+                            // On the dest tile: normalize onto the dest POINT exactly
+                            // (a capped hop can land fractionally short of it).
+                            p.position_reference = *dest;
+                            p.base_tic = ctx.now;
+                        } else {
+                            // The shared route's FIRST CHORD (chord-movement F2/F3) —
+                            // recomputed statelessly from the CURRENT point; the hop
+                            // lands one STRIDE along it (F8: the re-anchor cadence as
+                            // distance, chord-capped — I7).
+                            use resonantdust_codec::object::{point_to_position, position_to_point};
+                            match resonantdust_content::path_eval::find_chords(
+                                cur_tile,
                                 (tx, ty),
-                                pathable,
+                                0,
+                                ctx.pathable,
                             ) {
-                                Some((nx, ny)) => {
-                                    let (sx, sy) = (nx - cx, ny - cy);
-                                    p.position_reference = tile_to_position(nx, ny);
-                                    let facing: u8 = if sx > 0 { 1 } else if sx < 0 { 3 } else if sy > 0 { 0 } else { 2 };
-                                    p.data = pack_pawn_data(facing, pawn_trip_serial(p.data));
+                                Some(chords) if !chords.is_empty() => {
+                                    let (wx, wy) = chords[0];
+                                    let (cxf, cyf) = position_to_point(p.position_reference);
+                                    let (dxf, dyf) = (wx as f64 - cxf, wy as f64 - cyf);
+                                    let len = dxf.hypot(dyf);
+                                    if len > f64::EPSILON {
+                                        let stride = hop_stride_tiles((ctx.tics_per_tile)(*obj));
+                                        let f = (stride / len).min(1.0);
+                                        p.position_reference =
+                                            point_to_position(cxf + dxf * f, cyf + dyf * f);
+                                        p.base_tic = ctx.now;
+                                        let facing: u8 = if dxf.abs() >= dyf.abs() {
+                                            if dxf > 0.0 { 1 } else { 3 }
+                                        } else if dyf > 0.0 { 0 } else { 2 };
+                                        p.data = pack_pawn_data(facing, pawn_trip_serial(p.data));
+                                    }
                                 }
-                                None => {
+                                _ => {
                                     // Blocked THIS hop (the world changed mid-trip): step
-                                    // nothing. The chain keeps re-queuing at pace and
-                                    // re-paths every hop — a cleared blockage (a felled
-                                    // tree) resumes the trip by itself.
+                                    // nothing. The chain keeps re-queuing and re-routing —
+                                    // a cleared blockage resumes the trip by itself.
                                     tracing::debug!(
                                         obj = format!("{obj:#010x}"),
-                                        "move_step blocked — no path this hop"
+                                        "move_step blocked — no route this hop"
                                     );
                                 }
                             }
@@ -1851,6 +2032,8 @@ struct Base {
     position_reference: u32,
     data: u8,
     dirty: bool,
+    /// The row's write tic (chord-movement F3 — the resolve's time origin).
+    tic: u16,
 }
 
 /// The entity's base for `tic`: its most-recent visible `state_log` row strictly before `tic`, read
@@ -1890,6 +2073,7 @@ fn base_row(data: &data_shard::DbConnection, pawn: &pawn::DbConnection, entity: 
                 position_reference: pack_position_reference(r.macro_position_reference, r.micro_position_reference),
                 data: r.data,
                 dirty: r.dirty,
+                tic: r.tic,
             })
         }};
     }

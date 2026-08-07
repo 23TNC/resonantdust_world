@@ -33,15 +33,21 @@ anticipated-issue inventory in [`issues.md`](issues.md) (I#)._
 
 ## P3 — the worker
 
-- [ ] Worker: chord-chain hops — write the chord END (subtile) + queue the next at
+- [x] Worker: chord-chain hops — write the chord END (subtile) + queue the next at
       `+ceil(len × ground_speed)` (F2/F6); chords split at ~8 tiles (I7).
-      Acceptance: a diagonal trip lands in ceil(√2·…) tics, not 2×.
-- [ ] Worker: mid-chord RESOLVE-ON-TOUCH (F3) — superseding seeds, interaction
+      Acceptance: a diagonal trip lands in ceil(√2·…) tics, not 2×. → stride = the
+      re-anchor cadence as distance (F8); a 6.803-tile diagonal-ish trip landed in
+      164 tics = ceil(6.803 × 24) EXACTLY; subtile rows live ((3,1)/(14,11)/(9,6)).
+- [x] Worker: mid-chord RESOLVE-ON-TOUCH (F3) — superseding seeds, interaction
       effects, and validation floors (I2) resolve the interpolated position first.
-      Acceptance: an interrupt mid-chord logs a resolved subtile start (I5).
-- [ ] Worker: the seed fans NO position; bare re-anchor `PROMOTE` every
+      Acceptance: an interrupt mid-chord logs a resolved subtile start (I5). → live:
+      `from=(99.0, 69.9375) to=(99.25, 69.6875)`; two bugs found+fixed (I10/I11 —
+      the resolve now reads the OLD chain's PENDING hop, and queued events mirror).
+- [x] Worker: the seed fans NO position; bare re-anchor `PROMOTE` every
       REANCHOR_TICS=32 (F4). Acceptance: event logs show intent + re-anchors +
-      landing only; no seed-position frame.
+      landing only; no seed-position frame. → PROMOTE dropped at both seed sites;
+      re-anchors = the promoted hops at exactly +32 tics (rows 43282/43314/43346);
+      the client-visible no-snap half drills with P4.
 
 ## P4 — the client
 
