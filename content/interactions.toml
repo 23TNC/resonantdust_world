@@ -53,6 +53,30 @@ min = 0
 max = 10
 winner = "min"
 
+# ── the diet/ability gates (food-chain F3) — traits contribute, affordances ask > 0;
+# "has Herbivore OR Omnivore" is the SUM being positive. ──
+
+[[stat]]
+name = "foraging"
+label = "Foraging"
+min = 0
+max = 10
+winner = "min"
+
+[[stat]]
+name = "plant_eating"
+label = "Plant Eating"
+min = 0
+max = 10
+winner = "min"
+
+[[stat]]
+name = "meat_eating"
+label = "Meat Eating"
+min = 0
+max = 10
+winner = "min"
+
 # ── traits ────────────────────────────────────────────────────────────────────
 
 [[trait]]
@@ -72,6 +96,34 @@ stats = [ { stat = "ground_speed", add = [24, 12, 6] } ]
 name = "lumberjack"
 label = "Lumberjack"
 stats = [ { stat = "logging", add = [1] } ]
+
+# The HEALTH cap (food-chain F2, the user's shape): ONE leveled trait owns corpus's
+# effective max — level 1 = ordinary life (cap 1), level 2 = the wolves' tier (cap 2).
+# Need MAX modifiers tier UPWARD (highest wins); the mint reads the effective cap.
+[[trait]]
+name = "corpus"
+label = "Corpus"
+needs = [ { need = "corpus", max = [1.0, 2.0] } ]
+
+[[trait]]
+name = "forager"
+label = "Forager"
+stats = [ { stat = "foraging", add = [1] } ]
+
+[[trait]]
+name = "herbivore"
+label = "Herbivore"
+stats = [ { stat = "plant_eating", add = [1] } ]
+
+[[trait]]
+name = "carnivore"
+label = "Carnivore"
+stats = [ { stat = "meat_eating", add = [1] } ]
+
+[[trait]]
+name = "omnivore"
+label = "Omnivore"
+stats = [ { stat = "plant_eating", add = [1] }, { stat = "meat_eating", add = [1] } ]
 
 # ── interactions ──────────────────────────────────────────────────────────────
 
@@ -125,6 +177,65 @@ location = "adjacent"
 duration = 30
 queue = { hover = "Cutting down", background = "#4a6a3a", progress = "cw", progress_color = "#3ad64f", progress_fill = true, cancelable = true }
 
+# DEATH (food-chain F5, the user's law): fired by the NEED-WRITE TRIGGER when a
+# corpus write leaves the holder at ≤ 0 — the worker sweeps, validates can_die, and
+# queues this through the same event door everything rides. The pawn's OWN kind
+# carries it (location `self` — the one hot-carrier rule, I9). Effects: MEAT into the
+# holder's floor cell (the yield lane), then the pawn shard's `remove` (StateGone
+# fans; clients drop the mover; idempotent).
+[[interaction]]
+name = "death"
+label = "Death"
+menu_text = "Death"
+affordances = ["can_die"]
+inputs = ["pawn"]
+location = "self"
+spawn = { thing = "meat", at = "on" }
+remove = "target"
+duration = 0
+queue = { hover = "Dying", size = 0.8 }
+
+# FORAGE (food-chain F6): timed work on FLORA — the flora SURVIVES; plant matter
+# lands on the first EMPTY pathable cell of the carrier's 3×3 (fixed scan; all
+# full = a logged no-yield). Sub-tile near-the-flora placement is the recorded
+# successor.
+[[interaction]]
+name = "forage"
+label = "Forage"
+menu_text = "Forage"
+affordances = ["can_forage"]
+inputs = ["pawn", "destination"]
+location = "adjacent"
+spawn = { thing = "plant_matter", at = "adjacent" }
+duration = 30
+queue = { hover = "Foraging", background = "#3a5a2a", progress = "cw", progress_color = "#58c04a", progress_fill = true, cancelable = true }
+
+# The EATS (food-chain F7): consume the carrier (destroy, no yield) + satisfy hunger
+# by the carrier binding's magnitude — the drink pattern, on things.
+[[interaction]]
+name = "eat_plant_matter"
+label = "Eat Plant Matter"
+menu_text = "Eat"
+affordances = ["can_eat_plants"]
+inputs = ["pawn", "destination", "amount"]
+satisfy = { target = "@pawn", need = "hunger", amount = "@amount" }
+destroy = "carrier"
+location = "adjacent"
+duration = 20
+queue = { hover = "Eating", background = "#3a5a2a", progress = "cw", progress_color = "#58c04a", progress_fill = true, cancelable = true }
+
+[[interaction]]
+name = "eat_meat"
+label = "Eat Meat"
+menu_text = "Eat"
+affordances = ["can_eat_meat"]
+inputs = ["pawn", "destination", "amount"]
+satisfy = { target = "@pawn", need = "hunger", amount = "@amount" }
+destroy = "carrier"
+location = "adjacent"
+duration = 20
+queue = { hover = "Eating", background = "#6a3a2a", progress = "cw", progress_color = "#d65a3a", progress_fill = true, cancelable = true }
+
 # ── affordances ───────────────────────────────────────────────────────────────
 
 [[affordance]]
@@ -143,3 +254,26 @@ check = { stat = "ground_speed", above = 0.0 }
 name = "can_fell_trees"
 label = "Can Fell Trees"
 check = { stat = "logging", above = 0.0 }
+
+[[affordance]]
+name = "can_forage"
+label = "Can Forage"
+check = { stat = "foraging", above = 0.0 }
+
+[[affordance]]
+name = "can_eat_plants"
+label = "Can Eat Plants"
+check = { stat = "plant_eating", above = 0.0 }
+
+[[affordance]]
+name = "can_eat_meat"
+label = "Can Eat Meat"
+check = { stat = "meat_eating", above = 0.0 }
+
+# The death gate (food-chain F4) — a NEED check, which is ALSO its need-write trigger
+# key (F5): any worker corpus write sweeps the holder's interactions and fires death
+# when this passes. The 4-tic barrier window is a feature: a heal inside it saves you.
+[[affordance]]
+name = "can_die"
+label = "Can Die"
+check = { need = "corpus", lte = 0.0 }

@@ -105,6 +105,8 @@ type = "biome-thing"
 kind = "flora"
 subType = ["default"]
 variant = ["0","1","2","3","4","5","6","7","8","9","10","11","12","13","14","15"]
+# food-chain F6: foragers gather here — the flora SURVIVES; plant matter drops beside.
+interactions = [ { name = "forage" } ]
 
   [[thing.part]]
   tint = "#ffffff"
@@ -136,11 +138,14 @@ type = "pawn"
 kind = "wolf"
 subType = ["animal"]
 variant = ["0"]
-needs = ["thirst"]
+needs = ["thirst", "hunger", "corpus"]
 # Starting trait bindings (stat-model F11), minted as payload rows at CREATE: a bare
 # string = level 1. walks level 2 = 12 tics/tile into ground_speed — the wolf's pace
 # (the `speed` field is GONE, input-rework F8: the derived stat IS the speed).
-traits = ["biological_lifeform", { name = "walks", level = 2 }]
+# food-chain: corpus level 2 = the tanky tier (health cap 2); carnivore eats meat.
+traits = ["biological_lifeform", { name = "walks", level = 2 }, { name = "corpus", level = 2 }, "carnivore"]
+# The pawn's OWN kind carries death (food-chain F5/I9) — the need-write trigger fires it.
+interactions = [ { name = "death" } ]
 
   [[thing.part]]
   tint = "#ffffff"
@@ -198,8 +203,10 @@ variant = ["0"]
 # human-pawns-redux F4: biological lifeforms THIRST — without the need, the pie menu
 # offers Drink (metabolism passes) and the worker refuses (no row): the drift class.
 # lumberjack F4: every human fells (dev posture, like walks); wolves refuse by the gate.
-needs = ["thirst"]
-traits = ["biological_lifeform", { name = "walks", level = 1 }, { name = "lumberjack", level = 1 }]
+# food-chain: humans hunger + carry health (corpus 1), forage, and eat BOTH (omnivore).
+needs = ["thirst", "hunger", "corpus"]
+traits = ["biological_lifeform", { name = "walks", level = 1 }, { name = "lumberjack", level = 1 }, { name = "corpus", level = 1 }, "forager", "omnivore"]
+interactions = [ { name = "death" } ]
 
   [[thing.part]]
   tint = "#ffffff"
@@ -232,8 +239,9 @@ type = "pawn"
 kind = "male"
 subType = ["human"]
 variant = ["0"]
-needs = ["thirst"]
-traits = ["biological_lifeform", { name = "walks", level = 1 }, { name = "lumberjack", level = 1 }]
+needs = ["thirst", "hunger", "corpus"]
+traits = ["biological_lifeform", { name = "walks", level = 1 }, { name = "lumberjack", level = 1 }, { name = "corpus", level = 1 }, "forager", "omnivore"]
+interactions = [ { name = "death" } ]
 
   [[thing.part]]
   tint = "#ffffff"
@@ -279,3 +287,59 @@ variant = ["0"]
   sprite_anchor = { x = 0.5, y = 1.0 }
   size = 0.5
   sprite_scale = { w = 0.6, h = 0.35 }
+
+# ── the food chain's things (food-chain F9 — outlined placeholders) ───────────
+
+# The BUNNY: biological life, herbivore, ordinary health (corpus 1). walks level 1 —
+# slower than the wolf ON PURPOSE (the coming hunt must be winnable). Placeholder.
+[[thing]]
+name = "bunny"
+type = "pawn"
+kind = "bunny"
+subType = ["animal"]
+variant = ["0"]
+needs = ["thirst", "hunger", "corpus"]
+traits = ["biological_lifeform", { name = "walks", level = 1 }, { name = "corpus", level = 1 }, "herbivore"]
+interactions = [ { name = "death" } ]
+
+  [[thing.part]]
+  texture = "white"
+  tint = "#b8a894"
+  anchor = { x = 0.5, y = 1.0 }
+  sprite_anchor = { x = 0.5, y = 1.0 }
+  size = 0.5
+  sprite_scale = { w = 0.35, h = 0.3 }
+
+# MEAT — what death leaves behind (F5); carnivores/omnivores eat it (+30 hunger, F7).
+[[thing]]
+name = "meat"
+type = "biome-thing"
+kind = "meat"
+subType = ["default"]
+variant = ["0"]
+interactions = [ { name = "eat_meat", magnitude = 30 } ]
+
+  [[thing.part]]
+  texture = "white"
+  tint = "#a03830"
+  anchor = { x = 0.5, y = 1.0 }
+  sprite_anchor = { x = 0.5, y = 1.0 }
+  size = 0.5
+  sprite_scale = { w = 0.45, h = 0.3 }
+
+# PLANT MATTER — what foraging gathers (F6); herbivores/omnivores eat it (+30, F7).
+[[thing]]
+name = "plant_matter"
+type = "biome-thing"
+kind = "plant_matter"
+subType = ["default"]
+variant = ["0"]
+interactions = [ { name = "eat_plant_matter", magnitude = 30 } ]
+
+  [[thing.part]]
+  texture = "white"
+  tint = "#58c04a"
+  anchor = { x = 0.5, y = 1.0 }
+  sprite_anchor = { x = 0.5, y = 1.0 }
+  size = 0.5
+  sprite_scale = { w = 0.4, h = 0.3 }

@@ -67,3 +67,41 @@ priority = 10
 # The stream's living proof of the modifier machinery (stat-model I4): while quenched,
 # thirst depletes at HALF rate, and the eval integrates piecewise across the expiry.
 needs = [ { need = "thirst", rate = 0.5 } ]
+
+# HUNGER (food-chain, I8 — numbers provisional): thirst-shaped, slower (2 h wall at
+# 6 Hz). eat_plant_matter / eat_meat satisfy it by the carrier's magnitude.
+[[need]]
+name = "hunger"
+label = "Hunger"
+min = 0
+max = 100
+deplete = 43200.0
+band = [
+  { condition = "hungry",   lo = 10, hi = 35 },
+  { condition = "starving", lo = 0,  hi = 10 },
+]
+
+[[condition]]
+name = "hungry"
+label = "Hungry"
+emotions = [ { emotion = "uncomfortable", magnitude = 2 } ]
+priority = 20
+
+[[condition]]
+name = "starving"
+label = "Starving"
+emotions = [
+  { emotion = "scared", magnitude = 4 },
+  { emotion = "uncomfortable", magnitude = 3 },
+]
+priority = 30
+
+# CORPUS — health (food-chain F2). The 0..2 domain is the ENCODING (the largest
+# reachable cap); the EFFECTIVE cap is the leveled `corpus` trait's per-level max
+# (level 1 → 1, level 2 → 2; the mint reads it). No deplete, no bands: health only
+# moves by events, and DEATH fires from the need-write trigger (can_die, corpus ≤ 0).
+[[need]]
+name = "corpus"
+label = "Corpus"
+min = 0
+max = 2

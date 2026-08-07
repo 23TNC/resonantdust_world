@@ -37,13 +37,16 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P2 — the corpus
 
-- [ ] Content: needs hunger (I8) + corpus; the LEVELED corpus trait (`max = [1, 2]`
+- [x] Content: needs hunger (I8) + corpus; the LEVELED corpus trait (`max = [1, 2]`
       — F2) + the four diet traits with their stats (F3); the four can_* affordances.
-      Acceptance: golden diff = the authored rows.
-- [ ] Content: things bunny/meat/plant_matter (F9); interactions death, forage,
+      Acceptance: golden diff = the authored rows. → hunger (hungry/starving bands +
+      emotions), corpus 0..2, five traits, three stats, five affordances
+      (can_die = the need check); golden shows exactly the rows.
+- [x] Content: things bunny/meat/plant_matter (F9); interactions death, forage,
       eat_plant_matter, eat_meat (F7); trait assignments per the design — corpus 1
       on bunny/humans, corpus 2 on wolves (I6). Acceptance: golden re-blessed; six
-      consumers rebuilt.
+      consumers rebuilt. → all four kinds carry death; flora forages; master seeded
+      226 defs, worker 15 kinds / 7 interactions, edge hot-loads clean.
 - [ ] Client: textureless tint-rect placeholders draw a BLACK OUTLINE (F9 — a render
       rule for ALL placeholders, old and new). Acceptance: capture — shrub/logs/meat
       read as outlined placeholders, not bugs.
