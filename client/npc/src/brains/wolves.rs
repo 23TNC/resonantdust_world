@@ -55,6 +55,12 @@ pub struct Wolves {
     /// The wolf kind's thirst need — a u32 gameplay `definition_reference` (interactions F1;
     /// `0` = kind carries none).
     thirst: u32,
+    /// The hunger need's gameplay ref (food-chain) — the eat pass's band key.
+    hunger: u32,
+    /// The meat-eating latch (once per hunger crossing, the drink pattern).
+    eat_issued: bool,
+    /// The meat cell an eat trip is heading to, if hunger drove it there.
+    eat_target: Option<(i32, i32)>,
     /// Latest RAW payload per entity — buffered pre-adoption too (the zone snapshot may
     /// fan `Payload` before the `StateObject` this brain adopts on; either order is legal).
     /// TRAIT + CONDITION rows decode from here (stat-model F1) — runtime truth, not the def.
@@ -128,6 +134,9 @@ impl Wolves {
             created: false,
             bundle: None,
             thirst: 0,
+            hunger: 0,
+            eat_issued: false,
+            eat_target: None,
             payloads: HashMap::new(),
             need_rows: HashMap::new(),
             init_after: std::time::Instant::now(),
@@ -312,14 +321,95 @@ impl Wolves {
             tracing::info!(tic = now, conditions = ?names, emotion = self.emotion, next_crossing = ?next,
                            "condition band change");
             self.active = refs;
-            // A band change re-arms the drink latch (interactions P4: once per crossing).
+            // A band change re-arms the drink AND eat latches (once per crossing).
             self.drink_issued = false;
+            self.eat_issued = false;
         }
         self.active_set = active;
     }
 
     /// Whether the wolf's CURRENT band set says it should drink: any active DERIVED band of
     /// the thirst need (Thirsty / Dehydrated — read from the corpus, never hard-coded).
+    /// A hunger band (hungry/starving) is active (food-chain — the eat pass's gate).
+    fn is_hungry(&self) -> bool {
+        let Some(bundle) = &self.bundle else { return false };
+        let Some(np) = bundle.need_params_by_ref(self.hunger) else { return false };
+        np.bands.iter().any(|b| {
+            bundle
+                .gameplay_reference("condition", &b.condition)
+                .is_some_and(|r| self.active.contains(&r))
+        })
+    }
+
+    /// The eat pass (food-chain F8): when hungry, head for the nearest thing OFFERING a
+    /// hunger-satisfying interaction this wolf may use (eat_meat via carnivore), and
+    /// fire it from within reach — the drink pattern, over the THING mirror.
+    fn mind_eat(&mut self, bot: &Bot) {
+        if self.hunger == 0 || self.eat_issued || !self.is_hungry() {
+            return;
+        }
+        let Some(now) = bot.now_tic() else { return };
+        // Within reach already? Eat it (adjacency is cheb ≤ 1 INCLUSIVE).
+        for oy in -1i32..=1 {
+            for ox in -1i32..=1 {
+                let c = (self.at.0 + ox, self.at.1 + oy);
+                if let Some(kind) = bot.thing_kind_at(c) {
+                    if let Some((interaction, magnitude)) = self.usable_eat(kind, now) {
+                        self.fire_interaction(bot, &interaction, magnitude, c);
+                        self.eat_issued = true;
+                        self.eat_target = None;
+                        return;
+                    }
+                }
+            }
+        }
+        // Otherwise walk to the nearest edible thing's OWN cell (meat is pathable).
+        let target = bot.nearest_thing(self.at, |kind| self.usable_eat_kind(kind, now));
+        match target {
+            Some(t) => {
+                if self.eat_target != Some(t) || self.dest.is_none() {
+                    tracing::info!(meat = ?t, from = ?self.at, "hungry — heading to food");
+                    self.eat_target = Some(t);
+                    self.issue_move(bot, t);
+                }
+            }
+            None => {
+                tracing::debug!("hungry but no known edible thing in the streamed zones");
+            }
+        }
+    }
+
+    /// The first hunger-SATISFYING interaction thing kind `kind` offers that this wolf
+    /// may use (the usable_drink pattern, over thing bindings).
+    fn usable_eat(&self, kind: u16, now: u16) -> Option<(String, f64)> {
+        let bundle = self.bundle.as_ref()?;
+        let wolf = self.wolf?;
+        let trait_rows = self.payloads.get(&wolf).map(|p| payload_traits(p)).unwrap_or_default();
+        let cond_rows =
+            self.payloads.get(&wolf).map(|p| payload_conditions(p)).unwrap_or_default();
+        let need_rows = self.wolf_needs();
+        bundle
+            .thing_interactions(kind)
+            .into_iter()
+            .find(|b| {
+                bundle.interaction_params(&b.name).is_some_and(|ip| ip.satisfy.is_some())
+                    && stat_eval::interaction_available(
+                        bundle,
+                        &b.name,
+                        &trait_rows,
+                        &need_rows,
+                        &cond_rows,
+                        &self.active_set,
+                        now,
+                    )
+            })
+            .map(|b| (b.name, b.magnitude))
+    }
+
+    fn usable_eat_kind(&self, kind: u16, now: u16) -> bool {
+        self.usable_eat(kind, now).is_some()
+    }
+
     fn is_thirsty(&self) -> bool {
         let Some(bundle) = &self.bundle else { return false };
         let Some(np) = bundle.need_params_by_ref(self.thirst) else { return false };
@@ -544,6 +634,8 @@ impl Brain for Wolves {
                         // Speed is DERIVED per trip (input-rework F8), never resolved here.
                         let kind = bundle.thing_object_id("wolf").unwrap_or(0);
                         self.thirst = bundle.thing_needs(kind).first().copied().unwrap_or(0);
+                        self.hunger =
+                            bundle.gameplay_reference("need", "hunger").unwrap_or(0);
                         tracing::info!(def = format!("{def:#010x}"),
                                        thirst_need = format!("{:#010x}", self.thirst),
                                        def_traits = ?bundle.thing_traits(kind),
@@ -657,11 +749,12 @@ impl Brain for Wolves {
         }
         self.mind_needs(bot);
         self.mind_drink(bot);
+        self.mind_eat(bot);
         match self.dest {
             None => {
-                // A drink trip owns the destination slot — the wander yields to it
-                // (mind_drink re-issues the water trip on its own).
-                if self.drink_target.is_none() {
+                // A drink or eat trip owns the destination slot — the wander yields
+                // (the minds re-issue their trips on their own).
+                if self.drink_target.is_none() && self.eat_target.is_none() {
                     let dest = self.pick_pathable_dest(bot);
                     self.issue_move(bot, dest);
                 }

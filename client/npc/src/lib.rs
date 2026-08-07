@@ -94,6 +94,12 @@ pub struct Bot {
     tiles: std::collections::HashMap<u16, Vec<u16>>,
     /// Cold OVERLAY overrides (built walls etc.): `(zone, cell)` → `kind_reference`.
     tile_overlays: std::collections::HashMap<(u16, u8), u16>,
+    /// The composed THING view (food-chain F8, closing pathfinding F8's successor):
+    /// `(zone, cell) → kind_reference` — ColdThings baselines fill, ColdState THING
+    /// overrides upsert (kind 0 stored = SUPPRESSED — a felled tree / eaten meat
+    /// vanishes from the scans). Last-write-wins is npc-grade (I4: a stale scan
+    /// self-corrects at the offer re-validation).
+    things: std::collections::HashMap<(u16, u8), u16>,
 }
 
 impl Bot {
@@ -112,6 +118,7 @@ impl Bot {
             tic_anchor: None,
             tiles: std::collections::HashMap::new(),
             tile_overlays: std::collections::HashMap::new(),
+            things: std::collections::HashMap::new(),
         };
         if bot.client.login(name).is_err() {
             tracing::error!("client engine failed to start");
@@ -202,6 +209,17 @@ impl Bot {
                     }
                 }
             }
+            // The known-zone THING baselines (food-chain F8): sparse kind_pos entries.
+            Event::ColdThings { macro_position, things, .. } => {
+                use resonantdust_codec::object as obj;
+                for &kp in things {
+                    let cell = ((kp >> 8) & 0xff) as u8; // tile_reference byte
+                    let kr = obj::kind_pos_ref_kind_reference(kp);
+                    if kr != 0 {
+                        self.things.entry((*macro_position, cell)).or_insert(kr);
+                    }
+                }
+            }
             Event::ColdState {
                 macro_position,
                 position_reference,
@@ -210,8 +228,8 @@ impl Bot {
                 ..
             } => {
                 use resonantdust_codec::object as obj;
+                let cell = (obj::position_micro(*position_reference) >> 8) as u8;
                 if obj::def_type_id(*definition_reference) == obj::TYPE_BIOME_TILE {
-                    let cell = (obj::position_micro(*position_reference) >> 8) as u8;
                     if *removed {
                         self.tile_overlays.remove(&(*macro_position, cell));
                     } else {
@@ -221,10 +239,16 @@ impl Bot {
                         );
                     }
                 }
+                if obj::def_type_id(*definition_reference) == obj::TYPE_BIOME_THING {
+                    // An override WINS the cell; kind 0 stored = suppressed (F8).
+                    let kr = if *removed { 0 } else { obj::def_kind_reference(*definition_reference) };
+                    self.things.insert((*macro_position, cell), kr);
+                }
             }
             Event::ZoneClosed { macro_position } => {
                 self.tiles.remove(macro_position);
                 self.tile_overlays.retain(|(z, _), _| z != macro_position);
+                self.things.retain(|(z, _), _| z != macro_position);
             }
             _ => {}
         }
@@ -276,6 +300,39 @@ impl Bot {
                         best = Some((world, d));
                     }
                 }
+            }
+        }
+        best.map(|(w, _)| w)
+    }
+
+    /// The composed THING kind_id at world `at` (food-chain F8) — baseline ⊕ overrides,
+    /// kind-0 suppressed. `None` = empty cell or an unstreamed zone.
+    pub fn thing_kind_at(&self, at: (i32, i32)) -> Option<u16> {
+        use resonantdust_codec::object as obj;
+        for (&(zone, cell), &kr) in &self.things {
+            let (ox, oy) = obj::macro_world_origin(zone);
+            let (dx, dy) = (obj::ref_hi(cell) as i32, obj::ref_lo(cell) as i32);
+            if (ox + dx, oy + dy) == at {
+                return (kr != 0).then_some(kr >> 4);
+            }
+        }
+        None
+    }
+
+    /// The nearest known THING (Chebyshev, world coords) whose composed kind_id satisfies
+    /// `pred` — the brains' "nearest meat / plant matter" scan (food-chain F8).
+    pub fn nearest_thing(&self, from: (i32, i32), pred: impl Fn(u16) -> bool) -> Option<(i32, i32)> {
+        use resonantdust_codec::object as obj;
+        let mut best: Option<((i32, i32), i32)> = None;
+        for (&(zone, cell), &kr) in &self.things {
+            if kr == 0 || !pred(kr >> 4) {
+                continue;
+            }
+            let (ox, oy) = obj::macro_world_origin(zone);
+            let world = (ox + obj::ref_hi(cell) as i32, oy + obj::ref_lo(cell) as i32);
+            let d = (world.0 - from.0).abs().max((world.1 - from.1).abs());
+            if best.is_none_or(|(_, bd)| d < bd) {
+                best = Some((world, d));
             }
         }
         best.map(|(w, _)| w)

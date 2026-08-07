@@ -4,4 +4,5 @@
 //! is NOT a brain — it is minted once (a CREATE with its PART payload) and moved by the
 //! player or a debug console, never by the npc.
 
+pub mod bunnies;
 pub mod wolves;

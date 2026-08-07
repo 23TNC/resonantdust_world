@@ -6,6 +6,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use client::ClientConfig;
+use npc::brains::bunnies::Bunnies;
 use npc::brains::wolves::Wolves;
 use npc::{run_brain, Bot, Rng};
 
@@ -46,6 +47,7 @@ async fn main() {
     // it drove raw MOVE_TO through the door this stream closed.
     match brain.as_str() {
         "wolves" => run_brain(bot, Wolves::new(rng), tick_ms).await,
-        other => tracing::error!(%other, "unknown brain (have: wolves)"),
+        "bunnies" => run_brain(bot, Bunnies::new(rng), tick_ms).await,
+        other => tracing::error!(%other, "unknown brain (have: wolves, bunnies)"),
     }
 }
