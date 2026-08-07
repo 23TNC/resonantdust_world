@@ -235,14 +235,12 @@ pub struct StatParams {
 /// `duration == 0` marks a DERIVED condition (alive exactly while its band holds);
 /// `> 0` a TIMED one (a stored row expiring `duration` tics after its written tic).
 ///
-/// `mood` is ONE effect, not the definition (conditions F6), and the stat-model realizes
-/// the open set: `stats`/`needs` modifier lists sit beside it, feeding the SAME combiner
-/// traits feed (stat-model F5/F6).
+/// A condition's effects are an OPEN set (conditions F6): `stats`/`needs`/`emotions`
+/// modifier lists, all feeding the SAME machinery traits feed (stat-model F5/F6;
+/// emotions F2 — MOOD is retired, emotions F4).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConditionParams {
   pub label: String,
-  /// Mood offset while active, `-1..1` (mood = clamp(base + Σ offsets), F5).
-  pub mood: f64,
   /// Lifetime in TICS for a stored grant; `0` = DERIVED (band-computed).
   pub duration: f64,
   /// Stat contributions while active (SCALARS — conditions have no levels).
@@ -250,13 +248,46 @@ pub struct ConditionParams {
   /// Need modifiers while active. A grant/expiry of a condition carrying one of these is
   /// exactly the mutation the re-stamp law (F7) speaks about.
   pub needs: Vec<NeedModifier>,
+  /// Emotion contributions while active (emotions F2) — what this condition makes the
+  /// pawn FEEL. Feeds the active-emotion argmax and the card's pie slices.
+  pub emotions: Vec<EmotionModifier>,
   /// Display PRIORITY, descending — the details panel maximizes the top 4 and minimizes the
-  /// rest (conditions F2). AUTHORED, never derived: `|mood|` cannot express "mild but urgent",
-  /// and it means nothing at all once a condition's effect is a need rather than a mood ([F6]).
-  /// Absent = `0`. Author in tens so a new condition can be slotted between two without
-  /// renumbering. The full sort — `priority` desc, `|mood|` desc, `condition_id` asc — lives in
-  /// [`crate::needs_eval::active_conditions`], NOT in any consumer (F3).
+  /// rest (conditions F2). AUTHORED, never derived (intensity cannot express "mild but
+  /// urgent"). Absent = `0`. Author in tens so a new condition can be slotted between two
+  /// without renumbering. The full sort — `priority` desc, Σ emotion magnitude desc,
+  /// `condition_id` asc — lives in [`crate::needs_eval::active_conditions`], NOT in any
+  /// consumer (F3).
   pub priority: i32,
+}
+
+/// One `[[emotion]]` def (emotions F1): the u4 DECLARATION INDEX is the whole identity —
+/// `fine` is REQUIRED first (index 0 = the "alters nothing" default). Never
+/// registry-numbered; emotions never ride the wire.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EmotionParams {
+  pub label: String,
+  /// `0xRRGGBB` — the pie slice / panel wash color.
+  pub color: u32,
+}
+
+/// One emotion contribution (emotions F2): `magnitude` is 1..=15 (u4; +0 is authored by
+/// ABSENCE). Packs to the canonical u8 via [`pack_emotion_modifier`] (I3 — ONE packer).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EmotionModifier {
+  /// The emotion's u4 declaration index.
+  pub emotion: u8,
+  pub magnitude: u8,
+}
+
+/// The ONE u8 pack for an emotion modifier — `emotion:4 | magnitude:4` (the user's
+/// layout, emotions I3). Its inverse is [`unpack_emotion_modifier`].
+pub fn pack_emotion_modifier(m: EmotionModifier) -> u8 {
+  (m.emotion << 4) | (m.magnitude & 0x0f)
+}
+
+/// See [`pack_emotion_modifier`].
+pub fn unpack_emotion_modifier(b: u8) -> EmotionModifier {
+  EmotionModifier { emotion: b >> 4, magnitude: b & 0x0f }
 }
 
 /// One LEVEL of a trait — the modifier set active at that level (stat-model F5). Index in
@@ -265,6 +296,8 @@ pub struct ConditionParams {
 pub struct TraitLevel {
   pub stats: Vec<StatModifier>,
   pub needs: Vec<NeedModifier>,
+  /// Emotion contributions at this level (emotions F2 — the per-level array form).
+  pub emotions: Vec<EmotionModifier>,
 }
 
 /// A `[[trait]]` def — a LEVELED stat contributor, "traits/skills" (stat-model F1/F5).
@@ -663,6 +696,9 @@ pub struct Bundle {
   pub(crate) interactions: Vec<(String, InteractionParams)>,
   pub(crate) affordances: Vec<(String, AffordanceParams)>,
   pub(crate) stats: Vec<(String, StatParams)>,
+  /// The SIXTEEN emotions, declaration order — index = the u4 identity (emotions F1;
+  /// `fine` first, never registry-numbered).
+  pub(crate) emotions: Vec<(String, EmotionParams)>,
   /// `(type, name) → subtype_id` for subtype axes with no record of their own — pawn species today
   /// (definition-registry F16). A biome's subtype is authored on the biome instead.
   pub(crate) subtypes: Vec<(String, String, u16)>,
@@ -1233,6 +1269,17 @@ impl Bundle {
   /// The whole condition registry in `condition_id` order.
   pub fn condition_params_all(&self) -> Vec<ConditionParams> {
     self.conditions.iter().map(|(_, p)| p.clone()).collect()
+  }
+
+  // ---------- emotions (emotions F1) ----------
+
+  /// An emotion's u4 declaration index, or `None` if unknown.
+  pub fn emotion_index(&self, name: &str) -> Option<u8> {
+    self.emotions.iter().position(|(n, _)| n == name).map(|i| i as u8)
+  }
+  /// The whole emotion table in declaration (u4) order — `(name, params)`.
+  pub fn emotion_params_all(&self) -> &[(String, EmotionParams)] {
+    &self.emotions
   }
 
   // ---------- traits, interactions, affordances, stats (interactions P1, stat-model) ----------

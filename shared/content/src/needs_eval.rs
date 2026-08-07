@@ -1,4 +1,4 @@
-//! `needs_eval` — THE evaluation of needs → conditions → mood (needs-moodlets F3).
+//! `needs_eval` — THE evaluation of needs → conditions (needs-moodlets F3).
 //!
 //! One implementation, three consumers: the worker, the npc Brain, and the client through
 //! `shared/wasm`. A band comparison re-derived in TS would be the two-copies drift class
@@ -17,7 +17,8 @@
 //!   product) under the RE-STAMP LAW (F7): every modifier-set mutation re-stamps the
 //!   affected rows, so inside a row's window modifiers only ever EXPIRE — the expiry tic
 //!   is derivable, and the eval integrates across it with no write;
-//! - mood = `clamp(0.5 + Σ active offsets, 0..1)`.
+//! - the active EMOTION is the argmax over the summed emotion modifiers of the active
+//!   set (emotions F3) — `emotion_eval`; MOOD is retired (emotions F4).
 //!
 //! Tics are u16 and WRAP (~3 h at 6 Hz); every elapsed is `now.wrapping_sub(then)` under
 //! the half-window guard: a row stamped AHEAD of the observer's learned clock reads as
@@ -30,15 +31,13 @@ use resonantdust_codec::object::{
 };
 use resonantdust_codec::value::dequantize;
 
-/// The base mood an unburdened pawn sits at (F5).
-pub const MOOD_BASE: f64 = 0.5;
-
-/// One ACTIVE condition: the gameplay def ref, its mood offset, the tics it has left
-/// (`0` = DERIVED, alive exactly while its band holds), and its authored display priority.
+/// One ACTIVE condition: the gameplay def ref, the Σ of its emotion-modifier magnitudes
+/// (the sort's tie-break — emotions F4), the tics it has left (`0` = DERIVED, alive
+/// exactly while its band holds), and its authored display priority.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ActiveCondition {
     pub condition_id: u32,
-    pub mood: f64,
+    pub magnitude_sum: u8,
     pub remaining: u16,
     /// The corpus `priority`, carried so consumers can render but never re-decide the order —
     /// [`active_conditions`] has already sorted (conditions F3).
@@ -229,9 +228,9 @@ fn eval_need_row(
 /// `(packed, set_tic)` pairs; `condition_rows` = decoded `CONDITION` payload rows
 /// `(packed, written_tic)` (`resonantdust_codec::payload`).
 ///
-/// **The result is SORTED** — `priority` desc, then `|mood|` desc, then `condition_id` asc
-/// (conditions F2/F3). The order is a corpus rule, so it is decided here, once, for every
-/// observer. No consumer re-sorts.
+/// **The result is SORTED** — `priority` desc, then Σ emotion magnitude desc, then
+/// `condition_id` asc (conditions F2/F3, emotions F4). The order is a corpus rule, so it
+/// is decided here, once, for every observer. No consumer re-sorts.
 pub fn active_conditions(
     bundle: &Bundle,
     trait_rows: &[u32],
@@ -251,7 +250,7 @@ pub fn active_conditions(
                     if let Some(cp) = bundle.condition_params_by_ref(cref) {
                         out.push(ActiveCondition {
                             condition_id: cref,
-                            mood: cp.mood,
+                            magnitude_sum: cp.emotions.iter().map(|e| e.magnitude).sum(),
                             remaining: 0,
                             priority: cp.priority,
                         });
@@ -270,26 +269,20 @@ pub fn active_conditions(
         if remaining > 0 {
             out.push(ActiveCondition {
                 condition_id: cref,
-                mood: cp.mood,
+                magnitude_sum: cp.emotions.iter().map(|e| e.magnitude).sum(),
                 remaining,
                 priority: cp.priority,
             });
         }
     }
-    // `sort_by` (stable) with a total comparator — see the doc comment. `|mood|` compares with
-    // `total_cmp` so a NaN authored into the corpus orders instead of panicking.
+    // `sort_by` (stable) with a total comparator — see the doc comment.
     out.sort_by(|a, b| {
         b.priority
             .cmp(&a.priority)
-            .then_with(|| b.mood.abs().total_cmp(&a.mood.abs()))
+            .then_with(|| b.magnitude_sum.cmp(&a.magnitude_sum))
             .then_with(|| a.condition_id.cmp(&b.condition_id))
     });
     out
-}
-
-/// The mood the active set sums to: `clamp(0.5 + Σ offsets, 0..1)` (F5).
-pub fn mood(active: &[ActiveCondition]) -> f64 {
-    (MOOD_BASE + active.iter().map(|c| c.mood).sum::<f64>()).clamp(0.0, 1.0)
 }
 
 /// The next FUTURE tic at which the active set can change without any new write: the
@@ -377,10 +370,23 @@ mod tests {
     use resonantdust_codec::object::pack_gameplay_row;
     use resonantdust_codec::value::quantize;
 
-    /// thirst: deplete 1000 tics on the DEFAULT `0..1` domain, Thirsty [0.10, 0.35) −0.15,
-    /// Dehydrated [0, 0.10) −0.40; quenched: +0.20 timed 100 tics.
+    /// thirst: deplete 1000 tics on the DEFAULT `0..1` domain, Thirsty [0.10, 0.35)
+    /// +2 uncomfortable, Dehydrated [0, 0.10) +5 uncomfortable; quenched: +2 happy
+    /// timed 100 tics.
     fn fixture() -> Bundle {
-        let src = r#"
+        let src = r##"
+[[emotion]]
+name = "fine"
+color = "#9aa4b0"
+
+[[emotion]]
+name = "happy"
+color = "#e8b23a"
+
+[[emotion]]
+name = "uncomfortable"
+color = "#8a8f3c"
+
 [[need]]
 name = "thirst"
 deplete = 1000
@@ -391,17 +397,17 @@ band = [
 
 [[condition]]
 name = "thirsty"
-mood = -0.15
+emotions = [ { emotion = "uncomfortable", magnitude = 2 } ]
 
 [[condition]]
 name = "dehydrated"
-mood = -0.40
+emotions = [ { emotion = "uncomfortable", magnitude = 5 } ]
 
 [[condition]]
 name = "quenched"
-mood = 0.20
+emotions = [ { emotion = "happy", magnitude = 2 } ]
 duration = 100
-"#;
+"##;
         load(&[("needs.toml".into(), src.into())]).expect("fixture loads")
     }
 
@@ -423,7 +429,7 @@ duration = 100
     /// A fixture built to make EVERY sort key decide something, and to make the
     /// insertion order deliberately wrong on all three.
     fn sort_fixture() -> Bundle {
-        let src = r#"
+        let src = r##"
 [[need]]
 name = "n"
 deplete = 0
@@ -434,32 +440,44 @@ band = [
   { condition = "low",   lo = 0.0, hi = 1.01 },
 ]
 
+[[emotion]]
+name = "fine"
+color = "#9aa4b0"
+
+[[emotion]]
+name = "happy"
+color = "#e8b23a"
+
+[[emotion]]
+name = "sad"
+color = "#3a6ee8"
+
 [[condition]]
 name = "low"
-mood = -0.01
+emotions = [ { emotion = "sad", magnitude = 1 } ]
 priority = 99
 
 [[condition]]
 name = "mid_a"
-mood = -0.10
+emotions = [ { emotion = "sad", magnitude = 1 } ]
 priority = 10
 
 [[condition]]
 name = "mid_b"
-mood = 0.50
+emotions = [ { emotion = "happy", magnitude = 5 } ]
 priority = 10
 
 [[condition]]
 name = "tie_b"
-mood = -0.20
+emotions = [ { emotion = "sad", magnitude = 2 } ]
 priority = 5
 
 [[condition]]
 name = "tie_a"
-mood = 0.20
+emotions = [ { emotion = "happy", magnitude = 2 } ]
 priority = 5
 duration = 100
-"#;
+"##;
         load(&[("needs.toml".into(), src.into())]).expect("sort fixture loads")
     }
 
@@ -477,8 +495,8 @@ duration = 100
             ["low", "mid_b", "mid_a", "tie_b", "tie_a"].iter().map(|c| cond_ref(&b, c)).collect();
         assert_eq!(
             order, expect,
-            "priority desc (low first), then |mood| desc (mid_b 0.50 > mid_a 0.10), \
-             then ref asc (tie_b before tie_a — equal priority AND equal |mood| 0.20)"
+            "priority desc (low first), then Σ magnitude desc (mid_b 5 > mid_a 1), \
+             then ref asc (tie_b before tie_a — equal priority AND equal Σ magnitude 2)"
         );
         let by_ref = |r: u32| {
             active_conditions(&b, &[], &rows, &grants, 50)
@@ -522,7 +540,6 @@ deplete = 21600
 
 [[condition]]
 name = "quenched"
-mood = 0.20
 duration = 3600
 needs = [ { need = "thirst", rate = 0.5 } ]
 "#;
@@ -557,7 +574,6 @@ deplete = 1000
 
 [[condition]]
 name = "quenched"
-mood = 0.20
 duration = 3600
 needs = [ { need = "thirst", rate = 0.5 } ]
 "#;
@@ -610,11 +626,9 @@ band = [ { condition = "thirsty", lo = 10, hi = 35 } ]
 
 [[condition]]
 name = "thirsty"
-mood = -0.15
 
 [[condition]]
 name = "quenched"
-mood = 0.20
 duration = 3600
 needs = [ { need = "thirst", rate = 0.5 } ]
 "#;
@@ -641,7 +655,7 @@ needs = [ { need = "thirst", rate = 0.5 } ]
         assert_eq!(c.len(), 1);
         assert_eq!(c[0].condition_id, cond_ref(&b, "dehydrated"));
         assert_eq!(satisfaction_at(1.0, 0, &np(&b, "thirst"), 5000, &[]), 0.0);
-        assert!((mood(&c) - 0.10).abs() < 1e-9, "0.5 − 0.40");
+        assert_eq!(c[0].magnitude_sum, 5, "Dehydrated carries its Σ emotion magnitude");
         // …and nothing ahead can change without a write.
         assert_eq!(next_crossing_tic(&b, &[], &needs, &[], 5000), None);
         // Inside Dehydrated but not yet at min: the only threshold below is the CLAMP
@@ -653,7 +667,6 @@ needs = [ { need = "thirst", rate = 0.5 } ]
     fn absent_rows_and_unknown_refs_are_calm() {
         let b = fixture();
         assert!(active_conditions(&b, &[], &[], &[], 100).is_empty());
-        assert_eq!(mood(&[]), MOOD_BASE);
         assert_eq!(next_crossing_tic(&b, &[], &[], &[], 100), None);
         // an unknown need/condition KEY skips, never panics.
         let ghost = pack_gameplay_row(0x8001_0FF0, 30000); // gameplay/need, kind past the registry
@@ -670,11 +683,11 @@ needs = [ { need = "thirst", rate = 0.5 } ]
         assert_eq!((live[0].condition_id, live[0].remaining), (q, 1));
         assert!(active_conditions(&b, &[], &[], &rows, 1100).is_empty(), "expiry at remaining 0");
         assert_eq!(next_crossing_tic(&b, &[], &[], &rows, 1050), Some(1100));
-        // Thirsty (−0.15) + Quenched (+0.20) sum: 0.5 − 0.15 + 0.20 = 0.55.
+        // Thirsty (+2 uncomfortable, DERIVED) stacks with Quenched (+2 happy, stored).
         let needs = [(need_row(&b, "thirst", 0.251), 1000u16)];
         let both = active_conditions(&b, &[], &needs, &rows, 1050);
         assert_eq!(both.len(), 2);
-        assert!((mood(&both) - 0.55).abs() < 1e-9);
+        assert!(both.iter().all(|c| c.magnitude_sum == 2));
     }
 
     #[test]

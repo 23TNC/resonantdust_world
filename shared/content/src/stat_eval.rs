@@ -252,7 +252,7 @@ stats = [ { stat = "s", add = 2.0 } ]
         );
         let cref = b.gameplay_reference("condition", "boosted").unwrap();
         let active =
-            [ActiveCondition { condition_id: cref, mood: 0.0, remaining: 50, priority: 0 }];
+            [ActiveCondition { condition_id: cref, magnitude_sum: 0, remaining: 50, priority: 0 }];
         assert_eq!(stat_value(&b, "s", &[], &active), 2.0);
         assert_eq!(stat_value(&b, "s", &[], &[]), 0.0, "expired = gone");
     }

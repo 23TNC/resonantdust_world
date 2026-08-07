@@ -20,9 +20,10 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P1 — the corpus
 
-- [ ] Loader: `EmotionParams` (≤16, fine-first, unique), condition scalars + trait
+- [x] Loader: `EmotionParams` (≤16, fine-first, unique), condition scalars + trait
       per-level arrays (magnitudes 1..15), ONE u8 pack (I3); `mood` deleted from the
-      schema. Acceptance: round-trip + refusal tests green.
+      schema. Acceptance: round-trip + refusal tests green. → 42 lib tests green; the
+      sort tie-break moved to Σ magnitude with it (the crate could not compile split).
 - [ ] Author the 16 emotions (user colors + F8) and thirsty/dehydrated/quenched's
       emotions (I5, mood lines deleted); golden re-blessed; six consumers rebuilt
       (I2). Acceptance: golden diff = the authored rows; edge hot-reload clean.

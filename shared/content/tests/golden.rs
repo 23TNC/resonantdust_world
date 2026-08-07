@@ -297,9 +297,11 @@ fn dump(b: &Bundle) -> String {
         let active = needs_eval::active_conditions(b, &[], rows, grants, *now);
         let _ = writeln!(
             needs,
-            "{name}: active={:?} mood={:?} next={:?}",
-            active.iter().map(|m| (m.condition_id, m.mood, m.remaining)).collect::<Vec<_>>(),
-            needs_eval::mood(&active),
+            "{name}: active={:?} next={:?}",
+            active
+                .iter()
+                .map(|m| (m.condition_id, m.magnitude_sum, m.remaining))
+                .collect::<Vec<_>>(),
             needs_eval::next_crossing_tic(b, &[], rows, grants, *now),
         );
     }

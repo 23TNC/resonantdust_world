@@ -8,10 +8,10 @@
 
 use crate::loader::{
   AffordanceParams, BiomeBody, BiomeDef, BiomeRules, Bundle, Cmp, ConditionParams, DirFrame,
-  InteractionParams, LightParts, LoadError, MaterialParams, MoveEffect, NeedBand, NeedModifier,
-  NeedParams, Operand, PackedChannel, SatisfyEffect, StatModifier, StatParams, Taxonomy,
-  ThingDef, TileDef, TraitLevel, TraitParams, VisualPart, VisualParts, NEEDS_PER_KIND,
-  ROTATIONS_PER_DEF, VARIANTS_PER_DEF,
+  EmotionModifier, EmotionParams, InteractionParams, LightParts, LoadError, MaterialParams,
+  MoveEffect, NeedBand, NeedModifier, NeedParams, Operand, PackedChannel, SatisfyEffect,
+  StatModifier, StatParams, Taxonomy, ThingDef, TileDef, TraitLevel, TraitParams, VisualPart,
+  VisualParts, NEEDS_PER_KIND, ROTATIONS_PER_DEF, VARIANTS_PER_DEF,
 };
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -41,6 +41,8 @@ struct Corpus {
   affordance: Vec<AffordanceToml>,
   #[serde(default)]
   stat: Vec<StatToml>,
+  #[serde(default)]
+  emotion: Vec<EmotionToml>,
   #[serde(default)]
   subtype: Vec<SubtypeToml>,
 }
@@ -433,8 +435,6 @@ struct ConditionToml {
   #[serde(default)]
   label: Option<String>,
   #[serde(default)]
-  mood: f64,
-  #[serde(default)]
   duration: f64,
   /// Card sort key, descending; absent = 0. See [`ConditionParams::priority`].
   #[serde(default)]
@@ -445,6 +445,28 @@ struct ConditionToml {
   /// Need modifiers while active — quenched's `rate = 0.5` on thirst.
   #[serde(default)]
   needs: Vec<ModNeedToml>,
+  /// Emotion contributions while active (emotions F2; MOOD is retired, F4).
+  #[serde(default)]
+  emotions: Vec<ModEmotionToml>,
+}
+
+/// One emotion contribution — a scalar on conditions, a per-LEVEL array on traits
+/// (emotions F2). Magnitudes are 1..=15 (the u4 bound; +0 = author nothing).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ModEmotionToml {
+  emotion: String,
+  magnitude: toml::Value,
+}
+
+/// One `[[emotion]]` def (emotions F1) — SIXTEEN max, declaration-ordered, `fine` first.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EmotionToml {
+  name: String,
+  #[serde(default)]
+  label: Option<String>,
+  color: String,
 }
 
 #[derive(Deserialize)]
@@ -459,6 +481,9 @@ struct TraitToml {
   /// Per-level need modifiers.
   #[serde(default)]
   needs: Vec<LevelNeedToml>,
+  /// Per-level emotion contributions (emotions F2) — `magnitude = [1, 2, …]`.
+  #[serde(default)]
+  emotions: Vec<ModEmotionToml>,
 }
 
 /// One effect operand: `"@name"` = a reference into the interaction's `inputs`; a bare
@@ -629,6 +654,7 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
         all.interaction.extend(c.interaction);
         all.affordance.extend(c.affordance);
         all.stat.extend(c.stat);
+        all.emotion.extend(c.emotion);
         all.subtype.extend(c.subtype);
       }
       Err(e) => errors.push(LoadError { file: name.clone(), message: format!("toml: {e}") }),
@@ -666,6 +692,7 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
   unique("interaction", all.interaction.iter().map(|d| d.name.as_str()).collect());
   unique("affordance", all.affordance.iter().map(|d| d.name.as_str()).collect());
   unique("stat", all.stat.iter().map(|d| d.name.as_str()).collect());
+  unique("emotion", all.emotion.iter().map(|d| d.name.as_str()).collect());
   // Tiles and things carry NO ids (definition-registry F1/F15): the corpus describes and the
   // server numbers. Their position here is only the SEED a fresh registry allocates from — an
   // existing registry overrides it through `Bundle::with_registry`, which is what makes a
@@ -703,6 +730,45 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
   let interaction_exists = |name: &str| all.interaction.iter().any(|i| i.name == name);
   // A binding's `yields` must name a thing kind (logs-drop F1).
   let thing_exists = |name: &str| all.thing.iter().any(|t| t.name == name);
+  // An emotion's u4 identity IS its declaration index (emotions F1).
+  let emotion_index = |name: &str| all.emotion.iter().position(|e| e.name == name);
+
+  // Emotions (emotions F1): SIXTEEN max (the u4 bound), `fine` required at index 0 —
+  // it is the empty-argmax default and the +0 display colour. Not registry-numbered:
+  // the declaration index is the wire id, so corpus order is LAW here.
+  if all.emotion.len() > 16 {
+    errors.push(LoadError {
+      file: String::new(),
+      message: format!(
+        "{} emotions defined — the u4 identity holds SIXTEEN max (emotions F1)",
+        all.emotion.len()
+      ),
+    });
+  }
+  if let Some(first) = all.emotion.first() {
+    if first.name != "fine" {
+      errors.push(LoadError {
+        file: String::new(),
+        message: format!(
+          "the first [[emotion]] must be `fine` — index 0 is the empty-argmax default \
+           (emotions F1); found `{}`",
+          first.name
+        ),
+      });
+    }
+  }
+  b.emotions = all
+    .emotion
+    .iter()
+    .map(|e| {
+      let c = color(&Some(e.color.clone()), &format!("emotion `{}`", e.name), &mut errors)
+        .unwrap_or(0);
+      (e.name.clone(), EmotionParams {
+        label: e.label.clone().unwrap_or_else(|| e.name.clone()),
+        color: c,
+      })
+    })
+    .collect();
 
   // The empty-intersection rule (stat-model F6): `"min"` (default) or `"max"`.
   fn parse_winner(
@@ -805,7 +871,6 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
       }
       (m.name.clone(), ConditionParams {
         label: m.label.clone().unwrap_or_else(|| m.name.clone()),
-        mood: m.mood,
         duration: m.duration,
         priority: m.priority,
         stats: m
@@ -817,6 +882,38 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
           .needs
           .iter()
           .map(|n| NeedModifier { need: n.need.clone(), rate: n.rate, min: n.min, max: n.max })
+          .collect(),
+        emotions: m
+          .emotions
+          .iter()
+          .filter_map(|em| {
+            let Some(idx) = emotion_index(&em.emotion) else {
+              errors.push(LoadError {
+                file: String::new(),
+                message: format!(
+                  "condition `{}`: modifier names unknown emotion `{}`",
+                  m.name, em.emotion
+                ),
+              });
+              return None;
+            };
+            match em.magnitude.as_integer() {
+              Some(v) if (1..=15).contains(&v) => {
+                Some(EmotionModifier { emotion: idx as u8, magnitude: v as u8 })
+              }
+              _ => {
+                errors.push(LoadError {
+                  file: String::new(),
+                  message: format!(
+                    "condition `{}`: emotion `{}` magnitude must be an integer 1..=15 \
+                     (the u4 bound; +0 = author nothing)",
+                    m.name, em.emotion
+                  ),
+                });
+                None
+              }
+            }
+          })
           .collect(),
       })
     })
@@ -841,6 +938,38 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
         for l in [n.rate.len(), n.min.len(), n.max.len()] {
           if l > 0 {
             lens.push(l);
+          }
+        }
+      }
+      for em in &t.emotions {
+        if emotion_index(&em.emotion).is_none() {
+          errors.push(LoadError {
+            file: String::new(),
+            message: format!("trait `{}`: modifier names unknown emotion `{}`", t.name, em.emotion),
+          });
+        }
+        match em.magnitude.as_array() {
+          Some(a) if !a.is_empty() => {
+            lens.push(a.len());
+            if a.iter().any(|v| !matches!(v.as_integer(), Some(1..=15))) {
+              errors.push(LoadError {
+                file: String::new(),
+                message: format!(
+                  "trait `{}`: emotion `{}` — every per-level magnitude must be an \
+                   integer 1..=15 (the u4 bound; +0 = author nothing)",
+                  t.name, em.emotion
+                ),
+              });
+            }
+          }
+          _ => {
+            errors.push(LoadError {
+              file: String::new(),
+              message: format!(
+                "trait `{}`: emotion `{}` magnitude must be a per-LEVEL array (emotions F2)",
+                t.name, em.emotion
+              ),
+            });
           }
         }
       }
@@ -891,6 +1020,18 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
               rate: n.rate.get(i).copied().unwrap_or(1.0),
               min: n.min.get(i).copied(),
               max: n.max.get(i).copied(),
+            })
+            .collect(),
+          emotions: t
+            .emotions
+            .iter()
+            .filter_map(|em| {
+              let idx = emotion_index(&em.emotion)? as u8;
+              let v = em.magnitude.as_array()?.get(i)?.as_integer()?;
+              if !(1..=15).contains(&v) {
+                return None; // range errors already recorded above
+              }
+              Some(EmotionModifier { emotion: idx, magnitude: v as u8 })
             })
             .collect(),
         })
@@ -1565,7 +1706,7 @@ fn biome_def(biome: &BiomeToml) -> Result<BiomeDef, LoadError> {
 
 #[cfg(test)]
 mod tests {
-  use crate::loader::load;
+  use crate::loader::{load, pack_emotion_modifier, unpack_emotion_modifier};
 
   fn src(name: &str, text: &str) -> (String, String) {
     (name.to_string(), text.to_string())
@@ -1614,15 +1755,24 @@ name = "thirst"
 deplete = 21600
 band = [ { condition = "thirsty", lo = 0.10, hi = 0.35 } ]
 
+[[emotion]]
+name = "fine"
+color = "#9aa4b0"
+
+[[emotion]]
+name = "uncomfortable"
+label = "Uncomfortable"
+color = "#8a8f3c"
+
 [[condition]]
 name = "thirsty"
 label = "Thirsty"
-mood = -0.15
+emotions = [ { emotion = "uncomfortable", magnitude = 2 } ]
 priority = 20
 
 [[condition]]
 name = "dehydrated"
-mood = -0.4
+emotions = [ { emotion = "uncomfortable", magnitude = 5 } ]
 
 [[biome]]
 name = "forest"
@@ -1678,7 +1828,15 @@ scatter = [ { salt = 6, p = 0.99, thing = "wolf" } ]
     // needs registry
     assert_eq!(b.need_id("thirst"), Some(1));
     assert_eq!(b.need_params("thirst").unwrap().bands.len(), 1);
-    assert_eq!(b.condition_params("thirsty").unwrap().mood, -0.15);
+    // emotions (emotions F1/F2): declaration index = identity, modifiers resolve to it.
+    assert_eq!(b.emotion_index("fine"), Some(0));
+    assert_eq!(b.emotion_index("uncomfortable"), Some(1));
+    let em = &b.condition_params("thirsty").unwrap().emotions;
+    assert_eq!(em.len(), 1);
+    assert_eq!((em[0].emotion, em[0].magnitude), (1, 2));
+    assert_eq!(pack_emotion_modifier(em[0]), 0x12, "emotion:4 | magnitude:4");
+    let up = unpack_emotion_modifier(0x12);
+    assert_eq!((up.emotion, up.magnitude), (1, 2), "the round-trip");
     // priority: authored is read back verbatim; an omitted key is 0, never a derived guess.
     assert_eq!(b.condition_params("thirsty").unwrap().priority, 20);
     assert_eq!(b.condition_params("dehydrated").unwrap().priority, 0, "absent = 0");
@@ -1709,6 +1867,71 @@ name = "thirst"
     // A need still authoring an id is a LOUD refusal now, not a silently-ignored key.
     let e = load(&[src("t.toml", "[[need]]\nid = 1\nname = \"thirst\"\n")]).unwrap_err();
     assert!(e[0].message.contains("unknown field `id`"), "{}", e[0].message);
+  }
+
+  #[test]
+  fn the_emotion_laws_refuse_loudly() {
+    // emotions F1: `fine` must be declared FIRST — index 0 is the empty-argmax default.
+    let not_fine = "[[emotion]]\nname = \"happy\"\ncolor = \"#e8b23a\"\n";
+    let e = load(&[src("t.toml", not_fine)]).unwrap_err();
+    assert!(e.iter().any(|e| e.message.contains("must be `fine`")), "{e:?}");
+
+    // …SIXTEEN max (the u4 bound).
+    let mut many = String::from("[[emotion]]\nname = \"fine\"\ncolor = \"#9aa4b0\"\n");
+    for i in 0..16 {
+      many.push_str(&format!("[[emotion]]\nname = \"e{i}\"\ncolor = \"#000000\"\n"));
+    }
+    let e = load(&[src("t.toml", &many)]).unwrap_err();
+    assert!(e.iter().any(|e| e.message.contains("SIXTEEN max")), "{e:?}");
+
+    // …color is REQUIRED (deny_unknown_fields serde refusal).
+    let e = load(&[src("t.toml", "[[emotion]]\nname = \"fine\"\n")]).unwrap_err();
+    assert!(e.iter().any(|e| e.message.contains("missing field `color`")), "{e:?}");
+
+    // A condition modifier must name a declared emotion, with magnitude 1..=15.
+    let fine = "[[emotion]]\nname = \"fine\"\ncolor = \"#9aa4b0\"\n";
+    let ghost = format!(
+      "{fine}[[condition]]\nname = \"c\"\nemotions = [ {{ emotion = \"ghost\", magnitude = 1 }} ]\n"
+    );
+    let e = load(&[src("t.toml", &ghost)]).unwrap_err();
+    assert!(e.iter().any(|e| e.message.contains("unknown emotion `ghost`")), "{e:?}");
+    let big = format!(
+      "{fine}[[condition]]\nname = \"c\"\nemotions = [ {{ emotion = \"fine\", magnitude = 16 }} ]\n"
+    );
+    let e = load(&[src("t.toml", &big)]).unwrap_err();
+    assert!(e.iter().any(|e| e.message.contains("integer 1..=15")), "{e:?}");
+
+    // A trait modifier is the PER-LEVEL array form — a scalar refuses…
+    let scalar = format!(
+      "{fine}[[trait]]\nname = \"t\"\nemotions = [ {{ emotion = \"fine\", magnitude = 1 }} ]\n"
+    );
+    let e = load(&[src("t.toml", &scalar)]).unwrap_err();
+    assert!(e.iter().any(|e| e.message.contains("per-LEVEL array")), "{e:?}");
+    // …and mood is DELETED from the schema (emotions F4), not silently ignored.
+    let e = load(&[src("t.toml", "[[condition]]\nname = \"c\"\nmood = 0.2\n")]).unwrap_err();
+    assert!(e[0].message.contains("unknown field `mood`"), "{}", e[0].message);
+  }
+
+  #[test]
+  fn trait_emotions_land_per_level() {
+    let text = r##"
+[[emotion]]
+name = "fine"
+color = "#9aa4b0"
+
+[[emotion]]
+name = "playful"
+color = "#c93cb8"
+
+[[trait]]
+name = "puppyish"
+emotions = [ { emotion = "playful", magnitude = [1, 3] } ]
+"##;
+    let b = load(&[src("t.toml", text)]).expect("clean load");
+    let t = b.trait_params("puppyish").expect("trait");
+    assert_eq!(t.levels.len(), 2, "the array length IS the level count");
+    assert_eq!((t.levels[0].emotions[0].emotion, t.levels[0].emotions[0].magnitude), (1, 1));
+    assert_eq!((t.levels[1].emotions[0].emotion, t.levels[1].emotions[0].magnitude), (1, 3));
   }
 
   #[test]
