@@ -896,6 +896,15 @@ band = [                    # exclusive ranges in the need's OWN units; ≤1 act
   { condition = "thirsty",    lo = 10, hi = 35 },
   { condition = "dehydrated", lo = 0,  hi = 10 },
 ]
+# hunger is thirst-shaped (food-chain I8: 0..100, deplete 43200, hungry/starving bands).
+# corpus — HEALTH (food-chain F2) — authors the ENCODING domain 0..2 with deplete 0
+# (health never drains; only events move it); the EFFECTIVE cap is the LEVELED
+# `corpus` trait's per-level need-max (`max = [1, 2]` — level 1 = ordinary life,
+# level 2 = the wolves' tier). TWO laws ride this:
+#   - need MAX modifiers combine HIGHEST-WINS (caps TIER UPWARD — unlike stat ranges,
+#     which intersect; a second authoring source can never silently shrink a cap);
+#   - needs MINT at the EFFECTIVE max (the kind's traits are in hand at mint), so a
+#     bunny mints corpus 1 and a wolf 2 on the ONE 0..2 encoding.
 
 [[emotion]]                 # SIXTEEN, declaration-ordered — the u4 INDEX is the identity
 name = "fine"               # (emotions F1); `fine` REQUIRED first: index 0 = the "alters
@@ -997,10 +1006,29 @@ location = "adjacent"
 duration = 30               # ≈5 s at 6 Hz; the completion re-validates (see drink above)
 queue = { hover = "Cutting down", progress = "cw", progress_color = "#3ad64f", progress_fill = true, cancelable = true }
 
+[[interaction]]             # the SPAWN effect + the `self` location (food-chain F5/F6/I9)
+name = "death"
+label = "Death"
+affordances = ["can_die"]   # the corpus ≤ 0 need check — ALSO its need-write trigger
+inputs = ["pawn"]
+location = "self"           # the carrier IS the target pawn (its OWN kind offers this;
+                            #  no cold probe — the one hot-carrier location rule)
+spawn = { thing = "meat", at = "on" }        # write the thing's kind into the holder's
+remove = "target"           # floor cell (the yield lane), then REMOVE the pawn — the
+                            # pawn shard's `remove` reducer; StateGone fans; idempotent.
+# forage's shape: location "adjacent" on the FLORA carrier,
+# spawn = { thing = "plant_matter", at = "adjacent" } — the first EMPTY pathable cell
+# of the carrier's 3×3 in fixed (dy, dx) scan order; all full = a logged no-yield.
+
 [[affordance]]              # a named PREDICATE over pawn stats (stat-model F5/F10)
 name = "can_drink"
 label = "Can Drink"
 check = { stat = "metabolism", above = 0.0 }   # above|below, EXCLUSIVE; stat must exist
+# …or over a NEED's lazy value (food-chain F4): the death gate. A need check DOUBLES
+# as the NEED-WRITE TRIGGER key (food-chain F5, the user's law): every worker need
+# write sweeps the target's carried interactions for affordances checking THAT need
+# and queues the passers — the mutation is the trigger; no polling, no brains.
+# check = { need = "corpus", lte = 0.0 }       # gte|gt|lt|lte, need must exist
 # carriers bind the INTERACTIONS they offer where they are defined (tile/thing blocks
 # above): interactions = [{ name = "drink", magnitude = 3 }]
 # worked example: drinking at the water tile executes drink with amount = +3.0 —
