@@ -90,35 +90,57 @@ pub fn stat_value(
     sum.clamp(lo, hi)
 }
 
-/// Does `affordance` pass for this pawn (F5/F10)? The predicate is EXCLUSIVE
-/// (`value > above` / `value < below`); an unknown affordance never passes.
+/// Does `affordance` pass for this pawn (F5/F10; food-chain F4)? A STAT check is
+/// EXCLUSIVE (`value > above` / `value < below`); a NEED check compares the lazy
+/// satisfaction at `now` (a pawn with no row for the need never passes). An unknown
+/// affordance never passes. `need_rows`/`cond_rows` are the same raw slices `active`
+/// was derived from — the stat path reads `active`, the need path re-evaluates lazily.
 pub fn affordance_passes(
     bundle: &Bundle,
     affordance: &str,
     trait_rows: &[u32],
+    need_rows: &[(u32, u16)],
+    cond_rows: &[(u32, u16)],
     active: &[ActiveCondition],
+    now: u16,
 ) -> bool {
     let Some(ap) = bundle.affordance_params(affordance) else { return false };
-    let v = stat_value(bundle, &ap.stat, trait_rows, active);
-    match (ap.above, ap.below) {
-        (Some(t), None) => v > t,
-        (None, Some(t)) => v < t,
-        _ => false, // refused at load; unreachable from a loaded corpus
+    match &ap.check {
+        crate::loader::AffordanceCheck::Stat { stat, above, below } => {
+            let v = stat_value(bundle, stat, trait_rows, active);
+            match (above, below) {
+                (Some(t), None) => v > *t,
+                (None, Some(t)) => v < *t,
+                _ => false, // refused at load; unreachable from a loaded corpus
+            }
+        }
+        crate::loader::AffordanceCheck::Need { need, cmp, value } => {
+            match crate::needs_eval::need_satisfaction(
+                bundle, need, trait_rows, need_rows, cond_rows, now,
+            ) {
+                Some(sat) => cmp.pass(sat, *value),
+                None => false,
+            }
+        }
     }
 }
 
 /// Every affordance gate on `interaction` passes (stat-model F5) — the availability
 /// question the npc, the worker, and the pie menu all ask identically.
+#[allow(clippy::too_many_arguments)]
 pub fn interaction_available(
     bundle: &Bundle,
     interaction: &str,
     trait_rows: &[u32],
+    need_rows: &[(u32, u16)],
+    cond_rows: &[(u32, u16)],
     active: &[ActiveCondition],
+    now: u16,
 ) -> bool {
     match bundle.interaction_params(interaction) {
-        Some(ip) => {
-            ip.affordances.iter().all(|a| affordance_passes(bundle, a, trait_rows, active))
-        }
+        Some(ip) => ip.affordances.iter().all(|a| {
+            affordance_passes(bundle, a, trait_rows, need_rows, cond_rows, active, now)
+        }),
         None => false,
     }
 }
@@ -189,10 +211,10 @@ satisfy = { target = "@pawn", need = "thirst", amount = "@amount" }
         assert_eq!(stat_value(&b, "ground_speed", &[trait_row(&b, "walks", 3)], &[]), 6.0);
         // No walks → ground_speed 0 → can_move_ground fails, can_drink still passes.
         let biolife = [trait_row(&b, "biological_lifeform", 1)];
-        assert!(!affordance_passes(&b, "can_move_ground", &biolife, &[]));
-        assert!(affordance_passes(&b, "can_drink", &biolife, &[]));
-        assert!(interaction_available(&b, "drink", &biolife, &[]));
-        assert!(!interaction_available(&b, "drink", &[trait_row(&b, "walks", 1)], &[]));
+        assert!(!affordance_passes(&b, "can_move_ground", &biolife, &[], &[], &[], 0));
+        assert!(affordance_passes(&b, "can_drink", &biolife, &[], &[], &[], 0));
+        assert!(interaction_available(&b, "drink", &biolife, &[], &[], &[], 0));
+        assert!(!interaction_available(&b, "drink", &[trait_row(&b, "walks", 1)], &[], &[], &[], 0));
     }
 
     #[test]
@@ -272,8 +294,8 @@ stats = [ { stat = "s", add = 2.0 } ]
     fn unknown_names_and_absent_levels_are_calm() {
         let b = bundle(CORPUS);
         assert_eq!(stat_value(&b, "nonsense", &[], &[]), 0.0);
-        assert!(!affordance_passes(&b, "nonsense", &[], &[]));
-        assert!(!interaction_available(&b, "nonsense", &[], &[]));
+        assert!(!affordance_passes(&b, "nonsense", &[], &[], &[], &[], 0));
+        assert!(!interaction_available(&b, "nonsense", &[], &[], &[], &[], 0));
         // a level past the authored table contributes nothing (not a panic).
         assert_eq!(stat_value(&b, "ground_speed", &[trait_row(&b, "walks", 9)], &[]), 0.0);
         // a level-0 row (never minted, but defensively) contributes nothing.

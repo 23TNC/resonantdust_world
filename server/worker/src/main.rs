@@ -1384,7 +1384,7 @@ async fn main() {
                         &bundle, &trait_rows, &need_rows, &cond_rows, effect_tic,
                     );
                     if !resonantdust_content::stat_eval::interaction_available(
-                        &bundle, &iname, &trait_rows, &active,
+                        &bundle, &iname, &trait_rows, &need_rows, &cond_rows, &active, effect_tic,
                     ) {
                         reject("an affordance predicate fails for the target (stat-model F5)");
                         continue;

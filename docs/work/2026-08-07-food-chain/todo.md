@@ -14,9 +14,11 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P1 — the machinery
 
-- [ ] Loader: affordance `check = { need, cmp }` variant (F4); interaction
+- [x] Loader: affordance `check = { need, cmp }` variant (F4); interaction
       `spawn = { thing, at = "adjacent" }` effect (F6); location rule `self` (I9).
-      Acceptance: round-trip + refusal tests green.
+      Acceptance: round-trip + refusal tests green. → AffordanceCheck::Stat|Need +
+      trigger_need(), SpawnEffect, remove; 59 lib tests green; the eval signature
+      gained (need_rows, cond_rows, now) — worker/wasm/npc call sites swept.
 - [ ] Eval: need MAX modifiers combine HIGHEST-wins (F2) in the ONE needs eval; the
       need-check affordance evaluates lazily beside stat checks. Acceptance: unit
       tests — bunny cap 1 / wolf cap 2; corpus ≤ 0 gates can_die.

@@ -285,6 +285,24 @@ pub fn active_conditions(
     out
 }
 
+/// A NAMED need's lazy satisfaction for this pawn at `now` (food-chain F4 — the
+/// need-check affordance's read; the same PIECEWISE eval every band uses). `None` =
+/// the pawn carries no row for that need (a pawn without `corpus` cannot `can_die`).
+pub fn need_satisfaction(
+    bundle: &Bundle,
+    need: &str,
+    trait_rows: &[u32],
+    need_rows: &[(u32, u16)],
+    condition_rows: &[(u32, u16)],
+    now: u16,
+) -> Option<f64> {
+    let nref = bundle.gameplay_reference("need", need)?;
+    let &(row, set_tic) = need_rows
+        .iter()
+        .find(|(row, _)| gameplay_row_reference(GAMEPLAY_NEED, *row) == nref)?;
+    eval_need_row(bundle, row, set_tic, trait_rows, condition_rows, now).map(|(_, _, sat)| sat)
+}
+
 /// The next FUTURE tic at which the active set can change without any new write: the
 /// earliest band-threshold crossing of any need (under its PIECEWISE rate) + the earliest
 /// stored-row expiry. `None` when nothing ahead can change. This is what lets observers

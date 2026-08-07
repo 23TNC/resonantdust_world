@@ -334,10 +334,13 @@ impl Wolves {
     /// this wolf may use (input-rework I11: with `move_to` on every ground tile, "any
     /// usable interaction" matched GRASS — the drink pass filters to `satisfy` carriers).
     /// Availability is the SAME predicate gate the worker enforces (stat-model I2).
-    fn usable_drink(&self, kind: u16) -> Option<(String, f64)> {
+    fn usable_drink(&self, kind: u16, now: u16) -> Option<(String, f64)> {
         let bundle = self.bundle.as_ref()?;
         let wolf = self.wolf?;
         let trait_rows = self.payloads.get(&wolf).map(|p| payload_traits(p)).unwrap_or_default();
+        let cond_rows =
+            self.payloads.get(&wolf).map(|p| payload_conditions(p)).unwrap_or_default();
+        let need_rows = self.wolf_needs();
         bundle
             .tile_interactions(kind)
             .into_iter()
@@ -347,7 +350,10 @@ impl Wolves {
                         bundle,
                         &b.name,
                         &trait_rows,
+                        &need_rows,
+                        &cond_rows,
                         &self.active_set,
+                        now,
                     )
             })
             .map(|b| (b.name, b.magnitude))
@@ -401,6 +407,7 @@ impl Wolves {
         if self.thirst == 0 || self.drink_issued || !self.is_thirsty() {
             return;
         }
+        let Some(now) = bot.now_tic() else { return };
         // A satisfying carrier within reach already? Drink it. The worker's adjacency
         // law is cheb ≤ 1 INCLUSIVE (lumberjack), and water is IMPATHABLE now
         // (pathfinding): the wolf drinks FROM THE SHORE — the destination names the
@@ -409,7 +416,7 @@ impl Wolves {
             for ox in -1i32..=1 {
                 let c = (self.at.0 + ox, self.at.1 + oy);
                 if let Some(kind) = bot.tile_kind_at(c) {
-                    if let Some((interaction, magnitude)) = self.usable_drink(kind) {
+                    if let Some((interaction, magnitude)) = self.usable_drink(kind, now) {
                         self.fire_interaction(bot, &interaction, magnitude, c);
                         self.drink_issued = true;
                         self.drink_target = None;
@@ -422,7 +429,7 @@ impl Wolves {
         // PATHABLE cell in the carrier's 3×3 by the tile mirror — deterministic pick
         // (nearest to the wolf, ties by (y, x)). All-water surroundings = no shore known;
         // leave the wolf to its wander, never a spin.
-        let target = bot.nearest_tile(self.at, |kind| self.usable_drink(kind).is_some());
+        let target = bot.nearest_tile(self.at, |kind| self.usable_drink(kind, now).is_some());
         match target {
             Some(t) => {
                 if self.drink_target != Some(t) || self.dest.is_none() {

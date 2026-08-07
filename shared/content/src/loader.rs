@@ -366,6 +366,13 @@ pub struct InteractionParams {
   /// via the cold-overlay `SET … kind 0`. The `yields` successor (place a thing where the
   /// carrier stood — lumberjack I9) is RESERVED beside it, not built.
   pub destroy: Option<String>,
+  /// The spawn effect (food-chain F5/F6): write `thing`'s kind into a cell — `at = "on"`
+  /// = the TARGET pawn's floor cell (death's meat); `"adjacent"` = the first EMPTY
+  /// pathable cell of the CARRIER's 3×3, fixed (dy, dx) scan (forage's plant matter).
+  pub spawn: Option<SpawnEffect>,
+  /// The remove effect (food-chain F5): `"target"` deletes the target pawn via the pawn
+  /// shard's `remove` reducer — death's second half. Idempotent at execution.
+  pub remove: Option<String>,
   /// The placement rule (input-rework F4 / lumberjack F2): `"on"` = the ACTING pawn
   /// stands on the carrier; `"adjacent"` = Chebyshev ≤ 1 from the carrier's cell,
   /// INCLUSIVE of it; `"target"` = the DESTINATION tile is the carrier.
@@ -378,6 +385,14 @@ pub struct InteractionParams {
   /// circle renders in the details panel's strip, and whether a click may cancel it
   /// while executing. All presentation; the worker reads only `cancelable`.
   pub queue: QueueVisual,
+}
+
+/// The spawn effect's authored shape (food-chain F5/F6) — `thing` is load-validated
+/// against thing kinds; `at` ∈ `"on"` | `"adjacent"`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SpawnEffect {
+  pub thing: String,
+  pub at: String,
 }
 
 /// An interaction's queue-strip presentation (intent-queue-ui F2; schema in
@@ -424,6 +439,8 @@ pub fn location_in_range(location: &str, cheb: u32) -> bool {
   match location {
     "on" => cheb == 0,
     "adjacent" => cheb <= 1,
+    // "self" (food-chain I9): the carrier IS the target pawn — distance is definitionally
+    // zero, so no spatial constraint. "target" likewise places none (movement's rule).
     _ => true,
   }
 }
@@ -446,18 +463,34 @@ mod location_tests {
   }
 }
 
-/// An `[[affordance]]` def — a named PREDICATE over pawn stats (stat-model F5/F10):
-/// `can_move_ground` ⇔ `ground_speed > 0`. Structured, not an expression string; exactly
-/// one of `above`/`below` is authored (both thresholds EXCLUSIVE).
+/// An `[[affordance]]` def — a named PREDICATE over a pawn's STATS or a NEED's lazy
+/// value (stat-model F5/F10; food-chain F4): `can_move_ground` ⇔ `ground_speed > 0`;
+/// `can_die` ⇔ `corpus ≤ 0`. Structured, not an expression string.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AffordanceParams {
   pub label: String,
-  /// The stat the predicate reads.
-  pub stat: String,
-  /// Passes while `value > above`.
-  pub above: Option<f64>,
-  /// Passes while `value < below`.
-  pub below: Option<f64>,
+  pub check: AffordanceCheck,
+}
+
+/// The predicate body (food-chain F4). A NEED check evaluates the lazy value at `now`
+/// and DOUBLES as the need-write TRIGGER key (F5 — the worker sweeps a target's
+/// carried interactions for checks on the need it just wrote).
+#[derive(Debug, Clone, PartialEq)]
+pub enum AffordanceCheck {
+  /// Exactly one of `above`/`below` is authored (both thresholds EXCLUSIVE).
+  Stat { stat: String, above: Option<f64>, below: Option<f64> },
+  /// `satisfaction_at(now) <cmp> value` on the need's effective domain.
+  Need { need: String, cmp: Cmp, value: f64 },
+}
+
+impl AffordanceParams {
+  /// The need a `Need` check reads (the trigger key), if any.
+  pub fn trigger_need(&self) -> Option<&str> {
+    match &self.check {
+      AffordanceCheck::Need { need, .. } => Some(need),
+      AffordanceCheck::Stat { .. } => None,
+    }
+  }
 }
 
 /// One part SLOT of a kind's visual skeleton (human-pawns P2). Slot index =
@@ -638,9 +671,10 @@ pub(crate) enum BiomeBody {
 }
 
 /// A comparison op, spelled exactly as the retired `.rd` ops were (F3): the golden
-/// gate depends on reproducing the same half-open edges.
+/// gate depends on reproducing the same half-open edges. Public since food-chain F4 —
+/// need-check affordances carry one.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) enum Cmp {
+pub enum Cmp {
   Gte,
   Gt,
   Lt,
@@ -648,7 +682,7 @@ pub(crate) enum Cmp {
 }
 
 impl Cmp {
-  fn pass(self, v: f64, t: f64) -> bool {
+  pub fn pass(self, v: f64, t: f64) -> bool {
     match self {
       Cmp::Gte => v >= t,
       Cmp::Gt => v > t,

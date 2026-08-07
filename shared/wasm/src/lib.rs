@@ -931,8 +931,9 @@ fn menu_options(
         if !can_compose_walk && !dsl::loader::location_in_range(&ip.location, cheb_distance) {
             continue;
         }
-        if !resonantdust_content::stat_eval::interaction_available(bundle, &name, &traits, &active)
-        {
+        if !resonantdust_content::stat_eval::interaction_available(
+            bundle, &name, &traits, &need_rows, &conditions, &active, now_tic,
+        ) {
             continue;
         }
         let Some(reference) = bundle.gameplay_reference("interaction", &name) else { continue };

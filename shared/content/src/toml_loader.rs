@@ -7,11 +7,12 @@
 //! slot as an empty placeholder forever).
 
 use crate::loader::{
-  AffordanceParams, BiomeBody, BiomeDef, BiomeRules, Bundle, Cmp, ConditionParams, DirFrame,
-  EmotionModifier, EmotionParams, InteractionParams, LightParts, LoadError, MaterialParams,
-  MoveEffect, NeedBand, NeedModifier, NeedParams, Operand, PackedChannel, SatisfyEffect,
-  StatModifier, StatParams, Taxonomy, ThingDef, TileDef, TraitLevel, TraitParams, VisualPart,
-  VisualParts, NEEDS_PER_KIND, ROTATIONS_PER_DEF, VARIANTS_PER_DEF,
+  AffordanceCheck, AffordanceParams, BiomeBody, BiomeDef, BiomeRules, Bundle, Cmp,
+  ConditionParams, DirFrame, EmotionModifier, EmotionParams, InteractionParams, LightParts,
+  LoadError, MaterialParams, MoveEffect, NeedBand, NeedModifier, NeedParams, Operand,
+  PackedChannel, SatisfyEffect, SpawnEffect, StatModifier, StatParams, Taxonomy, ThingDef,
+  TileDef, TraitLevel, TraitParams, VisualPart, VisualParts, NEEDS_PER_KIND,
+  ROTATIONS_PER_DEF, VARIANTS_PER_DEF,
 };
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -545,6 +546,12 @@ struct InteractionToml {
   /// validated offerer's cell. `yields` is the RESERVED successor (I9), not a field yet.
   #[serde(default)]
   destroy: Option<String>,
+  /// The spawn effect (food-chain F5/F6): `{ thing, at = "on"|"adjacent" }`.
+  #[serde(default)]
+  spawn: Option<SpawnToml>,
+  /// The remove effect (food-chain F5): `"target"` is the only value.
+  #[serde(default)]
+  remove: Option<String>,
   /// The placement rule (input-rework F4 / lumberjack F2): `"on"` | `"adjacent"` | `"target"`.
   #[serde(default = "on")]
   location: String,
@@ -595,11 +602,33 @@ struct AffordanceToml {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CheckToml {
-  stat: String,
+  /// The STAT form (stat-model F10) — exactly one of `above`/`below`.
+  #[serde(default)]
+  stat: Option<String>,
   #[serde(default)]
   above: Option<f64>,
   #[serde(default)]
   below: Option<f64>,
+  /// The NEED form (food-chain F4) — exactly one of gte/gt/lt/lte. A need check is
+  /// ALSO the need-write trigger key (F5).
+  #[serde(default)]
+  need: Option<String>,
+  #[serde(default)]
+  gte: Option<f64>,
+  #[serde(default)]
+  gt: Option<f64>,
+  #[serde(default)]
+  lt: Option<f64>,
+  #[serde(default)]
+  lte: Option<f64>,
+}
+
+/// The spawn effect's TOML shape (food-chain F5/F6).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SpawnToml {
+  thing: String,
+  at: String,
 }
 
 /// A CARRIER's interaction binding — what it offers, plus its parameters (stat-model F9).
@@ -1106,12 +1135,17 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
         to: operand(&m.to, "move.to", &mut errors),
       });
       // An interaction must DO something (input-rework F6): at least one effect.
-      if satisfy.is_none() && move_effect.is_none() && i.destroy.is_none() {
+      if satisfy.is_none()
+        && move_effect.is_none()
+        && i.destroy.is_none()
+        && i.spawn.is_none()
+        && i.remove.is_none()
+      {
         errors.push(LoadError {
           file: String::new(),
           message: format!(
-            "interaction `{}` authors no effect — at least one of `satisfy`/`move`/`destroy` \
-             is required",
+            "interaction `{}` authors no effect — at least one of `satisfy`/`move`/`destroy`/\
+             `spawn`/`remove` is required",
             i.name
           ),
         });
@@ -1151,12 +1185,12 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
           });
         }
       }
-      if i.location != "on" && i.location != "adjacent" && i.location != "target" {
+      if !matches!(i.location.as_str(), "on" | "adjacent" | "target" | "self") {
         errors.push(LoadError {
           file: String::new(),
           message: format!(
-            "interaction `{}`: location `{}` — the built rules are `on`, `adjacent`, and \
-             `target` (input-rework F4 / lumberjack F2)",
+            "interaction `{}`: location `{}` — the built rules are `on`, `adjacent`, \
+             `target`, and `self` (input-rework F4 / lumberjack F2 / food-chain I9)",
             i.name, i.location
           ),
         });
@@ -1200,6 +1234,39 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
         progress_fill: q.and_then(|q| q.progress_fill).unwrap_or(true),
         cancelable: q.and_then(|q| q.cancelable).unwrap_or(false),
       };
+      // The spawn effect (food-chain F5/F6): the thing must exist; `at` is closed.
+      let spawn = i.spawn.as_ref().map(|s| {
+        if !thing_exists(&s.thing) {
+          errors.push(LoadError {
+            file: String::new(),
+            message: format!(
+              "interaction `{}`: spawn names unknown thing `{}`",
+              i.name, s.thing
+            ),
+          });
+        }
+        if s.at != "on" && s.at != "adjacent" {
+          errors.push(LoadError {
+            file: String::new(),
+            message: format!(
+              "interaction `{}`: spawn.at `{}` — `on` or `adjacent` (food-chain F6)",
+              i.name, s.at
+            ),
+          });
+        }
+        SpawnEffect { thing: s.thing.clone(), at: s.at.clone() }
+      });
+      if let Some(r) = &i.remove {
+        if r != "target" {
+          errors.push(LoadError {
+            file: String::new(),
+            message: format!(
+              "interaction `{}`: remove `{r}` — `target` is the only value (food-chain F5)",
+              i.name
+            ),
+          });
+        }
+      }
       let label = i.label.clone().unwrap_or_else(|| i.name.clone());
       (i.name.clone(), InteractionParams {
         menu_text: i.menu_text.clone().unwrap_or_else(|| label.clone()),
@@ -1210,6 +1277,8 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
         move_effect,
         grants: i.grant.clone(),
         destroy: i.destroy.clone(),
+        spawn,
+        remove: i.remove.clone(),
         location: i.location.clone(),
         duration: i.duration,
         queue,
@@ -1221,27 +1290,74 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
     .affordance
     .iter()
     .map(|a| {
-      if !stat_exists(&a.check.stat) {
-        errors.push(LoadError {
-          file: String::new(),
-          message: format!("affordance `{}`: check names unknown stat `{}`", a.name, a.check.stat),
-        });
-      }
-      match (a.check.above, a.check.below) {
-        (None, None) | (Some(_), Some(_)) => errors.push(LoadError {
-          file: String::new(),
-          message: format!(
-            "affordance `{}`: check authors exactly ONE of `above`/`below` (stat-model F10)",
-            a.name
-          ),
-        }),
-        _ => {}
-      }
+      let check = match (&a.check.stat, &a.check.need) {
+        (Some(stat), None) => {
+          if !stat_exists(stat) {
+            errors.push(LoadError {
+              file: String::new(),
+              message: format!("affordance `{}`: check names unknown stat `{stat}`", a.name),
+            });
+          }
+          if matches!((a.check.above, a.check.below), (None, None) | (Some(_), Some(_))) {
+            errors.push(LoadError {
+              file: String::new(),
+              message: format!(
+                "affordance `{}`: check authors exactly ONE of `above`/`below` (stat-model F10)",
+                a.name
+              ),
+            });
+          }
+          AffordanceCheck::Stat {
+            stat: stat.clone(),
+            above: a.check.above,
+            below: a.check.below,
+          }
+        }
+        (None, Some(need)) => {
+          if !need_exists(need) {
+            errors.push(LoadError {
+              file: String::new(),
+              message: format!("affordance `{}`: check names unknown need `{need}`", a.name),
+            });
+          }
+          let ops = [
+            (a.check.gte, Cmp::Gte),
+            (a.check.gt, Cmp::Gt),
+            (a.check.lt, Cmp::Lt),
+            (a.check.lte, Cmp::Lte),
+          ];
+          let mut authored = ops.iter().filter_map(|(v, c)| v.map(|v| (*c, v)));
+          let first = authored.next();
+          let (cmp, value) = match (first, authored.next()) {
+            (Some(cv), None) => cv,
+            _ => {
+              errors.push(LoadError {
+                file: String::new(),
+                message: format!(
+                  "affordance `{}`: a NEED check authors exactly ONE of gte/gt/lt/lte \
+                   (food-chain F4)",
+                  a.name
+                ),
+              });
+              (Cmp::Lte, 0.0)
+            }
+          };
+          AffordanceCheck::Need { need: need.clone(), cmp, value }
+        }
+        _ => {
+          errors.push(LoadError {
+            file: String::new(),
+            message: format!(
+              "affordance `{}`: check names exactly ONE of `stat`/`need` (food-chain F4)",
+              a.name
+            ),
+          });
+          AffordanceCheck::Stat { stat: String::new(), above: Some(0.0), below: None }
+        }
+      };
       (a.name.clone(), AffordanceParams {
         label: a.label.clone().unwrap_or_else(|| a.name.clone()),
-        stat: a.check.stat.clone(),
-        above: a.check.above,
-        below: a.check.below,
+        check,
       })
     })
     .collect();
@@ -1715,7 +1831,7 @@ fn biome_def(biome: &BiomeToml) -> Result<BiomeDef, LoadError> {
 
 #[cfg(test)]
 mod tests {
-  use crate::loader::{load, pack_emotion_modifier, unpack_emotion_modifier};
+  use crate::loader::{load, pack_emotion_modifier, unpack_emotion_modifier, AffordanceCheck};
 
   fn src(name: &str, text: &str) -> (String, String) {
     (name.to_string(), text.to_string())
@@ -1922,6 +2038,74 @@ name = "thirst"
   }
 
   #[test]
+  fn the_food_chain_surfaces_round_trip_and_refuse() {
+    // food-chain F4/F5/F6: the need-check affordance, the spawn effect, the remove
+    // effect — round-trips first.
+    let text = r##"
+[[need]]
+name = "corpus"
+min = 0
+max = 2
+
+[[thing]]
+name = "meat"
+packed = [ { tint = "#a04030" } ]
+
+[[interaction]]
+name = "death"
+affordances = ["can_die"]
+inputs = ["pawn"]
+location = "self"
+spawn = { thing = "meat", at = "on" }
+remove = "target"
+
+[[affordance]]
+name = "can_die"
+check = { need = "corpus", lte = 0.0 }
+"##;
+    let b = load(&[src("t.toml", text)]).expect("clean load");
+    let ap = b.affordance_params("can_die").expect("can_die");
+    assert_eq!(
+      ap.check,
+      AffordanceCheck::Need { need: "corpus".into(), cmp: crate::loader::Cmp::Lte, value: 0.0 }
+    );
+    assert_eq!(ap.trigger_need(), Some("corpus"), "the need check IS the trigger key");
+    let ip = b.interaction_params("death").expect("death");
+    assert_eq!(ip.spawn.as_ref().map(|s| (s.thing.as_str(), s.at.as_str())), Some(("meat", "on")));
+    assert_eq!(ip.remove.as_deref(), Some("target"));
+
+    // Refusals: unknown need; zero ops; a check naming BOTH forms; spawn's unknown
+    // thing + bad `at`; remove's only value.
+    let e = load(&[src("t.toml", "[[affordance]]\nname = \"a\"\ncheck = { need = \"ghost\", lte = 0.0 }\n")])
+      .unwrap_err();
+    assert!(e.iter().any(|e| e.message.contains("unknown need `ghost`")), "{e:?}");
+    let e = load(&[src("t.toml", "[[need]]\nname = \"n\"\n[[affordance]]\nname = \"a\"\ncheck = { need = \"n\" }\n")])
+      .unwrap_err();
+    assert!(e.iter().any(|e| e.message.contains("exactly ONE of gte/gt/lt/lte")), "{e:?}");
+    let e = load(&[src(
+      "t.toml",
+      "[[need]]\nname = \"n\"\n[[stat]]\nname = \"s\"\nmin = 0\nmax = 1\n[[affordance]]\nname = \"a\"\ncheck = { stat = \"s\", above = 0.0, need = \"n\", lte = 0.0 }\n",
+    )])
+    .unwrap_err();
+    assert!(e.iter().any(|e| e.message.contains("exactly ONE of `stat`/`need`")), "{e:?}");
+    let e = load(&[src("t.toml", "[[interaction]]\nname = \"i\"\ninputs = [\"pawn\"]\nspawn = { thing = \"ghost\", at = \"on\" }\nremove = \"target\"\n")])
+      .unwrap_err();
+    assert!(e.iter().any(|e| e.message.contains("spawn names unknown thing")), "{e:?}");
+    let e = load(&[src(
+      "t.toml",
+      "[[thing]]\nname = \"meat\"\npacked = [ { tint = \"#a04030\" } ]\n[[interaction]]\nname = \"i\"\ninputs = [\"pawn\"]\nspawn = { thing = \"meat\", at = \"everywhere\" }\nremove = \"target\"\n",
+    )])
+    .unwrap_err();
+    assert!(e.iter().any(|e| e.message.contains("spawn.at")), "{e:?}");
+    let e = load(&[src(
+      "t.toml",
+      "[[thing]]\nname = \"meat\"\npacked = [ { tint = \"#a04030\" } ]\n[[interaction]]\nname = \"i\"\ninputs = [\"pawn\"]\nspawn = { thing = \"meat\", at = \"on\" }\nremove = \"carrier\"\n",
+    )])
+    .unwrap_err();
+    assert!(e.iter().any(|e| e.message.contains("`target` is the only value")), "{e:?}");
+  }
+
+  #[test]
   fn trait_emotions_land_per_level() {
     let text = r##"
 [[emotion]]
@@ -2041,7 +2225,10 @@ tint = "#ffffff"
 
     // The predicate + the trait's leveled table + the condition's need modifier.
     let can = b.affordance_params("can_drink").expect("can_drink");
-    assert_eq!((can.stat.as_str(), can.above, can.below), ("metabolism", Some(0.0), None));
+    assert_eq!(
+        can.check,
+        AffordanceCheck::Stat { stat: "metabolism".into(), above: Some(0.0), below: None }
+    );
     let bl = b.trait_params("biological_lifeform").expect("trait");
     assert_eq!(bl.levels.len(), 1);
     assert_eq!(bl.levels[0].stats[0].add, 1.0);
