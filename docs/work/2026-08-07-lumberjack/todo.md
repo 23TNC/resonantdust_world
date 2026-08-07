@@ -7,9 +7,8 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 ## P0 — the paper
 
 - [ ] ACTIONS.md: the intent-queue law — EPHEMERAL per-pawn list (F1), cap 5, fresh
-      order REPLACES (F3), duration rides queue_at, EVERY completion RE-VALIDATES →
-      no-op when stale (I2). Acceptance: docs-check green; the law readable without
-      this folder.
+      order REPLACES (F3), duration rides queue_at, every completion RE-VALIDATES →
+      no-op when stale (I2). Acceptance: docs-check green; law readable alone.
 - [ ] VARIABLES.md: the `"adjacent"` location rule (F2), `duration`,
       `destroy = "carrier"` + reserved `yields` (F5) in the TOML schema. Acceptance:
       docs-check green.
@@ -33,18 +32,15 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P3 — the intent queue
 
-- [ ] The ephemeral per-pawn queue at the worker (F1) + composition: out of place →
-      `[move_to(adjacent), act]`; in place → `[act]`; fresh order replaces; cap-5
-      rejects whole (F3). Acceptance: composed queue logged; a mid-walk re-order leaves
-      ONE fresh queue.
-- [ ] Advancement (I4): a `duration = 0` head completes in-pass; move_to advances on the
-      chain's FINAL hop landing, keyed by trip serial (a superseded chain advances
-      nothing). Acceptance: log shows walk-lands → next intent queued; drink-via-queue
-      still +3 exact.
-- [ ] Duration via queue_at: a `duration = N` head queues its COMPLETION at `+N`; the
-      completion RE-VALIDATES affordance + location and no-ops when stale (I2, the user's
-      no-op law). Acceptance: log shows fire tic = start + N; a walked-away pawn's
-      completion logs the no-op.
+- [ ] The ephemeral queue (F1) + composition: out of place → `[move_to(adjacent), act]`;
+      in place → `[act]`; fresh order replaces; cap-5 rejects whole (F3). Acceptance:
+      composed queue logged; a mid-walk re-order leaves ONE fresh queue.
+- [ ] Advancement (I4): `duration = 0` completes in-pass; move_to advances on the
+      chain's FINAL hop, keyed by trip serial (a superseded chain advances nothing).
+      Acceptance: walk-lands → next intent queued in the log; queued drink still +3.
+- [ ] Duration via queue_at: a `duration = N` head queues its COMPLETION at `+N`, which
+      RE-VALIDATES affordance + location and no-ops when stale (I2). Acceptance: fire
+      tic = start + N in the log; a walked-away pawn's completion logs the no-op.
 
 ## P4 — timber
 
@@ -59,7 +55,7 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 - [ ] Docs + memory truth pass: memories note timed interactions + the queue; consumed
       RESERVED notes gone; index row records delivery. Acceptance: docs-check green.
-- [ ] Cold boot: the bounce DROPS pending intents, in-flight queued completions survive
-      the event shard and re-validate on fire — state what actually happened (F1); fell
-      + drink + wolf arcs green together; **the user's eyes close the stream**.
-      Acceptance: captures + logs in completed.md.
+- [ ] Cold boot: the bounce drops pending intents, in-flight completions survive the
+      event shard and re-validate on fire — state what actually happened (F1); fell +
+      drink + wolf arcs green; **the user's eyes close the stream**. Acceptance:
+      captures + logs in completed.md.
