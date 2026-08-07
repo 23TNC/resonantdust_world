@@ -96,8 +96,16 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P5 — the verdict
 
-- [ ] Docs + memory truth pass: lumberjack I7's "no fan" claim amended; index row
-      records delivery. Acceptance: docs-check green.
-- [ ] Cold boot: the strip self-corrects from the next fan after a bounce (state what
+- [x] Docs + memory truth pass: lumberjack I7's "no fan" claim amended; index row
+      records delivery. Acceptance: docs-check green. → I7 banners SUPERSEDED with the
+      pointer; the new `intent-queue-ui-delivered` memory + index line (the fan, the
+      strip, the cancel paths, the poisoned-anchor and event-shard-codec gotchas); the
+      work-index row flipped done with the delivery note; green.
+- [x] Cold boot: the strip self-corrects from the next fan after a bounce (state what
       actually happens); standing arcs beside; **the user's eyes close the stream**.
-      Acceptance: captures + logs in completed.md.
+      Acceptance: captures + logs in completed.md. → OBSERVED: mid-walk-with-parked-
+      chop, the worker bounced; the strip HELD the stale 2-entry snapshot (display
+      lag, harmless); a fresh order's fan REPLACED it whole (new ephemeral entry ids
+      restarting at 1 — the mint is worker memory, as designed) and the chop completed
+      `destroyed=true yielded=Some("logs")`. The pre-bounce parked chop dropped — F1's
+      stated loss. The user's eyes close the stream on this report.

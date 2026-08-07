@@ -55,9 +55,11 @@ successor so the brain doesn't fork from the menu path forever.
 
 Queue-cap and validation rejections log-and-drop at the worker (the I6 interactions
 law), no-ops log at completion, and with the queue ephemeral (F1) there is no fanned row
-for a client UI to show. Accepted this stream: the worker log is the only window — make
-its queue lines good (pawn, composed intents, advancement, no-op reasons). A future
-queue UI would need a fan the user has explicitly declined to build now.
+for a client UI to show. Accepted this stream: the worker log is the only window.
+_SUPERSEDED 2026-08-07 by [intent-queue-ui](../2026-08-07-intent-queue-ui/README.md):
+the fan exists now — a promoted `QUEUE_STATE` event per mutation feeds the details
+panel's strip, WITHOUT overturning F1 (display truth only; authority stays the worker's
+ephemeral map)._
 
 ## I8 — existing pawns predate the lumberjack trait {#i8}
 
