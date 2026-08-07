@@ -8,9 +8,9 @@ caption.**
 
 ## P0 — Measure the corpus before changing it
 
-- [ ] Count images per species per direction across all 200 folders. Acceptance: a table in `issues.md`; the claim "176 of 200 have exactly 3" is confirmed or corrected.
-- [ ] Count how many DISTINCT species tokens the captions currently carry. Acceptance: a number — it is how many concepts the current captioning asks one LoRA to learn.
-- [ ] Record what a caption looks like today, verbatim, for one image. Acceptance: the exact string in `issues.md`, so the diff to the style-only form is legible.
+- [x] Count images per species per direction across all 200 folders. Acceptance: a table in `issues.md`; the claim "176 of 200 have exactly 3" is confirmed or corrected.
+- [x] Count how many DISTINCT species tokens the captions currently carry. Acceptance: a number — it is how many concepts the current captioning asks one LoRA to learn.
+- [x] Record what a caption looks like today, verbatim, for one image. Acceptance: the exact string in `issues.md`, so the diff to the style-only form is legible.
 
 ## P1 — Build the style-only caption variant
 

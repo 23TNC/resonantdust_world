@@ -28,3 +28,32 @@ every unexplained result falls out of it:
 
 **This is a data ceiling, not a training ceiling.** It is stated here so no future run is spent
 trying to reach a 3-image concept by tuning.
+
+## I2 — 229 of 252 caption tokens are backed by ≤3 images {#i2}
+_2026-08-06 · measured at P0 · **sharper than [I1](#i1), and the direct case for [F1](forks.md#f1)**_
+
+P0 confirmed [I1](#i1) exactly and then found the more pointed figure. Across 701 captions:
+
+| | |
+|---|---|
+| distinct non-`rd_` tokens | **252** |
+| of those, appearing on **≤3 images** | **229 (91%)** |
+| tokens appearing on 233–234 images | the direction/composition phrases only |
+
+So the caption vocabulary splits cleanly in two. A dozen phrases — `side profile`, `facing right`,
+`front view`, `back view`, `single creature`, `full body` — carry 233–234 examples each. Everything
+else (**229 tokens**) is a species or family name with three examples or fewer.
+
+**The corpus is also perfectly balanced by direction** — east 234, north 233, south 234 — and of
+the 176 species with exactly three images, **176 of 176 have exactly one per direction**. Nothing
+is skewed; it is simply thin.
+
+**A caption today, verbatim:**
+
+```
+rd_style, rd_animal, rd_quadruped, rd_east, side profile, side view, facing right,
+feline, tiger, single creature, full body
+```
+
+Nine of those eleven tokens have 233+ examples behind them. Two — `feline`, `tiger` — have three.
+[F1](forks.md#f1) drops exactly those two classes and keeps the rest.
