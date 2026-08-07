@@ -8,6 +8,10 @@ kind = "conifer"
 subType = ["default"]
 variant = ["0","1","2","3","4","5","6","7","8","9","10","11","12","13","14","15"]
 packed = [ { tint = "#46d64f" }, { tint = "#b0754f" } ]
+# Impathable (pathfinding F1): pawns may not ENTER a tree's cell — the pathfinder
+# routes around a treeline. Felling clears the occupant (overlay kind-0 suppression),
+# which reopens the cell with no extra write; the LOGS left behind stay pathable.
+pathable = false
 # Fellable (lumberjack F6): the pie menu on a tree offers Cut Down to logging pawns.
 # logs-drop F1: the YIELD is the binding's — the tree leaves logs where it stood;
 # shrub/cactus bind no yield and clear.

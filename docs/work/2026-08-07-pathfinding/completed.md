@@ -29,3 +29,13 @@
   open water logged `move_to no-op: destination impathable or unreachable (pathfinding
   F5)`; drink ordered ON a water cell walked to beach (110,72) and drank (thirst
   86.2→89.2, quenched granted, version-2 advance) — the shoreline law, live.
+- **2026-08-07 — P4: trees block, fells reopen.** The tree authors `pathable = false`
+  (golden diff exactly `thing tree`; worker restarted for the startup-loaded corpus).
+  Drilled at the lake's east treeline: cut_down on the pine at (114,72) — the
+  walk-dest selector EXCLUDED the impathable tree cell and walked to (113,71) (the
+  occupancy gate live); the fell yielded LOGS and a Move To ONTO (114,72) then
+  ARRIVED (kind-0 suppression reopens, logs stay pathable — composed-view probe read
+  kind 12 there); a female pawn spawned INSIDE the standing tree at (114,71) walked
+  OUT to (116,71) (F6 — leaving impathable is always legal). Captures: pie offering
+  Cut Down on the pine, the logs square where it stood, the pawn standing on the
+  felled cell, the in-tree pawn + her walk-out.

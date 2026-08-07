@@ -80,6 +80,7 @@ human_male Some(16777215)
 logs Some(9071170)
 == impathable kinds (tile/thing name) ==
 tile water
+thing tree
 == tile_texture_stems ==
 white
 white

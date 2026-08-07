@@ -47,12 +47,16 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P4 — trees block, fells reopen
 
-- [ ] Corpus: tree thing def authors `pathable = false`; worker probe consults thing
+- [x] Corpus: tree thing def authors `pathable = false`; worker probe consults thing
       occupancy (composed, kind-0 suppresses). Acceptance: golden re-blessed; drill —
-      a treeline blocks the straight line and the path goes around (captures).
-- [ ] Drill: fell a blocking tree (lumberjack arc) → the SAME trip now paths through
+      a treeline blocks the straight line and the path goes around (captures). →
+      golden diff exactly `thing tree`; cut_down's walk-dest EXCLUDED the tree cell
+      (picked (113,71) beside (114,72)) — the occupancy gate live.
+- [x] Drill: fell a blocking tree (lumberjack arc) → the SAME trip now paths through
       the opened cell; a pawn standing on a tree cell walks OUT (I3/F6). Acceptance:
-      before/after captures + hop logs.
+      before/after captures + hop logs. → the felled cell (114,72) held LOGS and a
+      Move To ONTO it arrived; a female spawned INSIDE the tree at (114,71) walked
+      out to (116,71) — F6 live; before/after captures taken.
 
 ## P5 — the observers agree
 
