@@ -14,10 +14,10 @@ caption.**
 
 ## P1 — Build the style-only caption variant
 
-- [ ] Write the style-only caption rule: convention tags + body plan + direction, NO species or family token. Acceptance: the rule is stated in `forks.md` with what it drops and why.
-- [ ] Generate the variant caption set beside the originals, leaving image files untouched. Acceptance: 701 new `.txt`, same stems, originals unmodified and still present.
-- [ ] Diff ten captions old-vs-new by eye. Acceptance: species and family tokens gone, convention and body-plan tokens intact, no empty captions.
-- [ ] Assert no caption is empty or duplicate-only. Acceptance: a script check — an all-identical caption set teaches nothing, the same defect shape as `rd_quadruped` on 459/459 (I12 there).
+- [x] Write the style-only caption rule: convention tags + body plan + direction, NO species or family token. Acceptance: the rule is stated in `forks.md` with what it drops and why.
+- [x] Generate the variant caption set beside the originals, leaving image files untouched. Acceptance: 701 new `.txt`, same stems, originals unmodified and still present.
+- [x] Diff ten captions old-vs-new by eye. Acceptance: species and family tokens gone, convention and body-plan tokens intact, no empty captions.
+- [x] Assert no caption is empty or duplicate-only. Acceptance: a script check — an all-identical caption set teaches nothing, the same defect shape as `rd_quadruped` on 459/459 (I12 there).
 
 ## P2 — Train it
 

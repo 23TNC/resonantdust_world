@@ -57,3 +57,28 @@ feline, tiger, single creature, full body
 
 Nine of those eleven tokens have 233+ examples behind them. Two — `feline`, `tiger` — have three.
 [F1](forks.md#f1) drops exactly those two classes and keeps the rest.
+
+## I3 — The style-only captions collapse to 27 distinct strings, and 165 images share one {#i3}
+_2026-08-06 · measured at P1 · **recorded as a PREDICTION before training, so it can be wrong**_
+
+Dropping species and family tokens leaves **27 distinct captions** across 701 images — nine
+body-plan combinations × three directions. The largest class is **165 images sharing one caption**:
+every quadruped east view, from cat to giraffe to elephant.
+
+**The [I12](../2026-08-02-lora-beat-e07/issues.md#i12) defect is NOT reintroduced.** That failure
+was `rd_quadruped` on 459/459 — a constant, discriminating nothing. Here every body-plan tag has
+negatives: quadruped 498/701, biped 90, winged 69, humanoid 51, legless 27, multiped 27. Verified
+tag by tag; all six discriminate.
+
+**But there is a real new hazard, and it is the mirror of [F1](forks.md#f1)'s stated risk.** With
+165 very different shapes under one label, the model may learn a **blurry average** of "quadruped
+east" rather than a crisp convention. Style LoRAs are routinely trained this way — one trigger
+across a varied set, where the variety is what prevents memorising any single subject — so this is
+a known-viable regime, not an obvious mistake. It is still the thing most likely to go wrong.
+
+**What would confirm it:** outputs that are mushy or non-committal in silhouette, especially where
+the corpus's quadrupeds differ most (a giraffe and a cat sharing one caption). **What would refute
+it:** crisp masses whose species identity tracks the PROMPT rather than the corpus — which is
+exactly the thesis.
+
+[P3](todo.md)'s cat-versus-well-covered-species comparison tests both directions.

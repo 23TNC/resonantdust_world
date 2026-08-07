@@ -18,3 +18,20 @@ _Nothing delivered yet. Items land here with their measured result when ticked i
   `rd_style, rd_animal, rd_quadruped, rd_east, side profile, side view, facing right, feline,
   tiger, single creature, full body`. Nine of eleven tokens have 233+ examples; `feline` and
   `tiger` have three.
+
+## P1 — Build the style-only caption variant
+
+- **2026-08-06 · P1.1 · The rule is a WHITELIST, not a species blacklist** ([F1 addendum](forks.md)).
+  Keep every `rd_*` tag plus twelve direction/composition phrases; drop everything else. A blacklist
+  would need 229 names enumerated and silently keeps anything it misses — a missed species token is
+  exactly what this stream exists to remove. A whitelist fails safe.
+- **2026-08-06 · P1.2 · 701 style-only captions written** to `.staging/animal-lora-styleonly/`,
+  same stems, **originals intact at 701**. 243 distinct tokens dropped. Image files untouched.
+- **2026-08-06 · P1.3 · Ten diffed by eye** — every drop is a family or species name and nothing
+  else: `cattle, muffalo` · `primate, orangutan` · `bird, quail female` · `deer, toxdeer female` ·
+  `rodent, beaver` · `bear, bear`. Convention, body-plan and direction tokens intact throughout.
+- **2026-08-06 · P1.4 · No empty captions; all six body-plan tags still discriminate.** 0 empty of
+  701. quadruped 498/701, biped 90, winged 69, humanoid 51, legless 27, multiped 27 — every one has
+  negatives, so [I12](../2026-08-02-lora-beat-e07/issues.md#i12)'s constant-tag defect is not
+  reintroduced. **27 distinct captions remain and 165 images share the largest**; recorded as
+  [I3](issues.md#i3) with an explicit prediction before training rather than a rationalisation after.

@@ -212,6 +212,43 @@ construction — the server dictates truth, the client makes it smooth.
 
 ---
 
+## The intent queue, and interactions that cost tics
+
+**The law** (lumberjack, 2026-08-07; consumes the `duration` seam the stat-model corpus
+reserved). A pawn can hold a short sequence of intents — "walk there, then chop" — and an
+interaction can cost tics. Both ride the machinery above; neither adds authoritative state.
+
+- **The queue is EPHEMERAL** (user, lumberjack F1): a per-pawn pending list in WORKER
+  memory, **cap 5**. The durable half is the standing event machinery — the work in
+  flight is a queued event in the event shard, exactly like a `MOVE_STEP` hop. A worker
+  bounce loses only the pending tail: "whatever happens to that queue… happens."
+- **One composer.** The worker's `EXECUTE_INTERACTION` arm is where queues are built: an
+  order whose location rule fails **only by distance** composes `[move_to(adjacent), act]`;
+  an in-place order is just `[act]`. The menu and the npc need no queue logic — they issue
+  one interaction and the worker sequences it (the same single-authority posture as the
+  affordance gate).
+- **A fresh order REPLACES the whole queue** (F3) — the `MOVE_STEP` one-chain law lifted a
+  level. Preemption = issue a new order. A composition that would exceed the cap rejects
+  WHOLE (log-and-drop, the interactions I6 law — never a partial queue).
+- **Advancement is per intent kind**: a `duration = 0` intent completes in the pass that
+  executes it; a `move_to` intent completes when its chain's FINAL hop lands — keyed by
+  the pawn's **trip serial**, so a superseded chain advances nothing; a `duration = N`
+  intent queues its **completion event** at `+N` (queue-at-a-future-tic, §Movement) —
+  elapsed-tics tracking is implicit in the target tic. On completion the worker queues the
+  pawn's next pending intent and drops it from the list.
+- **Every completion RE-VALIDATES** (user, F1 — the safety is here, not in queue
+  integrity): affordances AND the location rule re-run at the fire tic against
+  authoritative rows. A stale intent — the drink whose walk was cancelled, the chop whose
+  pawn wandered off — resolves to a **logged NO-OP**, never a wrong write. No cancel
+  machinery, no partial credit, no refunds: a felled tree means the pawn was still
+  adjacent when the full duration elapsed.
+
+`duration` is authored on the interaction in TICS (`VARIABLES.md` § TOML content schema);
+`duration = 0` — drink, the move_to seed — is the degenerate everything-in-one-pass case
+and is exactly the pre-lumberjack behavior.
+
+---
+
 ## Deriving the sets
 
 **Write set** — scan the stream; for each action, its signature names which operands are written

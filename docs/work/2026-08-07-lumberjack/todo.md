@@ -6,9 +6,12 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P0 — the paper
 
-- [ ] ACTIONS.md: the intent-queue law — EPHEMERAL per-pawn list (F1), cap 5, fresh
+- [x] ACTIONS.md: the intent-queue law — EPHEMERAL per-pawn list (F1), cap 5, fresh
       order REPLACES (F3), duration rides queue_at, every completion RE-VALIDATES →
-      no-op when stale (I2). Acceptance: docs-check green; law readable alone.
+      no-op when stale (I2). Acceptance: docs-check green; law readable alone. → new
+      §"The intent queue, and interactions that cost tics" after §Movement: one
+      composer, replace-whole, per-kind advancement (in-pass / final-hop-by-serial /
+      queue_at +N), the no-op law; docs-check green.
 - [ ] VARIABLES.md: the `"adjacent"` location rule (F2), `duration`,
       `destroy = "carrier"` + reserved `yields` (F5) in the TOML schema. Acceptance:
       docs-check green.

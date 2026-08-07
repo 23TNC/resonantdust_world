@@ -874,8 +874,18 @@ inputs = ["pawn", "amount"]
 # menu cannot guess a need input — input-rework F5).
 satisfy = { target = "@pawn", need = "thirst", amount = "@amount" }
 grant = ["quenched"]        # TIMED condition grants on execute (expiry from the condition)
-location = "on"             # the ACTING pawn must stand ON a carrier tile (interactions F8)
-duration = 0                # reserved — interactions are instantaneous (interactions I9)
+# location rules (interactions F8 / input-rework F4 / lumberjack F2): where the ACTING
+# pawn must be, relative to the CARRIER (the def offering this interaction):
+#   "on"       — standing on the carrier's cell
+#   "adjacent" — Chebyshev ≤ 1 from the carrier's cell, INCLUSIVE of it ("on or beside")
+#   "target"   — the carrier is the DESTINATION input's cell (movement's rule)
+# Out-of-place orders on positional rules compose a walk first — the intent queue
+# (ACTIONS.md § The intent queue).
+location = "adjacent"
+# TICS this interaction takes; 0 = instantaneous (everything pre-lumberjack). N > 0
+# queues a COMPLETION event at +N which RE-VALIDATES affordances + location at fire —
+# stale completions no-op (lumberjack F1/I2; ACTIONS.md § The intent queue).
+duration = 0
 
 [[interaction]]             # movement as an interaction (input-rework F2/F6)
 name = "move_to"
