@@ -6,12 +6,13 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P0 — the paper
 
-- [ ] ACTIONS.md: the intent-queue law — one queue per pawn, cap 5, fresh order REPLACES
-      (F3), head stamps `started_tic`, pops at `elapsed ≥ duration` (I2 stated).
-      Acceptance: docs-check green; the law readable without this folder.
-- [ ] TABLES.md + VARIABLES.md: the pawn-shard `intents` row (F1), the `"adjacent"`
-      location rule (F2), `duration`, `destroy = "carrier"` + reserved `yields` (F5).
-      Acceptance: docs-check green.
+- [ ] ACTIONS.md: the intent-queue law — EPHEMERAL per-pawn list (F1), cap 5, fresh
+      order REPLACES (F3), duration rides queue_at, EVERY completion RE-VALIDATES →
+      no-op when stale (I2). Acceptance: docs-check green; the law readable without
+      this folder.
+- [ ] VARIABLES.md: the `"adjacent"` location rule (F2), `duration`,
+      `destroy = "carrier"` + reserved `yields` (F5) in the TOML schema. Acceptance:
+      docs-check green.
 
 ## P1 — the corpus
 
@@ -32,16 +33,18 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P3 — the intent queue
 
-- [ ] The pawn-shard `intents` row (F1): table, state-claim slaving, zone rekey, worker
-      the only writer. Acceptance: sql shows a queued row; subscription SQL live-checked.
-- [ ] Worker composition: out of place → `[move_to(adjacent), act]`; in place → `[act]`;
-      fresh order replaces; cap-5 rejects whole (F3, I7). Acceptance: composed queue in
-      the log; a mid-chop re-order leaves ONE fresh queue.
-- [ ] The executor: move_to head pops on arrival; `duration > 0` head stamps
-      `started_tic`, pops at elapse, effects queue at pop (I2). Acceptance: start/elapsed/
-      pop tics logged; drink-via-queue still +3 exact.
-- [ ] The intents wire: edge frame + `Event::PawnIntents` + client mirror (I4).
-      Acceptance: browser probe watches the queue arrive and drain.
+- [ ] The ephemeral per-pawn queue at the worker (F1) + composition: out of place →
+      `[move_to(adjacent), act]`; in place → `[act]`; fresh order replaces; cap-5
+      rejects whole (F3). Acceptance: composed queue logged; a mid-walk re-order leaves
+      ONE fresh queue.
+- [ ] Advancement (I4): a `duration = 0` head completes in-pass; move_to advances on the
+      chain's FINAL hop landing, keyed by trip serial (a superseded chain advances
+      nothing). Acceptance: log shows walk-lands → next intent queued; drink-via-queue
+      still +3 exact.
+- [ ] Duration via queue_at: a `duration = N` head queues its COMPLETION at `+N`; the
+      completion RE-VALIDATES affordance + location and no-ops when stale (I2, the user's
+      no-op law). Acceptance: log shows fire tic = start + N; a walked-away pawn's
+      completion logs the no-op.
 
 ## P4 — timber
 
@@ -56,6 +59,7 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 - [ ] Docs + memory truth pass: memories note timed interactions + the queue; consumed
       RESERVED notes gone; index row records delivery. Acceptance: docs-check green.
-- [ ] Cold boot: the queue's bounce behavior STATED (resumes or restates), fell + drink +
-      wolf arcs green together; **the user's eyes close the stream**. Acceptance:
-      captures + logs in completed.md.
+- [ ] Cold boot: the bounce DROPS pending intents, in-flight queued completions survive
+      the event shard and re-validate on fire — state what actually happened (F1); fell
+      + drink + wolf arcs green together; **the user's eyes close the stream**.
+      Acceptance: captures + logs in completed.md.

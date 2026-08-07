@@ -29,19 +29,26 @@ mechanism I9 asked for.
   `"adjacent"` = Chebyshev ≤ 1 **inclusive of the carrier cell** ([F2](forks.md#f2)) —
   "on or beside". `drink` moves from `"on"` to `"adjacent"`; every existing arc (the wolf
   standing on water) stays green by construction.
-- **The intent queue is shard state, not worker memory** ([F1](forks.md#f1)): one row per
-  pawn in the pawn shard, slaved to the state claim like `payload`, fanned on change. A
-  worker restart must not forget orders (sim-self-heal ethos), and a fanned queue is what
-  a future queue UI reads.
+- **The intent queue is EPHEMERAL; the running event is the durable half** (user,
+  [F1](forks.md#f1)): the worker holds a per-pawn pending list in memory; the work
+  in flight is a queued event in the event shard (the MOVE_STEP-chain pattern). When an
+  event completes, the worker queues the next intent automatically and drops it from the
+  list. A bounce loses only the pending tail — "whatever happens to that queue…
+  happens."
+- **Execution-time re-validation is the safety, not queue integrity** (user, F1): every
+  intent re-runs the affordance gate AND the location rule at its fire tic. A stale
+  intent — the drink whose move was cancelled, the chop whose pawn wandered — resolves
+  to a logged NO-OP, never a wrong write.
 - **The queue is how positional interactions compose**: the menu offers a positional
   interaction even from afar; the worker (ONE composer — the same place the affordance
-  gate lives, so npc and menu cannot drift) composes `[move_to(adjacent), act]` into the
-  queue when the pawn is out of place. A fresh order REPLACES the queue
-  ([F3](forks.md#f3)) — the MOVE_STEP one-chain law lifted one level.
-- **Tic costs live on the head intent**: the head stamps `started_tic` when it begins;
-  the worker pops it when `elapsed ≥ duration` and only then queues the effect writes.
-  `duration = 0` intents (drink, move_to seeds) execute-and-pop in one pass — today's
-  behavior is the degenerate case.
+  gate lives, so npc and menu cannot drift) composes `[move_to(adjacent), act]` when the
+  pawn is out of place. A fresh order REPLACES the queue ([F3](forks.md#f3)) — the
+  MOVE_STEP one-chain law lifted one level.
+- **Tic costs ride queue_at**: a `duration = N` intent validates now and queues its
+  COMPLETION event at `+N`; the completion re-validates (the no-op law) and only then
+  emits the effect writes. `duration = 0` (drink, move_to seeds) completes in one pass —
+  today's behavior is the degenerate case, and elapsed-tics tracking is implicit in the
+  queued event's target tic.
 - **Removal is the existing cold-overlay write**: `destroy = "carrier"` resolves the
   validated offerer cell and emits `PROMOTE SET <cold_row> TYPE_BIOME_THING <cell> 0 0` —
   the same SET the build-walls stream proved, kind 0 = remove ([F5](forks.md#f5)). The

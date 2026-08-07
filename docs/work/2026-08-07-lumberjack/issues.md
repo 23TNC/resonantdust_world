@@ -9,13 +9,15 @@ bindings, **identically to `thingMenuOptions`**, or the menu offers what the wor
 refuses (the redux-I2 drift class, again). One resolution helper shared in spirit: the
 wasm filter and the worker read the same corpus tables.
 
-## I2 — a timed head intent vs MOVE_STEP supersession {#i2}
+## I2 — a timed intent vs supersession: the no-op law does the work {#i2}
 
-The corpus I9 reservation, now due: what happens when a fresh order lands mid-chop? Law
-([F3](forks.md#f3)): the queue is REPLACED — the chop is cancelled, no partial credit, no
-refund (nothing was spent but time). The elapsed-tics counter dies with the popped head;
-the tree is untouched until the full duration elapses in one unbroken tenure. State the
-law in ACTIONS.md so the next timed interaction doesn't re-litigate it.
+The corpus I9 reservation, now due: what happens when a fresh order lands mid-chop? The
+pending list is REPLACED ([F3](forks.md#f3)) and the new head's move supersedes the
+chain; the chop's already-queued COMPLETION event still fires — and re-validation at the
+fire tic finds the pawn gone/out of range and resolves to a logged no-op (user, F1). No
+partial credit, no refund, no cancellation bookkeeping: the tree is untouched unless the
+pawn is still adjacent when the full duration elapses. State the law in ACTIONS.md so
+the next timed interaction doesn't re-litigate it.
 
 ## I3 — tree removal must dirty the COLD caches {#i3}
 
@@ -25,11 +27,15 @@ from the in-family shadow buckets ([shadows-on-prims] rule: read from caster buc
 never recompute) and re-bake the affected squares, or the tree's shadow outlives the
 tree. Build-walls proved the add path; this is the first REMOVE drill.
 
-## I4 — the intents fan needs a wire frame + client mirror {#i4}
+## I4 — advancement needs a completion signal per intent kind {#i4}
 
-Like `Need`: a new edge frame for the intents row, a client `Event::PawnIntents`, and a
-mirror the pie-menu/debug can read. Headless drills inherit redux I10's rules (hidden-tab
-rAF freeze; MessageChannel yields, never busy-waits).
+The ephemeral queue (F1) advances when "the worker completes an event" — but completion
+differs by kind: a `duration > 0` intent completes when its queued completion event
+fires (self-signaling); a **move_to completes on ARRIVAL**, and the worker must
+recognize the chain's final hop landing for the right pawn AND the right trip serial (a
+superseded chain's death must not advance a queue it no longer heads). The MOVE_STEP arm
+already stamps trip serials — key the advancement on them. Headless drills inherit redux
+I10's rules (hidden-tab rAF freeze; MessageChannel yields, never busy-waits).
 
 ## I5 — golden + registry churn {#i5}
 
@@ -45,11 +51,13 @@ npc still composes its own move-then-drink two-step; once the queue lands, the n
 issue one queued order instead. Not this stream's work — record the simplification as a
 successor so the brain doesn't fork from the menu path forever.
 
-## I7 — the 6th intent and other rejections are silent to the user {#i7}
+## I7 — the queue is invisible outside the worker log {#i7}
 
-Queue-cap and validation rejections log-and-drop at the worker (the I6 interactions law).
-The menu has no feedback channel for a refused order. Accepted this stream; the queue row
-being fanned means a future UI can at least SHOW the queue it holds.
+Queue-cap and validation rejections log-and-drop at the worker (the I6 interactions
+law), no-ops log at completion, and with the queue ephemeral (F1) there is no fanned row
+for a client UI to show. Accepted this stream: the worker log is the only window — make
+its queue lines good (pawn, composed intents, advancement, no-op reasons). A future
+queue UI would need a fan the user has explicitly declined to build now.
 
 ## I8 — existing pawns predate the lumberjack trait {#i8}
 

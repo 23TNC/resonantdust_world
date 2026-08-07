@@ -1,15 +1,22 @@
 # Forks — lumberjack (plan-time decisions; each is mine unless the user vetoes)
 
-## F1 — the intent queue lives in the pawn shard, one row per pawn {#f1}
+## F1 — the intent queue is EPHEMERAL worker state (USER, 2026-08-07) {#f1}
 
-**Chosen**: a pawn-shard `intents` table row per pawn — `entity_reference`,
-`macro_position_reference` (zone-slaved like `needs`), `intents: Vec<u32>` (the queued
-program: packed `EXECUTE_INTERACTION`-shaped entries), `head_started_tic: u32`. Slaved to
-the state claim like `payload` (never claimed independently); fanned whole-row on change
-via a new wire frame.
-**Rejected**: worker in-memory (a worker restart forgets orders — against the self-heal
-posture; invisible to any future UI); one row per slot (no atomic replace, wider wire);
-payload opcodes (payload is mint/identity state, churning it per order is wrong-shaped).
+**User overruled the plan's shard-row draft**: "The pawn queue doesn't have to be
+authoritative… the currently running event is held in our tables as whatever we're
+actively working on, and our intent queue is ephemeral running alongside it so… whatever
+happens to that queue… happens."
+
+**Chosen**: a per-pawn in-memory pending list at the worker (cap 5, maybe a queue tic).
+When the worker completes an event it queues the NEXT one automatically, removing it from
+the pawn's list. The DURABLE half is the standing event machinery: the in-flight work is
+a queued event in the event shard (exactly like a MOVE_STEP chain hop), so a worker
+bounce loses only the pending tail — accepted. **The safety is execution-time
+re-validation**: every intent re-checks its affordances AND location at fire — a drink
+whose move was cancelled "figures out it's out of range and resolves to a no-op".
+**Rejected** (the earlier draft): a fanned pawn-shard `intents` row — authority the
+design doesn't need; the no-op law covers loss, and the running event is already in the
+tables.
 
 ## F2 — "adjacent" = Chebyshev ≤ 1 INCLUSIVE of the carrier cell {#f2}
 
