@@ -44,12 +44,16 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P3 — the display
 
-- [ ] ConditionCards → pie SQUARES: conic-gradient slices by magnitude, emotion-index
+- [x] ConditionCards → pie SQUARES: conic-gradient slices by magnitude, emotion-index
       order, solid for one, gray for none, NO text (F5). Acceptance: +1 happy +2 sad
-      renders 120°/240° (I4); captures.
-- [ ] The everything-tooltip (F6) + the alpha-dimmed panel wash (F7). Acceptance:
+      renders 120°/240° (I4); captures. → pinned card computed
+      `conic-gradient(happy 0-120deg, sad 120-360deg)` — index order despite sad
+      authored first; five live solid pies captured in sort order.
+- [x] The everything-tooltip (F6) + the alpha-dimmed panel wash (F7). Acceptance:
       captures — `+N <Emotion>` lines (+0 omitted, + always); the wash tracks the
-      active emotion.
+      active emotion. → captured "Elated / +6 Happy / priority 10 / 3137t remaining"
+      (flips above the cursor at the window's bottom edge); wash tracked fine-gray →
+      happy-gold → uncomfortable-olive across three live states.
 
 ## P4 — the verdict
 

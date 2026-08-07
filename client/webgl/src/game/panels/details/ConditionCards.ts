@@ -233,13 +233,9 @@ export class ConditionCards {
       el.style.borderColor = CARD_BORDER_HOVER;
       this.tooltip.textContent = tooltipText(c);
       this.tooltip.style.display = "block";
-      this.tooltip.style.left = `${e.clientX + 12}px`;
-      this.tooltip.style.top = `${e.clientY - 6}px`;
+      this.placeTooltip(e);
     });
-    el.addEventListener("mousemove", (e) => {
-      this.tooltip.style.left = `${e.clientX + 12}px`;
-      this.tooltip.style.top = `${e.clientY - 6}px`;
-    });
+    el.addEventListener("mousemove", (e) => this.placeTooltip(e));
     el.addEventListener("mouseleave", () => {
       el.style.borderColor = CARD_BORDER;
       this.tooltip.style.display = "none";
@@ -252,6 +248,15 @@ export class ConditionCards {
       this.setExpanded(!this.expanded);
     });
     return el;
+  }
+
+  /** Cursor-follow, FLIPPING above the cursor when the text would clip past the window
+   *  bottom — the strip hugs the panel's bottom edge, so downward tooltips usually would. */
+  private placeTooltip(e: MouseEvent): void {
+    const h = this.tooltip.offsetHeight;
+    const below = e.clientY - 6 + h <= window.innerHeight - 4;
+    this.tooltip.style.left = `${e.clientX + 12}px`;
+    this.tooltip.style.top = below ? `${e.clientY - 6}px` : `${e.clientY - h - 10}px`;
   }
 
   /** Flip the expanded state, persist it, and re-lay the strip. */

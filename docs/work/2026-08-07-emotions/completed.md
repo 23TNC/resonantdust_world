@@ -32,3 +32,11 @@
   clean outside the refusal test + one retirement comment; tsc clean; wasm + core +
   worker/master/orchestrator/npc + edge rebuilt and booted clean (master seeded 199
   definitions; npc logged `conditions=["quenched"] emotion=1` — happy — live).
+- **2026-08-07 — P3: the display.** Pie squares live: the +1 happy +2 sad pin computed
+  `conic-gradient(#e8a33a 0deg 120deg, #3a6ee8 120deg 360deg)` (index order beats
+  authored order); the everything-tooltip captured (`Elated / +6 Happy / priority 10 /
+  3137t remaining` — flips ABOVE the cursor at the window bottom, a clipping fix found
+  in drill); the wash tracked fine-gray (condition-free pawn) → happy-gold (thirsty+2u
+  vs quenched+2h, the TIE taking the lowest index) → uncomfortable-olive (7 = itchy 5 +
+  thirsty 2 beating elated's 6) across live states; four oracle conditions
+  (elated/itchy/frisky/engrossed) authored into the corpus, registry seeded 203.

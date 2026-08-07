@@ -92,3 +92,37 @@ color = "#8a8f3c"
 name = "playful"
 label = "Playful"
 color = "#c93cb8"
+
+# ── emotion-bearing TIMED conditions ──────────────────────────────────────────────────
+# Pure feelings — no stat/need machinery, granted by future interactions (and today by
+# drills). Together they stage the stream's acceptance oracle: 3 playful + 5
+# uncomfortable + 2 focused + 6 happy → the pawn holds HAPPY (VARIABLES.md § THE
+# ACTIVE EMOTION). 3600 tics = 10 min wall at 6 Hz.
+
+[[condition]]
+name = "elated"
+label = "Elated"
+emotions = [ { emotion = "happy", magnitude = 6 } ]
+duration = 3600.0
+priority = 10
+
+[[condition]]
+name = "itchy"
+label = "Itchy"
+emotions = [ { emotion = "uncomfortable", magnitude = 5 } ]
+duration = 3600.0
+priority = 10
+
+[[condition]]
+name = "frisky"
+label = "Frisky"
+emotions = [ { emotion = "playful", magnitude = 3 } ]
+duration = 3600.0
+priority = 10
+
+[[condition]]
+name = "engrossed"
+label = "Engrossed"
+emotions = [ { emotion = "focused", magnitude = 2 } ]
+duration = 3600.0
+priority = 10

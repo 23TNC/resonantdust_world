@@ -26,6 +26,10 @@ bark
 == needs ==
 thirst
 == conditions ==
+elated
+itchy
+frisky
+engrossed
 thirsty
 dehydrated
 quenched
@@ -185,6 +189,58 @@ white
 == condition_params ==
 [
     ConditionParams {
+        label: "Elated",
+        duration: 3600.0,
+        stats: [],
+        needs: [],
+        emotions: [
+            EmotionModifier {
+                emotion: 1,
+                magnitude: 6,
+            },
+        ],
+        priority: 10,
+    },
+    ConditionParams {
+        label: "Itchy",
+        duration: 3600.0,
+        stats: [],
+        needs: [],
+        emotions: [
+            EmotionModifier {
+                emotion: 14,
+                magnitude: 5,
+            },
+        ],
+        priority: 10,
+    },
+    ConditionParams {
+        label: "Frisky",
+        duration: 3600.0,
+        stats: [],
+        needs: [],
+        emotions: [
+            EmotionModifier {
+                emotion: 15,
+                magnitude: 3,
+            },
+        ],
+        priority: 10,
+    },
+    ConditionParams {
+        label: "Engrossed",
+        duration: 3600.0,
+        stats: [],
+        needs: [],
+        emotions: [
+            EmotionModifier {
+                emotion: 12,
+                magnitude: 2,
+            },
+        ],
+        priority: 10,
+    },
+    ConditionParams {
         label: "Thirsty",
         duration: 0.0,
         stats: [],
@@ -265,9 +321,13 @@ metabolism: Some(StatParams { label: "Metabolism", min: 0.0, max: 10.0, min_wins
 logging: Some(StatParams { label: "Logging", min: 0.0, max: 10.0, min_wins: true })
 == gameplay seed refs ==
 gameplay/need/thirst Some("0x80010010")
-gameplay/condition/thirsty Some("0x80020010")
-gameplay/condition/dehydrated Some("0x80020020")
-gameplay/condition/quenched Some("0x80020030")
+gameplay/condition/elated Some("0x80020010")
+gameplay/condition/itchy Some("0x80020020")
+gameplay/condition/frisky Some("0x80020030")
+gameplay/condition/engrossed Some("0x80020040")
+gameplay/condition/thirsty Some("0x80020050")
+gameplay/condition/dehydrated Some("0x80020060")
+gameplay/condition/quenched Some("0x80020070")
 gameplay/trait/biological_lifeform Some("0x80030010")
 gameplay/trait/walks Some("0x80030020")
 gameplay/trait/lumberjack Some("0x80030030")
@@ -9577,6 +9637,6 @@ logs: 1 part(s) [(0, 1.0, Some("white"))]
 20,20,20 mountains stone -
 == needs probes ==
 full: active=[] next=Some(14041)
-mid: active=[(2147614736, 2, 0)] next=Some(3241)
-empty: active=[(2147614752, 8, 0)] next=None
-timed: active=[(2147614768, 2, 3500)] next=Some(3600)
+mid: active=[(2147614800, 2, 0)] next=Some(3241)
+empty: active=[(2147614816, 8, 0)] next=None
+timed: active=[(2147614832, 2, 3500)] next=Some(3600)
