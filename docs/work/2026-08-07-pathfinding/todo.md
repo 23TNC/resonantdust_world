@@ -26,9 +26,10 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P2 — the pathfinder
 
-- [ ] `path_eval` in shared/content: A* 8-way over a probe closure — F4/F6 rules,
+- [x] `path_eval` in shared/content: A* 8-way over a probe closure — F4/F6 rules,
       expansion cap (I6), `next_step`/`path_len`. Acceptance: unit tests — detour,
-      wall, corner-cut refusal, walk-out-of-tree, unreachable → None.
+      wall, corner-cut refusal, walk-out-of-tree, unreachable → None. → 7/7 green
+      incl. determinism (seq-tie-broken heap) and cap-exhaustion-reads-unreachable.
 
 ## P3 — the worker walks around water
 

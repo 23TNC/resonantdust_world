@@ -19,6 +19,7 @@ pub mod content;
 pub mod emotion_eval;
 pub mod loader;
 pub mod needs_eval;
+pub mod path_eval;
 pub mod stat_eval;
 pub mod toml_loader;
 
