@@ -24,9 +24,14 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
       BUMPS — sim-visible), wasm filter, and the worker's probes; ghost-yield refusal
       unit-tested; content-check clean, all gates (content tests 40, shared, core,
       worker, tsc) green.
-- [ ] Golden re-blessed (I4) and ALL FOUR sim crates rebuilt + restarted (I2 —
+- [x] Golden re-blessed (I4) and ALL FOUR sim crates rebuilt + restarted (I2 —
       lumberjack I11's law). Acceptance: golden diff = the authored rows; the registry
-      shows the logs def after the master reseeds.
+      shows the logs def after the master reseeds. → golden diff audited (the logs
+      def, the struct Debug shape, tree `yields: Some("logs")` vs shrub/cactus None);
+      the registry appended `logs` at id 0x200000C0 (kind 12; 198→199 defs, nothing
+      renumbered); I2 BIT ANYWAY — the npc's `usable_drink` was a missed sweep site
+      (its RUNTIME corpus fetch refused `yields` until rebuilt), caught by its own
+      loud corpus-load error and fixed.
 
 ## P2 — the drop
 

@@ -320,10 +320,19 @@ impl Wolves {
         let bundle = self.bundle.as_ref()?;
         let wolf = self.wolf?;
         let trait_rows = self.payloads.get(&wolf).map(|p| payload_traits(p)).unwrap_or_default();
-        bundle.tile_interactions(kind).into_iter().find(|(i, _)| {
-            bundle.interaction_params(i).is_some_and(|ip| ip.satisfy.is_some())
-                && stat_eval::interaction_available(bundle, i, &trait_rows, &self.active_set)
-        })
+        bundle
+            .tile_interactions(kind)
+            .into_iter()
+            .find(|b| {
+                bundle.interaction_params(&b.name).is_some_and(|ip| ip.satisfy.is_some())
+                    && stat_eval::interaction_available(
+                        bundle,
+                        &b.name,
+                        &trait_rows,
+                        &self.active_set,
+                    )
+            })
+            .map(|b| (b.name, b.magnitude))
     }
 
     /// Compose + queue `EXECUTE_INTERACTION` for `interaction`, binding its signature by
