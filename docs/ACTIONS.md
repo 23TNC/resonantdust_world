@@ -139,10 +139,31 @@ carry it, F9), the pawn's `can_move_ground` predicate passes — and queues the
 `PROMOTE_EVENT PROMOTE MOVE_TO pawn dest` seed at `master+4` (the I11 barrier rule). From the
 seed down, everything below is unchanged.
 
-`MOVE_TO` is a self-perpetuating chain: each hop writes one tile and queues the next, until `dest`.
+`MOVE_TO` is a self-perpetuating chain: each hop walks one CHORD and queues the next, until `dest`.
 
-**The step is the shared path's first hop** (pathfinding, 2026-08-07 — the seam the greedy
-straight line held). The pathing law:
+**The step is the shared path's first CHORD** (chord-movement, 2026-08-07 — the per-tile hop
+retired the day pathfinding replaced the greedy seam). The chord law:
+
+- **The route is the string-pulled polyline** — `path_eval` runs octile A* then string-pulls
+  to the MINIMAL chord sequence (corner points on the doubled integer grid — chord-movement
+  F5); a pawn walks straight lines of arbitrary slope between them. Chords split at ~8 tiles
+  so a hop's window stays bounded (I7).
+- **One hop event per chord** (F2): a hop writes the chord's END — a SUBTILE position
+  (`sx:4|sy:4` in the position's low byte, VARIABLES.md) — and queues the next hop at
+  `tic + ceil(chord_len × ground_speed)`. Event count = the chord count.
+- **Speed flips at EVAL, not in content** (F6): `walks` still authors tics/tile; consumers
+  derive `tiles_per_tic = 1 / ground_speed`. All schedule arithmetic stays in integer tics.
+- **Mid-chord RESOLVE-ON-TOUCH is law** (F3): between chord writes the stored row is the
+  chord's start + its write tic. Any event touching the pawn — a superseding seed, an
+  interaction effect, a validation floor — first resolves
+  `position = start + unit(chord) × (now − write_tic) × tiles_per_tic`, quantized to
+  subtile, using the deterministic route recompute to know the chord. No new state: the
+  row + the corpus + the tic are the whole computation. This is what makes an interrupted
+  trip continue from where the pawn IS.
+- **Tile identity = floor** (I2, half-open: subtile 0 belongs to the tile). VALIDATION
+  floors only worker-stored/resolved positions; client flooring is display-advisory.
+
+The pathing law beneath it (pathfinding, 2026-08-07):
 
 - **ONE pathfinder** — `path_eval` in shared/content beside the other evals: A* on the 8-way
   tile grid over a caller-supplied cell probe. The worker feeds its mirrored composed
@@ -152,11 +173,13 @@ straight line held). The pathing law:
   composed tile kind authors `pathable` (VARIABLES.md; absence = true) AND no impathable
   thing occupies it (thing overlay kind-0 SUPPRESSES — a felled tree reopens its cell with
   no extra write). There is no pathability table.
-- **Per-hop STATELESS recompute** (F3): every hop re-runs `path_eval` from the pawn's
-  current cell and steps its first move. No stored route — supersession, re-issue, and
-  mid-trip world changes stay correct because every hop re-reads the world.
-- **8-way, NO corner cutting** (F4): a diagonal is legal only if BOTH orthogonal cells it
-  clips are pathable.
+- **Per-hop STATELESS recompute** (pathfinding F3): every hop re-runs `path_eval` from the
+  pawn's current (resolved) position and walks the first chord. No stored route —
+  supersession, re-issue, and mid-trip world changes stay correct because every hop
+  re-reads the world.
+- **NO corner clipping** (pathfinding F4, generalized by chord-movement F5/F7): a chord's
+  supercover — inflated by the pawn's footprint radius (1×1 ships radius 0) — must be
+  wholly pathable; the old diagonal rule is the degenerate one-tile case.
 - **Impathable or unreachable destination = LOGGED NO-OP** (F5): the trip drops at seed
   time with a log line, the intent-completion posture. Bounded search — cap exhaustion
   reads as unreachable, never a stall.
@@ -168,8 +191,9 @@ Two capabilities the chain uses:
 
 - **A verb that queues an event.** A non-final `MOVE_TO` hop makes the worker queue the
   continuation `MOVE_STEP obj dest serial` — baked into the verb, not a general `QUEUE` action (yet).
-- **Queue-at-a-future-tic.** The next hop lands `k` tics out, `k` = the pawn's pace in TICS PER
-  TILE — since input-rework F8 the DERIVED **`ground_speed` stat** (the pawn's `walks` level's
+- **Queue-at-a-future-tic.** The next hop lands `k` tics out, `k = ceil(chord_len ×
+  ground_speed)` (chord-movement F6) — `ground_speed` is the pawn's pace in TICS PER
+  TILE, since input-rework F8 the DERIVED **`ground_speed` stat** (the pawn's `walks` level's
   authored tics/tile through the ONE `stat_eval`; the old per-kind `speed` field is DELETED).
   Every consumer — the worker's continuation spacing, the client's speculation rate, the npc's
   trip deadline — derives the SAME value from the pawn's rows + corpus, or speculation drifts by
@@ -184,18 +208,18 @@ avoiding. The cadence:
 
 - **`PROMOTE_EVENT` once**, on the initial program, announces the **intent**: the client now knows
   `obj` is heading to `dest`, at which tic.
-- **`PROMOTE` at the seed and the final hop** — the start position anchors speculation; the landing
-  corrects it. Bare continuations fan **nothing**. **The seed does NOT step** (user, 2026-07-28):
-  the intent event's `MOVE_TO` promotes the object's **current** position unchanged (facing turns
-  toward the path, and the trip-serial is stamped — see chain identity below), so the anchor
-  aligns every client to the server BEFORE speculation walks — a
-  seed that stepped first fanned `start+1` and opened every trip with a one-tile snap. The first
-  step lands on the first continuation, one `tics_per_tile` after the intent; a trip is
-  `hops + 1` hop-slots end to end.
-- **Resolve-on-touch is free**: any other event touching `obj` composes (and, promoting, publishes)
-  its resolved position — no extra machinery.
-- A re-anchor **every N tiles** is a held knob — added when the recorded speculation error
-  (first-pawns F8) says what N buys.
+- **`PROMOTE` at the final hop only — the seed fans NO position** (user, 2026-08-07;
+  chord-movement F4, retiring the 2026-07-28 start anchor). The start fan existed to align
+  speculation at trip open, but it QUANTIZED an interrupted pawn to its last tile — the
+  backtrack visual. With subtile positions the client arms speculation from its CURRENT
+  belief instead; the landing still corrects exactly. The seed still stamps the
+  trip-serial and turns facing (chain identity below); it steps nothing and fans nothing.
+- **The every-N re-anchor is ON** (chord-movement F4 — the knob first-pawns held): a bare
+  subtile-accurate `PROMOTE` every `REANCHOR_TICS` (32 to start; the recorded spec error
+  tunes it) bounds drift for late joiners and bad estimates. Because it carries subtile
+  position, a correction NUDGES — it cannot reproduce the old one-tile snap.
+- **Resolve-on-touch is law** (chord-movement F3): any other event touching `obj` first
+  RESOLVES its mid-chord position, then composes (and, promoting, publishes) it.
 - **Authoritative state steers the SPECULATION; the RENDER chases** (user, 2026-07-28 —
   movement-hardening F6, the former tween knob, built): a `state` row snaps the *speculation*
   to the server's tile (the landing clears it; an interim resolve reseeds it; every correction

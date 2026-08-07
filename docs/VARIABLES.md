@@ -79,12 +79,25 @@ u32 position_reference
     u8 zone_reference             bits 16–23
   u16 micro_position_reference    bits 0–15
     u8 tile_reference             bits 8–15
-    u8 layer_reference            bits 0–7
+    u8 layer_reference            bits 0–7    # COLD rows (tiles/things)
       u4 type_id                  bits 4–7
       u4 layer_id                 bits 0–3
+    u8 subtile_reference          bits 0–7    # PAWN positions (chord-movement F1)
+      u4 subtile_x                bits 4–7    # sixteenths of a tile from its origin
+      u4 subtile_y                bits 0–3
 ```
 
 No realm. One object per `(type, layer, tile)` within a zone, subtype-agnostic.
+
+**The low byte is per-shard** (chord-movement F1): COLD rows address layers with it;
+PAWN positions carry `sx:4 | sy:4` SUBTILE nibbles — sixteenths of a tile, so a pawn's
+authoritative position resolves to 1/16 tile with no schema change. Pawns historically
+wrote 0 and every decoder floors through `position_to_tile`, so an old reader of a
+subtile position simply reads the tile — graceful degrade by construction. The codec
+keeps the two meanings apart (`pack_pawn_subtile` / `position_subtile` vs the layer
+helpers); never mix them. **Edge ownership is HALF-OPEN** (chord-movement I2): subtile
+0 belongs to the tile — `tile = floor(position)`, exactly `position_to_tile`'s
+behavior — and VALIDATION floors only worker-stored/resolved positions.
 
 **World structure.** Every geographic level is a `u4` nibble pair (`x:4 | y:4`), so every edge is 16:
 

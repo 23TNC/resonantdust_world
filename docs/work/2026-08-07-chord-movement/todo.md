@@ -6,12 +6,14 @@ anticipated-issue inventory in [`issues.md`](issues.md) (I#)._
 
 ## P0 — the paper
 
-- [ ] ACTIONS.md §Movement: the chord law — per-chord hops (F2), mid-chord
+- [x] ACTIONS.md §Movement: the chord law — per-chord hops (F2), mid-chord
       resolve-on-touch (F3), no start fan + the every-N re-anchor ON (F4), tiles/tic
-      derived at eval (F6). Acceptance: docs-check green.
-- [ ] VARIABLES.md: pawn positions' low byte = `sx:4|sy:4` SUBTILE nibbles (F1; cold
+      derived at eval (F6). Acceptance: docs-check green. → the chord law block +
+      the promote cadence rewritten (seed fans nothing; REANCHOR_TICS=32 ON); green.
+- [x] VARIABLES.md: pawn positions' low byte = `sx:4|sy:4` SUBTILE nibbles (F1; cold
       rows keep layer semantics); the half-open edge-ownership rule (I2).
-      Acceptance: docs-check green.
+      Acceptance: docs-check green. → the layout block shows both readings of the
+      low byte + the per-shard law + half-open flooring; green.
 
 ## P1 — the codec
 
