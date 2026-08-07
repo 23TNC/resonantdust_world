@@ -170,7 +170,14 @@ they are the case the user confirmed "mostly works".
 
 **Do not restore the wolf's rects until the loader carries the two axes separately.**
 
-## I11 — Mover stems are registered as if they were COLD stems — OPEN (the wolf symptom was STALE) {#i11}
+## I11 — Mover stems are registered as if they were COLD stems — CLOSED 2026-08-06 (the wolf symptom was STALE) {#i11}
+
+> **CLOSED by [`2026-08-06-human-pawns-redux`](../2026-08-06-human-pawns-redux/README.md) P1
+> (its F6)**: `MoverLayer.applyVisual` now registers each slot's authored rect from
+> `moverParts()`' own `subframes`, under the EXACT stem `moverSlotTexture` resolved
+> (facing, variant folder, part suffix; west = the mirrored east stem, so it registers
+> east's rect by construction). Verified live: `pawn/animal/wolf/n#0` — a facing the cold
+> path never covered — holds the authored `[0.3359, 0.0859, 0.3281, 0.8438]` verbatim.
 
 > "The wolf is textured as a tree, and moving at light speed." — user, 2026-08-02
 
@@ -216,8 +223,8 @@ cropped one is unmistakably a tree.
 wrong speed) is a strong signal to check the KIND ID before suspecting the renderer. Both symptoms
 resolving to one wrong index is the shape of that failure.
 
-**I11 itself stands and is still unfixed** — the mover registration really is missing, it is simply
-not what broke the wolf.
+**I11 itself stood until 2026-08-06** — the mover registration really was missing (it was simply
+not what broke the wolf); human-pawns-redux P1 built it (see the closure note above).
 
 ## I12 — CUSTODY (lod-aftermath): the variant-as-cell dialect is retired for folder-variant kinds {#i12}
 

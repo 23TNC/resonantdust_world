@@ -5,28 +5,45 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P0 — the paper trued
 
-- [ ] Close [2026-07-30-pawn-part-placement](../2026-07-30-pawn-part-placement/README.md) as
+- [x] Close [2026-07-30-pawn-part-placement](../2026-07-30-pawn-part-placement/README.md) as
       SUPERSEDED ([F5](forks.md#f5)): its README + the work-index row say why (the `pawns.rd`
       knobs are deleted; tuning is TOML now; the lighting/capture lanes carry as
       [I9](issues.md#i9)). Acceptance: `bin/rd work doctor` shows it closed; docs-check green.
-- [ ] True the stale human-pawns paper: the work-index rows still naming `moveEntity` /
+      → the README banner + the index row (also keeping its still-real I1 blit-footprint
+      finding named); doctor shows `closed`; docs-check green.
+- [x] True the stale human-pawns paper: the work-index rows still naming `moveEntity` /
       `pawns.rd`, and `SquareCache`'s "human-pawns P5" doc notes vs the retired `layer` lane.
       Acceptance: grep `pawns.rd` clean outside completed/deviations history; docs-check green.
+      → the misleading OPEN references were pawn-part-placement (closed above) and the
+      human-pawns index row (a since-delivery note appended: TOML corpus, dead mover, redux
+      re-opens the mint). Remaining `pawns.rd` hits are DONE streams' historical records —
+      kept (rewriting history files is the wrong fix). The SquareCache `layer` doc-note is
+      deleted WITH its write in P1 (one change, not two).
 
 ## P1 — the rot repairs (before anything new renders)
 
-- [ ] The [subframe-ingest I11] fix ([F6](forks.md#f6)): MoverLayer registers per-SLOT
+- [x] The [subframe-ingest I11] fix ([F6](forks.md#f6)): MoverLayer registers per-SLOT
       subframes from `moverParts()`' rects against the stems `moverSlotTexture` builds
       (facing + variant-folder + part-suffix forms; west = mirrored east, never stored —
       [I1](issues.md#i1)). Acceptance: the wolf's e/s/n crops match its authored rects in the
-      browser; subframe-ingest I11 marked closed with a pointer here.
-- [ ] Humans gain `needs = ["thirst"]` ([F4](forks.md#f4)); golden re-blessed
+      browser; subframe-ingest I11 marked closed with a pointer here. → `subframeSlot` beside
+      `scaleSlot` (the [variant][rotation] cell, rot = `facing === 3 ? 1 : facing`);
+      `MoverPart.subframes` finally READ; `Viewport.setSubframe` passthrough. LIVE: resolver
+      holds `wolf/e#0 [0, 0.2578, 1, 0.4688]` and — the facing the cold path never covered —
+      `wolf/n#0 [0.3359, 0.0859, 0.3281, 0.8438]`, both authored-verbatim. I11 closed with
+      the pointer; south + part-suffix stems register on first occurrence (same one path).
+- [x] Humans gain `needs = ["thirst"]` ([F4](forks.md#f4)); golden re-blessed
       ([I6](issues.md#i6)). Acceptance: golden shows the rows; the drink drift is closed by
-      construction (menu offer ⇔ worker accept, verified in P4's drill).
-- [ ] Delete the retired `layer` write (MoverLayer + the `addPrim` copy site,
+      construction (menu offer ⇔ worker accept, verified in P4's drill). → both kinds; golden
+      diff = ONE line (the stride-8 needs table gains `0x80010010` in both human slots);
+      content-check clean.
+- [x] Delete the retired `layer` write (MoverLayer + the `addPrim` copy site,
       [I8](issues.md#i8)) and outline EVERY part of a selected pawn in `syncOutlines`
       ([I4](issues.md#i4)). Acceptance: grep `layer:` gone from the mover path; a selected
-      wolf still outlines correctly (the two-part check lands in P2's drill).
+      wolf still outlines correctly (the two-part check lands in P2's drill). → the write,
+      the copy, the `Primitive.layer` field and its P5 doc-note all gone (the retirement
+      pointer lives on `carrierOf`'s doc); syncOutlines now walks `partPrimIdsOf` (see P2's
+      drill for the two-part proof; the wolf outline re-verified there).
 
 ## P2 — the mint path
 

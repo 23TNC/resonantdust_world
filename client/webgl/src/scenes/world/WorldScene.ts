@@ -464,20 +464,27 @@ export class WorldScene extends Scene {
         items.push({ x: s.x * SQUARE, y: s.y * SQUARE, w: SQUARE, h: SQUARE, mode: "box" });
         continue;
       }
-      let prim = null;
+      // human-pawns-redux P1 (I4): a pawn outlines EVERY part (a human's head with its
+      // body); things stay single-prim.
+      const prims = [];
       if (s.kind === "pawn") {
-        const id = this.moverLayer.primIdOf(s.entity);
-        prim = id !== null ? this.panel.view.warmGetPrim(id) : null;
+        for (const id of this.moverLayer.partPrimIdsOf(s.entity)) {
+          const p = this.panel.view.warmGetPrim(id);
+          if (p) prims.push(p);
+        }
       } else {
-        prim = this.panel.view.coldGetPrim(s.primId);
+        const p = this.panel.view.coldGetPrim(s.primId);
+        if (p) prims.push(p);
       }
-      if (!prim) continue; // despawned/streamed out — outline simply absent until it returns
-      let frame;
-      if (prim.textureName) {
-        const surf = this.ctx.textureResolver.resolve(prim.textureName, "surface", prim.cell)?.frame;
-        if (surf) frame = { source: surf.source, x: surf.x, y: surf.y, w: surf.w, h: surf.h };
+      // despawned/streamed out — outline simply absent until it returns
+      for (const prim of prims) {
+        let frame;
+        if (prim.textureName) {
+          const surf = this.ctx.textureResolver.resolve(prim.textureName, "surface", prim.cell)?.frame;
+          if (surf) frame = { source: surf.source, x: surf.x, y: surf.y, w: surf.w, h: surf.h };
+        }
+        items.push({ x: prim.x, y: prim.y, w: prim.width, h: prim.height, mode: "sprite", frame, flip: prim.flipX });
       }
-      items.push({ x: prim.x, y: prim.y, w: prim.width, h: prim.height, mode: "sprite", frame, flip: prim.flipX });
     }
     this.panel.view.setOutlines(items);
   }

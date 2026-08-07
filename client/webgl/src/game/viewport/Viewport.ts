@@ -310,6 +310,15 @@ export class Viewport {
     this.resolver?.setSpriteScale(stem, sw, sh, px, py);
   }
 
+  /** human-pawns-redux P1 (subframe-ingest I11): register a mover slot's authored subframe
+   *  rect under its RESOLVED stem — same semantics as the cold-thing registration
+   *  (`WorldBridge.registerThingSubframes`); the resolver ingests that rect and nothing
+   *  else, identically for every co-packed map. No-op before the resolver attaches; the
+   *  MoverLayer re-registers on every visual apply. */
+  setSubframe(stem: string, cell: number, x: number, y: number, w: number, h: number, ax: number, ay: number): void {
+    this.resolver?.setSubframe(stem, cell, x, y, w, h, ax, ay);
+  }
+
   /** Attach the texture resolver (packed→geo) + our GL context. Called by the world scene once
    *  the viewport exists (F6). A pack landing re-bakes both caches so prims pick up the art. */
   setResolver(resolver: TextureResolver): void {

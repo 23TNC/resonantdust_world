@@ -185,6 +185,9 @@ subType = ["human"]
 variant = ["0"]
 # input-rework F8: pace = derived ground_speed. Level 1 = 24 tics/tile (the old
 # `speed = 16` slot has no walks level; humans are the ambling debug fixture).
+# human-pawns-redux F4: biological lifeforms THIRST — without the need, the pie menu
+# offers Drink (metabolism passes) and the worker refuses (no row): the drift class.
+needs = ["thirst"]
 traits = ["biological_lifeform", { name = "walks", level = 1 }]
 
   [[thing.part]]
@@ -218,6 +221,7 @@ type = "pawn"
 kind = "male"
 subType = ["human"]
 variant = ["0"]
+needs = ["thirst"]
 traits = ["biological_lifeform", { name = "walks", level = 1 }]
 
   [[thing.part]]

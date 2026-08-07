@@ -76,11 +76,10 @@ export interface Primitive {
   /** human-pawns P5 — this billboard is a CARRIED PIECE of another prim's carrier: the value is
    *  the OWNER billboard's prim id (a pawn's head names its body). Its `billboard_data` leaf
    *  parents on that carrier (`prim_data` holds up to 4 pieces — "a pawn = prim{head, body, …}",
-   *  VARIABLES.md) instead of minting a degenerate root of its own. Absent ⇒ a root as ever. */
+   *  VARIABLES.md) instead of minting a degenerate root of its own. Absent ⇒ a root as ever.
+   *  (The companion `layer` lane was RETIRED — VARIABLES §Removed: it carried the part slot
+   *  and nothing ever read it back; human-pawns-redux deleted the write.) */
   carrierOf?: number;
-  /** human-pawns P5 — the carried piece's LAYER (`billboard_data.G` bits 28–31): the pawn part
-   *  slot (body 0, head 1). One object per layer among a prim's pieces. */
-  layer?: number;
 }
 
 /** The light a primitive carries. Per-KIND in content ([F8](../../../../docs/work/2026-07-25-primitive-graph/forks.md)),
@@ -576,7 +575,7 @@ export class SquareCache {
       litTile: spec.litTile,   // tile-lighting F2: the participation flag — dropped here, a
                                // wall never joins the lighting class (the addPrim gotcha)
       carrierOf: spec.carrierOf, // human-pawns P5: the piece link — dropped here, a head mints
-      layer: spec.layer,         // its own root + loses its layer (the addPrim gotcha again)
+                                 // its own degenerate root (the addPrim gotcha again)
       elevation: spec.elevation, // z-positioning P3: the HEIGHT — dropped here, every elevated
                                  // part reverts to standing on the floor and casts from the wrong
                                  // footprint, which is the exact bug this stream exists to fix

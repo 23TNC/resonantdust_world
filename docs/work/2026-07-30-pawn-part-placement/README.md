@@ -1,5 +1,17 @@
 # Pawn parts: seat the head, order it by facing, and stop albedo/lighting disagreeing — 2026-07-30
 
+> **SUPERSEDED 2026-08-06** by
+> [`2026-08-06-human-pawns-redux`](../2026-08-06-human-pawns-redux/README.md) (its F5): this
+> plan's knobs are `content/visual/pawns.rd` variables (`head.scale 0.625`,
+> `head.offset.y −1.15`, `body.size 1.5`) that were DELETED with the DSL
+> (`2026-08-04-toml-content` P6) — the corpus now authors the parts as `[[thing.part]]` TOML
+> (`scale 0.5`, `offset.z 0.87`, `depth 1.0`), so a resumed session cannot execute these
+> items as written. The facing z-order it wanted was later BUILT (`facingDepth`, per-slot
+> depth — pawn-render); placement tuning is now plain TOML edits judged in the browser
+> (redux I3); the lighting-footprint and capture lanes carry as redux
+> [I9](../2026-08-06-human-pawns-redux/issues.md#i9)'s recorded successors. Superseded, not
+> delivered — the distinction matters to a reader deciding whether an idea was tried.
+
 _Components: [`client/webgl`](../../components/client/webgl/) (`MoverLayer.ts`,
 `thingPlacement.ts`, `albedoBlitShader.ts`) · [`shared/dsl`](../../components/shared/) ·
 [`dev/art`](../../components/dev/). Plan in [`todo.md`](todo.md); decisions in

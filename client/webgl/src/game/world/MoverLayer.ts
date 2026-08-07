@@ -71,6 +71,11 @@ interface MoverPart {
   spriteAnchorY: number;
   tint: number;
   geoColor: number;
+  /** The slot's authored SUBFRAME rects, flat `[variant][rotation] × [x,y,w,h,ax,ay]`
+   *  (16 × 16 × 6 = 1536) — registered per resolved stem in {@link applyVisual}
+   *  (human-pawns-redux P1, closing subframe-ingest I11: these were emitted by
+   *  `moverParts` and never read, so every mover cropped by defaults). */
+  subframes?: Float64Array;
 }
 
 /** Speculation applies a new position only past this tile delta — keeps the warm re-bake
@@ -387,10 +392,16 @@ export class MoverLayer {
     }
   }
 
-  /** ui-select P1: the warm prim id for a pawn entity — the CARRIER (slot 0) prim; outline/
-   *  details follow it. */
+  /** ui-select P1: the warm prim id for a pawn entity — the CARRIER (slot 0) prim; details
+   *  follow it. */
   primIdOf(entity: number): number | null {
     return this.movers.get(entity)?.parts[0]?.id ?? null;
+  }
+
+  /** human-pawns-redux P1 (I4): EVERY part's prim id, slot order — the outline set walks
+   *  all of them so a selected human's head is marked with its body. */
+  partPrimIdsOf(entity: number): number[] {
+    return this.movers.get(entity)?.parts.map((p) => p.id) ?? [];
   }
 
   /** ui-select P2: a pawn's live details for the details panel — authoritative tile, facing,
@@ -667,12 +678,27 @@ export class MoverLayer {
     const scaleSlot = (s: MoverPart, name: string | undefined): void => {
       if (name) this.viewport.setSpriteScale(name, s.scale, s.scale, s.spriteAnchorX, s.spriteAnchorY);
     };
+    // human-pawns-redux P1, closing subframe-ingest I11: the slot's authored subframe rect,
+    // registered under the SAME resolved name. The rect is the [variant][rotation] cell the
+    // loader composed (fallback chain included); a WEST facing draws the EAST master
+    // mirrored, so it registers (and needs) east's rect — the resolved name IS the east
+    // stem. Full-frame defaults no-op inside `setSubframe`, so unauthored slots stay on
+    // the old path.
+    const subframeSlot = (s: MoverPart, name: string | undefined, variant: number): void => {
+      const sub = s.subframes;
+      if (!name || !sub) return;
+      const rot = facing === 3 ? 1 : facing; // w = mirrored e (s0 e1 n2 w3)
+      const o = (variant * 16 + rot) * 6;
+      if (o + 6 > sub.length) return;
+      this.viewport.setSubframe(name, 0, sub[o], sub[o + 1], sub[o + 2], sub[o + 3], sub[o + 4], sub[o + 5]);
+    };
 
     // Slot 0 — the carrier box from the kind's layout (the wolf's whole visual).
     const d0 = defOf(0);
     const layout = readLayout(this.thingLayout, kind);
     const tex0 = moverSlotTexture(stemOf(slots[0], d0), facing, variantOf(d0), slots[0].part, has);
     scaleSlot(slots[0], tex0.name);
+    subframeSlot(slots[0], tex0.name, variantOf(d0));
     const box = placeThing(tileX, tileY, layout, tex0.flipX, !tex0.name);
     const size0 = box.width; // square box
     // The pawn's ROW band. Slots sort WITHIN it by their own facing-resolved depth (F1) — the
@@ -712,6 +738,7 @@ export class MoverLayer {
       const di = defOf(i);
       const tex = moverSlotTexture(stemOf(s, di), facing, variantOf(di), s.part, has);
       scaleSlot(s, tex.name);
+      subframeSlot(s, tex.name, variantOf(di));
       // The slot's OWN frame span in world px — never slot 0's box times a factor (F4): the drawn
       // box must equal the def's pow2 frame span or the lighting card mis-sizes by the ratio.
       const w = (s.span > 0 ? s.span : 1) * tilePx;
@@ -762,7 +789,6 @@ export class MoverLayer {
           hot: true, // a mover — its light/shadow participation is HOT-class only (pawn-render P2)
           rotation: facing, // P4: the record carries the TRUE cardinal (the frame follows it anyway)
           carrierOf: i > 0 ? parts[0].id : undefined, // P5: pieces name the carrier owner
-          layer: i,
           elevation: sp.elevation ?? 0, // z-positioning P3 — `y` is already shifted north by this
         });
         parts.push({
