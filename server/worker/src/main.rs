@@ -815,8 +815,15 @@ async fn main() {
                     // executes a scheduled `duration` intent's effects (re-validating).
                     let is_completion = version == INTENT_COMPLETION;
                     let reject = |why: &str| {
-                        tracing::warn!(event = format!("{event_reference:#010x}"), tic = t, why,
-                            "interaction dropped");
+                        // A dropped COMPLETION is the intent queue's NO-OP (lumberjack
+                        // F1) — same law, named in the log so drills can tell them apart.
+                        if version == INTENT_COMPLETION {
+                            tracing::info!(event = format!("{event_reference:#010x}"), tic = t,
+                                why, "intent completion NO-OP");
+                        } else {
+                            tracing::warn!(event = format!("{event_reference:#010x}"), tic = t,
+                                why, "interaction dropped");
+                        }
                     };
                     let Some(params) = bundle.interaction_params_by_ref(interaction_ref) else {
                         reject("unknown interaction def");

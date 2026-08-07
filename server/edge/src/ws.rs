@@ -521,7 +521,12 @@ fn relay_thing_overlay(o: &mpsc::UnboundedSender<String>, row: &bindings::thing:
                 definition_reference: definition,
                 data: it.data,
                 tic: row.tic,
-                removed: removed || it.kind_reference == 0,
+                // A kind-0 THING cell is a TOMBSTONE (a felled tree — lumberjack F5): it
+                // must reach the client as a live override that SUPPRESSES the baseline
+                // and draws nothing. `removed: true` is only for the override row itself
+                // leaving the subscription (restore the baseline). Tiles differ: ground
+                // can't be "nothing", so the tile relay's kind-0 = clear-override stands.
+                removed,
             },
         );
     }
