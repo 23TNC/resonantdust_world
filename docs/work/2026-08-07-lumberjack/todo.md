@@ -71,23 +71,56 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
       order clears the queue before its seed supersedes the chain, so a superseded
       Move-running queue cannot exist (stated in the code). DRILLED: `intent advanced —
       walk landed` then `drink … 0.0→3.0 … version=2` 8 s after composition.
-- [ ] Duration via queue_at: a `duration = N` head queues its COMPLETION at `+N`, which
+- [x] Duration via queue_at: a `duration = N` head queues its COMPLETION at `+N`, which
       RE-VALIDATES affordance + location and no-ops when stale (I2). Acceptance: fire
       tic = start + N in the log; a walked-away pawn's completion logs the no-op.
+      → CLEAN-WORLD drills: schedule 4261 fire_tic 4290 → `executed tic=4290
+      destroyed=true version=1` (fire = start + 30 exact, twice more at 6954/6979).
+      The stale case drilled as a RACE (walking out of inclusive-adjacent range in 30
+      tics is impossible at 24 t/t — two lumberjacks chop ONE tree staggered): B's
+      completion felled it at 6954, A's at 6979 logged `intent completion NO-OP —
+      no carrier in range offers this interaction`. The user's law verbatim, zero
+      cancellation machinery. (Dropped completions log as NO-OP INFO now, not WARN.)
 
 ## P4 — timber
 
-- [ ] A FRESH lumberjack (I8: worker restarted, re-minted) menu-clicks a FAR tree: Cut
+- [x] A FRESH lumberjack (I8: worker restarted, re-minted) menu-clicks a FAR tree: Cut
       Down offered, queue walks then chops 30 tics, the cell SETs 0, tree AND shadow
       leave the render (I3). Acceptance: walk+chop+destroy log; before/after captures.
-- [ ] The refusals + neighbours: a wolf's tree menu offers no Cut Down; shrub and cactus
+      → drilled TWICE (dirty world, then the user-requested CLEAN state after a full
+      `redeploy --force`): compose 4158 → walk landed 4257 → scheduled fire 4290 →
+      executed AT 4290 destroyed=true → tombstone tic 4293 at (103,56) → she stands in
+      a clear cell, no orphan shadow (captures). RELOAD-persistence proven: a fresh page
+      re-receives the tombstone (`2:103:56` in coldOverrides, thingDefAt = 0) — after
+      FIXING two real bugs this drill exposed: the edge framed thing tombstones as
+      removed:true (client resurrection), and `seed_zone`'s process-memory once-guard
+      re-seeded zones on every edge restart, re-stamping baselines OVER older tombstones
+      (now gated on the applied snapshot being empty).
+- [x] The refusals + neighbours: a wolf's tree menu offers no Cut Down; shrub and cactus
       fell; drink + wolf trips beside (F6). Acceptance: refusal + two fells + both
-      species' arcs in one session.
+      species' arcs in one session. → the wolf's tree menu is EMPTY (affordance gate;
+      F7 empty-set-opens-nothing); tree ×3 + shrub ×1 felled (4 tombstones); CACTUS is
+      authored identically but UNDRILLED — no desert biome within the drilled area
+      (stated, not assumed); the wolf's thermostat drinks (34.8→37.8 twice) and trips
+      ran beside the humans' chops and the 17-tile composed walk-then-drink (her needs
+      row +3 at set_tic 9275 — sql-verified; log greps are ANSI-blind, noted).
 
 ## P5 — the verdict
 
-- [ ] Docs + memory truth pass: memories note timed interactions + the queue; consumed
+- [x] Docs + memory truth pass: memories note timed interactions + the queue; consumed
       RESERVED notes gone; index row records delivery. Acceptance: docs-check green.
-- [ ] Cold boot: pending intents drop, in-flight completions survive + re-validate —
+      → new `lumberjack-delivered` memory + index line (the queue law, adjacency,
+      destroy, the seed-guard + registry-seed gotchas); the consumed RESERVED notes died
+      in P0/P1; the work-index row flipped done with the delivery note; docs-check
+      green.
+- [x] Cold boot: pending intents drop, in-flight completions survive + re-validate —
       state what actually happened (F1); fell + drink + wolf arcs green; **the user's
-      eyes close the stream**. Acceptance: captures + logs in completed.md.
+      eyes close the stream**. Acceptance: captures + logs in completed.md. → THREE
+      boots this stream: (1) an unplanned HOST BLUESCREEN mid-drill — durable clock,
+      all 9 pawns and the tombstones survived; (2) the user-requested clean
+      `redeploy --force` standup (registry re-seed + fresh mints + every drill green
+      from zero); (3) an orderly worker bounce MID-CHOP: the parked chop DROPPED with
+      the ephemeral queue (F1's stated loss, observed — B finished his durable walk,
+      no tombstone appeared, no wrong write), while durable queued events (the chain;
+      completions by the same mechanism) survived and completed. The user's eyes close
+      the stream on this report.

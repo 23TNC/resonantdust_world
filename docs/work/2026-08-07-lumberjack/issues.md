@@ -66,6 +66,28 @@ contributor, so their menus on trees will not offer Cut Down — correct behavio
 drill must mint a FRESH human after the corpus lands (the redux worker-bundle-at-startup
 gotcha applies: restart the worker before minting).
 
+## I10 — the seed once-guard was edge memory; restarts resurrected fells {#i10}
+
+Found by the first reload-persistence drill: `seed_zone`'s `claim_zone_seed` guard lived
+in edge PROCESS memory, so every edge restart re-seeded every zone a client touched —
+re-writing the baseline row at a FRESH tic, which the client's tic-ordering rule then
+(correctly) preferred over the older overlay tombstones: felled trees resurrected.
+FIXED: seeding moved into the tile subscription's `on_applied` — only a zone whose
+applied snapshot holds NO baseline rows generates. The reducer-side guard (seed refuses
+a non-empty zone) is the belt-and-braces successor, deferred because a module redeploy
+wipes the world.
+
+## I11 — a stale sim binary silently skips the registry seed {#i11}
+
+The clean-state standup hit it: the MASTER seeds the definition registry from the corpus
+at boot, so a master built before a loader change refuses the corpus
+("unknown field `destroy`") and logs `registry seed skipped` — every downstream def
+resolution then fails ("not in the definition registry"). The [[docker-cargo-mtime-miss]]
+family: after ANY shared/content change, rebuild master + orchestrator + worker + npc,
+not just the crates you edited. Also learned: ANSI styling in `bin/sim logs` breaks
+`grep "key=value"` matches (the `=` is wrapped in escapes) — grep the key alone, or
+verify via sql.
+
 ## I9 — carried successor: logs where the tree stood {#i9}
 
 The user's named next step. The `yields = "<thing>"` TOML shape is chosen (F5) but NOT

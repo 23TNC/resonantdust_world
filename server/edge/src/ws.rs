@@ -201,8 +201,9 @@ async fn session_worker(
                 handle_queue(world.event.as_ref(), &out_tx, session, cid, actions);
             }
             ClientMsg::SubscribeZone { zone } => {
-                handle_subscribe(&world, &out_tx, &mut zones, zone);
-                seed_zone(&pool, &world, zone); // generate + seed the zone's cold layers on first sight
+                // Seeding moved INTO the tile subscription's on_applied (lumberjack):
+                // only a zone whose applied snapshot has NO baseline rows generates.
+                handle_subscribe(&pool, &world, &out_tx, &mut zones, zone);
             }
             ClientMsg::UnsubscribeZone { zone } => {
                 if zones.remove(&zone).is_some() {
@@ -501,6 +502,8 @@ fn relay_tile_overlay(o: &mpsc::UnboundedSender<String>, row: &bindings::tile::O
 /// Re-frame a thing `overlay` row's cells to per-cell `ColdState` (F10) — as [`relay_tile_overlay`] but
 /// carrying the thing's `data` byte.
 fn relay_thing_overlay(o: &mpsc::UnboundedSender<String>, row: &bindings::thing::Overlay, removed: bool) {
+    tracing::info!(zone = row.macro_position_reference, cells = row.items.len(), removed,
+        "relaying thing overlay row");
     use resonantdust_codec::object::{
         cold_entity_reference, pack_definition_reference, pack_layer_reference, pack_position_reference,
         pack_type_reference, TYPE_BIOME_THING,
@@ -646,6 +649,7 @@ fn handle_queue(
 /// Subscribe the client to a zone's `state` + `event` streams. Idempotent per zone. The initial
 /// matching rows are delivered through the row callbacks as the subscription applies.
 fn handle_subscribe(
+    pool: &Arc<Pool>,
     world: &World,
     out_tx: &mpsc::UnboundedSender<String>,
     zones: &mut HashMap<u16, ZoneSub>,
@@ -726,6 +730,9 @@ fn handle_subscribe(
     // baseline rows. `on_insert`/`on_update` (in `build_world`) still carry live changes + late seeds;
     // a double relay is harmless (the client re-expands the row idempotently).
     let o = out_tx.clone();
+    let seed_pool = pool.clone();
+    let seed_tile = world.tile.clone();
+    let seed_thing = world.thing.clone();
     let tile = world.tile.as_ref().map(|t| {
         t.subscription_builder()
             .on_error(|_ctx, err| tracing::warn!(%err, "tile cold subscription error"))
@@ -739,6 +746,15 @@ fn handle_subscribe(
                 for row in ctx.db.overlay().iter().filter(|r| r.macro_position_reference == zone) {
                     relay_tile_overlay(&o, &row, false);
                 }
+                // SEED ONLY A VIRGIN ZONE (lumberjack): the once-guard used to be edge
+                // process memory, so every edge restart re-seeded touched zones — and a
+                // re-seed's fresh row tic SHADOWS older overlay tombstones (felled trees
+                // resurrected on the next reload). The applied snapshot is the truth: any
+                // baseline row for the zone means it was seeded in some life; seed only
+                // when there is none.
+                if ctx.db.entity_state().iter().all(|r| r.macro_position_reference != zone) {
+                    seed_zone(&seed_pool, seed_tile.as_ref(), seed_thing.as_ref(), zone);
+                }
             })
             .subscribe([
                 format!("SELECT * FROM entity_state WHERE macro_position_reference = {zone}"),
@@ -750,12 +766,16 @@ fn handle_subscribe(
         t.subscription_builder()
             .on_error(|_ctx, err| tracing::warn!(%err, "thing cold subscription error"))
             .on_applied(move |ctx| {
+                let (mut nb, mut no) = (0, 0);
                 for row in ctx.db.entity_state().iter().filter(|r| r.macro_position_reference == zone) {
+                    nb += 1;
                     send(&o, cold_thing_frame(&row));
                 }
                 for row in ctx.db.overlay().iter().filter(|r| r.macro_position_reference == zone) {
+                    no += 1;
                     relay_thing_overlay(&o, &row, false);
                 }
+                tracing::info!(zone, baselines = nb, overlays = no, "thing zone replay applied");
             })
             .subscribe([
                 format!("SELECT * FROM entity_state WHERE macro_position_reference = {zone}"),
@@ -771,12 +791,17 @@ fn handle_subscribe(
 /// race or a second edge just re-writes the same content. A missing corpus or cold upstream is a
 /// no-op — the zone simply has no terrain yet. The client's cold subscription then delivers the
 /// seeded rows, which relay as `ColdTile`/`ColdThing`.
-fn seed_zone(pool: &Arc<Pool>, world: &World, zone: u16) {
+fn seed_zone(
+    pool: &Arc<Pool>,
+    tile: Option<&Arc<bindings::tile::DbConnection>>,
+    thing: Option<&Arc<bindings::thing::DbConnection>>,
+    zone: u16,
+) {
     if !pool.claim_zone_seed(zone) {
-        return; // already seeded this process
+        return; // already seeded this process (dedupe across this process's clients)
     }
     let Some(worldgen) = pool.current_worldgen() else { return };
-    let (Some(tile), Some(thing)) = (&world.tile, &world.thing) else { return };
+    let (Some(tile), Some(thing)) = (tile, thing) else { return };
     // `zone` is the `macro_position_reference` worldgen keys on directly. One row per biome present;
     // `type_id` is the module, so `seed` takes `(macro, subtype_id, layer_id, payload)`. Worldgen
     // writes the primary layer (`layer_id = 0`).

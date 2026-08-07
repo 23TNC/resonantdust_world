@@ -1,5 +1,41 @@
 # Completed — lumberjack
 
+## 2026-08-07 — P3/P4/P5: the queue lives, timber falls, three cold boots
+
+- **P3, the ephemeral queue**: version word discriminates flows (0 fresh/replaces, 2
+  advanced, 1 completion); out-of-place orders park behind a queued walk seed; arrival
+  polling advances (before the empty-pass early-out); `duration > 0` schedules a
+  re-validating completion at `+N`; `destroy` emits the thing-overlay clearing SET.
+  Drink gained the `destination` input (npc binds its own tile; the menu relaxes
+  distance only for destination-bearing signatures; golden re-blessed). Drilled:
+  compose→advance→drink +3 as version=2; a mid-walk fresh order logged
+  `intent queue REPLACED (F3)` and the parked drink never fired.
+- **P4, timber (clean state — the user's call after a bluescreen +
+  `redeploy --force`)**: the far chop's full arc — composed 4158, walk landed 4257,
+  scheduled fire 4290, executed AT 4290 `destroyed=true version=1`, tombstone tic 4293,
+  the render clear. The RACE proved the no-op law verbatim: two lumberjacks on one tree,
+  B's completion felled it at 6954, A's at 6979 logged
+  `intent completion NO-OP — no carrier in range offers this interaction`. The wolf's
+  tree menu is EMPTY (the affordance gate); tree ×3 + shrub felled; cactus authored
+  identically but undrilled (no desert in reach — stated). Wolf thermostat + trips ran
+  beside the humans throughout; her 17-tile composed walk-then-drink wrote +3 at
+  set_tic 9275 (sql-verified).
+- **Two real bugs the first remove-drill exposed, both fixed**: the edge framed thing
+  tombstones `removed: true` (client restored the baseline — felled trees resurrected
+  on reload); and `seed_zone`'s once-guard was edge PROCESS MEMORY, so every edge
+  restart re-seeded touched zones, re-stamping baselines over older tombstones
+  ([I10](issues.md#i10)). Seeding now happens only when the applied snapshot shows an
+  EMPTY zone. Reload-persistence verified: a fresh page re-receives the tombstone and
+  `thingDefAt` reads 0.
+- **P5, three cold boots**: a host BLUESCREEN mid-drill (durable clock, 9 pawns,
+  tombstones all survived; the recovery also caught [I11](issues.md#i11) — a stale
+  master silently skips the registry seed); the clean standup from zero; and an orderly
+  worker bounce MID-CHOP — the parked chop dropped with the ephemeral queue (F1's
+  stated loss, observed: the durable walk finished, no tombstone, no wrong write).
+- **Session dirt honestly recorded**: [D1](deviations.md) — a concurrent session's
+  `git add -A` swept the P3 code into its commit; this session commits by explicit path
+  since.
+
 ## 2026-08-07 — P0: the paper
 
 - **ACTIONS.md § "The intent queue, and interactions that cost tics"**: the law written
