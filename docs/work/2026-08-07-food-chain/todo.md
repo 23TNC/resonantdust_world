@@ -6,9 +6,10 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P0 — the paper
 
-- [ ] VARIABLES.md: hunger + corpus (0..2 domain, cap TIERS — need MAX modifiers =
-      HIGHEST wins, mint at effective max — F2), the need-check affordance (F4), the
-      `self` location + spawn effect (F5/F6/I9). Acceptance: docs-check green.
+- [ ] VARIABLES.md: hunger + corpus (0..2 domain; the LEVELED corpus trait owns the
+      cap, need-max = HIGHEST wins, mint at effective max — F2), the need-check
+      affordance (F4), the `self` location + spawn effect (F5/F6/I9). Acceptance:
+      docs-check green.
 
 ## P1 — the machinery
 
@@ -29,13 +30,17 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P2 — the corpus
 
-- [ ] Content: needs hunger (bands + emotions — I8) + corpus; traits corpus_i +
-      forager/herbivore/carnivore/omnivore with their stats (F3); affordances
-      can_forage/can_eat_plants/can_eat_meat/can_die. Acceptance: golden diff = the
-      authored rows.
+- [ ] Content: needs hunger (bands + emotions — I8) + corpus; the LEVELED corpus
+      trait (`max = [1, 2]` — F2) + forager/herbivore/carnivore/omnivore with their
+      stats (F3); affordances can_forage/can_eat_plants/can_eat_meat/can_die.
+      Acceptance: golden diff = the authored rows.
 - [ ] Content: things bunny/meat/plant_matter (F9); interactions death, forage,
-      eat_plant_matter, eat_meat (F7); trait assignments per the design (I6).
-      Acceptance: golden re-blessed; six consumers rebuilt.
+      eat_plant_matter, eat_meat (F7); trait assignments per the design — corpus 1
+      on bunny/humans, corpus 2 on wolves (I6). Acceptance: golden re-blessed; six
+      consumers rebuilt.
+- [ ] Client: textureless tint-rect placeholders draw a BLACK OUTLINE (F9 — a render
+      rule for ALL placeholders, old and new). Acceptance: capture — shrub/logs/meat
+      read as outlined placeholders, not bugs.
 
 ## P3 — the worker executes
 

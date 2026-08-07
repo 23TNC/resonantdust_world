@@ -9,20 +9,25 @@ move minting into trait resolution for zero present gain.
 **Rejected**: needs-from-traits (a mint rework this stream doesn't need; recorded as
 the successor if a fifth biological kind ever forgets its hunger line).
 
-## F2 — corpus: encoding domain 0..2, TIERED caps, mint at effective max {#f2}
+## F2 — corpus: ONE LEVELED trait owns the cap; domain 0..2; mint at effective max {#f2}
 
-The stored value quantizes on the AUTHORED min..max (stat-model F4), so the domain
-must hold the LARGEST reachable health — `min = 0, max = 2`. The user's "max 1 unless
-Corpus I" becomes cap TIERS: `biological_lifeform` authors a corpus `max = [1]` need
-modifier, `corpus_i` authors `max = [2]`, and need MAX modifiers combine by **HIGHEST
-WINS** — a lane NOTHING authors today (quenched uses `rate` only), so the semantic is
-free to define, and "caps tier upward" is what tiers mean. Stat ranges keep their
-intersection law untouched. Minting quantizes the EFFECTIVE max (traits are minted
-first, so it is computable): bunnies/humans mint 1, wolves 2. `deplete = 0` — health
-never decays; only events (damage, healing, the coming attacks) move it.
-**Rejected**: authoring 0..1 and letting corpus_i "raise" past the encoding (cannot
-store 2); per-pawn quantize domains (every observer must re-derive the domain before
-reading any row — a decode landmine).
+**The USER's shape (2026-08-07, plan review): traits have levels — biological life
+just provides the CORPUS trait, and leveling it raises the maximum.** So: the need
+`corpus` authors the ENCODING domain `min = 0, max = 2` (the stored value quantizes
+on authored bounds — stat-model F4 — so the domain must hold the largest reachable
+health), and ONE trait `corpus` carries the cap per LEVEL through the existing
+per-level need-modifier arrays: `needs = [{ need = "corpus", max = [1.0, 2.0] }]`.
+Bunnies and humans carry corpus level 1 (cap 1); wolves level 2 (cap 2 — the design's
+"Corpus I" tier); a future tier is one more array slot. With a SINGLE authoring
+source there is no combine ambiguity; the need-max lane still gets the HIGHEST-WINS
+law on paper so a second source can never silently shrink a cap. Minting quantizes
+the EFFECTIVE max (the kind's trait list is in hand at mint): level-1 kinds mint 1,
+wolves mint 2, one 0..2 encoding for all. `deplete = 0` — health never decays; only
+events move it.
+**Rejected (superseded by the user)**: a separate `corpus_i` trait beside a
+biological-lifeform cap (two sources where one leveled trait says it); authoring
+0..1 and "raising" past the encoding (cannot store 2); per-pawn quantize domains
+(a decode landmine).
 
 ## F3 — diet/ability gates = the lumberjack stat pattern {#f3}
 
@@ -74,11 +79,14 @@ worker owns causation now; brains only ever CHOOSE, never account.
 ## F6 — forage leaves the flora and spawns plant_matter BESIDE it {#f6}
 
 The user: "generate plant matter on an adjacent tile" — the flora survives (no
-destroy). The spawn cell = the first EMPTY, PATHABLE cell scanning the carrier's 3×3
-in fixed (dy, dx) order (deterministic; the movement probe answers pathable, the
-composed thing view answers empty). All eight full → the forage completes with a
-logged no-yield (never an overwrite). `spawn = { thing = "plant_matter", at =
-"adjacent" }` on the interaction; duration + queue visuals like cut_down.
+destroy; confirmed at plan review). The spawn cell = the first EMPTY, PATHABLE cell
+scanning the carrier's 3×3 in fixed (dy, dx) order (deterministic; the movement probe
+answers pathable, the composed thing view answers empty). All eight full → the forage
+completes with a logged no-yield (never an overwrite). `spawn = { thing =
+"plant_matter", at = "adjacent" }` on the interaction; duration + queue visuals like
+cut_down. **Recorded successor (the user, plan review)**: sub-tile placement so the
+drop lands NEAR the flora rather than tile-center — things are cold CELLS today, so
+that waits on a thing-position lane, not this stream.
 **Rejected**: spawning ON the flora's cell (occupied); replacing the flora (the user
 kept it distinct from felling).
 
@@ -100,8 +108,12 @@ recorded successor for the npc.
 **Rejected**: one-brain-per-bunny processes (the user asked for a GROUP handler);
 menu-only eating (npc pawns must feed themselves).
 
-## F9 — bunny, meat, and plant_matter ship as placeholder tint squares {#f9}
+## F9 — placeholder tint squares, now with a BLACK OUTLINE {#f9}
 
 The bunny = a single flat-tint PART (small scale, warm gray); meat = a red-brown
 square; plant_matter = a fresh-green square — the shrub/logs placeholder convention.
+**The user (plan review): placeholders gain a black outline "so they better read as
+placeholder objects instead of bugs"** — applied to EVERY textureless tint-rect
+placeholder (shrub, cactus, reed, rock, logs, and the three new things), in the
+client's flat-rect draw path, so the outline is a render rule, not per-def art.
 Real art is the sprite pipeline's business, later.

@@ -19,12 +19,11 @@ carnivore, humans omnivore. (A coming turn adds wolves attacking bunnies.)
   `herbivore/omnivore → plant_eating +1`, `carnivore/omnivore → meat_eating +1`;
   `can_forage`/`can_eat_plants`/`can_eat_meat` gate on `> 0`. "Has X or Y" is a sum —
   no new machinery.
-- **Corpus is the health need**, encoding domain 0..2 with TIERED caps
-  ([F2](forks.md#f2)): need MAX modifiers take the HIGHEST authored value (an
-  unexercised lane today — no corpus content uses need min/max modifiers), so
-  `biological_lifeform` caps corpus at 1 and `corpus_i` raises wolves to 2. Needs
-  mint at the EFFECTIVE max (bunnies 1, wolves 2), `deplete = 0` — health only moves
-  by events.
+- **Corpus is the health need, capped by ONE LEVELED trait** ([F2](forks.md#f2) —
+  the user's shape, plan review): encoding domain 0..2; the `corpus` trait's
+  per-level need-max array (`max = [1, 2]`) sets the cap — bunnies/humans level 1,
+  wolves level 2, a future tier is one more slot. Needs mint at the EFFECTIVE max,
+  `deplete = 0` — health only moves by events.
 - **Death's affordance is a NEED predicate** ([F4](forks.md#f4)): affordance checks
   gain a `need` variant beside `stat` (`{ need = "corpus", lte = 0 }`) — the ONE
   shared eval gates it for menu, npc, and worker alike.
@@ -41,7 +40,9 @@ carnivore, humans omnivore. (A coming turn adds wolves attacking bunnies.)
 - **The npc learns THINGS** ([F8](forks.md#f8)): the Bot already receives ColdThings
   — it now stores them (the mirror pathfinding F8 deferred), so bunny groups
   (`brains/bunnies.rs`, NPC_BUNNIES count) eat plant matter and hungry wolves eat
-  meat. Placeholder art for bunny/meat/plant_matter ([F9](forks.md#f9)).
+  meat. Placeholder art for bunny/meat/plant_matter — and EVERY tint-rect placeholder
+  gains a BLACK OUTLINE so it reads as a placeholder, not a bug ([F9](forks.md#f9),
+  the user's ask at plan review).
 
 Authoritative docs touched: VARIABLES.md (needs, the cap-tier law, the need-check
 affordance, new defs), ACTIONS.md (the death/spawn effects).
