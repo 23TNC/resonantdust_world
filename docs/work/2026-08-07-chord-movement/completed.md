@@ -41,3 +41,10 @@
   over its tiles-only mirror (est_tics=27 for a (2,1) trip — Euclidean to the tic);
   lake soak: 6 arrivals, ZERO deadline churn. The intent strip needs no change —
   rings render only on TIMED acts; walk circles are progress-none by TOML.
+- **2026-08-07 — P6: the verdict (eyes pending).** ACTIONS.md's re-anchor paragraph
+  reconciled with F8 (hops fire AT the cadence, each promotes); memory gained
+  chord-movement-delivered (+ index line, client-sync updated). Stack bounce: the
+  stale-binary guard caught master/orchestrator against the codec change — rebuilt,
+  all four crates restarted; arcs green (npc arriving, master seeded 1×, worker
+  error-free) and the mid-drill INTERRUPTED trip completed THROUGH the bounce,
+  landing exactly on (95,75). B1 records the last step: the user's eyes.

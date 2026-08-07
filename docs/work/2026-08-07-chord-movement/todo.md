@@ -74,4 +74,6 @@ anticipated-issue inventory in [`issues.md`](issues.md) (I#)._
 
 - [ ] Docs + memory truth pass + a stack bounce with arcs green; **the user's eyes
       close the stream**. Acceptance: docs-check green; captures + logs in
-      completed.md.
+      completed.md. → truth pass + bounce DONE (ACTIONS.md matches F8; memory
+      updated; stale-binary guard caught master/orch — rebuilt; arcs green; the
+      interrupted trip completed THROUGH the bounce); B1 holds the eyes.
