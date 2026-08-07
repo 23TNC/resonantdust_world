@@ -20,7 +20,7 @@
 //! movement-content follow-up) and `PROMOTE` (a prefix). `CREATE` is deferred: its minted id isn't a write
 //! operand, so no slot is claimed for it yet (needs the orchestrator's spawn-id claim).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Duration;
 
 use spacetimedb_sdk::{DbContext, Table as _};
@@ -141,6 +141,42 @@ struct Payload {
     data: u8,
 }
 
+/// One parked order in a pawn's EPHEMERAL intent queue (lumberjack F1 — ACTIONS.md
+/// § The intent queue): re-queued as a version-2 (ADVANCED) `EXECUTE_INTERACTION` event
+/// when the intent ahead of it completes. The DURABLE half is always the queued event
+/// itself; a worker bounce loses only this pending tail, and execution-time
+/// re-validation turns any stale survivor into a logged no-op.
+struct PendingIntent {
+    interaction_ref: u32,
+    inputs: Vec<u32>,
+}
+
+/// What a pawn's queue is waiting on (the in-flight half).
+enum Running {
+    /// A composed walk — completes when the pawn's authoritative row reaches `dest`.
+    /// No trip-serial check needed: every seed flows through the interaction arm, and a
+    /// fresh order REPLACES the whole queue before its new seed supersedes the chain
+    /// (F3) — a superseded chain's queue is already gone.
+    Move { dest: u32 },
+    /// A `duration > 0` intent — completes when its version-1 COMPLETION event fires.
+    Timed { fire_tic: u16 },
+}
+
+struct PawnQueue {
+    pending: VecDeque<PendingIntent>,
+    running: Option<Running>,
+}
+
+/// The queue-depth law (lumberjack F3): a composition that would exceed this rejects WHOLE.
+const INTENT_CAP: usize = 5;
+
+/// `EXECUTE_INTERACTION`'s version word, repurposed as the intent-queue discriminator
+/// (lumberjack): clients always send FRESH. Dev posture: the edge doesn't police the
+/// word (no ownership model) — a hand-rolled completion just re-validates like any other.
+const INTENT_FRESH: u32 = 0;
+const INTENT_COMPLETION: u32 = 1;
+const INTENT_ADVANCED: u32 = 2;
+
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt()
@@ -231,6 +267,10 @@ async fn main() {
     tracing::info!("resolving (uplinks lazy — a pass needing a dead upstream defers)");
     let (mut up_i, mut up_e, mut up_d, mut up_p, mut up_t, mut up_h) = (true, true, true, true, true, true);
 
+    // The per-pawn intent queues (lumberjack F1) — worker MEMORY, deliberately: the
+    // in-flight order is a durable queued event; this map is only the tail behind it.
+    let mut intent_queues: HashMap<u32, PawnQueue> = HashMap::new();
+
     let mut ticker = tokio::time::interval(period);
     loop {
         ticker.tick().await;
@@ -245,6 +285,50 @@ async fn main() {
         let Some(thing) = acquire(&thing_up, &mut up_h, "thing").await else { continue };
 
         let master = index.db().master_clock().realm().find(&realm).map(|c| c.tic as u16).unwrap_or(0);
+
+        // ── INTENT ADVANCEMENT, move half (lumberjack I4) ── a Move-running queue head
+        // completes when the pawn's authoritative row reaches its dest; completing an
+        // event queues the NEXT one automatically (the user's law, F1). Runs BEFORE the
+        // empty-pass early-out — arrival often lands on a pass with no assigned events.
+        let arrived: Vec<u32> = intent_queues
+            .iter()
+            .filter_map(|(&p, q)| match q.running {
+                Some(Running::Move { dest }) => {
+                    pawn.db().entity_state().iter().find(|r| r.entity_reference == p).and_then(
+                        |r| {
+                            let pos = pack_position_reference(
+                                r.macro_position_reference,
+                                r.micro_position_reference,
+                            );
+                            (position_to_tile(pos) == position_to_tile(dest)).then_some(p)
+                        },
+                    )
+                }
+                _ => None,
+            })
+            .collect();
+        for p in arrived {
+            let Some(q) = intent_queues.get_mut(&p) else { continue };
+            q.running = None;
+            if let Some(next) = q.pending.pop_front() {
+                let mut prog = vec![
+                    EXECUTE_INTERACTION,
+                    next.interaction_ref,
+                    INTENT_ADVANCED,
+                    next.inputs.len() as u32,
+                ];
+                prog.extend_from_slice(&next.inputs);
+                match event.reducers().queue_at(prog, tic_add(master, 4)) {
+                    Ok(()) => tracing::info!(master, pawn = format!("{p:#010x}"),
+                        pending = q.pending.len(), "intent advanced — walk landed, next order queued"),
+                    Err(err) => tracing::warn!(%err, pawn = format!("{p:#010x}"),
+                        "intent advance queue failed — pending tail dropped"),
+                }
+            }
+            if q.pending.is_empty() && q.running.is_none() {
+                intent_queues.remove(&p);
+            }
+        }
 
         // Gather the events still assigned to me, bucketed by their tic. Once an event is `complete`
         // its phase leaves ASSIGNED and it drops out here — no reprocessing.
@@ -722,10 +806,14 @@ async fn main() {
             for (event_reference, actions) in &events {
                 for inst in action::program(actions) {
                     let Ok(inst) = inst else { break };
-                    let (interaction_ref, inputs) = match (inst.action, inst.operands) {
-                        (EXECUTE_INTERACTION, [i, _version, _count, inputs @ ..]) => (*i, inputs),
+                    let (interaction_ref, version, inputs) = match (inst.action, inst.operands) {
+                        (EXECUTE_INTERACTION, [i, v, _count, inputs @ ..]) => (*i, *v, inputs),
                         _ => continue,
                     };
+                    // The version word discriminates the intent-queue flows (lumberjack):
+                    // FRESH replaces the pawn's queue, ADVANCED continues it, COMPLETION
+                    // executes a scheduled `duration` intent's effects (re-validating).
+                    let is_completion = version == INTENT_COMPLETION;
                     let reject = |why: &str| {
                         tracing::warn!(event = format!("{event_reference:#010x}"), tic = t, why,
                             "interaction dropped");
@@ -759,6 +847,42 @@ async fn main() {
                             }
                         },
                     };
+                    // A FRESH order REPLACES the pawn's whole queue (F3 — the one-chain
+                    // law lifted a level); preemption IS a new order.
+                    if version == INTENT_FRESH && intent_queues.remove(&target).is_some() {
+                        tracing::info!(tic = t, pawn = format!("{target:#010x}"),
+                            "intent queue REPLACED by a fresh order (F3)");
+                    }
+                    // A COMPLETION advances the queue ON RECEIPT — the outcome (execute
+                    // or no-op) never retries and never blocks the next intent (F1).
+                    if is_completion {
+                        if let Some(q) = intent_queues.get_mut(&target) {
+                            if matches!(q.running, Some(Running::Timed { fire_tic }) if fire_tic == t)
+                            {
+                                q.running = None;
+                                if let Some(next) = q.pending.pop_front() {
+                                    let mut prog = vec![
+                                        EXECUTE_INTERACTION,
+                                        next.interaction_ref,
+                                        INTENT_ADVANCED,
+                                        next.inputs.len() as u32,
+                                    ];
+                                    prog.extend_from_slice(&next.inputs);
+                                    match event.reducers().queue_at(prog, tic_add(master, 4)) {
+                                        Ok(()) => tracing::info!(tic = t,
+                                            pawn = format!("{target:#010x}"),
+                                            "intent advanced — completion fired, next order queued"),
+                                        Err(err) => tracing::warn!(%err,
+                                            pawn = format!("{target:#010x}"),
+                                            "intent advance queue failed — pending tail dropped"),
+                                    }
+                                }
+                                if q.pending.is_empty() && q.running.is_none() {
+                                    intent_queues.remove(&target);
+                                }
+                            }
+                        }
+                    }
                     // The destination (a position_reference): the move effect's `to`, else
                     // the reserved `destination` input — adjacency-gated interactions name
                     // their carrier through it without moving (lumberjack).
@@ -789,6 +913,11 @@ async fn main() {
                         prow.micro_position_reference,
                     );
                     let (px, py) = position_to_tile(pawn_pos);
+                    // Out of place by DISTANCE alone → the intent queue composes
+                    // [walk, act] instead of rejecting (lumberjack; ACTIONS.md § The
+                    // intent queue). Set here, consumed after the affordance gate — a
+                    // pawn that could never act must not walk first.
+                    let mut needs_walk = false;
                     let candidates: Vec<u32> = match params.location.as_str() {
                         "on" => vec![pawn_pos],
                         "target" => match dest {
@@ -805,8 +934,11 @@ async fn main() {
                                 if !resonantdust_content::loader::location_in_range(
                                     "adjacent", cheb,
                                 ) {
-                                    reject("the pawn is not adjacent to the destination carrier (lumberjack F2)");
-                                    continue;
+                                    if is_completion {
+                                        reject("completion NO-OP: the pawn left the carrier's range (lumberjack F1)");
+                                        continue;
+                                    }
+                                    needs_walk = true;
                                 }
                                 vec![d]
                             }
@@ -853,7 +985,9 @@ async fn main() {
                         }
                         k
                     };
-                    let thing_kind_at = |zone: u16, cell: u8| -> Option<u16> {
+                    // Returns (kind, the owning row's cold_row_reference) — the address
+                    // the destroy effect's clearing SET targets (lumberjack F5).
+                    let thing_kind_at = |zone: u16, cell: u8| -> Option<(u16, u32)> {
                         let mut k = thing
                             .db()
                             .entity_state()
@@ -863,14 +997,15 @@ async fn main() {
                                 r.items
                                     .iter()
                                     .find(|i| i.tile_reference == cell && i.kind_reference != 0)
-                                    .map(|i| i.kind_reference)
+                                    .map(|i| (i.kind_reference, r.cold_row_reference))
                             });
                         for o in
                             thing.db().overlay().iter().filter(|r| r.macro_position_reference == zone)
                         {
                             for it in &o.items {
                                 if it.tile_reference == cell {
-                                    k = (it.kind_reference != 0).then_some(it.kind_reference);
+                                    k = (it.kind_reference != 0)
+                                        .then_some((it.kind_reference, o.cold_row_reference));
                                 }
                             }
                         }
@@ -880,29 +1015,29 @@ async fn main() {
                     // (stat-model F9 binding; walls not carrying move_to is exactly this
                     // refusal — input-rework F9). Things probe first: a tree stands ON
                     // grass, and the thing is the more specific carrier.
-                    let mut carrier: Option<(u32, bool)> = None; // (position, is_thing)
+                    // (position, is_thing, owning cold_row — 0 for tiles).
+                    let mut carrier: Option<(u32, bool, u32)> = None;
                     for &c in &candidates {
                         let zone = position_macro(c);
                         let cell = (position_micro(c) >> 8) as u8;
-                        if let Some(kr) = thing_kind_at(zone, cell) {
+                        if let Some((kr, row)) = thing_kind_at(zone, cell) {
                             if bundle
                                 .thing_interactions(kr >> 4)
                                 .iter()
                                 .any(|(i, _)| i == &iname)
                             {
-                                carrier = Some((c, true));
+                                carrier = Some((c, true, row));
                                 break;
                             }
                         }
                         if let Some(kr) = tile_kind_at(zone, cell) {
                             if bundle.tile_interactions(kr >> 4).iter().any(|(i, _)| i == &iname) {
-                                carrier = Some((c, false));
+                                carrier = Some((c, false, 0));
                                 break;
                             }
                         }
                     }
-                    // `_carrier` feeds the destroy effect's cell addressing (P4).
-                    let Some(_carrier) = carrier else {
+                    let Some(carrier) = carrier else {
                         reject("no carrier in range offers this interaction (F4/F2 location rule)");
                         continue;
                     };
@@ -944,6 +1079,67 @@ async fn main() {
                         &bundle, &iname, &trait_rows, &active,
                     ) {
                         reject("an affordance predicate fails for the target (stat-model F5)");
+                        continue;
+                    }
+                    // ── COMPOSE (lumberjack) ── out of place, gates passed: walk to the
+                    // carrier, park THIS order behind the walk. The seed is its own
+                    // durable event; the parked order re-enters as version-2 on arrival.
+                    if needs_walk {
+                        let d = dest.expect("needs_walk only sets with a bound destination");
+                        let q = intent_queues
+                            .entry(target)
+                            .or_insert_with(|| PawnQueue { pending: VecDeque::new(), running: None });
+                        if q.pending.len() >= INTENT_CAP {
+                            reject("intent queue full (cap 5, F3) — order rejected whole");
+                            continue;
+                        }
+                        q.pending.push_back(PendingIntent {
+                            interaction_ref,
+                            inputs: inputs.to_vec(),
+                        });
+                        q.running = Some(Running::Move { dest: d });
+                        if let Err(err) = event
+                            .reducers()
+                            .queue_at(vec![PROMOTE_EVENT, PROMOTE, MOVE_TO, target, d], effect_tic)
+                        {
+                            tracing::warn!(%err, tic = t, "intent walk seed queue failed — queue dropped");
+                            intent_queues.remove(&target);
+                        } else {
+                            tracing::info!(tic = t, interaction = %iname,
+                                pawn = format!("{target:#010x}"),
+                                dest = format!("{:?}", position_to_tile(d)),
+                                pending = q.pending.len(),
+                                "intent composed — walk queued, order parked behind it");
+                        }
+                        continue;
+                    }
+                    // ── SCHEDULE (lumberjack) ── a tic-costed intent validates now and
+                    // queues its COMPLETION at +duration; the completion re-validates
+                    // (the no-op law) and only then executes the effects below.
+                    if !is_completion && params.duration > 0.0 {
+                        let fire_tic = tic_add(master, (params.duration as u16).max(4));
+                        let mut prog = vec![
+                            EXECUTE_INTERACTION,
+                            interaction_ref,
+                            INTENT_COMPLETION,
+                            inputs.len() as u32,
+                        ];
+                        prog.extend_from_slice(inputs);
+                        if let Err(err) = event.reducers().queue_at(prog, fire_tic) {
+                            tracing::warn!(%err, tic = t, "intent completion queue failed — dropped");
+                        } else {
+                            intent_queues
+                                .entry(target)
+                                .or_insert_with(|| PawnQueue {
+                                    pending: VecDeque::new(),
+                                    running: None,
+                                })
+                                .running = Some(Running::Timed { fire_tic });
+                            tracing::info!(tic = t, interaction = %iname,
+                                pawn = format!("{target:#010x}"),
+                                duration = params.duration, fire_tic,
+                                "intent scheduled — completion queued at +duration");
+                        }
                         continue;
                     }
                     let mut program: Vec<u32> = Vec::new();
@@ -1033,6 +1229,28 @@ async fn main() {
                         let d = dest.expect("the location checks above guarantee a destination");
                         program.extend_from_slice(&[PROMOTE_EVENT, PROMOTE, MOVE_TO, target, d]);
                     }
+                    // The destroy effect (lumberjack F5): clear the validated CARRIER's
+                    // cell through the cold overlay — the build-walls SET path, kind 0 =
+                    // remove. Tile carriers refuse: nothing authors tile destruction, and
+                    // clearing ground is a different conversation. The `yields` successor
+                    // (I9) will emit its placing SET beside this one.
+                    if params.destroy.is_some() {
+                        let (cpos, is_thing, cold_row) = carrier;
+                        if !is_thing {
+                            reject("destroy names a TILE carrier — only things fell (lumberjack F5)");
+                            continue;
+                        }
+                        let cell = u32::from((position_micro(cpos) >> 8) as u8);
+                        program.extend_from_slice(&[
+                            PROMOTE,
+                            SET,
+                            cold_row,
+                            u32::from(TYPE_BIOME_THING),
+                            cell,
+                            0,
+                            0,
+                        ]);
+                    }
                     // Grants carry remaining-at-write = the condition's authored duration
                     // (F3). The RE-STAMP duty is THIS composer's (F7/I12): any need a granted
                     // condition modifies that this program doesn't already SET gets its
@@ -1090,8 +1308,10 @@ async fn main() {
                             target = format!("{target:#010x}"),
                             satisfied = ?satisfied_need, from = log_from, to = log_to,
                             moved = params.move_effect.is_some(),
+                            destroyed = params.destroy.is_some(),
                             dest = dest.map(|d| format!("{:?}", position_to_tile(d))),
-                            grants = params.grants.len(), "interaction executed");
+                            grants = params.grants.len(), version,
+                            "interaction executed");
                     }
                 }
             }

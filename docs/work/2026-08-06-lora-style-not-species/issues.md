@@ -82,3 +82,29 @@ it:** crisp masses whose species identity tracks the PROMPT rather than the corp
 exactly the thesis.
 
 [P3](todo.md)'s cat-versus-well-covered-species comparison tests both directions.
+
+## I4 — Run-16 died on a permissions error I created {#i4}
+_2026-08-06 · hit at P2 · **fixed; recorded because the failure mode is silent-ish and will recur**_
+
+First launch of run-16 exited non-zero after reading all 701 captions cleanly:
+
+```
+PermissionError: [Errno 13] Permission denied:
+  .../dataset_styleonly/1_animal/AEXP_AmericanBeaver__AmericanBeaver_east_0768x0768_sdxl.npz
+```
+
+`--cache_latents_to_disk` writes a `.npz` **beside each image**, so the training directory must be
+writable by the container's user. I built `dataset_styleonly` over SSH as **root**, giving `0:0`,
+while the working `dataset` is `1025:1025`. Ownership, not the captions.
+
+```
+dataset/1_animal            1025:1025 755   <- works
+dataset_styleonly/1_animal     0:0   755   <- failed
+```
+
+Fixed with `chown -R --reference=dataset` plus `u+rwX,g+rwX`. **Any future dataset built from the
+host needs the same treatment** — the natural way to create it is the wrong way.
+
+Worth noting what it does NOT indicate: the captions were fine. The log shows
+`read caption: 100%|██████████| 701/701` before the crash, so [P1](todo.md)'s work was already
+validated by the failed run.

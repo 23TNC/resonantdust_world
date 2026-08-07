@@ -83,7 +83,9 @@ name = "drink"
 label = "Drink"
 menu_text = "Drink"
 affordances = ["can_drink"]
-inputs = ["pawn", "amount"]
+# `destination` (lumberjack P3) names the clicked carrier so a FAR order can compose
+# [walk, drink] through the intent queue; no effect consumes it — the location rule does.
+inputs = ["pawn", "destination", "amount"]
 satisfy = { target = "@pawn", need = "thirst", amount = "@amount" }
 grant = ["quenched"]
 # Placement (lumberjack F2): on-or-beside the carrier — Chebyshev ≤ 1 INCLUSIVE. A far

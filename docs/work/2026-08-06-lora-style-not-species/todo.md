@@ -22,7 +22,7 @@ caption.**
 ## P2 — Train it
 
 - [ ] Train run-16 on the style-only captions, config frozen, 12 generations. Acceptance: `TRAIN_EXIT_OK`, 12 checkpoints, 60 samples, loss curve recorded.
-- [ ] Verify at launch that it read the NEW captions, not the originals. Acceptance: the caption dir in the log matches the variant path — a silent fallback to the old set would invalidate the whole run.
+- [x] Verify at launch that it read the NEW captions, not the originals. Acceptance: the caption dir in the log matches the variant path — a silent fallback to the old set would invalidate the whole run.
 - [ ] Save all 12 generations under the naming scheme as `rd_styl_anima_r16_g<NN>`. Acceptance: 12 files in `models/loras`, provenance in `checkpoints.md`.
 
 ## P3 — Judge it against the species-captioned baseline

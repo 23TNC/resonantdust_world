@@ -344,6 +344,10 @@ impl Wolves {
         for name in &ip.inputs {
             match name.as_str() {
                 "pawn" => inputs.push(wolf),
+                // The wolf fires on arrival, so the carrier IS where it stands
+                // (lumberjack P3 — drink's signature gained `destination`).
+                "destination" => inputs
+                    .push(resonantdust_codec::object::tile_to_position(self.at.0, self.at.1)),
                 "amount" => inputs.push((magnitude as f32).to_bits()),
                 other => {
                     tracing::warn!(%interaction, input = other,

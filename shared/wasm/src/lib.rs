@@ -727,9 +727,12 @@ fn menu_options(
     for (name, magnitude) in binds {
         let Some(ip) = bundle.interaction_params(&name) else { continue };
         // The location rule (F4 / lumberjack F2): the SHARED range check — the menu must
-        // never offer what the worker would refuse. `cheb_distance` is pawn↔clicked-cell
-        // in tiles. (The intent queue relaxes this for positional rules — P3.)
-        if !dsl::loader::location_in_range(&ip.location, cheb_distance) {
+        // never offer what the worker would refuse. RELAXED for signatures that bind a
+        // `destination` (lumberjack P3): the worker composes [walk, act] through the
+        // intent queue for those, so distance no longer refuses; a destless signature
+        // has nowhere to walk and stays strictly ranged.
+        let can_compose_walk = ip.inputs.iter().any(|n| n == "destination");
+        if !can_compose_walk && !dsl::loader::location_in_range(&ip.location, cheb_distance) {
             continue;
         }
         if !resonantdust_content::stat_eval::interaction_available(bundle, &name, &traits, &active)

@@ -35,3 +35,14 @@ _Nothing delivered yet. Items land here with their measured result when ticked i
   negatives, so [I12](../2026-08-02-lora-beat-e07/issues.md#i12)'s constant-tag defect is not
   reintroduced. **27 distinct captions remain and 165 images share the largest**; recorded as
   [I3](issues.md#i3) with an explicit prediction before training rather than a rationalisation after.
+
+## P2 — Train it
+
+- **2026-08-06 · P2.2 · Caption source verified at launch, and a failed run proved it twice.**
+  The log names `dataset_styleonly/1_animal/...` as the data path and `read caption: 701/701`
+  completed — so kohya read the NEW captions, not the originals. `load network weights` count is
+  **0**, confirming a fresh single-stage run with no warm start.
+- **2026-08-06 · P2 · First launch FAILED on permissions** ([I4](issues.md#i4)), not on anything to
+  do with this stream's thesis. `--cache_latents_to_disk` writes a `.npz` beside each image, and I
+  had built the dataset over SSH as root (`0:0`) while the working one is `1025:1025`. Fixed by
+  `chown --reference`; relaunched and caching now proceeds past the file that failed.
