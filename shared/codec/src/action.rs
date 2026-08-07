@@ -92,6 +92,19 @@ pub const GRANT_CONDITION: u32 = 11;
 /// set — so the untyped input words never need top-byte routing.
 pub const EXECUTE_INTERACTION: u32 = 12;
 
+/// The pawn's INTENT-QUEUE snapshot, **WORKER-ONLY** and always `PROMOTE_EVENT`-prefixed
+/// (intent-queue-ui F1 — a pure DISPLAY fan; authority stays the worker's ephemeral
+/// map). Operands: `pawn` (imm) · `_reserved` (imm, 0) · `count` (imm, total payload
+/// words) · `entry×4 per intent` — `[order_event_reference, interaction_ref, phase,
+/// started:16|fire:16]`, entry 0 = the ACTIVE event, phase 0 pending / 1 walking /
+/// 2 executing. The fourth variable-arity verb; `count` sits third like the others.
+pub const QUEUE_STATE: u32 = 13;
+
+/// Cancel a queued intent by its ORDER's event_reference (intent-queue-ui F3/F4) —
+/// CLIENT-open; resolves against worker MEMORY and writes nothing. Operands: `pawn`
+/// (imm) · `order_event_reference` (imm). Unknown reference = a logged no-op.
+pub const CANCEL_INTENT: u32 = 14;
+
 /// What an operand is, for deriving the write/read sets. Only `entity_reference` operands matter to
 /// the sets; `Imm` operands (numbers, positions, definitions) are neither.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -136,6 +149,9 @@ pub fn signature(action: u32) -> Option<&'static [OperandKind]> {
         // EXECUTE_INTERACTION is variable-arity (interaction, version, count, inputs×count —
         // all Imm; writes ride the verbs the worker queues) — framed in the reader like
         // CREATE/INIT_ZONE, no fixed signature.
+        // QUEUE_STATE is variable-arity too (pawn, _reserved, count, entry-words×count —
+        // all Imm; a display fan, no write set).
+        CANCEL_INTENT => &[Imm, Imm], // pawn, order_event_reference — worker-memory resolution
         _ => return None,
     })
 }
@@ -189,7 +205,11 @@ impl<'a> Iterator for Program<'a> {
         // `CREATE def position count payload×count` (human-pawns F2) and `EXECUTE_INTERACTION
         // interaction version count inputs×count` (interactions F4). All three carry their
         // `count` as the third operand (`pos + 3`), so arity is `3 + count`. Others are fixed.
-        let ar = if action == INIT_ZONE || action == CREATE || action == EXECUTE_INTERACTION {
+        let ar = if action == INIT_ZONE
+            || action == CREATE
+            || action == EXECUTE_INTERACTION
+            || action == QUEUE_STATE
+        {
             match self.words.get(self.pos + 3) {
                 Some(&count) => 3 + count as usize,
                 None => {
@@ -247,7 +267,9 @@ fn collect_operands(
         // not an operand) — it contributes nothing to either set. EXECUTE_INTERACTION likewise:
         // its inputs are UNTYPED words (an f32 bit pattern can alias any nibble), and its real
         // writes ride the typed verbs the worker queues (interactions F4).
-        if inst.action == CREATE || inst.action == EXECUTE_INTERACTION {
+        if inst.action == CREATE || inst.action == EXECUTE_INTERACTION || inst.action == QUEUE_STATE
+        {
+            // QUEUE_STATE: a display fan — every operand imm, no sets (intent-queue-ui F1).
             continue;
         }
         let sig = signature(inst.action).expect("parsed, so known");
@@ -317,6 +339,8 @@ pub fn target_routes(words: &[u32]) -> Result<Vec<(u32, Route)>, ProgramError> {
             CREATE => {}
             // EXECUTE_INTERACTION — no routed target either: untyped inputs, queued-verb writes.
             EXECUTE_INTERACTION => {}
+            // QUEUE_STATE — a display fan; CANCEL_INTENT — worker-memory resolution. Neither routes.
+            QUEUE_STATE | CANCEL_INTENT => {}
             // Hot verbs: every Write/ReadWrite operand routes by its own nibble.
             _ => {
                 let sig = signature(inst.action).expect("parsed, so known");

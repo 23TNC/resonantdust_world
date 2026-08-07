@@ -46,12 +46,25 @@ pub fn build_wall_program(start_x: i32, start_y: i32, end_x: i32, end_y: i32, ob
 }
 
 /// Decode a settled, promoted `event` row's program into [`Event::MoveIntent`]s — one per
-/// `MOVE_TO` instruction (`ACTIONS.md` §Movement: the intent channel clients speculate from).
-/// Non-movement actions in the program are simply skipped.
+/// `MOVE_TO` instruction (`ACTIONS.md` §Movement: the intent channel clients speculate from) —
+/// and [`Event::QueueState`]s — one per `QUEUE_STATE` snapshot (intent-queue-ui F1: the
+/// details panel's strip; entries ride flat, stride 4). Other actions are simply skipped.
 pub fn move_intents(zone: u16, event_tic: u16, actions: &[u32]) -> Vec<Event> {
     let mut out = Vec::new();
     for inst in resonantdust_codec::action::program(actions) {
         let Ok(inst) = inst else { break };
+        if inst.action == resonantdust_codec::action::QUEUE_STATE {
+            // QUEUE_STATE pawn _reserved count entry-words×count.
+            if let [pawn, _reserved, _count, entries @ ..] = inst.operands {
+                out.push(Event::QueueState {
+                    macro_position: zone,
+                    entity_reference: *pawn,
+                    event_tic,
+                    entries: entries.to_vec(),
+                });
+            }
+            continue;
+        }
         if inst.action != MOVE_TO {
             continue;
         }

@@ -601,6 +601,9 @@ const CLIENT_VERBS: &[u32] = &[
     // it against the corpus and queues the real writes (F4). Same open-door posture as
     // SET_NEED until ownership lands (interactions I4).
     resonantdust_codec::action::EXECUTE_INTERACTION,
+    // intent-queue-ui F3: a strip-circle click cancels by entry_id; resolves against
+    // worker memory, writes nothing. QUEUE_STATE stays WORKER-ONLY (not listed).
+    resonantdust_codec::action::CANCEL_INTENT,
 ];
 
 /// Validate + relay a client intent to `event_shard.queue`. The door enforces "logged in",
@@ -1034,7 +1037,13 @@ fn now_ms() -> u64 {
 
 /// Serialize a [`ServerMsg`] and enqueue it. A closed channel (client gone) is a no-op.
 fn send(out: &mpsc::UnboundedSender<String>, msg: ServerMsg) {
-    let _ = out.send(msg.to_text());
+    let text = msg.to_text();
+    // TEMP (logs-drop drill): trace cold-state delivery end to end.
+    if text.contains("coldState") || text.contains("cold_state") || text.contains("ColdState") {
+        tracing::info!(frame = %text.chars().take(140).collect::<String>(), ok = !out.is_closed(),
+            "sending ColdState frame");
+    }
+    let _ = out.send(text);
 }
 
 /// Shorthand for a protocol-level error frame.

@@ -178,6 +178,10 @@ fn log_event(event: &Event) {
         Event::MoveIntent { macro_position, entity_reference, tile_x, tile_y, event_tic } => {
             info!(macro_position, entity_reference, tile_x, tile_y, event_tic, "move intent")
         }
+        Event::QueueState { macro_position, entity_reference, event_tic, entries } => {
+            info!(macro_position, entity_reference, event_tic,
+                intents = entries.len() / 4, "intent-queue snapshot")
+        }
         // The web engine emits these for the webgl debug HUD; the headless driver
         // has no HUD, so there's nothing to log. `ClockSync` fires every couple of
         // seconds — logging it would drown the smoke test.

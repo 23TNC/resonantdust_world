@@ -636,6 +636,10 @@ impl Engine {
                 tic,
                 removed,
             } => {
+                // TEMP (logs-drop drill): prove receipt end to end.
+                self.emit(Event::Status(format!(
+                    "cold_state received: zone {zone} def {definition_reference:#010x} removed {removed}"
+                )));
                 self.record_row("cold_state", text.len());
                 self.zones.note_update(zone, text.len() as u64, now_ms());
                 self.emit(Event::ColdState {

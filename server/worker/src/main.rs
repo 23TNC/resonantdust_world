@@ -26,8 +26,8 @@ use std::time::Duration;
 use spacetimedb_sdk::{DbContext, Table as _};
 
 use resonantdust_codec::action::{
-    self, Route, BUILD_WALL, CREATE, EXECUTE_INTERACTION, GRANT_CONDITION, INIT_ZONE, MOVE_STEP,
-    MOVE_TO, PLACE, PROMOTE, PROMOTE_EVENT, SET, SET_NEED,
+    self, Route, BUILD_WALL, CANCEL_INTENT, CREATE, EXECUTE_INTERACTION, GRANT_CONDITION,
+    INIT_ZONE, MOVE_STEP, MOVE_TO, PLACE, PROMOTE, PROMOTE_EVENT, QUEUE_STATE, SET, SET_NEED,
 };
 use resonantdust_codec::object::{
     cold_row_layer_id, cold_row_macro_position, cold_row_subtype, data_rotation, def_kind_id,
@@ -147,6 +147,8 @@ struct Payload {
 /// itself; a worker bounce loses only this pending tail, and execution-time
 /// re-validation turns any stale survivor into a logged no-op.
 struct PendingIntent {
+    /// The worker-minted DISPLAY identity (intent-queue-ui) — what a cancel click names.
+    entry_id: u32,
     interaction_ref: u32,
     inputs: Vec<u32>,
 }
@@ -157,14 +159,55 @@ enum Running {
     /// No trip-serial check needed: every seed flows through the interaction arm, and a
     /// fresh order REPLACES the whole queue before its new seed supersedes the chain
     /// (F3) — a superseded chain's queue is already gone.
-    Move { dest: u32 },
+    Move { entry_id: u32, interaction_ref: u32, dest: u32 },
     /// A `duration > 0` intent — completes when its version-1 COMPLETION event fires.
-    Timed { fire_tic: u16 },
+    Timed { entry_id: u32, interaction_ref: u32, started_tic: u16, fire_tic: u16 },
 }
 
 struct PawnQueue {
     pending: VecDeque<PendingIntent>,
     running: Option<Running>,
+    /// The entry carried across an ADVANCEMENT: popped from `pending` when its
+    /// version-2 order is queued, consumed when that order schedules/executes — so the
+    /// DISPLAY identity survives the re-queue (intent-queue-ui).
+    advancing: Option<(u32, u32)>, // (entry_id, interaction_ref)
+}
+
+impl PawnQueue {
+    fn new() -> Self {
+        PawnQueue { pending: VecDeque::new(), running: None, advancing: None }
+    }
+
+    /// The `QUEUE_STATE` fan program (intent-queue-ui F1): entry 0 = the ACTIVE event,
+    /// pending after, each `[entry_id, interaction_ref, phase, started:16|fire:16]`.
+    /// Phase: 0 pending / 1 walking / 2 executing (ACTIONS.md palette). An entry mid-
+    /// advancement fans as pending (phase 0, its next fan corrects it).
+    fn fan_program(&self, pawn: u32) -> Vec<u32> {
+        let mut entries: Vec<u32> = Vec::new();
+        match &self.running {
+            Some(Running::Move { entry_id, interaction_ref, .. }) => {
+                entries.extend_from_slice(&[*entry_id, *interaction_ref, 1, 0]);
+            }
+            Some(Running::Timed { entry_id, interaction_ref, started_tic, fire_tic }) => {
+                entries.extend_from_slice(&[
+                    *entry_id,
+                    *interaction_ref,
+                    2,
+                    (u32::from(*started_tic) << 16) | u32::from(*fire_tic),
+                ]);
+            }
+            None => {}
+        }
+        if let Some((entry_id, interaction_ref)) = &self.advancing {
+            entries.extend_from_slice(&[*entry_id, *interaction_ref, 0, 0]);
+        }
+        for p in &self.pending {
+            entries.extend_from_slice(&[p.entry_id, p.interaction_ref, 0, 0]);
+        }
+        let mut prog = vec![PROMOTE_EVENT, QUEUE_STATE, pawn, 0, entries.len() as u32];
+        prog.extend_from_slice(&entries);
+        prog
+    }
 }
 
 /// The queue-depth law (lumberjack F3): a composition that would exceed this rejects WHOLE.
@@ -270,6 +313,13 @@ async fn main() {
     // The per-pawn intent queues (lumberjack F1) — worker MEMORY, deliberately: the
     // in-flight order is a durable queued event; this map is only the tail behind it.
     let mut intent_queues: HashMap<u32, PawnQueue> = HashMap::new();
+    // The DISPLAY identity mint (intent-queue-ui) — never 0, ephemeral like the queue.
+    let mut intent_entry_seq: u32 = 0;
+    // Cancelled EXECUTING intents (intent-queue-ui F3): `(pawn, fire_tic)` — consumed
+    // when the completion arrives, turning it into a logged `cancelled` NO-OP. Worker
+    // memory: a bounce forgets it and a still-valid completion executes (stated in
+    // ACTIONS.md).
+    let mut cancelled: HashSet<(u32, u16)> = HashSet::new();
 
     let mut ticker = tokio::time::interval(period);
     loop {
@@ -293,7 +343,7 @@ async fn main() {
         let arrived: Vec<u32> = intent_queues
             .iter()
             .filter_map(|(&p, q)| match q.running {
-                Some(Running::Move { dest }) => {
+                Some(Running::Move { dest, .. }) => {
                     pawn.db().entity_state().iter().find(|r| r.entity_reference == p).and_then(
                         |r| {
                             let pos = pack_position_reference(
@@ -318,6 +368,8 @@ async fn main() {
                     next.inputs.len() as u32,
                 ];
                 prog.extend_from_slice(&next.inputs);
+                // The display identity survives the re-queue (intent-queue-ui).
+                q.advancing = Some((next.entry_id, next.interaction_ref));
                 match event.reducers().queue_at(prog, tic_add(master, 4)) {
                     Ok(()) => tracing::info!(master, pawn = format!("{p:#010x}"),
                         pending = q.pending.len(), "intent advanced — walk landed, next order queued"),
@@ -325,7 +377,8 @@ async fn main() {
                         "intent advance queue failed — pending tail dropped"),
                 }
             }
-            if q.pending.is_empty() && q.running.is_none() {
+            let _ = event.reducers().queue_at(q.fan_program(p), tic_add(master, 4));
+            if q.pending.is_empty() && q.running.is_none() && q.advancing.is_none() {
                 intent_queues.remove(&p);
             }
         }
@@ -806,6 +859,73 @@ async fn main() {
             for (event_reference, actions) in &events {
                 for inst in action::program(actions) {
                     let Ok(inst) = inst else { break };
+                    // ── CANCEL_INTENT pawn entry_id (intent-queue-ui F3/F4) ── resolves
+                    // against worker MEMORY by phase; every path refans; unknown = no-op.
+                    if inst.action == CANCEL_INTENT {
+                        let [pawn_ref, entry_id] = inst.operands else { continue };
+                        let plabel = format!("{pawn_ref:#010x}");
+                        let Some(q) = intent_queues.get_mut(pawn_ref) else {
+                            tracing::info!(tic = t, pawn = %plabel, entry_id,
+                                "cancel no-op — the pawn holds no queue");
+                            continue;
+                        };
+                        if let Some(i) = q.pending.iter().position(|p| p.entry_id == *entry_id) {
+                            q.pending.remove(i);
+                            tracing::info!(tic = t, pawn = %plabel, entry_id,
+                                "intent cancelled — pending entry removed");
+                            let _ = event
+                                .reducers()
+                                .queue_at(q.fan_program(*pawn_ref), tic_add(master, 4));
+                            if q.pending.is_empty() && q.running.is_none() && q.advancing.is_none()
+                            {
+                                intent_queues.remove(pawn_ref);
+                            }
+                            continue;
+                        }
+                        match &q.running {
+                            Some(Running::Timed {
+                                entry_id: id,
+                                interaction_ref: iref,
+                                fire_tic,
+                                ..
+                            }) if id == entry_id => {
+                                // Cancelable is the TOML's call, only for the EXECUTING case.
+                                let ok = bundle
+                                    .gameplay_lookup(*iref)
+                                    .and_then(|(_, n)| bundle.interaction_params(&n))
+                                    .map(|p| p.queue.cancelable)
+                                    .unwrap_or(false);
+                                if ok {
+                                    cancelled.insert((*pawn_ref, *fire_tic));
+                                    q.running = None;
+                                    tracing::info!(tic = t, pawn = %plabel, entry_id,
+                                        "intent cancelled — executing entry; its completion will NO-OP");
+                                    let _ = event
+                                        .reducers()
+                                        .queue_at(q.fan_program(*pawn_ref), tic_add(master, 4));
+                                } else {
+                                    tracing::info!(tic = t, pawn = %plabel, entry_id,
+                                        "cancel REFUSED — the interaction is not cancelable while executing");
+                                }
+                            }
+                            Some(Running::Move { entry_id: id, .. }) if id == entry_id => {
+                                // F3: cancelling the walk clears the queue; the chain
+                                // finishes its glide and the parked act dies with it.
+                                intent_queues.remove(pawn_ref);
+                                tracing::info!(tic = t, pawn = %plabel, entry_id,
+                                    "intent cancelled — walk; queue cleared, glide finishes");
+                                let _ = event.reducers().queue_at(
+                                    PawnQueue::new().fan_program(*pawn_ref),
+                                    tic_add(master, 4),
+                                );
+                            }
+                            _ => {
+                                tracing::info!(tic = t, pawn = %plabel, entry_id,
+                                    "cancel no-op — entry not in the queue (completed or mid-advancement)");
+                            }
+                        }
+                        continue;
+                    }
                     let (interaction_ref, version, inputs) = match (inst.action, inst.operands) {
                         (EXECUTE_INTERACTION, [i, v, _count, inputs @ ..]) => (*i, *v, inputs),
                         _ => continue,
@@ -855,16 +975,20 @@ async fn main() {
                         },
                     };
                     // A FRESH order REPLACES the pawn's whole queue (F3 — the one-chain
-                    // law lifted a level); preemption IS a new order.
+                    // law lifted a level); preemption IS a new order. The strip clears
+                    // via an EMPTY fan (intent-queue-ui).
                     if version == INTENT_FRESH && intent_queues.remove(&target).is_some() {
                         tracing::info!(tic = t, pawn = format!("{target:#010x}"),
                             "intent queue REPLACED by a fresh order (F3)");
+                        let _ = event
+                            .reducers()
+                            .queue_at(PawnQueue::new().fan_program(target), tic_add(master, 4));
                     }
                     // A COMPLETION advances the queue ON RECEIPT — the outcome (execute
                     // or no-op) never retries and never blocks the next intent (F1).
                     if is_completion {
                         if let Some(q) = intent_queues.get_mut(&target) {
-                            if matches!(q.running, Some(Running::Timed { fire_tic }) if fire_tic == t)
+                            if matches!(q.running, Some(Running::Timed { fire_tic, .. }) if fire_tic == t)
                             {
                                 q.running = None;
                                 if let Some(next) = q.pending.pop_front() {
@@ -875,6 +999,7 @@ async fn main() {
                                         next.inputs.len() as u32,
                                     ];
                                     prog.extend_from_slice(&next.inputs);
+                                    q.advancing = Some((next.entry_id, next.interaction_ref));
                                     match event.reducers().queue_at(prog, tic_add(master, 4)) {
                                         Ok(()) => tracing::info!(tic = t,
                                             pawn = format!("{target:#010x}"),
@@ -884,10 +1009,22 @@ async fn main() {
                                             "intent advance queue failed — pending tail dropped"),
                                     }
                                 }
-                                if q.pending.is_empty() && q.running.is_none() {
+                                let _ = event
+                                    .reducers()
+                                    .queue_at(q.fan_program(target), tic_add(master, 4));
+                                if q.pending.is_empty()
+                                    && q.running.is_none()
+                                    && q.advancing.is_none()
+                                {
                                     intent_queues.remove(&target);
                                 }
                             }
+                        }
+                        // A CANCELLED completion is the click's promised outcome
+                        // (intent-queue-ui F3): consume the marker and no-op WHOLE.
+                        if cancelled.remove(&(target, t)) {
+                            reject("cancelled by CANCEL_INTENT (intent-queue-ui F3)");
+                            continue;
                         }
                     }
                     // The destination (a position_reference): the move effect's `to`, else
@@ -1094,18 +1231,28 @@ async fn main() {
                     // durable event; the parked order re-enters as version-2 on arrival.
                     if needs_walk {
                         let d = dest.expect("needs_walk only sets with a bound destination");
-                        let q = intent_queues
-                            .entry(target)
-                            .or_insert_with(|| PawnQueue { pending: VecDeque::new(), running: None });
+                        let q = intent_queues.entry(target).or_insert_with(PawnQueue::new);
                         if q.pending.len() >= INTENT_CAP {
                             reject("intent queue full (cap 5, F3) — order rejected whole");
                             continue;
                         }
+                        // Two DISPLAY entries from one order (intent-queue-ui): the walk
+                        // and the parked act each mint their own id.
+                        intent_entry_seq += 2;
+                        let walk_id = intent_entry_seq - 1;
+                        let act_id = intent_entry_seq;
+                        let move_ref =
+                            bundle.gameplay_reference("interaction", "move_to").unwrap_or(0);
                         q.pending.push_back(PendingIntent {
+                            entry_id: act_id,
                             interaction_ref,
                             inputs: inputs.to_vec(),
                         });
-                        q.running = Some(Running::Move { dest: d });
+                        q.running = Some(Running::Move {
+                            entry_id: walk_id,
+                            interaction_ref: move_ref,
+                            dest: d,
+                        });
                         if let Err(err) = event
                             .reducers()
                             .queue_at(vec![PROMOTE_EVENT, PROMOTE, MOVE_TO, target, d], effect_tic)
@@ -1113,6 +1260,9 @@ async fn main() {
                             tracing::warn!(%err, tic = t, "intent walk seed queue failed — queue dropped");
                             intent_queues.remove(&target);
                         } else {
+                            let _ = event
+                                .reducers()
+                                .queue_at(q.fan_program(target), effect_tic);
                             tracing::info!(tic = t, interaction = %iname,
                                 pawn = format!("{target:#010x}"),
                                 dest = format!("{:?}", position_to_tile(d)),
@@ -1125,6 +1275,7 @@ async fn main() {
                     // queues its COMPLETION at +duration; the completion re-validates
                     // (the no-op law) and only then executes the effects below.
                     if !is_completion && params.duration > 0.0 {
+                        let started_tic = master;
                         let fire_tic = tic_add(master, (params.duration as u16).max(4));
                         let mut prog = vec![
                             EXECUTE_INTERACTION,
@@ -1136,19 +1287,45 @@ async fn main() {
                         if let Err(err) = event.reducers().queue_at(prog, fire_tic) {
                             tracing::warn!(%err, tic = t, "intent completion queue failed — dropped");
                         } else {
-                            intent_queues
-                                .entry(target)
-                                .or_insert_with(|| PawnQueue {
-                                    pending: VecDeque::new(),
-                                    running: None,
-                                })
-                                .running = Some(Running::Timed { fire_tic });
+                            let q = intent_queues.entry(target).or_insert_with(PawnQueue::new);
+                            // An ADVANCED order keeps its display identity; a fresh
+                            // in-place one mints its own (intent-queue-ui).
+                            let entry_id = match q.advancing.take() {
+                                Some((id, _)) if version == INTENT_ADVANCED => id,
+                                other => {
+                                    q.advancing = other; // not ours — put it back
+                                    intent_entry_seq += 1;
+                                    intent_entry_seq
+                                }
+                            };
+                            q.running = Some(Running::Timed {
+                                entry_id,
+                                interaction_ref,
+                                started_tic,
+                                fire_tic,
+                            });
+                            let _ = event
+                                .reducers()
+                                .queue_at(q.fan_program(target), tic_add(master, 4));
                             tracing::info!(tic = t, interaction = %iname,
                                 pawn = format!("{target:#010x}"),
                                 duration = params.duration, fire_tic,
                                 "intent scheduled — completion queued at +duration");
                         }
                         continue;
+                    }
+                    // An ADVANCED duration-0 order (a parked drink) executes below in
+                    // this pass — its display entry leaves the strip now.
+                    if version == INTENT_ADVANCED {
+                        if let Some(q) = intent_queues.get_mut(&target) {
+                            q.advancing = None;
+                            let _ = event
+                                .reducers()
+                                .queue_at(q.fan_program(target), tic_add(master, 4));
+                            if q.pending.is_empty() && q.running.is_none() {
+                                intent_queues.remove(&target);
+                            }
+                        }
                     }
                     let mut program: Vec<u32> = Vec::new();
                     let mut satisfied_need: Option<String> = None;
@@ -1361,6 +1538,22 @@ async fn main() {
                 for z in create_zones.get(event_reference).into_iter().flatten() {
                     if !zones.contains(z) {
                         zones.push(*z);
+                    }
+                }
+                // QUEUE_STATE writes nothing, so its fan zone comes from the PAWN it
+                // describes (intent-queue-ui F1) — without this the promoted event
+                // completes zoneless and never reaches a subscriber.
+                for inst in action::program(actions).flatten() {
+                    if inst.action == QUEUE_STATE {
+                        if let Some(p) = inst.operands.first() {
+                            if let Some(r) =
+                                pawn.db().entity_state().iter().find(|r| r.entity_reference == *p)
+                            {
+                                if !zones.contains(&r.macro_position_reference) {
+                                    zones.push(r.macro_position_reference);
+                                }
+                            }
+                        }
                     }
                 }
                 if let Err(err) = event.reducers().complete(*event_reference, zones) {

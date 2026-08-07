@@ -11,6 +11,7 @@ import type { GameContext } from "../../GameContext";
 import { ViewportPanel } from "../../game/viewport/ViewportPanel";
 import { WorldBridge } from "../../game/world/WorldBridge";
 import { MoverLayer } from "../../game/world/MoverLayer";
+import { IntentQueues } from "../../game/world/IntentQueues";
 import { ChatPanel } from "../../game/panels/chat/ChatPanel";
 import { DetailsPanel } from "../../game/panels/details/DetailsPanel";
 import { BuildPanel } from "../../game/panels/build/BuildPanel";
@@ -48,6 +49,7 @@ export class WorldScene extends Scene {
   private panel!: ViewportPanel;
   private bridge!: WorldBridge;
   private moverLayer!: MoverLayer;
+  private intentQueues!: IntentQueues;
   private chat!: ChatPanel;
   private details: DetailsPanel | null = null;
   private contentUnsub: (() => void) | null = null;
@@ -98,6 +100,10 @@ export class WorldScene extends Scene {
     };
     // Pawns (the wolves): synced from the tick pipeline's mobile entities into the viewport's WARM cache.
     this.moverLayer = new MoverLayer(ctx.client, ctx.content, this.panel.view);
+    // The intent-queue mirror (intent-queue-ui F1) — the details panel's strip reads it.
+    this.intentQueues = new IntentQueues(ctx.client);
+    // DEBUG: `__queues` — drill probes read the mirror directly.
+    (globalThis as unknown as { __queues: IntentQueues }).__queues = this.intentQueues;
     // DEBUG: `__sel` — the live SelectionModel (ui-select P0 acceptance probes read/drive it).
     (globalThis as unknown as { __sel: SelectionModel }).__sel = this.selection;
     // DEBUG: `__bridge` — the WorldBridge (build-walls drills drive the tile paths directly).

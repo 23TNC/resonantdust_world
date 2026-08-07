@@ -199,6 +199,19 @@ export interface MoveIntent {
 
 export type MoveIntentHandler = (intent: MoveIntent) => void;
 
+/** A pawn's INTENT-QUEUE snapshot (intent-queue-ui F1 — the details panel's strip;
+ *  `ACTIONS.md` § palette `QUEUE_STATE`). `entries` is the flat stride-4 payload
+ *  verbatim: `[entryId, interactionRef, phase, started:16|fire:16] × n`, entry 0 =
+ *  the ACTIVE event. Display truth only — never authority. */
+export interface QueueState {
+  macroPosition: number;
+  entityReference: number;
+  eventTic: number;
+  entries: Uint32Array;
+}
+
+export type QueueStateHandler = (q: QueueState) => void;
+
 const NOOP_UNSUB = (): void => { /* nothing subscribed */ };
 
 /** How long to wait for login to complete (gateway resolve + connect + auth)
@@ -264,6 +277,13 @@ type WorldEvent =
       tileX: number;
       tileY: number;
       eventTic: number;
+    }
+  | {
+      kind: "queueState";
+      macroPosition: number;
+      entityReference: number;
+      eventTic: number;
+      entries: Uint32Array;
     }
   | { kind: "callStats"; stats: CallStat[] }
   | { kind: "subStats"; open: number; total: number; tables: SubStat[] }
@@ -338,6 +358,7 @@ export class WasmClient {
   private readonly callStatCbs = new Set<(stats: CallStat[]) => void>();
   private readonly subStatCbs = new Set<(snap: SubStatsSnapshot) => void>();
   private readonly moveIntentCbs = new Set<MoveIntentHandler>();
+  private readonly queueStateCbs = new Set<QueueStateHandler>();
   /** The wall↔tic anchor (first-pawns P3) — the freshest wire tic and the wall time it arrived.
    *  Fractional deltas extrapolate by {@link ticHz}; null until any state/event arrives. */
   private ticAnchor: { tic: number; wallMs: number; ticsPerSec: number } | null = null;
@@ -605,6 +626,13 @@ export class WasmClient {
     return () => this.moveIntentCbs.delete(cb);
   }
 
+  /** Subscribe to intent-queue snapshots (intent-queue-ui F1 — the details panel's
+   *  strip reads these; display truth only). Returns an unsubscribe. */
+  onQueueState(cb: QueueStateHandler): () => void {
+    this.queueStateCbs.add(cb);
+    return () => this.queueStateCbs.delete(cb);
+  }
+
   /** Fractional tics elapsed NOW since wire tic `t` (serial — correct across the u16 wrap;
    *  negative = `t` is still in the estimated future). `null` until any state/event has
    *  anchored the estimate. The speculation clock (first-pawns P3). */
@@ -826,6 +854,16 @@ export class WasmClient {
             tileX: ev.tileX,
             tileY: ev.tileY,
             eventTic: ev.eventTic,
+          });
+        }
+        break;
+      case "queueState":
+        for (const cb of this.queueStateCbs) {
+          cb({
+            macroPosition: ev.macroPosition,
+            entityReference: ev.entityReference,
+            eventTic: ev.eventTic,
+            entries: ev.entries,
           });
         }
         break;

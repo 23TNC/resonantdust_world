@@ -954,6 +954,13 @@ fn event_to_js(event: &client::Event) -> JsValue {
             }
         }
         Event::Status(message) => {
+            // TEMP (logs-drop drill): surface status text race-free (parse errors ride it).
+            let arr = js_sys::eval("window.__statusRecv=window.__statusRecv||[];window.__statusRecv")
+                .ok()
+                .and_then(|v| v.dyn_into::<js_sys::Array>().ok());
+            if let Some(arr) = arr {
+                arr.push(&JsValue::from_str(message));
+            }
             set("kind", &JsValue::from_str("status"));
             set("message", &JsValue::from_str(message));
         }
@@ -1030,6 +1037,8 @@ fn event_to_js(event: &client::Event) -> JsValue {
             set("things", &arr);
         }
         Event::ColdState { macro_position, entity_reference, position_reference, definition_reference, data, tic, removed } => {
+            // TEMP (logs-drop drill): race-free receipt counter, readable from t=0.
+            let _ = js_sys::eval("window.__csRecv=(window.__csRecv||0)+1");
             set("kind", &JsValue::from_str("coldState"));
             set("macroPosition", &JsValue::from_f64(*macro_position as f64));
             set("entityReference", &JsValue::from_f64(*entity_reference as f64));
@@ -1060,6 +1069,16 @@ fn event_to_js(event: &client::Event) -> JsValue {
             set("tileX", &JsValue::from_f64(*tile_x as f64));
             set("tileY", &JsValue::from_f64(*tile_y as f64));
             set("eventTic", &JsValue::from_f64(*event_tic as f64));
+        }
+        Event::QueueState { macro_position, entity_reference, event_tic, entries } => {
+            set("kind", &JsValue::from_str("queueState"));
+            set("macroPosition", &JsValue::from_f64(*macro_position as f64));
+            set("entityReference", &JsValue::from_f64(*entity_reference as f64));
+            set("eventTic", &JsValue::from_f64(*event_tic as f64));
+            // Flat stride-4 entry words, verbatim (intent-queue-ui F1).
+            let arr = js_sys::Uint32Array::new_with_length(entries.len() as u32);
+            arr.copy_from(entries);
+            set("entries", &arr);
         }
         Event::CallStats(stats) => {
             set("kind", &JsValue::from_str("callStats"));

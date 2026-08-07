@@ -240,6 +240,16 @@ pub enum Event {
         tile_y: i32,
         event_tic: u16,
     },
+    /// A pawn's INTENT-QUEUE snapshot reached a subscribed zone (intent-queue-ui F1 —
+    /// the details panel's strip; `ACTIONS.md` § palette `QUEUE_STATE`). `entries` is
+    /// the flat stride-4 payload verbatim: `[entry_id, interaction_ref, phase,
+    /// started:16|fire:16] × n`, entry 0 = the ACTIVE event. Display truth only.
+    QueueState {
+        macro_position: u16,
+        entity_reference: u32,
+        event_tic: u16,
+        entries: Vec<u32>,
+    },
 }
 
 /// A receiver for the client's [`Event`]s, implemented by each host. The client

@@ -36,11 +36,26 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P2 — the fan
 
-- [ ] `QUEUE_STATE` behind ONE `fan_queue(pawn)` helper at every mutation site (I1);
+- [x] `QUEUE_STATE` behind ONE `fan_queue(pawn)` helper at every mutation site (I1);
       entries = order ref + interaction ref + phase + (started, fire) when executing
       (I3). Acceptance: a fan per mutation in a compose→schedule→complete drill.
-- [ ] The client mirror: wire decode → `WasmClient` event → a per-pawn QueueModel.
-      Acceptance: a browser probe tracks the worker's drill exactly.
+      → `PawnQueue::fan_program` (the one helper) called at replace/compose/schedule/
+      arrival-advance/completion-advance/cancel; identity = a WORKER-MINTED `entry_id`
+      (the order ref can't tell a composed walk from its parked act — ACTIONS amended);
+      `advancing` carries identity across re-queues; the COMPLETE pass derives the fan
+      zone from the PAWN (a zoneless promote never fans). FOUND EN ROUTE: the
+      event-shard MODULE validates programs with its own compiled codec — verb 13
+      rejected async-invisibly until the module was redeployed (transient data only)
+      + master/orch/npc rebuilt (the stale-binary guard caught master itself).
+- [x] The client mirror: wire decode → `WasmClient` event → a per-pawn QueueModel.
+      Acceptance: a browser probe tracks the worker's drill exactly. → core decodes
+      QUEUE_STATE beside MOVE_TO in `move_intents` → `Event::QueueState` (headless
+      logs it; npc ignores it) → wasm marshals `queueState` with the stride-4 words →
+      `WasmClient.onQueueState` → `IntentQueues` (serial-tic dedup so replays can't
+      roll back; `__queues` probe). DRILLED: the mirror showed
+      `{cut_down, phase 2, started 15149, fire 15179}` (+30 exact) and EMPTIED on the
+      completion fan. The walk-phase snapshot wasn't sampled in time (4 s probe vs a
+      2-tile walk) — P3's strip drill covers it visually.
 
 ## P3 — the strip
 
