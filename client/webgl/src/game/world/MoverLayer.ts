@@ -858,6 +858,7 @@ export class MoverLayer {
         const id = this.viewport.warmAddPrim({
           texture: this.viewport.white, // unused for a textureName-d prim (channels resolve by name)
           textureName: sp.texName,
+          outline: !sp.texName,         // food-chain F9: a textureless pawn part (the bunny) outlines
           flipX: sp.flipX,
           x: sp.x,
           y: sp.y,

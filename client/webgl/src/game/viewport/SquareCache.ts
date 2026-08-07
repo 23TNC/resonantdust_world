@@ -40,6 +40,10 @@ export interface Primitive {
   readonly id: number;
   texture: Texture;
   textureName?: string;
+  /** food-chain F9: a PLACEHOLDER tint rect — the bake borders it black so it reads
+   *  as a placeholder, not a bug. Set by the creators for textureless THING/pawn
+   *  parts; ground tiles never set it. */
+  outline?: boolean;
   x: number;
   y: number;
   width: number;
@@ -579,6 +583,8 @@ export class SquareCache {
       elevation: spec.elevation, // z-positioning P3: the HEIGHT — dropped here, every elevated
                                  // part reverts to standing on the floor and casts from the wrong
                                  // footprint, which is the exact bug this stream exists to fix
+      outline: spec.outline,     // food-chain F9: the placeholder border — dropped here, a
+                                 // placeholder reads as a bug again (the addPrim gotcha)
     };
     const range = squaresForAABB(prim.x, prim.y, prim.x + prim.width, prim.y + prim.height);
     this.prims.set(id, { prim, range });
@@ -755,6 +761,7 @@ export class SquareCache {
       // material-system P2: the bake consumes the SAME u8-quantised seed the billboard_data record
       // stamps (VARIABLES B bits 0–7) — one source, bit-agreeing on both sides.
       this.bake.setSeed(Math.floor((prim.seed ?? 0) * 255) / 255);
+      this.bake.setOutline(prim.outline ? 1 : 0);
       this.bake.setNormal(normalR.normal?.rgb?.source ?? null, normalR.normal?.rgb?.uvRect());
       this.bake.setTileDepth(depthR.depth ?? -1);
       const model = this.primModel(prim, wcOrigin, wrOrigin);

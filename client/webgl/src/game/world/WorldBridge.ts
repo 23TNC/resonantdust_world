@@ -731,6 +731,7 @@ export class WorldBridge {
         light: this.lightFor(kindId),   // P5: the kind's LIGHT presentation, if it has one
         texture: this.white,
         textureName: tex.name,
+        outline: !tex.name,             // food-chain F9: textureless = outlined placeholder
         flipX: tex.flipX,
         cell: tex.cell,
         x: p.x,
@@ -901,6 +902,7 @@ export class WorldBridge {
         id = this.viewport.addPrim({
           texture: this.white,
           textureName: tex.name,
+          outline: !tex.name,           // food-chain F9: textureless = outlined placeholder
           flipX: tex.flipX,
           cell: tex.cell,
           x: p.x,

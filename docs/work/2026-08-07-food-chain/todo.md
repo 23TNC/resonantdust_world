@@ -47,9 +47,11 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
       on bunny/humans, corpus 2 on wolves (I6). Acceptance: golden re-blessed; six
       consumers rebuilt. → all four kinds carry death; flora forages; master seeded
       226 defs, worker 15 kinds / 7 interactions, edge hot-loads clean.
-- [ ] Client: textureless tint-rect placeholders draw a BLACK OUTLINE (F9 — a render
+- [x] Client: textureless tint-rect placeholders draw a BLACK OUTLINE (F9 — a render
       rule for ALL placeholders, old and new). Acceptance: capture — shrub/logs/meat
-      read as outlined placeholders, not bugs.
+      read as outlined placeholders, not bugs. → uOutline in the MRT bake (8% UV
+      border), Primitive.outline set by all three creators (the addPrim gotcha
+      honored); captured — every shrub/log square outlined, real art untouched.
 
 ## P3 — the worker executes
 

@@ -55,6 +55,7 @@ uniform float uHasLayers;                  // 1 = add layer contributions
 uniform float uHasNormal;                  // 1 = sample uNormalTex, 0 = flat-up
 uniform float uTileDepth;                  // >=0 = thing depth; < 0 = ground (write black)
 uniform int uEmissiveOn;                   // lighting-feel P3: 1 = relay the leaf's R (emissive mask) into A
+uniform int uOutline;                      // food-chain F9: 1 = PLACEHOLDER — border the quad black
 
 layout(location = 0) out vec4 oAlbedo;
 layout(location = 1) out vec4 oSurface;
@@ -138,6 +139,13 @@ void main() {
     }
   }
   oAlbedo = vec4(outc * uTint, 1.0);
+  // food-chain F9 (the user): PLACEHOLDER tint rects wear a BLACK OUTLINE so they read
+  // as placeholders, not bugs. A render rule, not per-def art — the edge band of the
+  // unit quad in UV space (thickness a fixed fraction; the quads are sub-tile).
+  if (uOutline == 1) {
+    float edge = min(min(vUV.x, 1.0 - vUV.x), min(vUV.y, 1.0 - vUV.y));
+    if (edge < 0.08) { oAlbedo = vec4(0.0, 0.0, 0.0, 1.0); }
+  }
 
   // attachment 1: surface (R=presence, G=ao, B=coverage). Presence = tileDepth>=0.
   // A MUST stay 1.0: bakes ALPHA-BLEND (prims composite over their tile's ground in the same
@@ -182,6 +190,7 @@ export class MrtBakeShader {
   private hasLayers = 0;
   private hasNormal = 0;
   private tileDepth = -1;
+  private outline = 0;
 
   constructor(gl: WebGL2RenderingContext) {
     this.program = new Program(gl, MRT_VERT, MRT_FRAG, "mrt-bake");
@@ -241,6 +250,10 @@ export class MrtBakeShader {
   setTileDepth(v: number): void {
     this.tileDepth = v;
   }
+  /** food-chain F9: 1 = a placeholder tint rect — the frag draws the black border. */
+  setOutline(on: number): void {
+    this.outline = on;
+  }
 
   /** The five sampler bindings (unset ones → `empty`). Insertion order = texture-unit order. */
   textures(empty: Texture): Record<string, Texture> {
@@ -271,6 +284,7 @@ export class MrtBakeShader {
     p.uFloat("uHasLayers", this.hasLayers);
     p.uFloat("uHasNormal", this.hasNormal);
     p.uFloat("uTileDepth", this.tileDepth);
+    p.uInt("uOutline", this.outline);
   }
 
   destroy(): void {
