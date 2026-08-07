@@ -987,6 +987,115 @@ async fn main() {
                 continue;
             }
 
+            // ── THE NEED-WRITE TRIGGER (food-chain F5, the user's law) ── "when a need
+            // is modified, is when that affordance is fired": every SET_NEED sweeps the
+            // TARGET's carried interactions for affordances CHECKING the written need,
+            // evaluates them against the pawn's rows WITH THE FRESH WRITE SUBSTITUTED
+            // (the mirror may lag the reducer), and queues each passer as a FRESH
+            // system order through the same event door everything rides — the fire-time
+            // re-validation keeps the barrier window honest (a heal saves the pawn).
+            let mut swept: HashSet<(u32, u32)> = HashSet::new();
+            for (_er, actions) in &events {
+                for inst in action::program(actions) {
+                    let Ok(inst) = inst else { break };
+                    let (SET_NEED, [obj, row]) = (inst.action, inst.operands) else { continue };
+                    let nref = resonantdust_codec::object::gameplay_row_reference(
+                        resonantdust_codec::object::GAMEPLAY_NEED,
+                        *row,
+                    );
+                    if !swept.insert((*obj, nref)) {
+                        continue; // one sweep per (pawn, need) per tic
+                    }
+                    let Some((_, need_name)) = bundle.gameplay_lookup(nref) else { continue };
+                    let Some(prow) =
+                        pawn.db().entity_state().iter().find(|r| r.entity_reference == *obj)
+                    else {
+                        continue;
+                    };
+                    let kind = def_kind_id(prow.definition_reference);
+                    let (trait_rows, cond_rows) = pawn
+                        .db()
+                        .payload()
+                        .iter()
+                        .find(|r| r.entity_reference == *obj)
+                        .map(|r| {
+                            (
+                                resonantdust_codec::payload::payload_traits(&r.payload),
+                                resonantdust_codec::payload::payload_conditions(&r.payload),
+                            )
+                        })
+                        .unwrap_or_default();
+                    // The mirrored needs, with THIS write upserted.
+                    let mut need_rows: Vec<(u32, u16)> = pawn
+                        .db()
+                        .needs()
+                        .iter()
+                        .filter(|r| r.entity_reference == *obj)
+                        .map(|r| (r.need, r.set_tic))
+                        .collect();
+                    let key = resonantdust_codec::object::gameplay_row_key(*row);
+                    need_rows
+                        .retain(|(r, _)| resonantdust_codec::object::gameplay_row_key(*r) != key);
+                    need_rows.push((*row, t));
+                    let active = resonantdust_content::needs_eval::active_conditions(
+                        &bundle, &trait_rows, &need_rows, &cond_rows, t,
+                    );
+                    for bind in bundle.thing_interactions(kind) {
+                        let Some(ip) = bundle.interaction_params(&bind.name) else { continue };
+                        let keyed = ip.affordances.iter().any(|a| {
+                            bundle
+                                .affordance_params(a)
+                                .and_then(|p| p.trigger_need().map(str::to_owned))
+                                .as_deref()
+                                == Some(need_name.as_str())
+                        });
+                        if !keyed {
+                            continue;
+                        }
+                        if !resonantdust_content::stat_eval::interaction_available(
+                            &bundle, &bind.name, &trait_rows, &need_rows, &cond_rows, &active, t,
+                        ) {
+                            continue;
+                        }
+                        let Some(iref) = bundle.gameplay_reference("interaction", &bind.name)
+                        else {
+                            continue;
+                        };
+                        // Bind the input signature exactly as the pie menu would.
+                        let mut inputs = Vec::with_capacity(ip.inputs.len());
+                        let mut bindable = true;
+                        for name in &ip.inputs {
+                            match name.as_str() {
+                                "pawn" => inputs.push(*obj),
+                                "destination" => inputs.push(pack_position_reference(
+                                    prow.macro_position_reference,
+                                    prow.micro_position_reference,
+                                )),
+                                "amount" => inputs.push((bind.magnitude as f32).to_bits()),
+                                other => {
+                                    tracing::warn!(interaction = %bind.name, input = other,
+                                        "need-trigger: unbindable input — not fired");
+                                    bindable = false;
+                                }
+                            }
+                        }
+                        if !bindable {
+                            continue;
+                        }
+                        let mut program =
+                            vec![EXECUTE_INTERACTION, iref, INTENT_FRESH, inputs.len() as u32];
+                        program.extend_from_slice(&inputs);
+                        match event.reducers().queue_at(program, tic_add(master, 4)) {
+                            Ok(()) => tracing::info!(tic = t, interaction = %bind.name,
+                                need = %need_name, pawn = format!("{obj:#010x}"),
+                                "need-write trigger fired (food-chain F5)"),
+                            Err(err) => tracing::warn!(%err, tic = t, interaction = %bind.name,
+                                "need-write trigger queue failed"),
+                        }
+                    }
+                }
+            }
+
             // ── CONTINUE (MOVE_TO seed / MOVE_STEP hop) ── each un-arrived move queues its next
             // `MOVE_STEP` hop at `tic + tics_per_tile` (ACTIONS.md §Movement): BARE while distance
             // > 1, `PROMOTE`-prefixed when the next hop lands (the final-tile state anchor). The

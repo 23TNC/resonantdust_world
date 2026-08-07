@@ -209,6 +209,32 @@ pub fn grant_condition(
     Ok(())
 }
 
+/// `remove` — DEATH's second half (food-chain F5): delete the entity's CURRENT rows —
+/// `entity_state` (the subscription leave fans StateGone; clients drop the mover),
+/// `payload`, and every `needs` row. The LOGS stay (history; the mint counter never
+/// reuses ids, so a stale log can never resurrect anyone). Idempotent: removing an
+/// absent entity is a silent success (a raced double-death no-ops — I3).
+#[spacetimedb::reducer]
+pub fn remove(ctx: &ReducerContext, _worker: u8, _tic: u16, entity_reference: u32) -> Result<(), String> {
+    if let Some(row) = ctx.db.entity_state().entity_reference().find(entity_reference) {
+        ctx.db.entity_state().entity_reference().delete(row.entity_reference);
+    }
+    if let Some(row) = ctx.db.payload().entity_reference().find(entity_reference) {
+        ctx.db.payload().entity_reference().delete(row.entity_reference);
+    }
+    let uids: Vec<u64> = ctx
+        .db
+        .needs()
+        .entity_reference()
+        .filter(entity_reference)
+        .map(|n| n.uid)
+        .collect();
+    for uid in uids {
+        ctx.db.needs().uid().delete(uid);
+    }
+    Ok(())
+}
+
 // ── spawn — server-minted pawn ids (`CREATE`) ───────────────────────────────────────
 
 /// The replay ledger: `(event_reference, index) → minted entity_reference`. A `CREATE` replay

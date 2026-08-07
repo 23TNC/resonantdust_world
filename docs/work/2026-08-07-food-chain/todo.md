@@ -29,9 +29,11 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 - [ ] Worker: the NEED-WRITE TRIGGER (F5, the user's law) — every need write sweeps
       the target's interactions for need-check affordances on THAT need, queueing
       the passers. Acceptance: SET_NEED corpus→0 queues death by itself.
-- [ ] Pawn shard: the `remove` reducer (state + payload + needs rows; silent on
+- [x] Pawn shard: the `remove` reducer (state + payload + needs rows; silent on
       absence — I3); module redeploy + master restart sequenced (I1). Acceptance:
-      a drill remove deletes the rows; StateGone reaches a client.
+      a drill remove deletes the rows; StateGone reaches a client. → deployed (the
+      wipe + re-mint sequenced); a CLI remove deleted the row and a second call
+      no-opped; the client-visible StateGone rides P3's death drill.
 
 ## P2 — the corpus
 

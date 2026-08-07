@@ -24,6 +24,7 @@ pub mod bump_reducer;
 pub mod claim_reducer;
 pub mod gc_reducer;
 pub mod grant_condition_reducer;
+pub mod remove_reducer;
 pub mod set_need_reducer;
 pub mod spawn_reducer;
 pub mod write_reducer;
@@ -55,6 +56,7 @@ pub use bump_reducer::bump;
 pub use claim_reducer::claim;
 pub use gc_reducer::gc;
 pub use grant_condition_reducer::grant_condition;
+pub use remove_reducer::remove;
 pub use set_need_reducer::set_need;
 pub use spawn_reducer::spawn;
 pub use write_reducer::write;
@@ -83,6 +85,11 @@ pub enum Reducer {
         tic: u16,
         entity_reference: u32,
         row: u32,
+}    ,
+    Remove {
+        worker: u8,
+        tic: u16,
+        entity_reference: u32,
 }    ,
     SetNeed {
         worker: u8,
@@ -120,6 +127,7 @@ impl __sdk::Reducer for Reducer {
             Reducer::Claim { .. } => "claim",
             Reducer::Gc { .. } => "gc",
             Reducer::GrantCondition { .. } => "grant_condition",
+            Reducer::Remove { .. } => "remove",
             Reducer::SetNeed { .. } => "set_need",
             Reducer::Spawn { .. } => "spawn",
             Reducer::Write { .. } => "write",
@@ -158,6 +166,15 @@ fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
                 tic: tic.clone(),
                 entity_reference: entity_reference.clone(),
                 row: row.clone(),
+}),
+            Reducer::Remove{
+                worker,
+                tic,
+                entity_reference,
+}             => __sats::bsatn::to_vec(&remove_reducer::RemoveArgs {
+                worker: worker.clone(),
+                tic: tic.clone(),
+                entity_reference: entity_reference.clone(),
 }),
             Reducer::SetNeed{
                 worker,
