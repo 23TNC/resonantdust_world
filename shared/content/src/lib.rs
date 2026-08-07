@@ -16,6 +16,7 @@
 //!     (native/server only).
 
 pub mod content;
+pub mod emotion_eval;
 pub mod loader;
 pub mod needs_eval;
 pub mod stat_eval;

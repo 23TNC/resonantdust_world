@@ -14,3 +14,12 @@
   `cargo test --lib` 42/42 green incl. new refusal tests (`fine`-first, 17th emotion,
   missing color, unknown emotion, magnitude 16, trait scalar form, `mood` = unknown
   field) and the per-level trait round-trip.
+- **2026-08-07 — P1b: the corpus + P2a: the eval.** `content/emotions.toml` authors the
+  SIXTEEN `[[emotion]]` blocks in the user's order (fine gray, sad blue, angry red,
+  embarrassed yellow user-fixed; the twelve F8 hues mine);
+  thirsty/dehydrated/quenched author emotions (uncomfortable +2 / scared +5 +
+  uncomfortable +3 / happy +2 — I5), mood lines deleted. New
+  `emotion_eval::{emotion_sums, active_emotion}` (argmax, empty→fine, ties→lowest
+  index; trait levels sum beside conditions). Verified: golden re-blessed — the diff is
+  exactly the authored rows + the new declaration-order emotion section; 44 lib + 2
+  golden tests green incl. the 3/5/2/6→happy oracle and the tie/fine laws.

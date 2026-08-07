@@ -30,9 +30,10 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P2 — the eval + the sweep
 
-- [ ] `emotion_eval::active_emotion` (sums, argmax, fine/tie law — F3) with the
+- [x] `emotion_eval::active_emotion` (sums, argmax, fine/tie law — F3) with the
       3/5/2/6 → happy oracle unit test (I6); the sort tie-break → Σ magnitude desc in
-      the ONE sort (I1). Acceptance: eval tests green incl. the oracle.
+      the ONE sort (I1). Acceptance: eval tests green incl. the oracle. → 44/44 green;
+      the tie-break landed with P1 (one commit could not split them).
 - [ ] The mood SWEEP (F4/I1): `pawnMood` deleted, the stride's mood lane → Σ
       magnitude, new `pawnEmotion` + `conditionEmotions` wasm accessors, npc + client
       swept. Acceptance: grep `mood` clean outside history; gates green.

@@ -37,25 +37,31 @@ band = [
 ]
 
 # `priority` sorts the details panel's cards, DESCENDING — the top 4 show maximized, the
-# rest minimized. Authored, never derived from mood: urgency is not magnitude. Author in
-# TENS so a new condition slots between two without renumbering anything.
+# rest minimized. Authored, never derived from emotion magnitude: urgency is not
+# intensity. Author in TENS so a new condition slots between two without renumbering.
+#
+# `emotions` (emotions F2): what the condition makes the pawn FEEL — feeds the
+# active-emotion argmax and the card's pie slices. Magnitude 1..15; +0 = omit the line.
 
 [[condition]]
 name = "thirsty"
 label = "Thirsty"
-mood = -0.15
+emotions = [ { emotion = "uncomfortable", magnitude = 2 } ]
 priority = 20
 
 [[condition]]
 name = "dehydrated"
 label = "Dehydrated"
-mood = -0.4
+emotions = [
+  { emotion = "scared", magnitude = 5 },
+  { emotion = "uncomfortable", magnitude = 3 },
+]
 priority = 30
 
 [[condition]]
 name = "quenched"
 label = "Quenched"
-mood = 0.2
+emotions = [ { emotion = "happy", magnitude = 2 } ]
 duration = 3600.0
 priority = 10
 # The stream's living proof of the modifier machinery (stat-model I4): while quenched,

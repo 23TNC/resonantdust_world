@@ -64,6 +64,17 @@ fn dump(b: &Bundle) -> String {
     sec("materials", b.material_names().join("\n"), &mut out);
     sec("needs", b.need_names().join("\n"), &mut out);
     sec("conditions", b.condition_names().join("\n"), &mut out);
+    // Declaration order IS the u4 identity (emotions F1) — a reorder here is a world change.
+    sec(
+        "emotions (index name color, declaration order)",
+        b.emotion_params_all()
+            .iter()
+            .enumerate()
+            .map(|(i, (n, p))| format!("{i} {n} #{:06x}", p.color))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        &mut out,
+    );
     sec(
         "biomes (name subtype, evaluation order)",
         b.biome_names()

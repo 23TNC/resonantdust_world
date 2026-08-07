@@ -29,6 +29,23 @@ thirst
 thirsty
 dehydrated
 quenched
+== emotions (index name color, declaration order) ==
+0 fine #9aa4b0
+1 happy #e8a33a
+2 sad #3a6ee8
+3 angry #d8342c
+4 embarrassed #e8d23a
+5 confident #8a4fd8
+6 tense #a8533a
+7 bored #6b7a8a
+8 confused #2fa8a0
+9 scared #6a3ad8
+10 motivated #3ab84f
+11 restless #d89a2c
+12 focused #2fb8d8
+13 affectionate #e86aa8
+14 uncomfortable #8a8f3c
+15 playful #c93cb8
 == biomes (name subtype, evaluation order) ==
 ocean 1
 beach 2
@@ -169,23 +186,36 @@ white
 [
     ConditionParams {
         label: "Thirsty",
-        mood: -0.15,
         duration: 0.0,
         stats: [],
         needs: [],
+        emotions: [
+            EmotionModifier {
+                emotion: 14,
+                magnitude: 2,
+            },
+        ],
         priority: 20,
     },
     ConditionParams {
         label: "Dehydrated",
-        mood: -0.4,
         duration: 0.0,
         stats: [],
         needs: [],
+        emotions: [
+            EmotionModifier {
+                emotion: 9,
+                magnitude: 5,
+            },
+            EmotionModifier {
+                emotion: 14,
+                magnitude: 3,
+            },
+        ],
         priority: 30,
     },
     ConditionParams {
         label: "Quenched",
-        mood: 0.2,
         duration: 3600.0,
         stats: [],
         needs: [
@@ -194,6 +224,12 @@ white
                 rate: 0.5,
                 min: None,
                 max: None,
+            },
+        ],
+        emotions: [
+            EmotionModifier {
+                emotion: 1,
+                magnitude: 2,
             },
         ],
         priority: 10,
@@ -212,9 +248,9 @@ can_drink
 can_move_ground
 can_fell_trees
 == trait_params ==
-biological_lifeform: Some(TraitParams { label: "Biological Lifeform", levels: [TraitLevel { stats: [StatModifier { stat: "metabolism", add: 1.0, min: None, max: None }], needs: [] }] })
-walks: Some(TraitParams { label: "Walks", levels: [TraitLevel { stats: [StatModifier { stat: "ground_speed", add: 24.0, min: None, max: None }], needs: [] }, TraitLevel { stats: [StatModifier { stat: "ground_speed", add: 12.0, min: None, max: None }], needs: [] }, TraitLevel { stats: [StatModifier { stat: "ground_speed", add: 6.0, min: None, max: None }], needs: [] }] })
-lumberjack: Some(TraitParams { label: "Lumberjack", levels: [TraitLevel { stats: [StatModifier { stat: "logging", add: 1.0, min: None, max: None }], needs: [] }] })
+biological_lifeform: Some(TraitParams { label: "Biological Lifeform", levels: [TraitLevel { stats: [StatModifier { stat: "metabolism", add: 1.0, min: None, max: None }], needs: [], emotions: [] }] })
+walks: Some(TraitParams { label: "Walks", levels: [TraitLevel { stats: [StatModifier { stat: "ground_speed", add: 24.0, min: None, max: None }], needs: [], emotions: [] }, TraitLevel { stats: [StatModifier { stat: "ground_speed", add: 12.0, min: None, max: None }], needs: [], emotions: [] }, TraitLevel { stats: [StatModifier { stat: "ground_speed", add: 6.0, min: None, max: None }], needs: [], emotions: [] }] })
+lumberjack: Some(TraitParams { label: "Lumberjack", levels: [TraitLevel { stats: [StatModifier { stat: "logging", add: 1.0, min: None, max: None }], needs: [], emotions: [] }] })
 == interaction_params ==
 drink: Some(InteractionParams { label: "Drink", menu_text: "Drink", affordances: ["can_drink"], inputs: ["pawn", "destination", "amount"], satisfy: Some(SatisfyEffect { target: Input(0), need: Name("thirst"), amount: Input(2) }), move_effect: None, grants: ["quenched"], destroy: None, location: "adjacent", duration: 0.0, queue: QueueVisual { hover: Some("Drinking"), size: 1.0, background: Some(3037816), progress: "cw", progress_color: Some(3855951), progress_fill: true, cancelable: true } })
 move_to: Some(InteractionParams { label: "Move To", menu_text: "Move To", affordances: ["can_move_ground"], inputs: ["pawn", "destination"], satisfy: None, move_effect: Some(MoveEffect { target: Input(0), to: Input(1) }), grants: [], destroy: None, location: "target", duration: 0.0, queue: QueueVisual { hover: Some("Moving"), size: 0.6, background: None, progress: "none", progress_color: None, progress_fill: true, cancelable: false } })
@@ -9540,7 +9576,7 @@ logs: 1 part(s) [(0, 1.0, Some("white"))]
 20,20,19 mountains stone -
 20,20,20 mountains stone -
 == needs probes ==
-full: active=[] mood=0.5 next=Some(14041)
-mid: active=[(2147614736, -0.15, 0)] mood=0.35 next=Some(3241)
-empty: active=[(2147614752, -0.4, 0)] mood=0.09999999999999998 next=None
-timed: active=[(2147614768, 0.2, 3500)] mood=0.7 next=Some(3600)
+full: active=[] next=Some(14041)
+mid: active=[(2147614736, 2, 0)] next=Some(3241)
+empty: active=[(2147614752, 8, 0)] next=None
+timed: active=[(2147614768, 2, 3500)] next=Some(3600)
