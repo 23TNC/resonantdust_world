@@ -199,24 +199,31 @@ pawn/human/male
 == traits ==
 biological_lifeform
 walks
+lumberjack
 == interactions ==
 drink
 move_to
+cut_down
 == affordances ==
 can_drink
 can_move_ground
+can_fell_trees
 == trait_params ==
 biological_lifeform: Some(TraitParams { label: "Biological Lifeform", levels: [TraitLevel { stats: [StatModifier { stat: "metabolism", add: 1.0, min: None, max: None }], needs: [] }] })
 walks: Some(TraitParams { label: "Walks", levels: [TraitLevel { stats: [StatModifier { stat: "ground_speed", add: 24.0, min: None, max: None }], needs: [] }, TraitLevel { stats: [StatModifier { stat: "ground_speed", add: 12.0, min: None, max: None }], needs: [] }, TraitLevel { stats: [StatModifier { stat: "ground_speed", add: 6.0, min: None, max: None }], needs: [] }] })
+lumberjack: Some(TraitParams { label: "Lumberjack", levels: [TraitLevel { stats: [StatModifier { stat: "logging", add: 1.0, min: None, max: None }], needs: [] }] })
 == interaction_params ==
-drink: Some(InteractionParams { label: "Drink", menu_text: "Drink", affordances: ["can_drink"], inputs: ["pawn", "amount"], satisfy: Some(SatisfyEffect { target: Input(0), need: Name("thirst"), amount: Input(1) }), move_effect: None, grants: ["quenched"], location: "on", duration: 0.0 })
-move_to: Some(InteractionParams { label: "Move To", menu_text: "Move To", affordances: ["can_move_ground"], inputs: ["pawn", "destination"], satisfy: None, move_effect: Some(MoveEffect { target: Input(0), to: Input(1) }), grants: [], location: "target", duration: 0.0 })
+drink: Some(InteractionParams { label: "Drink", menu_text: "Drink", affordances: ["can_drink"], inputs: ["pawn", "amount"], satisfy: Some(SatisfyEffect { target: Input(0), need: Name("thirst"), amount: Input(1) }), move_effect: None, grants: ["quenched"], destroy: None, location: "adjacent", duration: 0.0 })
+move_to: Some(InteractionParams { label: "Move To", menu_text: "Move To", affordances: ["can_move_ground"], inputs: ["pawn", "destination"], satisfy: None, move_effect: Some(MoveEffect { target: Input(0), to: Input(1) }), grants: [], destroy: None, location: "target", duration: 0.0 })
+cut_down: Some(InteractionParams { label: "Cut Down", menu_text: "Cut Down", affordances: ["can_fell_trees"], inputs: ["pawn", "destination"], satisfy: None, move_effect: None, grants: [], destroy: Some("carrier"), location: "adjacent", duration: 30.0 })
 == affordance_params ==
 can_drink: Some(AffordanceParams { label: "Can Drink", stat: "metabolism", above: Some(0.0), below: None })
 can_move_ground: Some(AffordanceParams { label: "Can Move Ground", stat: "ground_speed", above: Some(0.0), below: None })
+can_fell_trees: Some(AffordanceParams { label: "Can Fell Trees", stat: "logging", above: Some(0.0), below: None })
 == stat_params ==
 ground_speed: Some(StatParams { label: "Ground Speed", min: 0.0, max: 240.0, min_wins: true })
 metabolism: Some(StatParams { label: "Metabolism", min: 0.0, max: 10.0, min_wins: true })
+logging: Some(StatParams { label: "Logging", min: 0.0, max: 10.0, min_wins: true })
 == gameplay seed refs ==
 gameplay/need/thirst Some("0x80010010")
 gameplay/condition/thirsty Some("0x80020010")
@@ -224,12 +231,16 @@ gameplay/condition/dehydrated Some("0x80020020")
 gameplay/condition/quenched Some("0x80020030")
 gameplay/trait/biological_lifeform Some("0x80030010")
 gameplay/trait/walks Some("0x80030020")
+gameplay/trait/lumberjack Some("0x80030030")
 gameplay/interaction/drink Some("0x80040010")
 gameplay/interaction/move_to Some("0x80040020")
+gameplay/interaction/cut_down Some("0x80040030")
 gameplay/affordance/can_drink Some("0x80050010")
 gameplay/affordance/can_move_ground Some("0x80050020")
+gameplay/affordance/can_fell_trees Some("0x80050030")
 gameplay/stat/ground_speed Some("0x80060010")
 gameplay/stat/metabolism Some("0x80060020")
+gameplay/stat/logging Some("0x80060030")
 == tile interactions (name → bindings) ==
 grass [("move_to", 0.0)]
 dirt [("move_to", 0.0)]
@@ -238,17 +249,17 @@ water [("drink", 3.0), ("move_to", 0.0)]
 stone [("move_to", 0.0)]
 wall_smooth []
 == thing traits + interactions ==
-tree traits=[] interactions=[]
-shrub traits=[] interactions=[]
-cactus traits=[] interactions=[]
+tree traits=[] interactions=[("cut_down", 0.0)]
+shrub traits=[] interactions=[("cut_down", 0.0)]
+cactus traits=[] interactions=[("cut_down", 0.0)]
 reed traits=[] interactions=[]
 rock traits=[] interactions=[]
 flora traits=[] interactions=[]
 wolf traits=[("biological_lifeform", 1), ("walks", 2)] interactions=[]
 torch traits=[] interactions=[]
 torch_blue traits=[] interactions=[]
-human_female traits=[("biological_lifeform", 1), ("walks", 1)] interactions=[]
-human_male traits=[("biological_lifeform", 1), ("walks", 1)] interactions=[]
+human_female traits=[("biological_lifeform", 1), ("walks", 1), ("lumberjack", 1)] interactions=[]
+human_male traits=[("biological_lifeform", 1), ("walks", 1), ("lumberjack", 1)] interactions=[]
 == thing visual parts ==
 tree: 1 part(s) [(0, 1.0, Some("biome-thing/default/conifer"))]
 shrub: 1 part(s) [(0, 1.0, Some("white"))]

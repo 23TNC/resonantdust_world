@@ -509,10 +509,15 @@ struct InteractionToml {
   /// TIMED condition grants on execute.
   #[serde(default)]
   grant: Vec<String>,
-  /// The placement rule (input-rework F4): `"on"` | `"target"`.
+  /// The destroy effect (lumberjack F5): `"carrier"` is the only value — clear the
+  /// validated offerer's cell. `yields` is the RESERVED successor (I9), not a field yet.
+  #[serde(default)]
+  destroy: Option<String>,
+  /// The placement rule (input-rework F4 / lumberjack F2): `"on"` | `"adjacent"` | `"target"`.
   #[serde(default = "on")]
   location: String,
-  /// RESERVED (I9) — interactions are instantaneous; author 0.
+  /// TICS this interaction takes; 0 = instantaneous, N > 0 completes (and re-validates)
+  /// at +N (lumberjack — the I9 reservation consumed).
   #[serde(default)]
   duration: f64,
 }
@@ -924,13 +929,33 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
         to: operand(&m.to, "move.to", &mut errors),
       });
       // An interaction must DO something (input-rework F6): at least one effect.
-      if satisfy.is_none() && move_effect.is_none() {
+      if satisfy.is_none() && move_effect.is_none() && i.destroy.is_none() {
         errors.push(LoadError {
           file: String::new(),
           message: format!(
-            "interaction `{}` authors no effect — at least one of `satisfy`/`move` is required",
+            "interaction `{}` authors no effect — at least one of `satisfy`/`move`/`destroy` \
+             is required",
             i.name
           ),
+        });
+      }
+      // The destroy effect names the CARRIER and nothing else (lumberjack F5).
+      if let Some(d) = &i.destroy {
+        if d != "carrier" {
+          errors.push(LoadError {
+            file: String::new(),
+            message: format!(
+              "interaction `{}`: destroy = `{d}` — `\"carrier\"` is the only target \
+               (lumberjack F5; `yields` is the reserved successor)",
+              i.name
+            ),
+          });
+        }
+      }
+      if i.duration < 0.0 {
+        errors.push(LoadError {
+          file: String::new(),
+          message: format!("interaction `{}`: duration {} is negative", i.name, i.duration),
         });
       }
       for g in &i.grant {
@@ -949,12 +974,12 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
           });
         }
       }
-      if i.location != "on" && i.location != "target" {
+      if i.location != "on" && i.location != "adjacent" && i.location != "target" {
         errors.push(LoadError {
           file: String::new(),
           message: format!(
-            "interaction `{}`: location `{}` — the built rules are `on` and `target` \
-             (input-rework F4)",
+            "interaction `{}`: location `{}` — the built rules are `on`, `adjacent`, and \
+             `target` (input-rework F4 / lumberjack F2)",
             i.name, i.location
           ),
         });
@@ -968,6 +993,7 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
         satisfy,
         move_effect,
         grants: i.grant.clone(),
+        destroy: i.destroy.clone(),
         location: i.location.clone(),
         duration: i.duration,
       })
@@ -1683,11 +1709,25 @@ tint = "#ffffff"
     assert!(e.iter().any(|e| e.message.contains("@ghost")), "{e:?}");
     let e = load(&[src("t.toml", "[[interaction]]\nname = \"d\"\ngrant = [\"ghost\"]\n")]).unwrap_err();
     assert!(e.iter().any(|e| e.message.contains("unknown condition `ghost`")), "{e:?}");
-    let e = load(&[src("t.toml", "[[interaction]]\nname = \"d\"\nlocation = \"adjacent\"\n")])
+    let e = load(&[src("t.toml", "[[interaction]]\nname = \"d\"\nlocation = \"orbit\"\n")])
       .unwrap_err();
     assert!(e.iter().any(|e| e.message.contains("the built rules are")), "{e:?}");
     // An interaction with NO effect refuses (input-rework F6).
     assert!(e.iter().any(|e| e.message.contains("authors no effect")), "{e:?}");
+    // The lumberjack surface: destroy/duration round-trip; destroy is an effect; only
+    // `"carrier"` is a legal destroy target (F5); adjacent is a built rule now (F2).
+    let b = load(&[src(
+      "t.toml",
+      "[[interaction]]\nname = \"cut_down\"\ndestroy = \"carrier\"\nlocation = \"adjacent\"\n\
+       duration = 30\n",
+    )])
+    .expect("destroy is an effect");
+    let cut = b.interaction_params("cut_down").expect("cut_down");
+    assert_eq!(cut.destroy.as_deref(), Some("carrier"));
+    assert_eq!((cut.location.as_str(), cut.duration), ("adjacent", 30.0));
+    let e = load(&[src("t.toml", "[[interaction]]\nname = \"d\"\ndestroy = \"self\"\n")])
+      .unwrap_err();
+    assert!(e.iter().any(|e| e.message.contains("the only target")), "{e:?}");
     // A carrier binding a ghost interaction refuses too.
     let e = load(&[src("t.toml", "[[tile]]\nname = \"w\"\ninteractions = [{ name = \"x\" }]\n")])
       .unwrap_err();

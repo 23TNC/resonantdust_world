@@ -8,6 +8,8 @@ kind = "conifer"
 subType = ["default"]
 variant = ["0","1","2","3","4","5","6","7","8","9","10","11","12","13","14","15"]
 packed = [ { tint = "#46d64f" }, { tint = "#b0754f" } ]
+# Fellable (lumberjack F6): the pie menu on a tree offers Cut Down to logging pawns.
+interactions = [ { name = "cut_down" } ]
 
   [[thing.part]]
   tint = "#ffffff"
@@ -35,6 +37,7 @@ type = "biome-thing"
 kind = "shrub"
 subType = ["default"]
 variant = ["0","1","2","3","4","5","6","7","8","9","10","11","12","13","14","15"]
+interactions = [ { name = "cut_down" } ]
 
   [[thing.part]]
   texture = "white"
@@ -50,6 +53,7 @@ type = "biome-thing"
 kind = "cactus"
 subType = ["default"]
 variant = ["0","1","2","3","4","5","6","7","8","9","10","11","12","13","14","15"]
+interactions = [ { name = "cut_down" } ]
 
   [[thing.part]]
   texture = "white"
@@ -187,8 +191,9 @@ variant = ["0"]
 # `speed = 16` slot has no walks level; humans are the ambling debug fixture).
 # human-pawns-redux F4: biological lifeforms THIRST — without the need, the pie menu
 # offers Drink (metabolism passes) and the worker refuses (no row): the drift class.
+# lumberjack F4: every human fells (dev posture, like walks); wolves refuse by the gate.
 needs = ["thirst"]
-traits = ["biological_lifeform", { name = "walks", level = 1 }]
+traits = ["biological_lifeform", { name = "walks", level = 1 }, { name = "lumberjack", level = 1 }]
 
   [[thing.part]]
   tint = "#ffffff"
@@ -222,7 +227,7 @@ kind = "male"
 subType = ["human"]
 variant = ["0"]
 needs = ["thirst"]
-traits = ["biological_lifeform", { name = "walks", level = 1 }]
+traits = ["biological_lifeform", { name = "walks", level = 1 }, { name = "lumberjack", level = 1 }]
 
   [[thing.part]]
   tint = "#ffffff"

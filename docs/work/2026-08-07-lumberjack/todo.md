@@ -20,12 +20,17 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P1 — the corpus
 
-- [ ] interactions.toml: `logging` stat, `lumberjack` trait, `can_fell_trees`, `cut_down`
+- [x] interactions.toml: `logging` stat, `lumberjack` trait, `can_fell_trees`, `cut_down`
       (adjacent, duration 30, destroy carrier — F7); `drink` → adjacent; the consumed I9
-      RESERVED note deleted. Acceptance: content-check clean.
-- [ ] things.toml: tree/shrub/cactus carry `cut_down` (F6); humans author lumberjack 1
+      RESERVED note deleted. Acceptance: content-check clean. → all six defs authored;
+      the loader learned `destroy` (carrier-only, refusal tested), `adjacent` joined the
+      built location rules, negative durations refuse; content-check clean.
+- [x] things.toml: tree/shrub/cactus carry `cut_down` (F6); humans author lumberjack 1
       (F4); golden re-blessed (I5). Acceptance: golden diff = the authored rows only;
-      loader round-trips `duration`/`destroy`.
+      loader round-trips `duration`/`destroy`. → golden diff audited: exactly the new
+      registry rows (trait 0x80030030 / interaction 0x80040030 / affordance 0x80050030 /
+      stat 0x80060030), drink `adjacent`, three fellable things, humans +lumberjack@1;
+      39+2 content tests green incl. the new destroy/duration round-trip.
 
 ## P2 — adjacency
 

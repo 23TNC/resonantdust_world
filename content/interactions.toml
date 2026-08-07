@@ -44,6 +44,15 @@ min = 0
 max = 10
 winner = "min"
 
+# Tree-felling capability (lumberjack F7): can_fell_trees reads it; the lumberjack
+# trait contributes 1. Levels are room for skill later — the gate only asks > 0.
+[[stat]]
+name = "logging"
+label = "Logging"
+min = 0
+max = 10
+winner = "min"
+
 # ── traits ────────────────────────────────────────────────────────────────────
 
 [[trait]]
@@ -58,6 +67,12 @@ name = "walks"
 label = "Walks"
 stats = [ { stat = "ground_speed", add = [24, 12, 6] } ]
 
+# The tree-feller (lumberjack F4/F7): level 1 is all the gate needs today.
+[[trait]]
+name = "lumberjack"
+label = "Lumberjack"
+stats = [ { stat = "logging", add = [1] } ]
+
 # ── interactions ──────────────────────────────────────────────────────────────
 
 # Input names are the RESERVED pie-menu vocabulary (input-rework F5): `pawn` = the
@@ -71,12 +86,9 @@ affordances = ["can_drink"]
 inputs = ["pawn", "amount"]
 satisfy = { target = "@pawn", need = "thirst", amount = "@amount" }
 grant = ["quenched"]
-# Placement (interactions F8 / input-rework F4): the ACTING pawn stands ON the carrier.
-# The recorded generalization — unit.x/y/z locations + a queued "move to and execute" —
-# is a later stream.
-location = "on"
-# RESERVED (I9): interactions are instantaneous; a timed "drinking" state must
-# negotiate with MOVE_STEP chain supersession and gets its own stream.
+# Placement (lumberjack F2): on-or-beside the carrier — Chebyshev ≤ 1 INCLUSIVE. A far
+# order composes a walk first via the intent queue (ACTIONS.md § The intent queue).
+location = "adjacent"
 duration = 0
 
 # Movement as an interaction (input-rework F2/F6): the worker validates (the DESTINATION
@@ -92,6 +104,20 @@ move = { target = "@pawn", to = "@destination" }
 location = "target"
 duration = 0
 
+# Timed work on the world (lumberjack F5/F7): fell the carrier thing. `destination` is
+# the tree's tile; adjacency gates the swing; the COMPLETION at +duration re-validates
+# and clears the carrier's cell (`destroy = "carrier"` → cold-overlay SET kind 0). The
+# `yields = "logs"` successor (lumberjack I9) lands beside `destroy`, not built yet.
+[[interaction]]
+name = "cut_down"
+label = "Cut Down"
+menu_text = "Cut Down"
+affordances = ["can_fell_trees"]
+inputs = ["pawn", "destination"]
+destroy = "carrier"
+location = "adjacent"
+duration = 30
+
 # ── affordances ───────────────────────────────────────────────────────────────
 
 [[affordance]]
@@ -105,3 +131,8 @@ check = { stat = "metabolism", above = 0.0 }
 name = "can_move_ground"
 label = "Can Move Ground"
 check = { stat = "ground_speed", above = 0.0 }
+
+[[affordance]]
+name = "can_fell_trees"
+label = "Can Fell Trees"
+check = { stat = "logging", above = 0.0 }

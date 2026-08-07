@@ -325,14 +325,21 @@ pub struct InteractionParams {
   /// The satisfy effect, if the interaction moves a need.
   pub satisfy: Option<SatisfyEffect>,
   /// The move effect, if the interaction walks the pawn (input-rework F6). At least one
-  /// of `satisfy`/`move_effect` must be authored.
+  /// of `satisfy`/`move_effect`/`destroy` must be authored.
   pub move_effect: Option<MoveEffect>,
   /// TIMED condition grants on execute (expiry from each condition's own `duration`).
   pub grants: Vec<String>,
-  /// The placement rule (input-rework F4): `"on"` = the ACTING pawn stands on the carrier;
-  /// `"target"` = the DESTINATION tile is the carrier.
+  /// The destroy effect (lumberjack F5): `"carrier"` clears the validated offerer's cell
+  /// via the cold-overlay `SET … kind 0`. The `yields` successor (place a thing where the
+  /// carrier stood — lumberjack I9) is RESERVED beside it, not built.
+  pub destroy: Option<String>,
+  /// The placement rule (input-rework F4 / lumberjack F2): `"on"` = the ACTING pawn
+  /// stands on the carrier; `"adjacent"` = Chebyshev ≤ 1 from the carrier's cell,
+  /// INCLUSIVE of it; `"target"` = the DESTINATION tile is the carrier.
   pub location: String,
-  /// RESERVED (interactions I9): interactions are instantaneous; authored 0.
+  /// TICS this interaction takes (lumberjack, consuming the I9 reservation): 0 =
+  /// instantaneous; N > 0 queues a completion event at +N which RE-VALIDATES
+  /// affordances + location at fire (ACTIONS.md § The intent queue).
   pub duration: f64,
 }
 
