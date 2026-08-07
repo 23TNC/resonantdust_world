@@ -55,7 +55,6 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 - [ ] Docs + memory truth pass: memories note timed interactions + the queue; consumed
       RESERVED notes gone; index row records delivery. Acceptance: docs-check green.
-- [ ] Cold boot: the bounce drops pending intents, in-flight completions survive the
-      event shard and re-validate on fire — state what actually happened (F1); fell +
-      drink + wolf arcs green; **the user's eyes close the stream**. Acceptance:
-      captures + logs in completed.md.
+- [ ] Cold boot: pending intents drop, in-flight completions survive + re-validate —
+      state what actually happened (F1); fell + drink + wolf arcs green; **the user's
+      eyes close the stream**. Acceptance: captures + logs in completed.md.
