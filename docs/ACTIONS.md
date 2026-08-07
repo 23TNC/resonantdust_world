@@ -140,8 +140,31 @@ carry it, F9), the pawn's `can_move_ground` predicate passes — and queues the
 seed down, everything below is unchanged.
 
 `MOVE_TO` is a self-perpetuating chain: each hop writes one tile and queues the next, until `dest`.
-The step is a **greedy straight line** behind an explicit seam (`one function`, replaced by
-pathfinding when it lands). Two capabilities the chain uses:
+
+**The step is the shared path's first hop** (pathfinding, 2026-08-07 — the seam the greedy
+straight line held). The pathing law:
+
+- **ONE pathfinder** — `path_eval` in shared/content beside the other evals: A* on the 8-way
+  tile grid over a caller-supplied cell probe. The worker feeds its mirrored composed
+  tile ⊕ thing tiers, the wasm client its render-state view, the npc the same through its
+  corpus — every observer computes the SAME path or speculation diverges by design.
+- **Pathability is DERIVED, never stored** (pathfinding F1). A cell is pathable iff its
+  composed tile kind authors `pathable` (VARIABLES.md; absence = true) AND no impathable
+  thing occupies it (thing overlay kind-0 SUPPRESSES — a felled tree reopens its cell with
+  no extra write). There is no pathability table.
+- **Per-hop STATELESS recompute** (F3): every hop re-runs `path_eval` from the pawn's
+  current cell and steps its first move. No stored route — supersession, re-issue, and
+  mid-trip world changes stay correct because every hop re-reads the world.
+- **8-way, NO corner cutting** (F4): a diagonal is legal only if BOTH orthogonal cells it
+  clips are pathable.
+- **Impathable or unreachable destination = LOGGED NO-OP** (F5): the trip drops at seed
+  time with a log line, the intent-completion posture. Bounded search — cap exhaustion
+  reads as unreachable, never a stall.
+- **Leaving an impathable cell is ALWAYS legal** (F6): pathability gates the cell being
+  ENTERED; a stranded pawn (worldgen scatter, a tree grown underfoot) can walk out, and an
+  impathable START cell is accepted.
+
+Two capabilities the chain uses:
 
 - **A verb that queues an event.** A non-final `MOVE_TO` hop makes the worker queue the
   continuation `MOVE_STEP obj dest serial` — baked into the verb, not a general `QUEUE` action (yet).

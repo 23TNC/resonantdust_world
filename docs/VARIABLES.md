@@ -763,6 +763,8 @@ name = "grass"              # the resolution name (what worldgen + the build pan
 texture = "white"           # ONLY for the no-art fill; a real stem derives from the taxonomy
 tint = "#4b573e"
 height = 1.0                # world-z wall height (optional; 0 = flat ground)
+pathable = true             # may a pawn ENTER this tile? (optional; ABSENCE = true —
+                            #  water authors false; pathfinding F1: derived, never stored)
 build = "wall_smooth"       # the kind the build panel places on this tile (optional)
 cast_shadow = 1             # numeric lighting MODE lane (0 = off), passed through
 receives_shadows = 2        # numeric MODE (ground tiles author 2), passed through
@@ -792,6 +794,11 @@ variant = ["0"]             # applicability array
 name = "wolf"
 # (`speed` is GONE — input-rework F8: a pawn's pace is the DERIVED `ground_speed`
 #  stat, in tics/tile, contributed by its `walks` level. No walks → cannot ground-move.)
+# pathable = false          # may a pawn ENTER a cell this thing occupies? (optional;
+                            #  ABSENCE = true — the TREE authors false; the composed thing
+                            #  view decides, so a felled tree's kind-0 override reopens the
+                            #  cell with no extra write. A cell is pathable iff tile AND
+                            #  occupant agree — ACTIONS.md §Movement, the pathing law.)
 needs = ["thirst"]          # the needs this kind carries (optional)
 traits = [                  # starting trait bindings, minted at CREATE (stat-model F11);
   "biological_lifeform",    #   a bare string = level 1

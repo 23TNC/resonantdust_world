@@ -6,9 +6,11 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P0 — the paper
 
-- [ ] ACTIONS.md §Movement: the pathing law — ONE `path_eval`, per-hop recompute, no
+- [x] ACTIONS.md §Movement: the pathing law — ONE `path_eval`, per-hop recompute, no
       corner cutting, unreachable = logged no-op, leaving always legal (F2–F6);
-      VARIABLES.md: `pathable` on tile + thing defs. Acceptance: docs-check green.
+      VARIABLES.md: `pathable` on tile + thing defs. Acceptance: docs-check green. →
+      the greedy-straight-line seam paragraph replaced by the six-point law; both
+      schema examples annotated; green.
 
 ## P1 — the knob + the flags
 
