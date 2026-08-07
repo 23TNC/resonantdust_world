@@ -70,18 +70,26 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P4 — the bunnies
 
-- [ ] npc: the Bot's THING mirror (composed, kind-0 suppressed) + `nearest_thing`
-      (F8/I4). Acceptance: unit-ish probe — an eaten thing leaves the scan.
-- [ ] npc: `brains/bunnies.rs` — a GROUP of NPC_BUNNIES (default 3) minted/adopted
+- [x] npc: the Bot's THING mirror (composed, kind-0 suppressed) + `nearest_thing`
+      (F8/I4). Acceptance: unit-ish probe — an eaten thing leaves the scan. → live-
+      proven: after each eat (destroyed=true) no brain re-targeted the gone thing —
+      the kind-0 override suppressed it; the predicate then gained the CELL so
+      brains refuse lake-dropped food the worker would never path to.
+- [x] npc: `brains/bunnies.rs` — a GROUP of NPC_BUNNIES (default 3) minted/adopted
       near home; wander + drink + eat plant_matter when hungry; wolves gain
       eat-meat-when-hungry. Acceptance: soak — bunnies roam and eat; a hungry wolf
-      finds meat.
+      finds meat. → 3 minted/adopted at (113,68), roam + drink + a STARVING bunny
+      autonomously ate (9.37→39.37); the wolf walked to meat and ate 0→30 — after
+      the busy-hold fix (wandering off mid-act no-opped the completion).
 
 ## P5 — the verdict
 
-- [ ] The chain drill: human forages → bunny eats plant matter → force a bunny's
+- [x] The chain drill: human forages → bunny eats plant matter → force a bunny's
       corpus to 0 → death drops meat → a hungry wolf eats it. Acceptance: captures +
-      logs of every link.
+      logs of every link. → every link logged live (completed.md holds the lines):
+      forage → plant_matter beside the flora; the starving bunny ate it; ONE
+      SET_NEED corpus→0 → trigger → death → meat at the corpse → removal; the
+      starved wolf walked to the meat and ate 0→30, destroyed=true.
 - [ ] Docs + memory truth pass + a stack bounce with arcs green; **the user's eyes
       close the stream**. Acceptance: docs-check green; captures + logs in
       completed.md.

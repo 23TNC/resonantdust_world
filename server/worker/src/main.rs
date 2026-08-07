@@ -784,6 +784,11 @@ async fn main() {
             let pawn_w: Vec<pawn::TargetState> = scratch
                 .iter()
                 .filter(|(&e, _)| shard_of(e) == Shard::Pawn)
+                // food-chain I11, the WRITE half: `apply` or_defaults entries for
+                // event targets the hot filter dropped (the dead) — writing those
+                // would re-insert a DEFAULT (def-0 ghost) row. Only seeded targets
+                // may write.
+                .filter(|(e, _)| hot_targets.contains(e))
                 .map(|(&e, p)| pawn::TargetState {
                     entity_reference: e,
                     definition_reference: p.definition_reference,

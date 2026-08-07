@@ -69,9 +69,12 @@ is the fix — note it, don't build it.
 
 Seen live: a removed wolf's queued MOVE_STEP fired after death, `base_row` fell back
 to entity_state_LOG history, and the compose WRITE re-inserted a live row — a zombie
-with no payload. Fix: a PAWN write target with no LIVE `entity_state` row drops out
-of the compose (its chain completes as a no-op); minted pawns are safe because
-`spawn` writes their first row before any hop targets them.
+with no payload. Fix in TWO halves: (1) a PAWN target with no LIVE `entity_state` row
+drops out of `hot_targets` (its chain completes as a no-op); (2) the WRITE also
+filters to seeded targets — `apply` or_defaults entries for dropped targets, and
+writing those re-inserted a DEFAULT def-0 ghost row (seen live on a killed bunny
+after the stack bounce). Minted pawns are safe because `spawn` writes their first
+row before any hop targets them.
 
 ## I9 — the self-carried interaction's carrier resolution {#i9}
 
