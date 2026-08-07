@@ -62,9 +62,11 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
       SET_NEED corpus→0 ALONE kills; meat appears; the pawn vanishes everywhere. →
       the bunny died 2 tics after the write: MEAT (kind 14) at (100,74), the mover
       dropped client-side, and a re-fire on the corpse triggered NOTHING.
-- [ ] Worker: forage spawns plant_matter at the first EMPTY pathable adjacent cell
+- [x] Worker: forage spawns plant_matter at the first EMPTY pathable adjacent cell
       (F6/I5); eats destroy the carrier + satisfy hunger. Acceptance: drill — a
-      human forages then eats; hunger rises; the thing vanishes.
+      human forages then eats; hunger rises; the thing vanishes. → forage on the
+      flora at (114,74) dropped plant_matter at (113,73) — flora standing; the eat
+      walked, satisfied hunger 98.06→100, destroyed=true, the cell reads 0.
 
 ## P4 — the bunnies
 
