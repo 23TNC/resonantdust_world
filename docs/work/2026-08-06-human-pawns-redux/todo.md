@@ -106,9 +106,24 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P5 — the verdict
 
-- [ ] Docs + memory truth pass: the human-pawns / pawn-render / subframe-ingest memories
+- [x] Docs + memory truth pass: the human-pawns / pawn-render / subframe-ingest memories
       amended (I11 closed, the mint path exists, variants live), the stream index row
-      records delivery. Acceptance: `bin/rd docs-check` green.
-- [ ] Cold-boot the stack; `spawn` + variants + menu-driven move/drink + the wolf arcs green
+      records delivery. Acceptance: `bin/rd docs-check` green. → audited: NO memory claimed
+      the stale facts (the I11s in other memories are different streams' ledgers; "human"
+      appeared nowhere) — the amendment is the new `human-pawns-redux-delivered` memory +
+      index line (mint door, variant nibbles, I11 closure, depth-flip, worker-bundle-at-
+      startup gotcha, I10 drill artifact); the work-index row flipped done with the
+      delivery note; docs-check green (4 standing warnings, none ours).
+- [x] Cold-boot the stack; `spawn` + variants + menu-driven move/drink + the wolf arcs green
       together ([I7](issues.md#i7): state what actually exists); **the user's eyes close the
-      stream**. Acceptance: captures + logs in completed.md.
+      stream**. Acceptance: captures + logs in completed.md. → sim crates stopped + edge
+      killed + client reloaded; master resumed the DURABLE clock (worker composing at 12855
+      on boot); all 6 pawns re-fanned at their exact pre-boot tiles; `/spawn human_male 101
+      65 body 8 head 3` minted 0x30800006 (nibbles 0x300200B8/B3 verbatim, worker sidecars:
+      2 PART + 2 TRAIT + full thirst row); menu Move To → arrival → menu `["Drink","Move
+      To"]` → `drink satisfied=Some("thirst") 18.81→21.81 grants=1`; wolf trips resumed
+      (01:36 arrivals). I7 stated: 7 pawns exist — 3 wolves + 4 humans, of which 03/04
+      (pre-worker-restart mints) still carry NO thirst rows (recorded dev dirt). Captures:
+      the b8/h3 male at the pond, both parts outlined (a one-frame texture-fetch race shows
+      rect fallbacks on the very first frame — resolves on the next). The user's eyes close
+      the stream on this report.

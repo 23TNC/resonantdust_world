@@ -69,3 +69,25 @@
   arrivals; wolf panel `pawn/animal/wolf (#7) · 12 tics/tile · moving · mood 70%`; I1 crop
   check: east-facing mid-trip capture shows the authored wide side rect with the outline
   tracking — no letterbox, no shift.
+
+## 2026-08-07 — P5: the verdict
+
+- **Truth pass**: no memory claimed the stale facts (the I11s elsewhere are other streams'
+  ledgers) — the amendment is the new `human-pawns-redux-delivered` memory + index line;
+  the work-index row flipped done with the delivery note; docs-check green (4 standing
+  warnings, none this stream's).
+- **Cold boot green**: sim crates stopped, edge killed, client reloaded → master resumed
+  the DURABLE clock (worker composing at tic 12855 straight from boot), all 6 pawns
+  re-fanned at their exact pre-boot tiles, npc adopted 0x30800000 and resumed trips + the
+  thirst drill. Post-boot: `/spawn human_male 101 65 body 8 head 3` (the slash prefix IS
+  the command grammar) minted 0x30800006 — echoed program carries `0x300200B8`/`0x300200B3`
+  verbatim; sql shows the worker's appended sidecars (2 PART + 2 TRAIT entries + a full
+  thirst row at tic 13704). Menu Move To walked him to the pond (worker 01:35:53), the menu
+  on his tile offered `["Drink","Move To"]`, and the worker satisfied
+  (`Some("thirst") 18.81→21.81 grants=1` on the seeded row — lazily drained then +3 exact).
+  Wolf trips arrived at 01:36 beside him. **I7 stated — what actually exists**: 7 pawns (3
+  wolves, 4 humans); humans 0x30800003/04 (minted before the worker's corpus reload) still
+  carry NO thirst rows — recorded dev dirt, re-mint or a full wipe clears it. Captures: the
+  b8/h3 male at the pond with both parts silhouette-outlined; his very first presented
+  frame showed rect fallbacks (texture-fetch race, resolved next frame — the hidden-tab
+  one-frame-per-capture cadence of I10 made it visible at all).
