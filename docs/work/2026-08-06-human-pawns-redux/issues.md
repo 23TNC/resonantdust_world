@@ -59,6 +59,18 @@ it back") but `MoverLayer` still passes `layer: i` and `SquareCache.addPrim` sti
 it. Delete the write with the copy-site comment (the addPrim explicit-copy gotcha —
 [[pawn-render-delivered]]), and sweep `SquareCache`'s stale "human-pawns P5" doc note.
 
+## I10 — hidden-tab rAF freeze reads as "the pawn won't walk" (drill artifact) {#i10}
+
+Hit during P4's drill: with the browser tab HIDDEN, `requestAnimationFrame` pauses, so
+`MoverLayer.tick` (spec + render-chase) freezes while WS state keeps flowing — the pawn's
+authoritative row advances (sql showed arrival) but `rx/ry` sit at the last rendered tile
+and the walk looks dead. Re-showing the tab resumes the chase (≤3-tile gaps close at the
+chase cap; larger snap). NOT a code bug — the design already treats the chase as
+presentation — but the diagnosis cost is real, so it's named here. Headless drills can
+drive `L.tick()` manually (the exposed-for-console affordance) BUT must yield the event
+loop via MessageChannel, not busy-wait (WS delivery starves) and not `setTimeout` (hidden
+tabs clamp chained timers to 1s).
+
 ## I9 — carried successors from pawn-part-placement (recorded, not built) {#i9}
 
 What F5's closure carries forward without building here: per-part LIGHTING attachment (the

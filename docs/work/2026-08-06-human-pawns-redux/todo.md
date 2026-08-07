@@ -83,13 +83,26 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P4 — humans live on the current stack
 
-- [ ] A human through the PIE MENU: right-click select (panel shows the derived
+- [x] A human through the PIE MENU: right-click select (panel shows the derived
       `24 tics/tile` + mood/cards), Move To walks it (glide at 24), and at the water the menu
       offers Drink which the worker SATISFIES (+3 on its thirst row) — the F4 closure proven
       end to end. Acceptance: worker log `satisfied=Some("thirst")` for the human; captures.
-- [ ] The standing wolf drills (trips, thermostat, panel) run unchanged beside the humans
+      → 0x30800005: panel `24 tics/tile · mood` + Thirsty/Quenched CARDS; menu Move To →
+      worker `move_to dest="(102, 68)"`; her own tile offered `["Drink","Move To"]` → worker
+      `drink satisfied=Some("thirst") from=18.62 to=21.62 grants=1`. Glide sampled mid-walk
+      NORTH at 0.22–0.24 tiles/s tracking the derived 0.267 (6.41 tics/s ÷ 24 — not the old
+      16). The P2-deferred depth-flip landed on that walk: facing 2, head `female/12/n.1`
+      z=66.6566 UNDER body `female/5/n` z=66.6665 (south neighbour: head z 67.0101 OVER body
+      67) + the zoomed capture. Drill note: a HIDDEN tab freezes rAF (chase/spec rendering)
+      while WS state flows — env artifact, recorded in issues.md.
+- [x] The standing wolf drills (trips, thermostat, panel) run unchanged beside the humans
       ([I1](issues.md#i1)'s wolf-crop check included). Acceptance: both species' arcs in one
-      session's logs.
+      session's logs. → one session, interleaved: wolf 0x30800002 thermostat drinks at
+      01:19/01:22/01:26 (`satisfied=Some("thirst")` 34.7→37.7, band 25 + `quenched`
+      re-crossings) between the human's 01:23 `move_to` and 01:11 drink; 714 trip arrivals;
+      panel: `pawn/animal/wolf (#7) · 12 tics/tile · moving · mood 70% · Quenched +0.20`;
+      I1 crop check: east-facing mid-trip capture shows the authored wide side rect
+      (1.0×0.4688), outline tracking — no letterbox, no shift.
 
 ## P5 — the verdict
 
