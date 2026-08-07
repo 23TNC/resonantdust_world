@@ -103,6 +103,16 @@ export class WorldScene extends Scene {
     };
     // Pawns (the wolves): synced from the tick pipeline's mobile entities into the viewport's WARM cache.
     this.moverLayer = new MoverLayer(ctx.client, ctx.content, this.panel.view);
+    // The speculation's pathability probe (pathfinding I1): the client's composed view —
+    // tile kind ∧ thing occupancy through the corpus flags, unknown/unstreamed reads OPEN
+    // (the shared degrade law). The glide then traces the worker's detour, not the chord.
+    this.moverLayer.pathProbe = (x, y) => {
+      const c = getContent();
+      const t = this.bridge.tileDefAt(x, y);
+      if (t !== 0 && !c.tilePathable(t)) return false;
+      const th = this.bridge.thingDefAt(x, y);
+      return th === 0 || c.thingPathable(th);
+    };
     // The intent-queue mirror (intent-queue-ui F1) — the details panel's strip reads it.
     this.intentQueues = new IntentQueues(ctx.client);
     // DEBUG: `__queues` — drill probes read the mirror directly.

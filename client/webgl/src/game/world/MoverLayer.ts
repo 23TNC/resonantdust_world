@@ -118,6 +118,11 @@ interface Spec {
   /** Last applied fractional tile, to skip sub-epsilon re-bakes. */
   appliedX: number;
   appliedY: number;
+  /** The SHARED path from `(fromX, fromY)` (pathfinding I1) — waypoints exclusive of the
+   *  start, one 8-way hop apart. `null` = unavailable (no probe, unstreamed window) and the
+   *  greedy line speculates as before. Recomputed at every reseed, like the worker's
+   *  per-hop recompute. */
+  path: { x: number; y: number }[] | null;
 }
 
 /** The server's stepping rule, mirrored EXACTLY (worker `apply` MOVE_TO): `p` fractional greedy
@@ -142,6 +147,28 @@ function walkGreedy(
     cy += sy;
     remaining -= 1;
   }
+}
+
+/** Fractional progress ALONG the shared path (pathfinding I1): `p` tiles of travel from
+ *  `(fx, fy)` through the waypoints — each hop is one tile of progress, exactly the
+ *  worker's hop cadence, so the glide traces the DETOUR the server walks. */
+function walkPath(
+  fx: number, fy: number, path: { x: number; y: number }[], p: number,
+): { x: number; y: number; done: boolean } {
+  if (path.length === 0) return { x: fx, y: fy, done: true };
+  if (p >= path.length) {
+    const last = path[path.length - 1];
+    return { x: last.x, y: last.y, done: true };
+  }
+  const k = Math.floor(p);
+  const frac = p - k;
+  const prev = k === 0 ? { x: fx, y: fy } : path[k - 1];
+  const next = path[k];
+  return {
+    x: prev.x + (next.x - prev.x) * frac,
+    y: prev.y + (next.y - prev.y) * frac,
+    done: false,
+  };
 }
 
 /** One drawn part SLOT of a live pawn — its warm prim + the last-baked fields the eps/skip
@@ -248,6 +275,10 @@ export class MoverLayer {
    *  a sip lands as exactly one update here; see {@link pawnNeeds}. */
   private readonly needRows = new Map<number, Map<number, [number, number]>>();
 
+  /** The world-view pathability probe (pathfinding I1), injected by the scene (the layer
+   *  never reaches for the bridge). `null` = pathless speculation (the greedy line). */
+  pathProbe: ((x: number, y: number) => boolean) | null = null;
+
   constructor(
     private readonly client: WasmClient,
     private content: Content,
@@ -321,7 +352,10 @@ export class MoverLayer {
           // spec-space and disagrees with the render at reseeds, stair-steps and while the
           // chase corrects (I1). Facing derives from the RENDERED delta below; the walk's
           // only facing role left is the arm-time initial aim (onMoveIntent).
-          const p = walkGreedy(s.fromX, s.fromY, s.destX, s.destY, d / s.ticsPerTile);
+          const prog = d / s.ticsPerTile;
+          const p = s.path
+            ? walkPath(s.fromX, s.fromY, s.path, prog)
+            : walkGreedy(s.fromX, s.fromY, s.destX, s.destY, prog);
           tx = p.x;
           ty = p.y;
           s.appliedX = p.x; // spec-space bookkeeping — landing error still measures the SPEC
@@ -530,6 +564,34 @@ export class MoverLayer {
    *  authoritative tile. An intent for a pawn we haven't seen yet, or one arriving before the
    *  tic clock anchors, is HELD in {@link pendingIntents} (never dropped — I1) and
    *  re-evaluated by {@link tick} once its preconditions hold. */
+  /** The SHARED path for a spec (pathfinding I1), through the wasm `findPath` over a
+   *  WINDOWED grid the probe fills: endpoints' bounding box + a margin, capped. Outside
+   *  the window reads closed (the wasm doc names the tradeoff); an unstreamed cell reads
+   *  OPEN through the probe (degrade to ground, the shared law). `null` = no probe or no
+   *  path — the greedy line speculates and authoritative rows correct as always. */
+  private computePath(
+    fx: number, fy: number, dx: number, dy: number,
+  ): { x: number; y: number }[] | null {
+    if (!this.pathProbe) return null;
+    const MARGIN = 12;
+    const CAP = 96;
+    const ox = Math.min(fx, dx) - MARGIN;
+    const oy = Math.min(fy, dy) - MARGIN;
+    const w = Math.min(CAP, Math.abs(dx - fx) + 1 + MARGIN * 2);
+    const h = Math.min(CAP, Math.abs(dy - fy) + 1 + MARGIN * 2);
+    const cells = new Uint8Array(w * h);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        cells[y * w + x] = this.pathProbe(ox + x, oy + y) ? 1 : 0;
+      }
+    }
+    const flat = this.content.findPath(fx, fy, dx, dy, ox, oy, w, h, cells);
+    if (flat.length === 0) return null;
+    const path: { x: number; y: number }[] = [];
+    for (let i = 0; i + 1 < flat.length; i += 2) path.push({ x: flat[i], y: flat[i + 1] });
+    return path;
+  }
+
   private onMoveIntent(intent: MoveIntent): void {
     const m = this.movers.get(intent.entityReference);
     const d = this.client.ticDelta(intent.eventTic);
@@ -563,6 +625,7 @@ export class MoverLayer {
       ticsPerTile: tpt,
       appliedX: m.authX,
       appliedY: m.authY,
+      path: this.computePath(m.authX, m.authY, intent.tileX, intent.tileY),
     };
     // speculative-direction P1: the INITIAL AIM — the pawn turns toward its path at the
     // seed (the greedy walk's e/w-first first leg), before any rendered delta exists. The
@@ -616,6 +679,9 @@ export class MoverLayer {
         s.eventTic = obj.tic;
         s.appliedX = obj.tileX;
         s.appliedY = obj.tileY;
+        // The worker's per-hop recompute, mirrored at the reseed cadence (I1): the rest
+        // of the route re-paths from the fresh authoritative tile.
+        s.path = this.computePath(obj.tileX, obj.tileY, s.destX, s.destY);
       }
     }
 

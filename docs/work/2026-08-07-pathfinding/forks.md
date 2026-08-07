@@ -55,6 +55,18 @@ Pathability gates the cell being ENTERED, never the cell being left. Worldgen sc
 and drills can strand a pawn on a newly-impathable cell (I3); it must be able to walk
 out, and A* must accept an impathable START cell.
 
+## F8 — the npc estimates over its TILES-ONLY mirror (resolved in execution) {#f8}
+
+The Bot mirrors tile baselines ⊕ overlays but holds NO thing occupancy — so the wolf's
+trip estimate runs the shared `path_len` over a tiles-only probe (water detours, the
+big misses, now count; tree detours still read optimistic), unknown tiles read OPEN,
+and `None` falls back to cheb × 2. The wander pick also re-rolls impathable dests
+(eight tries) so water picks stop burning deadlines on F5 rejects. The authoritative
+arrival poll remains the real completion signal — the estimate is only a give-up
+timer. **Recorded successor**: a thing-aware npc world mirror.
+**Rejected**: building the thing mirror in this stream (its own increment); leaving
+cheb (a shoreline detour fires the deadline mid-trip and churns supersessions).
+
 ## F7 — the ambient knob is a URL param riding the existing command pipe {#f7}
 
 `?ambient=0.8` → the parsed url-command list (the `focus`/`zoom` pattern) → the

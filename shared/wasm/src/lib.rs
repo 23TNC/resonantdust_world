@@ -396,6 +396,55 @@ impl Content {
             .unwrap_or(-1.0)
     }
 
+    // ── pathability + the shared pathfinder (pathfinding F1/F2) ──
+
+    /// May a pawn ENTER this tile kind? Unknown/retired ids read OPEN (the Bundle's guard).
+    #[wasm_bindgen(js_name = tilePathable)]
+    pub fn tile_pathable(&self, def_id: u16) -> bool {
+        self.bundle.tile_pathable(def_id)
+    }
+
+    /// May a pawn ENTER a cell this thing kind occupies? Unknown ids read OPEN.
+    #[wasm_bindgen(js_name = thingPathable)]
+    pub fn thing_pathable(&self, object_id: u16) -> bool {
+        self.bundle.thing_pathable(object_id)
+    }
+
+    /// The SHARED path (pathfinding F2/I1) over a WINDOWED pathability grid: `cells` is
+    /// row-major `w × h` (1 = enterable) anchored at world tile `(ox, oy)`; outside the
+    /// window reads CLOSED (the window must carry a margin — the caller's tradeoff for a
+    /// bounded copy; the worker paths the unbounded mirror, so a route hugging the window
+    /// edge can diverge until the next authoritative correction). Returns flat
+    /// `[x0, y0, x1, y1, …]` EXCLUSIVE of the start, empty when no path (or already there).
+    #[wasm_bindgen(js_name = findPath)]
+    pub fn find_path(
+        &self,
+        from_x: i32,
+        from_y: i32,
+        to_x: i32,
+        to_y: i32,
+        ox: i32,
+        oy: i32,
+        w: u32,
+        h: u32,
+        cells: Vec<u8>,
+    ) -> Vec<i32> {
+        let probe = |x: i32, y: i32| -> bool {
+            let (dx, dy) = (x - ox, y - oy);
+            if dx < 0 || dy < 0 || dx >= w as i32 || dy >= h as i32 {
+                return false;
+            }
+            cells
+                .get((dy as usize) * (w as usize) + dx as usize)
+                .is_some_and(|&b| b != 0)
+        };
+        match resonantdust_content::path_eval::find_path((from_x, from_y), (to_x, to_y), &probe)
+        {
+            Some(p) => p.into_iter().flat_map(|(x, y)| [x, y]).collect(),
+            None => Vec::new(),
+        }
+    }
+
     /// The next FUTURE tic the pawn's active-condition set can change WITHOUT a new write
     /// (band crossing under the PIECEWISE rate, or a stored row's expiry), or `-1` when
     /// nothing ahead changes — what lets the panel re-evaluate on a schedule (F4).

@@ -157,6 +157,23 @@ impl Wolves {
         )
     }
 
+    /// A wander dest that is PATHABLE by the bot's tile mirror (pathfinding I7): an
+    /// impathable pick (water) would just no-op at the worker (F5) and burn a deadline.
+    /// Unknown tiles read OPEN (the shared degrade law); eight rolls then give up —
+    /// the worker's gate stays the authority.
+    fn pick_pathable_dest(&mut self, bot: &Bot) -> (i32, i32) {
+        for _ in 0..8 {
+            let d = self.pick_dest();
+            let open = bot.tile_kind_at(d).is_none_or(|k| {
+                self.bundle.as_ref().is_none_or(|b| b.tile_pathable(k))
+            });
+            if open {
+                return d;
+            }
+        }
+        self.pick_dest()
+    }
+
     /// The needs pass, each decision tick (needs-moodlets P4): mint thirst once on a wolf
     /// that provably has none, then EVALUATE — the lazy read (F4) of the payload's NEED +
     /// CONDITION entries through the shared `needs_eval` (F3). Band transitions are logged
@@ -268,7 +285,7 @@ impl Wolves {
         // must be REFUSED there and logged, never half-executed.
         if !self.interact_fired && self.init_queued {
             if let Some(name) = self.interact_drill.clone() {
-                self.fire_interaction(bot, &name, 3.0);
+                self.fire_interaction(bot, &name, 3.0, self.at);
                 self.interact_fired = true;
             }
         }
@@ -340,7 +357,7 @@ impl Wolves {
     /// the F5 RESERVED vocabulary (`pawn` = this wolf, `amount` = `magnitude` as f32 bits)
     /// — the same rule the pie menu's composer applies. An unbindable name refuses loudly
     /// (input-rework I11: the hardcoded 3-input drink shape mis-fired move_to live).
-    fn fire_interaction(&self, bot: &Bot, interaction: &str, magnitude: f64) {
+    fn fire_interaction(&self, bot: &Bot, interaction: &str, magnitude: f64, dest: (i32, i32)) {
         let Some(wolf) = self.wolf else { return };
         let Some(bundle) = &self.bundle else { return };
         let (Some(iref), Some(ip)) = (
@@ -354,10 +371,11 @@ impl Wolves {
         for name in &ip.inputs {
             match name.as_str() {
                 "pawn" => inputs.push(wolf),
-                // The wolf fires on arrival, so the carrier IS where it stands
-                // (lumberjack P3 — drink's signature gained `destination`).
+                // The CARRIER cell (pathfinding: water is impathable, so the wolf
+                // drinks FROM THE SHORE — adjacency is cheb ≤ 1 inclusive, and the
+                // destination names the water, not where the wolf stands).
                 "destination" => inputs
-                    .push(resonantdust_codec::object::tile_to_position(self.at.0, self.at.1)),
+                    .push(resonantdust_codec::object::tile_to_position(dest.0, dest.1)),
                 "amount" => inputs.push((magnitude as f32).to_bits()),
                 other => {
                     tracing::warn!(%interaction, input = other,
@@ -383,23 +401,58 @@ impl Wolves {
         if self.thirst == 0 || self.drink_issued || !self.is_thirsty() {
             return;
         }
-        // Standing on a satisfying carrier already? Drink here.
-        if let Some(kind) = bot.tile_kind_at(self.at) {
-            if let Some((interaction, magnitude)) = self.usable_drink(kind) {
-                self.fire_interaction(bot, &interaction, magnitude);
-                self.drink_issued = true;
-                self.drink_target = None;
-                return;
+        // A satisfying carrier within reach already? Drink it. The worker's adjacency
+        // law is cheb ≤ 1 INCLUSIVE (lumberjack), and water is IMPATHABLE now
+        // (pathfinding): the wolf drinks FROM THE SHORE — the destination names the
+        // water cell, never where the wolf stands.
+        for oy in -1i32..=1 {
+            for ox in -1i32..=1 {
+                let c = (self.at.0 + ox, self.at.1 + oy);
+                if let Some(kind) = bot.tile_kind_at(c) {
+                    if let Some((interaction, magnitude)) = self.usable_drink(kind) {
+                        self.fire_interaction(bot, &interaction, magnitude, c);
+                        self.drink_issued = true;
+                        self.drink_target = None;
+                        return;
+                    }
+                }
             }
         }
-        // Otherwise head for the nearest tile offering a SATISFYING interaction (I11).
+        // Otherwise head for the SHORE of the nearest satisfying carrier (I11): the best
+        // PATHABLE cell in the carrier's 3×3 by the tile mirror — deterministic pick
+        // (nearest to the wolf, ties by (y, x)). All-water surroundings = no shore known;
+        // leave the wolf to its wander, never a spin.
         let target = bot.nearest_tile(self.at, |kind| self.usable_drink(kind).is_some());
         match target {
             Some(t) => {
                 if self.drink_target != Some(t) || self.dest.is_none() {
-                    tracing::info!(water = ?t, from = ?self.at, "thirsty — heading to water");
+                    let pathable = |c: (i32, i32)| {
+                        bot.tile_kind_at(c).is_none_or(|k| {
+                            self.bundle.as_ref().is_none_or(|b| b.tile_pathable(k))
+                        })
+                    };
+                    let mut best: Option<(i32, i32, i32)> = None; // (cheb, y, x)
+                    for oy in -1i32..=1 {
+                        for ox in -1i32..=1 {
+                            let c = (t.0 + ox, t.1 + oy);
+                            if !pathable(c) {
+                                continue;
+                            }
+                            let d = (c.0 - self.at.0).abs().max((c.1 - self.at.1).abs());
+                            let cand = (d, c.1, c.0);
+                            if best.is_none_or(|b| cand < b) {
+                                best = Some(cand);
+                            }
+                        }
+                    }
+                    let Some((_, sy, sx)) = best else {
+                        tracing::debug!(water = ?t, "thirsty but the water has no known shore");
+                        return;
+                    };
+                    tracing::info!(water = ?t, shore = ?(sx, sy), from = ?self.at,
+                                   "thirsty — heading to the shore");
                     self.drink_target = Some(t);
-                    self.issue_move(bot, t);
+                    self.issue_move(bot, (sx, sy));
                 }
             }
             None => {
@@ -440,7 +493,17 @@ impl Wolves {
             tracing::error!("engine gone during move");
             return;
         }
-        let hops = (dest.0 - self.at.0).abs().max((dest.1 - self.at.1).abs()).max(1) as u64;
+        // The trip length is the SHARED path's (pathfinding I7) over the bot's TILE
+        // mirror — a shoreline detour no longer under-counts and fires the deadline
+        // early. The bot holds no THING occupancy (its mirror is tiles-only; the
+        // thing-aware npc view is a recorded successor), so tree detours still read
+        // optimistic; unknown tiles read OPEN; no path → cheb × 2, the honest guess.
+        let cheb = (dest.0 - self.at.0).abs().max((dest.1 - self.at.1).abs()).max(1) as u64;
+        let pathable =
+            |x: i32, y: i32| bot.tile_kind_at((x, y)).is_none_or(|k| bundle.tile_pathable(k));
+        let hops = resonantdust_content::path_eval::path_len(self.at, dest, &pathable)
+            .map(|l| l.max(1) as u64)
+            .unwrap_or(cheb * 2);
         // `hops + 1`: the seed hop promotes the start WITHOUT stepping (ACTIONS.md §Movement),
         // so the first step lands one tics_per_tile after the intent.
         let trip_ms = (hops + 1) * self.derived_speed() as u64 * 1000 / TIC_HZ as u64;
@@ -588,7 +651,7 @@ impl Brain for Wolves {
                 // A drink trip owns the destination slot — the wander yields to it
                 // (mind_drink re-issues the water trip on its own).
                 if self.drink_target.is_none() {
-                    let dest = self.pick_dest();
+                    let dest = self.pick_pathable_dest(bot);
                     self.issue_move(bot, dest);
                 }
             }
@@ -598,7 +661,7 @@ impl Brain for Wolves {
                 // next hop — a re-issue can no longer duplicate chains. Pick a FRESH dest
                 // (the old one may be exactly why the trip stalled).
                 tracing::warn!(?dest, "trip deadline passed — superseding with a fresh trip");
-                let fresh = self.pick_dest();
+                let fresh = self.pick_pathable_dest(bot);
                 self.issue_move(bot, fresh);
             }
             Some(_) => {}
