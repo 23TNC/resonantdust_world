@@ -23,3 +23,12 @@
   index; trait levels sum beside conditions). Verified: golden re-blessed — the diff is
   exactly the authored rows + the new declaration-order emotion section; 44 lib + 2
   golden tests green incl. the 3/5/2/6→happy oracle and the tie/fine laws.
+- **2026-08-07 — P2b: the mood sweep.** `pawnMood` DELETED from wasm; the
+  `pawnConditions` stride's mood lane → `magnitude_sum`; new wasm accessors
+  `pawnEmotion` (17 f64s: argmax index + the 16 sums), `conditionEmotions` (stride-2
+  slices), `emotionTable`/`emotionLabel`/`emotionColor`, `conditionNeedLines` (F6
+  tooltip lines); the npc wolf Brain's `mood: f64` → `emotion: u8` via the shared
+  argmax; WorldScene/DetailsPanel/ConditionCards swept. Verified: repo grep `mood`
+  clean outside the refusal test + one retirement comment; tsc clean; wasm + core +
+  worker/master/orchestrator/npc + edge rebuilt and booted clean (master seeded 199
+  definitions; npc logged `conditions=["quenched"] emotion=1` — happy — live).

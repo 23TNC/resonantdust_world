@@ -301,13 +301,14 @@ impl Content {
 
     /// A pawn's ACTIVE conditions at `now_tic`, evaluated from its raw payload sidecar
     /// (`NEED` + `CONDITION` entries — `TABLES.md § payload`). Flat **stride-4** per active
-    /// condition: `[condition_id, mood_offset, remaining_tics, priority]` (`remaining 0` =
+    /// condition: `[condition_id, magnitude_sum, remaining_tics, priority]` (`remaining 0` =
     /// DERIVED, alive while its band holds). The SAME `needs_eval` the npc Brain imports
     /// natively — the panel and the Brain cannot disagree on a crossing by construction.
     ///
-    /// **Already sorted** (conditions F3) — `priority` desc, `|mood|` desc, `condition_id` asc.
-    /// The caller renders in the order given; `priority` rides along so it can be shown, not so
-    /// it can be re-sorted. A TS sort here would be the second implementation of a corpus rule.
+    /// **Already sorted** (conditions F3, emotions F4) — `priority` desc, Σ emotion magnitude
+    /// desc, `condition_id` asc. The caller renders in the order given; `priority` rides along
+    /// so it can be shown, not so it can be re-sorted. A TS sort here would be the second
+    /// implementation of a corpus rule.
     /// `needs` is the pawn's `needs` SUB-TABLE rows, flattened stride-2:
     /// `[packed_row, set_tic, …]` (stat-model F2); traits + stored conditions decode from
     /// `payload`. The eval is the SAME `needs_eval` the npc and worker import natively.
@@ -322,7 +323,7 @@ impl Content {
         for c in &active {
             out.extend_from_slice(&[
                 f64::from(c.condition_id),
-                c.mood,
+                f64::from(c.magnitude_sum),
                 f64::from(c.remaining),
                 f64::from(c.priority),
             ]);
@@ -330,15 +331,69 @@ impl Content {
         out
     }
 
-    /// The pawn's MOOD at `now_tic` — `clamp(0.5 + Σ active offsets, 0..1)` (F5).
-    #[wasm_bindgen(js_name = pawnMood)]
-    pub fn pawn_mood(&self, payload: Vec<u32>, needs: Vec<u32>, now_tic: u16) -> f64 {
+    /// The pawn's ACTIVE EMOTION at `now_tic` (emotions F3): flat 17 f64s —
+    /// `[active_index, sum0..sum15]` (index = the u4 declaration order; empty → 0 = fine).
+    /// The ONE `emotion_eval` argmax every consumer shares.
+    #[wasm_bindgen(js_name = pawnEmotion)]
+    pub fn pawn_emotion(&self, payload: Vec<u32>, needs: Vec<u32>, now_tic: u16) -> Vec<f64> {
         let (traits, conditions) = decode_payload(&payload);
         let need_rows = decode_need_rows(&needs);
         let active = resonantdust_content::needs_eval::active_conditions(
             &self.bundle, &traits, &need_rows, &conditions, now_tic,
         );
-        resonantdust_content::needs_eval::mood(&active)
+        let (e, sums) =
+            resonantdust_content::emotion_eval::active_emotion(&self.bundle, &traits, &active);
+        let mut out = Vec::with_capacity(17);
+        out.push(f64::from(e));
+        out.extend(sums.iter().map(|&s| f64::from(s)));
+        out
+    }
+
+    /// One condition's emotion modifiers (emotions F2), for the card's pie slices and the
+    /// tooltip: flat stride-2 `[emotion_index, magnitude, …]` in authored order. Empty for
+    /// an unknown ref or a modifier-free condition (the `fine +0` gray card).
+    #[wasm_bindgen(js_name = conditionEmotions)]
+    pub fn condition_emotions(&self, condition_id: u32) -> Vec<f64> {
+        let Some(cp) = self.bundle.condition_params_by_ref(condition_id) else {
+            return Vec::new();
+        };
+        let mut out = Vec::with_capacity(cp.emotions.len() * 2);
+        for m in &cp.emotions {
+            out.extend_from_slice(&[f64::from(m.emotion), f64::from(m.magnitude)]);
+        }
+        out
+    }
+
+    /// The emotion table in declaration (u4) order (emotions F1): flat stride-2
+    /// `[index, color_0xRRGGBB, …]`. Labels come via [`Self::emotion_label`].
+    #[wasm_bindgen(js_name = emotionTable)]
+    pub fn emotion_table(&self) -> Vec<f64> {
+        let all = self.bundle.emotion_params_all();
+        let mut out = Vec::with_capacity(all.len() * 2);
+        for (i, (_, p)) in all.iter().enumerate() {
+            out.extend_from_slice(&[i as f64, f64::from(p.color)]);
+        }
+        out
+    }
+
+    /// An emotion's display label by u4 index ("" = unknown).
+    #[wasm_bindgen(js_name = emotionLabel)]
+    pub fn emotion_label(&self, index: u8) -> String {
+        self.bundle
+            .emotion_params_all()
+            .get(index as usize)
+            .map(|(_, p)| p.label.clone())
+            .unwrap_or_default()
+    }
+
+    /// An emotion's `0xRRGGBB` color by u4 index (−1 = unknown).
+    #[wasm_bindgen(js_name = emotionColor)]
+    pub fn emotion_color(&self, index: u8) -> f64 {
+        self.bundle
+            .emotion_params_all()
+            .get(index as usize)
+            .map(|(_, p)| f64::from(p.color))
+            .unwrap_or(-1.0)
     }
 
     /// The next FUTURE tic the pawn's active-condition set can change WITHOUT a new write
@@ -360,6 +415,27 @@ impl Content {
     #[wasm_bindgen(js_name = conditionLabelOf)]
     pub fn condition_label_of(&self, reference: u32) -> Option<String> {
         self.bundle.condition_params_by_ref(reference).map(|m| m.label)
+    }
+
+    /// A condition's need-modifier lines for the everything-tooltip (emotions F6), one
+    /// pre-formatted string per modifier — `"thirst rate ×0.5"` (+ ` min N` / ` max N`
+    /// when authored). Empty for an unknown ref or a modifier-free condition.
+    #[wasm_bindgen(js_name = conditionNeedLines)]
+    pub fn condition_need_lines(&self, reference: u32) -> Vec<String> {
+        let Some(cp) = self.bundle.condition_params_by_ref(reference) else { return Vec::new() };
+        cp.needs
+            .iter()
+            .map(|n| {
+                let mut line = format!("{} rate \u{00d7}{}", n.need, n.rate);
+                if let Some(m) = n.min {
+                    line.push_str(&format!(" min {m}"));
+                }
+                if let Some(m) = n.max {
+                    line.push_str(&format!(" max {m}"));
+                }
+                line
+            })
+            .collect()
     }
 
     /// Bind the GAMEPLAY registry (interactions F1): three parallel arrays over the

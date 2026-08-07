@@ -24,9 +24,11 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
       per-level arrays (magnitudes 1..15), ONE u8 pack (I3); `mood` deleted from the
       schema. Acceptance: round-trip + refusal tests green. → 42 lib tests green; the
       sort tie-break moved to Σ magnitude with it (the crate could not compile split).
-- [ ] Author the 16 emotions (user colors + F8) and thirsty/dehydrated/quenched's
+- [x] Author the 16 emotions (user colors + F8) and thirsty/dehydrated/quenched's
       emotions (I5, mood lines deleted); golden re-blessed; six consumers rebuilt
-      (I2). Acceptance: golden diff = the authored rows; edge hot-reload clean.
+      (I2). Acceptance: golden diff = the authored rows; edge hot-reload clean. →
+      content/emotions.toml; golden diff exactly the rows; edge/master/worker/npc
+      reloaded clean (master seeded 199 defs).
 
 ## P2 — the eval + the sweep
 
@@ -34,9 +36,11 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
       3/5/2/6 → happy oracle unit test (I6); the sort tie-break → Σ magnitude desc in
       the ONE sort (I1). Acceptance: eval tests green incl. the oracle. → 44/44 green;
       the tie-break landed with P1 (one commit could not split them).
-- [ ] The mood SWEEP (F4/I1): `pawnMood` deleted, the stride's mood lane → Σ
+- [x] The mood SWEEP (F4/I1): `pawnMood` deleted, the stride's mood lane → Σ
       magnitude, new `pawnEmotion` + `conditionEmotions` wasm accessors, npc + client
-      swept. Acceptance: grep `mood` clean outside history; gates green.
+      swept. Acceptance: grep `mood` clean outside history; gates green. → grep clean
+      (refusal test + one retirement comment remain); wasm/core/4 sim crates + edge
+      rebuilt, all boot clean; npc logs `emotion=1` on quenched.
 
 ## P3 — the display
 

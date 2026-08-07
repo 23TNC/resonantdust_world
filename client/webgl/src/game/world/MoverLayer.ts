@@ -461,7 +461,7 @@ export class MoverLayer {
   }
 
   /** The entity's `needs` rows, flattened stride-2 `[packed, setTic, …]` (stat-model F2) —
-   *  the second eval input; fed verbatim to `pawnConditions`/`pawnMood`. */
+   *  the second eval input; fed verbatim to `pawnConditions`/`pawnEmotion`. */
   pawnNeeds(entity: number): Uint32Array {
     const rows = this.needRows.get(entity);
     if (!rows) return new Uint32Array(0);

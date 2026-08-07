@@ -14,6 +14,7 @@ import { MoverLayer } from "../../game/world/MoverLayer";
 import { IntentQueues } from "../../game/world/IntentQueues";
 import { ChatPanel } from "../../game/panels/chat/ChatPanel";
 import { DetailsPanel } from "../../game/panels/details/DetailsPanel";
+import type { ConditionCard, EmotionSlice } from "../../game/panels/details/ConditionCards";
 import { BuildPanel } from "../../game/panels/build/BuildPanel";
 import { buildMenuEntries, blueprintStemFor, type BuildEntry } from "../../game/world/buildMenu";
 import { linkedCell, N as MASK_N, E as MASK_E, S as MASK_S, W as MASK_W } from "../../game/world/linkedCell";
@@ -125,8 +126,8 @@ export class WorldScene extends Scene {
         // needs-moodlets P5: evaluate the pawn's RAW payload through the ONE wasm eval
         // (F3) at the LEARNED now-tic — lazily, at the panel's own refresh cadence (F4:
         // nothing ticks; the row + the corpus + the tic are the whole computation).
-        let conditions: { label: string; mood: number; remaining: number; priority: number }[] = [];
-        let mood = 0.5;
+        let conditions: ConditionCard[] = [];
+        let emotion = { index: 0, label: "Fine", color: 0x9aa4b0 };
         // TWO eval inputs now (stat-model F2): the payload (TRAIT + CONDITION rows) and
         // the fanned `needs` sub-table rows, both verbatim — the host decodes neither.
         const payload = this.moverLayer.pawnPayload(e) ?? new Uint32Array(0);
@@ -135,24 +136,56 @@ export class WorldScene extends Scene {
         if (d !== null) {
           const now = ((Math.floor(d) % 0x10000) + 0x10000) % 0x10000;
           const c = getContent();
-          // Stride 4: [condition_id, mood, remaining, priority]. The eval returns them
-          // ALREADY SORTED (conditions F3 — priority desc, |mood| desc, id asc); this loop
-          // preserves that order and must never re-sort. `priority` is carried for display.
+          // Stride 4: [condition_id, magnitude_sum, remaining, priority]. The eval returns
+          // them ALREADY SORTED (conditions F3, emotions F4 — priority desc, Σ magnitude
+          // desc, id asc); this loop preserves that order and must never re-sort.
           const flat = c.pawnConditions(payload, needs, now);
           for (let i = 0; i + 3 < flat.length; i += 4) {
             // `condition_id` is a u32 gameplay definition_reference now (interactions F1) —
-            // labels resolve BY REF, never by position.
+            // labels resolve BY REF, never by position. The pie slices + tooltip lines
+            // (emotions F5/F6) resolve here too: colors/labels are corpus look, and the
+            // cards must stay presentation-only.
             const id = flat[i];
+            const raw = c.conditionEmotions(id); // stride-2 [emotion_index, magnitude, …]
+            const emotions: EmotionSlice[] = [];
+            for (let j = 0; j + 1 < raw.length; j += 2) {
+              const idx = raw[j];
+              emotions.push({
+                index: idx,
+                magnitude: raw[j + 1],
+                label: c.emotionLabel(idx) || `#${idx}`,
+                color: c.emotionColor(idx) >= 0 ? c.emotionColor(idx) : 0x9aa4b0,
+              });
+            }
+            if (emotions.length === 0) {
+              // The user's law: a condition altering no emotion READS as `Fine +0`, gray.
+              emotions.push({
+                index: 0,
+                magnitude: 0,
+                label: c.emotionLabel(0) || "Fine",
+                color: c.emotionColor(0) >= 0 ? c.emotionColor(0) : 0x9aa4b0,
+              });
+            }
             conditions.push({
+              id,
               label: c.conditionLabelOf(id) ?? `#${id.toString(16)}`,
-              mood: flat[i + 1],
+              magnitudeSum: flat[i + 1],
               remaining: flat[i + 2],
               priority: flat[i + 3],
+              emotions,
+              needLines: c.conditionNeedLines(id),
             });
           }
-          mood = c.pawnMood(payload, needs, now);
+          // The ACTIVE emotion (emotions F3): `[index, sum0..sum15]` from the ONE argmax.
+          const em = c.pawnEmotion(payload, needs, now);
+          const idx = em.length > 0 ? em[0] : 0;
+          emotion = {
+            index: idx,
+            label: c.emotionLabel(idx) || "Fine",
+            color: c.emotionColor(idx) >= 0 ? c.emotionColor(idx) : 0x9aa4b0,
+          };
         }
-        return { ...info, conditions, mood };
+        return { ...info, conditions, emotion };
       },
       thing: (id) => {
         const t = this.panel.view.coldGetPrim(id);

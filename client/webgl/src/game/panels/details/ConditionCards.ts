@@ -1,5 +1,6 @@
 //! The details panel's CONDITION CARDS — a horizontal strip along the bottom of the panel,
-//! showing what a selected pawn is currently feeling / suffering (`2026-08-04-conditions` P4).
+//! showing what a selected pawn is currently feeling / suffering (`2026-08-04-conditions` P4,
+//! rebuilt as EMOTION PIE SQUARES by `2026-08-07-emotions` F5/F6).
 //!
 //! **The strip is a SIBLING of the panel, not a child** ([F7]). `PANEL_CSS` sets
 //! `overflow: hidden` on the panel root, so anything parented inside `DetailsPanel` is clipped
@@ -14,30 +15,52 @@
 //! and slide away from the bottom edge as the text rows scrolled.
 //!
 //! Ordering is NOT decided here. `needs_eval::active_conditions` has already sorted by
-//! `priority` desc, `|mood|` desc, `condition_id` asc (conditions F3) — this file renders the
-//! order it is given. A sort in TS would be a second implementation of a corpus rule.
+//! `priority` desc, Σ emotion magnitude desc, `condition_id` asc (conditions F3, emotions F4) —
+//! this file renders the order it is given. A sort in TS would be a second implementation of a
+//! corpus rule.
+//!
+//! **The card is the chart** (emotions F5): a fixed-size SQUARE whose background is a CSS
+//! `conic-gradient` pie — one slice per emotion modifier, proportional to magnitude, slices in
+//! EMOTION-INDEX order from 12 o'clock. One modifier = solid; none = solid `fine` gray. NO card
+//! text — the everything-tooltip (F6) is the whole read surface.
 
-/** One condition as the panel receives it — the shared eval's row, labelled. */
-export interface ConditionCard {
+/** One emotion slice, colors/labels resolved by the provider (the corpus owns look). */
+export interface EmotionSlice {
+  /** The emotion's u4 declaration index — the slice ORDER key (F5). */
+  index: number;
+  /** 1..15 authored; 0 only for the synthetic `Fine +0` of a modifier-free condition. */
+  magnitude: number;
   label: string;
-  /** Mood offset while active, `-1..1`. One effect of several to come (F6) — not the identity
-   *  of the condition, which is why the card leads with the LABEL and not this number. */
-  mood: number;
+  /** `0xRRGGBB`. */
+  color: number;
+}
+
+/** One condition as the panel receives it — the shared eval's row, labelled + resolved. */
+export interface ConditionCard {
+  /** The u32 gameplay definition_reference — the identity `sameCards` compares. */
+  id: number;
+  label: string;
+  /** Σ emotion magnitude — the sort's tie-break (emotions F4), shown nowhere; carried so a
+   *  changed corpus re-renders via `sameCards`. */
+  magnitudeSum: number;
   /** Tics left on a TIMED grant; `0` = DERIVED (alive exactly while its band holds). */
   remaining: number;
-  /** The authored sort key, carried for display. Never re-sorted here. */
+  /** The authored sort key, carried for the tooltip. Never re-sorted here. */
   priority: number;
+  /** The pie slices (F5). Empty never arrives — the provider synthesizes `Fine +0` (gray). */
+  emotions: EmotionSlice[];
+  /** Pre-formatted need-modifier lines for the tooltip (F6) — `"thirst rate ×0.5"`. */
+  needLines: string[];
 }
 
 // ── layout constants ────────────────────────────────────────────────────────────────
-// Sized so FOUR maximized cards plus their padding fit the details panel's default width
-// (~355 px): 8 + 4×80 + 3×6 = 346. Past four the strip simply keeps going — that is the whole
-// point of being a sibling.
+// SQUARES now (emotions F5). Sized so the strip's height matches the old card row and
+// eight maximized squares fit the panel's default width (~355 px): 8+40 + 8×(34+6) ≈ 368.
 
-/** Maximized card width, px. */
-export const CARD_W = 80;
-/** Card height, px — two 12px monospace lines plus padding. */
-export const CARD_H = 42;
+/** Maximized card side, px — a fixed-size SQUARE (F5). */
+export const CARD_W = 34;
+/** Card height = width (the square law). Kept as its own name for the reflow math. */
+export const CARD_H = CARD_W;
 /** Gap between cards, px. */
 export const CARD_GAP = 6;
 /** Inset from the panel's LEFT edge, px. */
@@ -50,19 +73,17 @@ const INTENT_STRIP_W = 40;
 export const PAD_BOTTOM = 8;
 /** How many cards show maximized before the rest minimize (the user's number). */
 export const MAXIMIZED = 4;
-/** A minimized card's width as a FRACTION of a maximized one — the horizontal saving. */
-export const MINIMIZED_FRACTION = 0.35;
-/** Minimized card width, px (derived; kept as a constant so tests and CSS agree). */
+/** A minimized card's side as a FRACTION of a maximized one — still a square. */
+export const MINIMIZED_FRACTION = 0.55;
+/** Minimized card side, px (derived; kept as a constant so tests and CSS agree). */
 export const CARD_W_MIN = Math.round(CARD_W * MINIMIZED_FRACTION);
 /** Gap kept between the strip and the viewport edges when it has to be clamped, px. */
 export const EDGE_MARGIN = 8;
 
-const CARD_BG = "rgba(28, 31, 42, 0.96)";
-const CARD_BG_HOVER = "rgba(44, 48, 64, 0.98)";
 const CARD_BORDER = "#3a3a4a";
-const CARD_BORDER_HOVER = "#6b6b86";
-const GOOD = "#8fce7a";
-const BAD = "#e08a7a";
+const CARD_BORDER_HOVER = "#b8bfd0";
+/** The modifier-free fallback if the provider ever fails to synthesize `Fine +0` (F5). */
+const FINE_GRAY = 0x9aa4b0;
 
 /** What `ConditionCards` needs from the panel it hangs off — passed in rather than reached for,
  *  so this file never imports `DomPanel` and stays testable in isolation. */
@@ -88,6 +109,9 @@ export interface CardsHost {
 
 export class ConditionCards {
   private readonly el = document.createElement("div");
+  /** The everything-tooltip (emotions F6) — ONE shared fixed-position div, the IntentStrip
+   *  pattern: cursor-following, pointer-transparent, torn down with the strip. */
+  private readonly tooltip = document.createElement("div");
   private readonly unsubs: (() => void)[] = [];
   private cards: ConditionCard[] = [];
   /** All cards maximized. Collapsed = top `MAXIMIZED` maximized, the rest minimized.
@@ -112,6 +136,11 @@ export class ConditionCards {
       // gaps between them (and the strip's empty tail) never swallow a world click.
       "pointer-events:none",
     ].join(";");
+    this.tooltip.style.cssText =
+      "position:fixed;display:none;z-index:60001;pointer-events:none;" +
+      "background:#1c1f24;color:#d7dde5;border:1px solid #444;border-radius:4px;" +
+      "padding:4px 8px;font:11px/1.6 monospace;white-space:pre;";
+    document.body.appendChild(this.tooltip);
     // SIBLING of the panel — the same host element `DomPanel` mounts into. Being outside the
     // panel root is precisely what lets the strip paint past the panel's right edge.
     const anchor = document.getElementById("app") ?? document.body;
@@ -165,61 +194,55 @@ export class ConditionCards {
   destroy(): void {
     for (const off of this.unsubs) off();
     this.unsubs.length = 0;
+    this.tooltip.remove();
     this.el.remove();
   }
 
   // ── internals ──────────────────────────────────────────────────────────────────────
 
   private rebuild(): void {
+    this.tooltip.style.display = "none"; // its card may be gone
     this.el.replaceChildren();
     this.cards.forEach((c, i) => this.el.appendChild(this.buildCard(c, i)));
   }
 
-  /** One card: the label, then its mood offset and (for a timed grant) the tics it has left.
-   *  A minimized card keeps the same node and only narrows — the label ellipsises, so the strip
-   *  still reads as "there are more of these" rather than going blank. */
+  /** One card: a pie SQUARE (F5) — no text; the tooltip carries everything (F6). A minimized
+   *  card keeps the same node and only shrinks, so the strip still reads as "there are more of
+   *  these" rather than going blank. */
   private buildCard(c: ConditionCard, index: number): HTMLElement {
     const minimized = !this.expanded && index >= MAXIMIZED;
+    const side = minimized ? CARD_W_MIN : CARD_W;
     const el = document.createElement("div");
     el.dataset.rdCondition = c.label;
     el.dataset.rdMinimized = minimized ? "1" : "0";
-    el.title = `${c.label}  ${signed(c.mood)}${c.remaining > 0 ? `  ${c.remaining}t` : ""}`;
     el.style.cssText = [
-      `width:${minimized ? CARD_W_MIN : CARD_W}px`,
-      `height:${CARD_H}px`,
+      `width:${side}px`,
+      `height:${side}px`,
       "flex:0 0 auto",
       "box-sizing:border-box",
-      "padding:5px 6px",
-      `background:${CARD_BG}`,
+      `background:${pieBackground(c.emotions)}`,
       `border:1px solid ${CARD_BORDER}`,
       "border-radius:3px",
-      "color:#ecd6aa",
       "overflow:hidden",
       "pointer-events:auto",
       "cursor:pointer",
-      "display:flex",
-      "flex-direction:column",
-      "justify-content:space-between",
-      "transition:background 90ms linear, border-color 90ms linear",
+      "transition:border-color 90ms linear",
     ].join(";");
 
-    const label = document.createElement("div");
-    label.textContent = c.label;
-    label.style.cssText = "overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
-
-    const stat = document.createElement("div");
-    stat.textContent = `${signed(c.mood)}${c.remaining > 0 ? `  ${c.remaining}t` : ""}`;
-    stat.style.cssText =
-      `white-space:nowrap;overflow:hidden;color:${c.mood >= 0 ? GOOD : BAD};font-size:11px`;
-
-    el.append(label, stat);
-    el.addEventListener("pointerenter", () => {
-      el.style.background = CARD_BG_HOVER;
+    el.addEventListener("mouseenter", (e) => {
       el.style.borderColor = CARD_BORDER_HOVER;
+      this.tooltip.textContent = tooltipText(c);
+      this.tooltip.style.display = "block";
+      this.tooltip.style.left = `${e.clientX + 12}px`;
+      this.tooltip.style.top = `${e.clientY - 6}px`;
     });
-    el.addEventListener("pointerleave", () => {
-      el.style.background = CARD_BG;
+    el.addEventListener("mousemove", (e) => {
+      this.tooltip.style.left = `${e.clientX + 12}px`;
+      this.tooltip.style.top = `${e.clientY - 6}px`;
+    });
+    el.addEventListener("mouseleave", () => {
       el.style.borderColor = CARD_BORDER;
+      this.tooltip.style.display = "none";
     });
     // The user's rule: clicking a MINIMIZED card maximizes them all. It is a TOGGLE (F5) —
     // clicking any card while expanded collapses back — because a state with no exit is a trap,
@@ -295,7 +318,7 @@ export class ConditionCards {
       // 2. The strip is wider than the SCREEN — no placement helps, so it becomes a scroller
       //    (B1 method #1, applied at the screen edge instead of the panel edge). It has to take
       //    pointer events to be scrollable at all; acceptable here because at this width it
-      //    already spans the viewport, so the world it covers is a 42px band at the bottom.
+      //    already spans the viewport, so the world it covers is a thin band at the bottom.
       this.el.style.left = `${EDGE_MARGIN}px`;
       this.el.style.width = `${room}px`;
       this.el.style.overflowX = "auto";
@@ -313,26 +336,67 @@ export class ConditionCards {
   }
 }
 
-/** `+0.20` / `−0.40` — the minus is U+2212, matching the panel's text rows. */
-function signed(mood: number): string {
-  return `${mood >= 0 ? "+" : "−"}${Math.abs(mood).toFixed(2)}`;
+const hex = (c: number): string => `#${(c >>> 0).toString(16).padStart(6, "0")}`;
+
+/** The pie (emotions F5): slices proportional to magnitude, EMOTION-INDEX order from
+ *  12 o'clock (conic-gradient's 0deg, clockwise). One slice — or a zero total, the synthetic
+ *  `Fine +0` — renders solid. */
+export function pieBackground(slices: EmotionSlice[]): string {
+  const ordered = [...slices].sort((a, b) => a.index - b.index);
+  const total = ordered.reduce((s, m) => s + m.magnitude, 0);
+  if (total === 0) return hex(ordered[0]?.color ?? FINE_GRAY);
+  if (ordered.length === 1) return hex(ordered[0].color);
+  let at = 0;
+  const stops = ordered.map((m) => {
+    const from = (at / total) * 360;
+    at += m.magnitude;
+    const to = (at / total) * 360;
+    return `${hex(m.color)} ${from.toFixed(2)}deg ${to.toFixed(2)}deg`;
+  });
+  return `conic-gradient(${stops.join(", ")})`;
+}
+
+/** The everything-tooltip's text (emotions F6): the label, one `+N <Emotion>` line per
+ *  modifier (`+` always; +0 only as the synthetic `Fine +0`), the priority, the remaining
+ *  tics of a TIMED grant, and the need-modifier lines. */
+export function tooltipText(c: ConditionCard): string {
+  const lines = [c.label];
+  for (const m of [...c.emotions].sort((a, b) => a.index - b.index)) {
+    lines.push(`+${m.magnitude} ${m.label}`);
+  }
+  lines.push(`priority ${c.priority}`);
+  if (c.remaining > 0) lines.push(`${c.remaining}t remaining`);
+  lines.push(...c.needLines);
+  return lines.join("\n");
 }
 
 function sameCards(a: ConditionCard[], b: ConditionCard[]): boolean {
   if (a.length !== b.length) return false;
   return a.every((c, i) =>
-    c.label === b[i].label && c.mood === b[i].mood && c.remaining === b[i].remaining);
+    c.id === b[i].id && c.magnitudeSum === b[i].magnitudeSum && c.remaining === b[i].remaining);
 }
 
-/** `n` plausible conditions for a layout drill — descending priority, alternating sign, and a
+/** `n` plausible conditions for a layout drill — descending priority, varied pies, and a
  *  timer on every third so the minimized/maximized forms both get exercised. */
 function synthetic(n: number): ConditionCard[] {
   const names = ["Dehydrated", "Thirsty", "Quenched", "Exhausted", "Rested", "Hungry",
                  "Well Fed", "Cold", "Warm", "Sore", "Content", "Restless"];
-  return Array.from({ length: n }, (_, i) => ({
-    label: names[i % names.length],
-    mood: (i % 2 === 0 ? -1 : 1) * (0.4 - i * 0.03),
-    remaining: i % 3 === 0 ? 1200 - i * 7 : 0,
-    priority: (n - i) * 10,
-  }));
+  const palette = [0xe8a33a, 0x3a6ee8, 0xd8342c, 0x8a4fd8, 0x3ab84f, 0x8a8f3c];
+  return Array.from({ length: n }, (_, i) => {
+    const emotions: EmotionSlice[] = Array.from({ length: (i % 3) + 1 }, (_, j) => ({
+      index: (i + j) % 16,
+      magnitude: 1 + ((i + j) % 5),
+      label: `Emotion${(i + j) % 16}`,
+      color: palette[(i + j) % palette.length],
+    }));
+    return {
+      id: 0x8003_0000 + i,
+      label: names[i % names.length],
+      magnitudeSum: emotions.reduce((s, m) => s + m.magnitude, 0),
+      remaining: i % 3 === 0 ? 1200 - i * 7 : 0,
+      priority: (n - i) * 10,
+      emotions,
+      needLines: i % 2 === 0 ? ["thirst rate ×0.5"] : [],
+    };
+  });
 }

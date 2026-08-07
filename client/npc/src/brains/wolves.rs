@@ -18,6 +18,7 @@ use resonantdust_codec::speed::DEFAULT_TICS_PER_TILE;
 use resonantdust_codec::tic::TIC_HZ;
 use resonantdust_codec::value::quantize;
 use resonantdust_content::loader::Bundle;
+use resonantdust_content::emotion_eval;
 use resonantdust_content::needs_eval::{self, ActiveCondition};
 use resonantdust_content::stat_eval;
 
@@ -73,8 +74,8 @@ pub struct Wolves {
     /// The full active set from the last evaluation — the predicate gate's input
     /// (stat-model F5: `interaction_available` reads conditions' stat contributions too).
     active_set: Vec<ActiveCondition>,
-    /// The decision context: current mood.
-    pub mood: f64,
+    /// The decision context: the ACTIVE emotion's u4 index (emotions F3; 0 = fine).
+    pub emotion: u8,
     /// **Drill** (env `NPC_THIRST`, f32 in the need's OWN units — thirst authors `0..100`):
     /// the satisfaction the mint writes instead of full. Thirst depletes over 21600 tics
     /// (1 h wall at 6 Hz), so waiting for a real band crossing is not a test loop —
@@ -133,7 +134,7 @@ impl Wolves {
             init_queued: false,
             active: Vec::new(),
             active_set: Vec::new(),
-            mood: needs_eval::MOOD_BASE,
+            emotion: 0,
             thirst_drill: std::env::var("NPC_THIRST").ok().and_then(|s| s.trim().parse().ok()),
             grant_drill: std::env::var("NPC_GRANT")
                 .ok()
@@ -283,7 +284,7 @@ impl Wolves {
             self.drink_issued = false;
         }
         let active = needs_eval::active_conditions(bundle, &trait_rows, &needs, &cond_rows, now);
-        self.mood = needs_eval::mood(&active);
+        self.emotion = emotion_eval::active_emotion(bundle, &trait_rows, &active).0;
         let refs: Vec<u32> = active.iter().map(|m| m.condition_id).collect();
         if refs != self.active {
             let names: Vec<String> = refs
@@ -291,7 +292,7 @@ impl Wolves {
                 .filter_map(|&r| bundle.gameplay_lookup(r).map(|(_, n)| n))
                 .collect();
             let next = needs_eval::next_crossing_tic(bundle, &trait_rows, &needs, &cond_rows, now);
-            tracing::info!(tic = now, conditions = ?names, mood = self.mood, next_crossing = ?next,
+            tracing::info!(tic = now, conditions = ?names, emotion = self.emotion, next_crossing = ?next,
                            "condition band change");
             self.active = refs;
             // A band change re-arms the drink latch (interactions P4: once per crossing).

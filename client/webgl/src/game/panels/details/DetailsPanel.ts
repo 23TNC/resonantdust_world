@@ -24,15 +24,16 @@ export interface DetailsProviders {
   pawn(entity: number): {
     kind: number; stem: string; tileX: number; tileY: number; facing: number;
     macroPosition: number; moving: boolean; ticsPerTile: number;
-    /** The pawn's ACTIVE conditions + summed mood (needs-moodlets P5), evaluated lazily by
-     *  the provider through the ONE wasm eval. The NEED scalars are deliberately absent —
-     *  the panel shows CONSEQUENCES, never bars (the stream's whole point).
+    /** The pawn's ACTIVE conditions (needs-moodlets P5), evaluated lazily by the provider
+     *  through the ONE wasm eval. The NEED scalars are deliberately absent — the panel
+     *  shows CONSEQUENCES, never bars (the stream's whole point).
      *
-     *  **Order is authoritative** (conditions F3): the shared eval has already sorted by
-     *  `priority` desc, `|mood|` desc, `condition_id` asc. The panel maximizes the first four
-     *  and minimizes the rest — it never sorts, and must not. */
-    conditions: { label: string; mood: number; remaining: number; priority: number }[];
-    mood: number;
+     *  **Order is authoritative** (conditions F3, emotions F4): the shared eval has already
+     *  sorted by `priority` desc, Σ emotion magnitude desc, `condition_id` asc. The panel
+     *  maximizes the first four and minimizes the rest — it never sorts, and must not. */
+    conditions: ConditionCard[];
+    /** The ACTIVE emotion (emotions F3/F7) — the argmax winner; `color` washes the panel. */
+    emotion: { index: number; label: string; color: number };
   } | null;
   thing(primId: number): {
     textureName?: string; x: number; y: number; width: number; height: number; zIndex: number;
@@ -134,10 +135,14 @@ export class DetailsPanel extends DomPanel {
      *  clears the strip. Collected here and pushed ONCE at the end so there is exactly one
      *  place the strip can be set from. */
     let cards: ConditionCard[] = [];
+    /** The panel wash (emotions F7): the active emotion's color, alpha-dimmed over the
+     *  panel's dark base. `""` (no wash) for every non-pawn selection. */
+    let wash = "";
     const all = this.selection.all;
     const p = this.selection.primary;
     if (!p) {
       this.bodyEl.textContent = panelText(PANEL_KEY, "empty");
+      this.rowEl.style.background = "";
       this.cards.setCards([]);
       this.strip.setEntries([]);
       return;
@@ -154,11 +159,14 @@ export class DetailsPanel extends DomPanel {
           `speed     ${info.ticsPerTile} tics/tile`,
           `zone      ${info.macroPosition}`,
           `state     ${info.moving ? "moving" : "resting"}`,
-          `mood      ${Math.round(info.mood * 100)}%`,
         );
+        // The mood row is RETIRED (emotions F4) — the active emotion's wash (F7) and the
+        // condition tooltips (F6) are the affect surface now.
         // Conditions are NOT text rows any more — they render as cards in the sibling strip
         // (P4). The order arrives already sorted by the shared eval; pass it through untouched.
         cards = info.conditions;
+        const c = info.emotion.color;
+        wash = `rgba(${(c >> 16) & 0xff}, ${(c >> 8) & 0xff}, ${c & 0xff}, 0.16)`;
       } else {
         rows.push("(despawned)");
       }
@@ -181,6 +189,7 @@ export class DetailsPanel extends DomPanel {
       );
     }
     this.bodyEl.textContent = rows.join("\n");
+    this.rowEl.style.background = wash;
     this.cards.setCards(cards);
     // The strip shows the SELECTED pawn's queue only; anything else clears it.
     this.strip.setEntries(p.kind === "pawn" ? this.queues.entriesOf(p.entity) : []);
