@@ -6,10 +6,9 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P0 — the paper
 
-- [ ] VARIABLES.md: hunger + corpus (0..2 domain; the LEVELED corpus trait owns the
-      cap, need-max = HIGHEST wins, mint at effective max — F2), the need-check
-      affordance (F4), the `self` location + spawn effect (F5/F6/I9). Acceptance:
-      docs-check green.
+- [ ] VARIABLES.md: hunger + corpus (0..2 domain; the LEVELED corpus trait caps it,
+      mint at effective max — F2), the need-check affordance (F4), the `self`
+      location + spawn effect (F5/F6/I9). Acceptance: docs-check green.
 
 ## P1 — the machinery
 
