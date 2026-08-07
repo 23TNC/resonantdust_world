@@ -117,6 +117,9 @@ export class Viewport {
   // lighting-correctness P1b: LIT IS THE DEFAULT — the reconciler keeps records live, so the
   // chain simply runs once the map is ready. `__lit(false)` remains the unlit A/B.
   private litEnabled = true;
+  /** The blit's ambient floor (pathfinding F7): `/ambient <0..1>` overrides the 0.12
+   *  default so drills can read terrain past the torch radius. Session-only, no persistence. */
+  private ambientFloor = 0.12;
   /** lighting-rework I11: the live light set, and their orbit origins. The headline acceptance is
    *  MOVING lights, and a static measurement is the best case of the very mechanism it stresses —
    *  with nothing moving, last frame's caster is still the caster and the incumbent tier absorbs
@@ -377,6 +380,14 @@ export class Viewport {
   }
   get debugGrid(): number {
     return this.gridLevel;
+  }
+  /** The blit's ambient floor (pathfinding F7) — clamped 0..1; returns the applied value. */
+  setAmbient(v: number): number {
+    this.ambientFloor = Math.min(1, Math.max(0, v));
+    return this.ambientFloor;
+  }
+  get ambient(): number {
+    return this.ambientFloor;
   }
 
   // ── G-buffer debug composites (`/overlayRT`, `/showRT`) ───────────────────────────
@@ -670,7 +681,7 @@ export class Viewport {
             // `__lit(true)` turns the new system on, so the unlit resting state is still the default.
             p.uInt("uLit", this.litEnabled ? 1 : 0);
             p.uFloat("uLightRead", LIGHT_READ_SCALE);
-            p.uFloat("uAmbient", 0.12);
+            p.uFloat("uAmbient", this.ambientFloor);
             p.uInt("uLCols", win.cols); p.uInt("uLRows", win.rows);
             p.uInt("uLWinCol", win.winCol); p.uInt("uLWinRow", win.winRow);
             p.uInt("uLSlot", TEXTILE_LIGHT >> win.level);   // P4: texels/tile at the current level

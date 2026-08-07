@@ -314,6 +314,14 @@ export class WorldScene extends Scene {
       return `Camera focused on tile (${x}, ${y}).`;
     });
 
+    // `/ambient <0..1>` — the blit's ambient floor (pathfinding F7): a drill knob so water
+    // reads past the torch radius (`?ambient=0.8` rides the URL→command replay). Session-only.
+    this.chat.registerCommand("ambient", (args) => {
+      const v = Number(args[0]);
+      if (!Number.isFinite(v)) return `Usage: /ambient <0..1>  (now ${view().ambient})`;
+      return `Ambient floor set to ${view().setAmbient(v)}.`;
+    });
+
     // `/zoom <level>` — absolute zoom (1 = native 64px, 2 = 2× in, 0.5 = out), holding the centre.
     this.chat.registerCommand("zoom", (args) => {
       const z = Number(args[0]);
