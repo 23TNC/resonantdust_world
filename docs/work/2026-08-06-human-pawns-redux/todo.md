@@ -47,25 +47,39 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P2 — the mint path
 
-- [ ] The `spawn` chat command ([F2](forks.md#f2)): `spawn <thing> [x y] [body N] [head N]`
+- [x] The `spawn` chat command ([F2](forks.md#f2)): `spawn <thing> [x y] [body N] [head N]`
       composes `PROMOTE CREATE def pos count PART(0, body) PART(1, head)` via
       `part_entry`-shaped words + `queue`; variants validated against the manifest's ranges
       (9 bodies / 16 heads — [F3](forks.md#f3)); single-part kinds compose count 0.
-      Acceptance: the command echoes its program; a refused variant says why.
-- [ ] Drill the mint: `spawn human_female` near the pond — payload `[PART 0][PART 1][TRAIT…]`
+      Acceptance: the command echoes its program; a refused variant says why. → landed;
+      SOFTENED (recorded): validation is the u4 HARD bound (0..15) — the client has no clean
+      per-part art-count accessor, and a missing variant folder degrades visibly through the
+      existing stem fallback rather than refusing; x/y default to the camera centre.
+- [x] Drill the mint: `spawn human_female` near the pond — payload `[PART 0][PART 1][TRAIT…]`
       read back via sql (the worker appends the trait mint — the audit's pipeline), both
       prims render with the REGISTERED crops, the head depth-flips when facing north, and
       `pawnAt`/right-click selects with BOTH parts outlined. Acceptance: browser captures
-      e/s/n; sql row in completed.md.
+      e/s/n; sql row in completed.md. → `0x30800003` payload
+      `[PART 0 0xA0][PART 1 0xA0][TRAIT bio@1][TRAIT walks@1]` via sql; both prims render
+      seated (captures); right-click selects with BOTH parts silhouette-outlined; the panel
+      shows `pawn/human/female (#10) · 24 tics/tile · resting`. The north depth-flip rides
+      P4's walk (a static south-facing mint can't show it). NOTE: this mint pre-dated the
+      worker's corpus reload, so it carries NO thirst row — the worker loads its bundle at
+      startup; fresh mints after the restart carry it (the P3 female does).
 
 ## P3 — variants
 
-- [ ] Per-pawn appearance via the PART refs' variant nibbles ([F3](forks.md#f3)): the spawn
+- [x] Per-pawn appearance via the PART refs' variant nibbles ([F3](forks.md#f3)): the spawn
       command's `body`/`head` args select them; `moverSlotTexture`'s variant-folder probe
       resolves the art. Acceptance: `spawn human_male 103 64 body 2 head 7` renders variant-2
-      body art under a variant-7 head.
-- [ ] Drill two DIFFERENT females side by side (default vs chosen variants). Acceptance: one
-      capture showing visibly different bodies/heads from one def.
+      body art under a variant-7 head. → sql: the male's payload holds `0x300200B2`/
+      `0x300200B7` (the nibbles verbatim) and renders the broader body-2; the variant
+      subframe stems registered themselves (`female/5/s#0`, and the PART-SUFFIX stem
+      `female/12/s.1#0` — I11's last uncovered form, now live).
+- [x] Drill two DIFFERENT females side by side (default vs chosen variants). Acceptance: one
+      capture showing visibly different bodies/heads from one def. → captured: the HEAVY
+      body-5/head-12 female (the spec's fat class, outline-confirmed) beside the slim
+      default female and the broad male — three silhouettes from two defs.
 
 ## P4 — humans live on the current stack
 

@@ -25,6 +25,7 @@ import { PieMenu, type PieMenuOption } from "../../game/panels/PieMenu";
 import { tileToPosition, composeInteraction } from "../../client/WasmClient";
 import type { OutlineItem } from "../../game/viewport/outlineOverlay";
 import { onContentReloaded, getContent } from "../../game/definitions/contentBoot";
+import { definitionRegistry } from "../../game/definitions/definitionRegistry";
 import { parseUrl, type UrlCommand } from "../../debug/urlParams";
 
 /** Wheel deltaY per zoom octave: factor = 2^(-deltaY/this), applied per event (continuous). */
@@ -290,6 +291,60 @@ export class WorldScene extends Scene {
       }
       const now = view().setOverlay(name);
       return now ? `Overlaying ${now}.` : `Overlay off (${name}).`;
+    });
+
+    // `/spawn <thing> [x y] [body N] [head N]` — human-pawns-redux P2 (F2): the dev MINT
+    // door, re-opened. Composes `PROMOTE CREATE def pos count [PART(0, body_def)
+    // PART(1, head_def)]` through the same allowlisted queue everything rides; a pawn's
+    // body/head choice is the PART refs' VARIANT nibble (F3 — one def, u4 appearance).
+    // x/y default to the camera centre; variants default 0; single-part kinds mint bare.
+    this.chat.registerCommand("spawn", (args) => {
+      const usage = "Usage: /spawn <thing> [x y] [body 0-15] [head 0-15]";
+      const name = args[0];
+      if (!name) return usage;
+      const c = getContent();
+      const names = c.thingNames();
+      const objectId = names.indexOf(name) + 1;
+      if (objectId === 0) return `Unknown thing "${name}". Things: ${names.join(", ")}.`;
+      const tax = c.thingTaxonomy(objectId);
+      if (!tax || tax.length < 4) return `"${name}" has no taxonomy — cannot resolve a def.`;
+      const def = definitionRegistry.resolve(tax[0], tax[1], tax[2], tax[3]);
+      if (def === null) return `"${name}" is not in the definition registry (unseeded?).`;
+      let i = 1;
+      let x: number;
+      let y: number;
+      if (args.length > i + 1 && Number.isFinite(Number(args[i])) && Number.isFinite(Number(args[i + 1]))) {
+        x = Number(args[i]);
+        y = Number(args[i + 1]);
+        i += 2;
+      } else {
+        const r = this.panel.canvas.getBoundingClientRect();
+        const w = this.panel.view.screenToWorld(r.width / 2, r.height / 2);
+        x = Math.floor(w.x / SQUARE);
+        y = Math.floor(w.y / SQUARE);
+      }
+      let body = 0;
+      let head = 0;
+      for (; i + 1 < args.length; i += 2) {
+        const v = Number(args[i + 1]);
+        if (!Number.isInteger(v) || v < 0 || v > 15) return usage; // the u4 lane is the hard bound
+        if (args[i] === "body") body = v;
+        else if (args[i] === "head") head = v;
+        else return usage;
+      }
+      // Two-part kinds mint their PART entries (payload opcode 1: header `1<<16 | 2`,
+      // slot, def-with-chosen-variant); single-part kinds mint bare like the wolf.
+      const slots = (c.moverParts(objectId) as unknown[]).length;
+      const words: number[] = [];
+      if (slots >= 2) {
+        const variantDef = (v: number) => ((def & ~0xf) | v) >>> 0;
+        words.push((1 << 16) | 2, 0, variantDef(body));
+        words.push((1 << 16) | 2, 1, variantDef(head));
+      }
+      // PROMOTE(1) CREATE(3) def pos count payload… — the npc's own mint shape.
+      const program = new Uint32Array([1, 3, def, tileToPosition(x, y), words.length, ...words]);
+      this.ctx.client.queue(program);
+      return `Spawning ${name} at (${x}, ${y})${slots >= 2 ? ` body ${body} head ${head}` : ""} — [${[...program].join(", ")}]`;
     });
 
     // No server-side pause verb in the rebuild yet.
