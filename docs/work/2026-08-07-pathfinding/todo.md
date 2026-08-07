@@ -18,9 +18,11 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
       the viewport's 0.12 `uAmbient` floor. Acceptance: `?ambient=0.8` screenshot
       shows terrain past the torch radius; no param = unchanged look. → `/ambient`
       chat command + the URL replay; probe read 0.8; capture is daylight-flat.
-- [ ] Loader: `pathable` flag (default true) on tile AND thing defs; Bundle accessors
+- [x] Loader: `pathable` flag (default true) on tile AND thing defs; Bundle accessors
       `tile_pathable`/`thing_pathable`; water tile authors `pathable = false`.
-      Acceptance: round-trip + default tests green; golden diff = the authored row.
+      Acceptance: round-trip + default tests green; golden diff = the authored row. →
+      45 lib green (unknown ids degrade OPEN); golden's new impathable section reads
+      exactly `tile water`.
 
 ## P2 — the pathfinder
 

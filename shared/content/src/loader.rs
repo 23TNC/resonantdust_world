@@ -580,6 +580,9 @@ pub(crate) struct TileDef {
   /// Interaction bindings: what this carrier OFFERS (stat-model F5/F9 — the
   /// interaction carries its own affordance gate).
   pub interactions: Vec<InteractionBind>,
+  /// May a pawn ENTER this tile? (pathfinding F1 — absence authors true; the
+  /// `Default` false only reaches RETIRED slots, which the accessor guards.)
+  pub pathable: bool,
 }
 
 /// One carrier→interaction binding — the PER-CARRIER lane (stat-model F9 for the
@@ -613,6 +616,9 @@ pub(crate) struct ThingDef {
   pub traits: Vec<(String, u16)>,
   /// Interaction bindings (stat-model F5/F9; the yield lane — logs-drop F1).
   pub interactions: Vec<InteractionBind>,
+  /// May a pawn ENTER a cell this thing occupies? (pathfinding F1 — absence authors
+  /// true; the `Default` false only reaches RETIRED slots, which the accessor guards.)
+  pub pathable: bool,
 }
 
 /// One biome, with its classifier body in either dialect.
@@ -997,6 +1003,15 @@ impl Bundle {
   pub fn tile_heights(&self) -> Vec<f64> {
     self.tiles.iter().map(|d| d.height.unwrap_or(0.0)).collect()
   }
+  /// May a pawn ENTER this tile kind? (pathfinding F1). An unknown or RETIRED id reads
+  /// PATHABLE — a corpus/state version skew must degrade to open ground, never freeze a
+  /// pawn against an invisible wall.
+  pub fn tile_pathable(&self, def_id: u16) -> bool {
+    match def_id.checked_sub(1).and_then(|i| self.tiles.get(i as usize)) {
+      Some(d) if !d.name.is_empty() => d.pathable,
+      _ => true,
+    }
+  }
   /// Every tile's 4 packed-channel material bindings in `def_id` order.
   pub fn tile_packed_channels(&self) -> Vec<[PackedChannel; 4]> {
     self.tiles.iter().map(|d| d.visual.as_ref().map(|v| v.packed).unwrap_or_default()).collect()
@@ -1111,6 +1126,15 @@ impl Bundle {
       .get(object_id.checked_sub(1).map(usize::from).unwrap_or(usize::MAX))
       .map(|d| d.needs.iter().filter_map(|n| self.gameplay_reference("need", n)).collect())
       .unwrap_or_default()
+  }
+  /// May a pawn ENTER a cell this thing kind occupies? (pathfinding F1). Unknown or
+  /// RETIRED ids read PATHABLE — version skew degrades to open ground (the same guard
+  /// as [`Self::tile_pathable`]).
+  pub fn thing_pathable(&self, object_id: u16) -> bool {
+    match object_id.checked_sub(1).and_then(|i| self.things.get(i as usize)) {
+      Some(d) if !d.name.is_empty() => d.pathable,
+      _ => true,
+    }
   }
   /// Every thing's needs in `object_id` order, flattened **stride-[`NEEDS_PER_KIND`]**
   /// per kind (`0` = empty slot). Values are u32 gameplay refs (exact in an f64).

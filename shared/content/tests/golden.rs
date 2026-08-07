@@ -127,6 +127,26 @@ fn dump(b: &Bundle) -> String {
     // the DERIVED ground_speed, whose inputs are already dumped as trait bindings.)
 
     // ── flat tables, exactly as consumers fetch them ──
+    // Pathability (pathfinding F1): absence = pathable, so the fixture pins exactly the
+    // kinds that CLOSE cells — water now, the tree when P4 authors it.
+    sec(
+        "impathable kinds (tile/thing name)",
+        b.tile_names()
+            .iter()
+            .enumerate()
+            .filter(|(i, n)| !n.is_empty() && !b.tile_pathable((i + 1) as u16))
+            .map(|(_, n)| format!("tile {n}"))
+            .chain(
+                b.thing_names()
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, n)| !n.is_empty() && !b.thing_pathable((i + 1) as u16))
+                    .map(|(_, n)| format!("thing {n}")),
+            )
+            .collect::<Vec<_>>()
+            .join("\n"),
+        &mut out,
+    );
     sec("tile_texture_stems", b.tile_texture_stems().join("\n"), &mut out);
     sec("tile_builds", b.tile_builds().join("\n"), &mut out);
     sec("tile_heights", floats(&b.tile_heights()), &mut out);

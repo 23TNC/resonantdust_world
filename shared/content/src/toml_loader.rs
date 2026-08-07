@@ -103,6 +103,9 @@ struct TileToml {
   /// Interaction bindings (stat-model F5/F9) — the water tile's `drink 3`.
   #[serde(default)]
   interactions: Vec<InteractionBindToml>,
+  /// May a pawn ENTER this tile? ABSENCE = true (pathfinding F1) — water authors false.
+  #[serde(default = "yes")]
+  pathable: bool,
 }
 
 #[derive(Deserialize)]
@@ -153,6 +156,10 @@ struct ThingToml {
   packed: Vec<PackedToml>,
   #[serde(default)]
   part: Vec<PartToml>,
+  /// May a pawn ENTER a cell this thing occupies? ABSENCE = true (pathfinding F1) —
+  /// the TREE authors false; the composed view (kind-0 suppresses) decides occupancy.
+  #[serde(default = "yes")]
+  pathable: bool,
 }
 
 #[derive(Deserialize)]
@@ -1530,6 +1537,7 @@ fn tile_def(
       t.receives_shadows.unwrap_or(0.0),
     ],
     interactions: interaction_binds(&t.interactions, interaction_exists, thing_exists, "tile", &t.name, errors),
+    pathable: t.pathable,
   }
 }
 
@@ -1664,6 +1672,7 @@ fn thing_def(
     needs,
     traits,
     interactions: interaction_binds(&t.interactions, interaction_exists, thing_exists, "thing", &t.name, errors),
+    pathable: t.pathable,
   }
 }
 
@@ -1932,6 +1941,41 @@ emotions = [ { emotion = "playful", magnitude = [1, 3] } ]
     assert_eq!(t.levels.len(), 2, "the array length IS the level count");
     assert_eq!((t.levels[0].emotions[0].emotion, t.levels[0].emotions[0].magnitude), (1, 1));
     assert_eq!((t.levels[1].emotions[0].emotion, t.levels[1].emotions[0].magnitude), (1, 3));
+  }
+
+  #[test]
+  fn pathable_defaults_true_and_authors_false() {
+    // pathfinding F1: ABSENCE = pathable on tiles and things alike; only an authored
+    // `pathable = false` closes a cell. Unknown/zero ids degrade OPEN (version skew
+    // must never freeze a pawn against an invisible wall).
+    let text = r##"
+[[tile]]
+name = "grass"
+texture = "white"
+tint = "#4b573e"
+
+[[tile]]
+name = "water"
+texture = "white"
+tint = "#2e5a78"
+pathable = false
+
+[[thing]]
+name = "tree"
+pathable = false
+packed = [ { tint = "#335533" } ]
+
+[[thing]]
+name = "logs"
+packed = [ { tint = "#7a5a3a" } ]
+"##;
+    let b = load(&[src("t.toml", text)]).expect("clean load");
+    assert!(b.tile_pathable(b.tile_def_id("grass").unwrap()), "absence = pathable");
+    assert!(!b.tile_pathable(b.tile_def_id("water").unwrap()), "water authors false");
+    assert!(!b.thing_pathable(b.thing_object_id("tree").unwrap()), "the tree authors false");
+    assert!(b.thing_pathable(b.thing_object_id("logs").unwrap()), "absence = pathable");
+    assert!(b.tile_pathable(0) && b.tile_pathable(999), "unknown ids degrade open");
+    assert!(b.thing_pathable(0) && b.thing_pathable(999), "unknown ids degrade open");
   }
 
   #[test]

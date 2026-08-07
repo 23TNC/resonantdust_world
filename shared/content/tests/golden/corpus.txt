@@ -78,6 +78,8 @@ torch_blue Some(10537215)
 human_female Some(16777215)
 human_male Some(16777215)
 logs Some(9071170)
+== impathable kinds (tile/thing name) ==
+tile water
 == tile_texture_stems ==
 white
 white
