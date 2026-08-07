@@ -60,15 +60,20 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P5 — the observers agree
 
-- [ ] wasm: `pawnPath`/`pathNextStep` accessors over the client's composed view; the
+- [x] wasm: `pawnPath`/`pathNextStep` accessors over the client's composed view; the
       speculation glide follows the SHARED path, not the straight line (I1).
-      Acceptance: drill — the glide traces the detour, no rubber-band on promote.
-- [ ] npc: trip-time estimate = shared path length, not cheb (I7); wolves keep
+      Acceptance: drill — the glide traces the detour, no rubber-band on promote. →
+      wasm `findPath` (windowed grid) + `tilePathable`/`thingPathable`; the spec
+      carried a 21-waypoint lake detour, the render traced it, landed e=0.01 tiles.
+- [x] npc: trip-time estimate = shared path length, not cheb (I7); wolves keep
       roaming green across water zones. Acceptance: npc soak — trips arrive, no
-      early arrival-poll churn in logs.
+      early arrival-poll churn in logs. → tiles-only probe (F8), impathable dest
+      re-roll, and the SHORELINE drink (dest = the water, wolf on land); lake soak:
+      trips arrive, the thirsty wolf drank from shore (29.5→35.5, quenched, happy).
 
 ## P6 — the verdict
 
 - [ ] Docs + memory truth pass (index row records delivery) + a stack bounce with
       arcs green; **the user's eyes close the stream**. Acceptance: docs-check green;
-      captures + logs in completed.md.
+      captures + logs in completed.md. → truth pass + bounce DONE (arcs green);
+      B1 holds the one open half: the user's eyes.

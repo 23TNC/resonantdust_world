@@ -39,3 +39,22 @@
   OUT to (116,71) (F6 — leaving impathable is always legal). Captures: pie offering
   Cut Down on the pine, the logs square where it stood, the pawn standing on the
   felled cell, the in-tree pawn + her walk-out.
+- **2026-08-07 — P5: the observers agree.** wasm gained `findPath` (the shared A* over
+  a WINDOWED grid the caller fills — outside the window reads closed, the margin
+  tradeoff documented) + `tilePathable`/`thingPathable`; the client speculation's Spec
+  carries the shared path (recomputed at every reseed, the worker's cadence) and
+  `walkPath` glides waypoint-to-waypoint — drilled: the return lake trip armed a
+  21-waypoint detour, the render track traced the west shore, and the landing logged
+  `e=0.01 tiles` (no rubber-band; stray e=6 lines are hidden-tab rAF-freeze artifacts,
+  not route error). npc: trip estimate = `path_len` over the Bot's TILES-ONLY mirror
+  (F8; fallback cheb×2), wander dests re-roll impathable picks, and the drink flow
+  drives to the SHORE and names the WATER cell as destination (fire_interaction gained
+  a dest param) — the lake-homed thirsty wolf walked to (109,69) and drank (108,70)
+  repeatedly (thirst 29.5→35.5, quenched, emotion=1); 4-min soak: 11 arrivals, 2
+  deadline re-issues, no F5 spam.
+- **2026-08-07 — P6: the verdict (eyes pending).** Truth pass: memory gained
+  pathfinding-delivered (+ index line); client-sync notes the glide walks the shared
+  path; debug-browser-url carries the webgl `:5174` form with `ambient=`/`cb=`.
+  Stack bounce: master/orchestrator/worker/npc restarted on the delivered binaries
+  (edge redeployed earlier in-stream) — master seeded, npc trips arriving, worker
+  error-free. B1 records the last step: the user's eyes close the stream.
