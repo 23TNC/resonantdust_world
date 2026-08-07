@@ -59,6 +59,10 @@ pub struct Wolves {
     hunger: u32,
     /// The meat-eating latch (once per hunger crossing, the drink pattern).
     eat_issued: bool,
+    /// Hold-still window while a DURATION act runs (eat_meat = 20 tics): the wander
+    /// must not walk the wolf off mid-act or the completion no-ops. Expiry re-arms
+    /// the eat latch (a no-opped completion gets its retry).
+    busy_until: Option<std::time::Instant>,
     /// The meat cell an eat trip is heading to, if hunger drove it there.
     eat_target: Option<(i32, i32)>,
     /// Latest RAW payload per entity — buffered pre-adoption too (the zone snapshot may
@@ -136,6 +140,7 @@ impl Wolves {
             thirst: 0,
             hunger: 0,
             eat_issued: false,
+            busy_until: None,
             eat_target: None,
             payloads: HashMap::new(),
             need_rows: HashMap::new(),
@@ -173,14 +178,19 @@ impl Wolves {
     fn pick_pathable_dest(&mut self, bot: &Bot) -> (i32, i32) {
         for _ in 0..8 {
             let d = self.pick_dest();
-            let open = bot.tile_kind_at(d).is_none_or(|k| {
-                self.bundle.as_ref().is_none_or(|b| b.tile_pathable(k))
-            });
-            if open {
+            if self.cell_open(bot, d) {
                 return d;
             }
         }
         self.pick_dest()
+    }
+
+    /// A world cell the worker would let us WALK ONTO — the wander's tile-pathability
+    /// rule (pathfinding I7), shared by the food scan so a drowned pawn's lake meat is
+    /// never picked (the worker would refuse the trip forever). Unknown tiles read OPEN.
+    fn cell_open(&self, bot: &Bot, cell: (i32, i32)) -> bool {
+        bot.tile_kind_at(cell)
+            .is_none_or(|k| self.bundle.as_ref().is_none_or(|b| b.tile_pathable(k)))
     }
 
     /// The needs pass, each decision tick (needs-moodlets P4): mint thirst once on a wolf
@@ -355,16 +365,31 @@ impl Wolves {
                 let c = (self.at.0 + ox, self.at.1 + oy);
                 if let Some(kind) = bot.thing_kind_at(c) {
                     if let Some((interaction, magnitude)) = self.usable_eat(kind, now) {
+                        // Hold still for the act's DURATION (tics at the nominal 6 Hz,
+                        // plus queue+fan margin) — see the busy gate in think().
+                        let dur = self
+                            .bundle
+                            .as_ref()
+                            .and_then(|b| b.interaction_params(&interaction))
+                            .map(|ip| ip.duration)
+                            .unwrap_or(0.0);
                         self.fire_interaction(bot, &interaction, magnitude, c);
                         self.eat_issued = true;
                         self.eat_target = None;
+                        self.busy_until = Some(
+                            std::time::Instant::now()
+                                + Duration::from_secs_f64(dur / 6.0 + 3.0),
+                        );
                         return;
                     }
                 }
             }
         }
-        // Otherwise walk to the nearest edible thing's OWN cell (meat is pathable).
-        let target = bot.nearest_thing(self.at, |kind| self.usable_eat_kind(kind, now));
+        // Otherwise walk to the nearest edible thing's OWN cell (meat is pathable) —
+        // skipping food on impathable ground (lake meat: refused-forever, see cell_open).
+        let target = bot.nearest_thing(self.at, |cell, kind| {
+            self.cell_open(bot, cell) && self.usable_eat_kind(kind, now)
+        });
         match target {
             Some(t) => {
                 if self.eat_target != Some(t) || self.dest.is_none() {
@@ -748,6 +773,17 @@ impl Brain for Wolves {
             return;
         }
         self.mind_needs(bot);
+        // An ACT with a duration is in flight (eat_meat runs 20 tics): HOLD STILL —
+        // walking off mid-act makes the completion no-op ("pawn left the carrier's
+        // range", lumberjack F1) and the latch would strand the need. On expiry,
+        // re-arm the eat latch so a no-opped completion retries.
+        if let Some(t) = self.busy_until {
+            if std::time::Instant::now() < t {
+                return;
+            }
+            self.busy_until = None;
+            self.eat_issued = false;
+        }
         self.mind_drink(bot);
         self.mind_eat(bot);
         match self.dest {

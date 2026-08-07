@@ -319,17 +319,24 @@ impl Bot {
         None
     }
 
-    /// The nearest known THING (Chebyshev, world coords) whose composed kind_id satisfies
-    /// `pred` — the brains' "nearest meat / plant matter" scan (food-chain F8).
-    pub fn nearest_thing(&self, from: (i32, i32), pred: impl Fn(u16) -> bool) -> Option<(i32, i32)> {
+    /// The nearest known THING (Chebyshev, world coords) whose composed kind_id AND world
+    /// cell satisfy `pred` — the brains' "nearest meat / plant matter" scan (food-chain F8).
+    /// The cell is in the predicate so brains can refuse UNREACHABLE food (a drowned pawn's
+    /// meat in the lake): the worker refuses impathable dests (pathfinding F5), and a brain
+    /// that keeps picking one oscillates forever between the refusal and its wander.
+    pub fn nearest_thing(
+        &self,
+        from: (i32, i32),
+        pred: impl Fn((i32, i32), u16) -> bool,
+    ) -> Option<(i32, i32)> {
         use resonantdust_codec::object as obj;
         let mut best: Option<((i32, i32), i32)> = None;
         for (&(zone, cell), &kr) in &self.things {
-            if kr == 0 || !pred(kr >> 4) {
-                continue;
-            }
             let (ox, oy) = obj::macro_world_origin(zone);
             let world = (ox + obj::ref_hi(cell) as i32, oy + obj::ref_lo(cell) as i32);
+            if kr == 0 || !pred(world, kr >> 4) {
+                continue;
+            }
             let d = (world.0 - from.0).abs().max((world.1 - from.1).abs());
             if best.is_none_or(|(_, bd)| d < bd) {
                 best = Some((world, d));

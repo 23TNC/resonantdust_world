@@ -4,7 +4,9 @@
 //! meat by itself). One brain, many pawns: the per-entity row maps the events already
 //! carry (`PawnParts` / `PawnNeed`) key everything, so a bunny costs a `Mind`, not a
 //! process. Death (corpus ≤ 0 → the worker's need-write trigger) reaches us as the
-//! removal `StateObject` — the mind is dropped, never re-minted (the pack thins).
+//! removal `StateObject` — the mind is dropped, and the warren REPLENISHES: the mint
+//! guard re-mints while minds < count, bounded at `count` CREATEs per run (prey respawns;
+//! a massacre outpacing the bound thins the pack until restart).
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -28,6 +30,9 @@ struct Mind {
     deadline: Instant,
     drink_issued: bool,
     eat_issued: bool,
+    /// Hold-still window while a DURATION act runs (eat = 20 tics): wandering off
+    /// mid-act no-ops the completion (lumberjack F1). Expiry re-arms the eat latch.
+    busy_until: Option<Instant>,
     active: Vec<u32>,
     active_set: Vec<ActiveCondition>,
 }
@@ -218,6 +223,17 @@ impl Bunnies {
             }
             m.active_set = active;
         }
+        // A DURATION act in flight: hold still until it completes (the wolves' busy
+        // gate) — expiry re-arms the eat latch so a no-opped completion retries.
+        if let Some(t) = self.minds[&id].busy_until {
+            if Instant::now() < t {
+                return;
+            }
+            if let Some(m) = self.minds.get_mut(&id) {
+                m.busy_until = None;
+                m.eat_issued = false;
+            }
+        }
         let at = self.minds[&id].at;
         // Drink (the shore rule): fire on an adjacent water carrier, else walk to the
         // nearest satisfying tile's best pathable neighbor.
@@ -271,17 +287,31 @@ impl Bunnies {
                     let c = (at.0 + ox, at.1 + oy);
                     if let Some(kind) = bot.thing_kind_at(c) {
                         if let Some((i, mag)) = self.usable_eat(id, kind, now) {
+                            let dur = self
+                                .bundle
+                                .as_ref()
+                                .and_then(|b| b.interaction_params(&i))
+                                .map(|ip| ip.duration)
+                                .unwrap_or(0.0);
                             self.fire(bot, id, &i, mag, c);
                             if let Some(m) = self.minds.get_mut(&id) {
                                 m.eat_issued = true;
+                                m.busy_until = Some(
+                                    Instant::now() + Duration::from_secs_f64(dur / 6.0 + 3.0),
+                                );
                             }
                             return;
                         }
                     }
                 }
             }
-            if let Some(t) = bot.nearest_thing(at, |kind| self.usable_eat(id, kind, now).is_some())
-            {
+            // Skip food on impathable ground (lake drops) — the worker would refuse the
+            // trip forever and the bunny would oscillate (the wolves' cell_open rule).
+            if let Some(t) = bot.nearest_thing(at, |cell, kind| {
+                bot.tile_kind_at(cell)
+                    .is_none_or(|k| self.bundle.as_ref().is_none_or(|b| b.tile_pathable(k)))
+                    && self.usable_eat(id, kind, now).is_some()
+            }) {
                 self.issue_move(bot, id, t);
                 return;
             }
@@ -359,6 +389,7 @@ impl Brain for Bunnies {
                                 deadline: Instant::now(),
                                 drink_issued: false,
                                 eat_issued: false,
+                                busy_until: None,
                                 active: Vec::new(),
                                 active_set: Vec::new(),
                             }

@@ -652,6 +652,20 @@ async fn main() {
                 .iter()
                 .copied()
                 .filter(|e| !matches!(route_of.get(e), Some(Route::ColdOverlay { .. }) | Some(Route::ColdBaseline { .. })))
+                // food-chain I11: a REMOVED pawn's in-flight chain must not resurrect it from
+                // log history — a pawn target with no LIVE row drops out of the compose and its
+                // events complete as no-ops. Minted pawns are unaffected: `spawn` writes their
+                // first live row before any event names them (CREATE operands never carry the id).
+                .filter(|e| {
+                    if shard_of(*e) != Shard::Pawn {
+                        return true;
+                    }
+                    let live = pawn.db().entity_state().iter().any(|r| r.entity_reference == *e);
+                    if !live {
+                        tracing::info!(target = format!("{e:#010x}"), tic = t, "no live pawn row — dropping the dead's events (food-chain I11)");
+                    }
+                    live
+                })
                 .collect();
             // The cold overlay (`SET`) cells this tic writes, grouped per cold_row (+ its promote bit).
             let cold_sets = collect_cold_overlay(&events);
