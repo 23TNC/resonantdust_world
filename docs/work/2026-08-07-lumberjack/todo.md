@@ -53,12 +53,24 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P3 — the intent queue
 
-- [ ] The ephemeral queue (F1) + composition: out of place → `[move_to(adjacent), act]`;
+- [x] The ephemeral queue (F1) + composition: out of place → `[move_to(adjacent), act]`;
       in place → `[act]`; fresh order replaces; cap-5 rejects whole (F3). Acceptance:
-      composed queue logged; a mid-walk re-order leaves ONE fresh queue.
-- [ ] Advancement (I4): `duration = 0` completes in-pass; move_to advances on the
+      composed queue logged; a mid-walk re-order leaves ONE fresh queue. → version word
+      = the discriminator (0 fresh/replaces, 2 advanced, 1 completion); drink gained the
+      `destination` input so far orders can compose (npc binds it = its own tile; golden
+      re-blessed — satisfy amount Input(2)); menu relaxes distance ONLY for
+      destination-bearing signatures. DRILLED: far-water Drink composed
+      (`intent composed … pending=1`), and a mid-walk Move To logged
+      `intent queue REPLACED by a fresh order (F3)` — she walked back, ZERO drink lines
+      after the replacement.
+- [x] Advancement (I4): `duration = 0` completes in-pass; move_to advances on the
       chain's FINAL hop, keyed by trip serial (a superseded chain advances nothing).
       Acceptance: walk-lands → next intent queued in the log; queued drink still +3.
+      → arrival detected by authoritative-position-equals-dest polling (runs BEFORE the
+      empty-pass early-out); the serial check is SUBSUMED by the replace law — a fresh
+      order clears the queue before its seed supersedes the chain, so a superseded
+      Move-running queue cannot exist (stated in the code). DRILLED: `intent advanced —
+      walk landed` then `drink … 0.0→3.0 … version=2` 8 s after composition.
 - [ ] Duration via queue_at: a `duration = N` head queues its COMPLETION at `+N`, which
       RE-VALIDATES affordance + location and no-ops when stale (I2). Acceptance: fire
       tic = start + N in the log; a walked-away pawn's completion logs the no-op.
