@@ -26,9 +26,11 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 - [x] Worker mint: needs quantize the EFFECTIVE max from the kind's traits (I2).
       Acceptance: mint unit test — bunny corpus 1, wolf 2, one 0..2 encoding. →
       mint_sidecars routes through need_bounds; the in-binary test proves 1 vs 2.
-- [ ] Worker: the NEED-WRITE TRIGGER (F5, the user's law) — every need write sweeps
+- [x] Worker: the NEED-WRITE TRIGGER (F5, the user's law) — every need write sweeps
       the target's interactions for need-check affordances on THAT need, queueing
-      the passers. Acceptance: SET_NEED corpus→0 queues death by itself.
+      the passers. Acceptance: SET_NEED corpus→0 queues death by itself. → drilled:
+      ONE client SET_NEED produced `need-write trigger fired … interaction=death
+      need=corpus` with the fresh write substituted into the eval rows.
 - [x] Pawn shard: the `remove` reducer (state + payload + needs rows; silent on
       absence — I3); module redeploy + master restart sequenced (I1). Acceptance:
       a drill remove deletes the rows; StateGone reaches a client. → deployed (the
@@ -55,9 +57,11 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P3 — the worker executes
 
-- [ ] Worker: the death effect — validate can_die, spawn meat at the holder's cell,
+- [x] Worker: the death effect — validate can_die, spawn meat at the holder's cell,
       `remove` the pawn, clear its queue (I7); idempotent (I3). Acceptance: drill —
-      SET_NEED corpus→0 ALONE kills; meat appears; the pawn vanishes everywhere.
+      SET_NEED corpus→0 ALONE kills; meat appears; the pawn vanishes everywhere. →
+      the bunny died 2 tics after the write: MEAT (kind 14) at (100,74), the mover
+      dropped client-side, and a re-fire on the corpse triggered NOTHING.
 - [ ] Worker: forage spawns plant_matter at the first EMPTY pathable adjacent cell
       (F6/I5); eats destroy the carrier + satisfy hunger. Acceptance: drill — a
       human forages then eats; hunger rises; the thing vanishes.

@@ -43,7 +43,7 @@ use resonantdust_codec::tic::{tic_add, tic_after, tic_before};
 use resonantdust_st_bindings::{data_shard, event_shard, index, pawn, thing, tile};
 use resonantdust_uplink::acquire;
 use data_shard::{write as _, EntityStateLogTableAccess as _};
-use pawn::{grant_condition as _, set_need as _, spawn as _, write as _, EntityStateLogTableAccess as _};
+use pawn::{grant_condition as _, remove as _, set_need as _, spawn as _, write as _, EntityStateLogTableAccess as _};
 // interactions P3 / stat-model P3: the execute arm reads the pawn shard's COMPOSED rows
 // (position + payload traits/conditions + the `needs` sub-table) and the tile shard's
 // baseline ⊕ overlay for the F8 on-tile check.
@@ -1479,6 +1479,8 @@ async fn main() {
                                 v
                             }
                         },
+                        // food-chain I9: `self` — the carrier is the pawn; no cells to scan.
+                        "self" => Vec::new(),
                         _ => {
                             reject("unknown location rule");
                             continue;
@@ -1494,7 +1496,20 @@ async fn main() {
                     // (position, is_thing, owning cold_row — 0 for tiles, kind_reference —
                     // the destroy composer resolves the BINDING's yield through it).
                     let mut carrier: Option<(u32, bool, u32, u16)> = None;
+                    if params.location == "self" {
+                        // food-chain I9: the ONE hot-carrier rule — the carrier IS the
+                        // target pawn (death rides its own kind); no cold probe.
+                        let kr = resonantdust_codec::object::def_kind_reference(
+                            prow.definition_reference,
+                        );
+                        if bundle.thing_interactions(kr >> 4).iter().any(|b| b.name == iname) {
+                            carrier = Some((pawn_pos, true, 0, kr));
+                        }
+                    }
                     for &c in &candidates {
+                        if carrier.is_some() {
+                            break;
+                        }
                         let zone = position_macro(c);
                         let cell = (position_micro(c) >> 8) as u8;
                         if let Some((kr, row)) = thing_kind_at(zone, cell) {
@@ -1834,6 +1849,65 @@ async fn main() {
                             0,
                         ]);
                     }
+                    // The SPAWN effect (food-chain F5/F6): write a thing's kind into a
+                    // cell — `on` = the target pawn's floor cell (death's meat);
+                    // `adjacent` = the CARRIER's 3×3 first EMPTY pathable cell, fixed
+                    // (dy, dx) scan (forage; all full = a logged no-yield, never an
+                    // overwrite). The emptiness/pathability probes are the SAME
+                    // pass-level ones movement uses (I5).
+                    if let Some(sp) = &params.spawn {
+                        let spawn_kind: u32 = bundle
+                            .thing_object_id(&sp.thing)
+                            .map(|id| u32::from(pack_kind_reference(id, 0)))
+                            .unwrap_or(0);
+                        let cell_pos: Option<u32> = if spawn_kind == 0 {
+                            tracing::warn!(thing = %sp.thing,
+                                "spawn names a thing the bundle cannot number — skipped");
+                            None
+                        } else if sp.at == "on" {
+                            Some(tile_to_position(px, py))
+                        } else {
+                            let (cx0, cy0) = position_to_tile(carrier.0);
+                            let mut found = None;
+                            'scan: for oy in -1i32..=1 {
+                                for ox in -1i32..=1 {
+                                    if ox == 0 && oy == 0 {
+                                        continue;
+                                    }
+                                    let (cx, cy) = (cx0 + ox, cy0 + oy);
+                                    let p2 = tile_to_position(cx, cy);
+                                    let zone = position_macro(p2);
+                                    let cell = (position_micro(p2) >> 8) as u8;
+                                    if thing_kind_at(zone, cell).is_some() {
+                                        continue; // occupied
+                                    }
+                                    if !cell_pathable(cx, cy) {
+                                        continue; // water is not a shelf
+                                    }
+                                    found = Some(p2);
+                                    break 'scan;
+                                }
+                            }
+                            if found.is_none() {
+                                tracing::info!(tic = t, interaction = %iname,
+                                    "no-yield — every adjacent cell is full or unpathable (F6)");
+                            }
+                            found
+                        };
+                        if let Some(p2) = cell_pos {
+                            let cold_row = pack_cold_row_reference(position_macro(p2), 0, 0);
+                            let cellw = u32::from((position_micro(p2) >> 8) as u8);
+                            program.extend_from_slice(&[
+                                PROMOTE,
+                                SET,
+                                cold_row,
+                                u32::from(TYPE_BIOME_THING),
+                                cellw,
+                                spawn_kind,
+                                0,
+                            ]);
+                        }
+                    }
                     // Grants carry remaining-at-write = the condition's authored duration
                     // (F3). The RE-STAMP duty is THIS composer's (F7/I12): any need a granted
                     // condition modifies that this program doesn't already SET gets its
@@ -1905,6 +1979,20 @@ async fn main() {
                             let _ = event
                                 .reducers()
                                 .queue_at(q.fan_program(target), effect_tic);
+                        }
+                        // The REMOVE effect (food-chain F5): death's second half — the
+                        // pawn shard deletes the entity's rows (StateGone fans, clients
+                        // drop the mover; idempotent — I3) and the ephemeral intent
+                        // queue clears (I7). The meat SET rides the queued program.
+                        if params.remove.as_deref() == Some("target") {
+                            if let Err(err) = pawn.reducers().remove(self_ref, t, target) {
+                                tracing::warn!(%err, tic = t,
+                                    pawn = format!("{target:#010x}"), "remove failed");
+                            } else {
+                                intent_queues.remove(&target);
+                                tracing::info!(tic = t, pawn = format!("{target:#010x}"),
+                                    "the holder died — removed (food-chain F5)");
+                            }
                         }
                         tracing::info!(tic = t, effect_tic, interaction = %iname,
                             target = format!("{target:#010x}"),
