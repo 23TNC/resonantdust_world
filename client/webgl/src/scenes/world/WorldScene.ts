@@ -31,6 +31,8 @@ import { parseUrl, type UrlCommand } from "../../debug/urlParams";
 
 /** Wheel deltaY per zoom octave: factor = 2^(-deltaY/this), applied per event (continuous). */
 const WHEEL_OCTAVE = 500;
+/** `codec::action::CANCEL_INTENT` (14) — the strip-circle cancel verb (intent-queue-ui F3). */
+const CANCEL_INTENT_ACTION = 14;
 /** ui-select P0: a left press that travels further than this before release is a drag (today:
  *  discarded; the drag-box pass turns it into box-select), not a click. */
 const CLICK_SLOP_PX = 4;
@@ -156,8 +158,14 @@ export class WorldScene extends Scene {
         const t = this.panel.view.coldGetPrim(id);
         return t ? { textureName: t.textureName, x: t.x, y: t.y, width: t.width, height: t.height, zIndex: t.zIndex } : null;
       },
-    });
+    }, this.intentQueues);
+    // intent-queue-ui F3/F4: a strip-circle click sends the cancel by entry_id.
+    this.details.cancelSender = (pawn, entryId) => {
+      this.ctx.client.queue(new Uint32Array([CANCEL_INTENT_ACTION, pawn, entryId]));
+    };
     this.details.open();
+    // DEBUG: `__details` — the strip's ring-percentage probe (intent-queue-ui I5).
+    (globalThis as unknown as { __details: DetailsPanel }).__details = this.details;
     // build-walls P2: the build panel — categories/icons entirely from content (D3).
     this.buildPanel = new BuildPanel(ctx, ctx.textureResolver,
       () => buildMenuEntries(getContent()),

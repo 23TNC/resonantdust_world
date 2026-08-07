@@ -9,10 +9,14 @@
 import { DomPanel } from "../../../ui/dom/DomPanel";
 import { ConditionCards, CARD_H, PAD_BOTTOM } from "./ConditionCards";
 import type { ConditionCard } from "./ConditionCards";
+import { IntentStrip } from "./IntentStrip";
+import type { QueueVisual } from "./IntentStrip";
 import { panelTitle, panelText } from "../panelStrings";
 import type { GameContext } from "../../../GameContext";
 import type { SelectionModel } from "../../world/SelectionModel";
+import type { IntentQueues } from "../../world/IntentQueues";
 import { SQUARE } from "../../viewport/squareMath";
+import { getContent } from "../../definitions/contentBoot";
 
 /** The world-scene data the panel reads — injected so the panel stays input- and
  *  engine-agnostic (testable, and reusable when souls/items become selectable). */
@@ -39,15 +43,22 @@ const PANEL_KEY = "gameDetailsPanel";
 const FACING = ["south", "east", "north", "west"];
 
 export class DetailsPanel extends DomPanel {
+  /** The flex ROW (intent-queue-ui F5): the strip pinned LEFT, the text content
+   *  SHIFTED RIGHT beside it. */
+  private readonly rowEl = document.createElement("div");
   private readonly bodyEl = document.createElement("div");
   private readonly unsubSel: () => void;
+  private readonly unsubQueues: () => void;
   private readonly timer: number;
   /** The condition strip — a SIBLING of this panel, not a child, so it can draw past the
    *  panel's right edge (conditions F7 / B1). Owned here, destroyed here. */
   private readonly cards: ConditionCards;
+  /** The intent-queue strip (intent-queue-ui F5) — circles from the TOML visuals. */
+  private readonly strip: IntentStrip;
 
   constructor(ctx: GameContext, private readonly selection: SelectionModel,
-              private readonly providers: DetailsProviders) {
+              private readonly providers: DetailsProviders,
+              private readonly queues: IntentQueues) {
     super({
       title: panelTitle(PANEL_KEY),
       storageKey: "details",
@@ -60,10 +71,28 @@ export class DetailsPanel extends DomPanel {
     // The body reserves the strip's band at the bottom so a long text block scrolls to a stop
     // ABOVE the cards instead of underneath them — the strip floats over the panel, so without
     // the reserve the last row would hide behind it.
+    this.rowEl.style.cssText = "display:flex;height:100%;box-sizing:border-box;";
     this.bodyEl.style.cssText =
       "padding:8px 12px;font:12px/1.7 monospace;white-space:pre;overflow:auto;height:100%;" +
-      `box-sizing:border-box;padding-bottom:${CARD_H + PAD_BOTTOM * 2}px;`;
-    this.setBody(this.bodyEl);
+      `box-sizing:border-box;flex:1 1 auto;padding-bottom:${CARD_H + PAD_BOTTOM * 2}px;`;
+    this.strip = new IntentStrip(
+      (ref) => {
+        try {
+          return getContent().queueVisual(ref) as QueueVisual | null;
+        } catch {
+          return null;
+        }
+      },
+      () => {
+        const d = ctx.client.ticDelta(0);
+        if (d === null) return null;
+        return ((Math.floor(d) % 0x10000) + 0x10000) % 0x10000;
+      },
+      (entryId) => this.onCancelClick(entryId),
+    );
+    this.rowEl.appendChild(this.strip.el);
+    this.rowEl.appendChild(this.bodyEl);
+    this.setBody(this.rowEl);
     this.cards = new ConditionCards({
       storageKey: "details",
       rect: () => this.panel.getBoundingClientRect(),
@@ -76,6 +105,10 @@ export class DetailsPanel extends DomPanel {
       onOpenChange: (cb) => this.onOpenChange(() => cb()),
     });
     this.unsubSel = selection.subscribe(() => this.render());
+    // The strip re-renders on every queue fan for the selected pawn.
+    this.unsubQueues = queues.subscribe(() => {
+      if (this.selection.primary?.kind === "pawn") this.render();
+    });
     // Pawns move while selected — refresh the live rows on a slow tick (the selection event
     // only fires on selection CHANGES, not on the pawn's motion).
     this.timer = window.setInterval(() => {
@@ -83,6 +116,17 @@ export class DetailsPanel extends DomPanel {
     }, 500);
     this.render();
   }
+
+  /** A strip-circle click attempts a cancel (intent-queue-ui F3/F4 — P4 wires the
+   *  verb; the strip already reports the worker-minted entry id). */
+  private onCancelClick(entryId: number): void {
+    const p = this.selection.primary;
+    if (p?.kind !== "pawn") return;
+    this.cancelSender?.(p.entity, entryId);
+  }
+
+  /** Injected by the scene (P4) — sends `CANCEL_INTENT pawn entry_id`. */
+  cancelSender: ((pawn: number, entryId: number) => void) | null = null;
 
   private render(): void {
     const rows: string[] = [];
@@ -95,6 +139,7 @@ export class DetailsPanel extends DomPanel {
     if (!p) {
       this.bodyEl.textContent = panelText(PANEL_KEY, "empty");
       this.cards.setCards([]);
+      this.strip.setEntries([]);
       return;
     }
     if (all.length > 1) rows.push(`${all.length} selected — primary:`);
@@ -137,12 +182,21 @@ export class DetailsPanel extends DomPanel {
     }
     this.bodyEl.textContent = rows.join("\n");
     this.cards.setCards(cards);
+    // The strip shows the SELECTED pawn's queue only; anything else clears it.
+    this.strip.setEntries(p.kind === "pawn" ? this.queues.entriesOf(p.entity) : []);
+  }
+
+  /** The strip's computed ring percentage (drill probe — intent-queue-ui I5). */
+  ringPercent(): number | null {
+    return this.strip.ringPercent();
   }
 
   destroy(): void {
     this.unsubSel();
+    this.unsubQueues();
     clearInterval(this.timer);
     this.cards.destroy();
+    this.strip.destroy();
     super.destroy();
   }
 }

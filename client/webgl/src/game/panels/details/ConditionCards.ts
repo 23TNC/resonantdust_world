@@ -42,6 +42,10 @@ export const CARD_H = 42;
 export const CARD_GAP = 6;
 /** Inset from the panel's LEFT edge, px. */
 export const PAD_LEFT = 8;
+/** The intent strip's column width (intent-queue-ui) — the cards' origin clears it so
+ *  the bottom-most circle and the first card never overlap. Mirrors `IntentStrip`'s
+ *  `STRIP_W` (kept as a literal to avoid a layout import cycle). */
+const INTENT_STRIP_W = 40;
 /** Inset from the panel's BOTTOM edge, px. */
 export const PAD_BOTTOM = 8;
 /** How many cards show maximized before the rest minimize (the user's number). */
@@ -277,7 +281,9 @@ export class ConditionCards {
       // 1. The strip FITS on screen but its natural origin would push it off the right — e.g.
       //    the panel is snapped to the right edge. Slide the origin left instead of scrolling:
       //    every card stays visible and the strip still hugs the panel's bottom.
-      const wanted = r.left + PAD_LEFT;
+      //    intent-queue-ui: the origin clears the INTENT strip's column (user call,
+      //    2026-08-07 — the cards must not overlap the intentions).
+      const wanted = r.left + PAD_LEFT + INTENT_STRIP_W;
       const maxLeft = window.innerWidth - EDGE_MARGIN - natural;
       this.el.style.left = `${Math.max(EDGE_MARGIN, Math.min(wanted, maxLeft))}px`;
       this.el.style.width = "";

@@ -437,6 +437,40 @@ impl Content {
         self.bundle.gameplay_reference(&category, &name)
     }
 
+    /// An interaction's queue-strip visuals by its `definition_reference`
+    /// (intent-queue-ui F2): `{ hover, size, background, progress, progressColor,
+    /// progressFill, cancelable }`. `hover` falls back to the LABEL; colors are
+    /// `0xRRGGBB` numbers or null (the panel's neutral). Unknown ref = null.
+    #[wasm_bindgen(js_name = queueVisual)]
+    pub fn queue_visual(&self, reference: u32) -> JsValue {
+        let Some((cat, name)) = self.bundle.gameplay_lookup(reference) else {
+            return JsValue::NULL;
+        };
+        if cat != "interaction" {
+            return JsValue::NULL;
+        }
+        let Some(ip) = self.bundle.interaction_params(&name) else { return JsValue::NULL };
+        let obj = js_sys::Object::new();
+        let set = |key: &str, value: &JsValue| {
+            let _ = js_sys::Reflect::set(&obj, &JsValue::from_str(key), value);
+        };
+        let q = &ip.queue;
+        set("hover", &JsValue::from_str(q.hover.as_deref().unwrap_or(&ip.label)));
+        set("size", &JsValue::from_f64(q.size));
+        match q.background {
+            Some(c) => set("background", &JsValue::from_f64(f64::from(c))),
+            None => set("background", &JsValue::NULL),
+        }
+        set("progress", &JsValue::from_str(&q.progress));
+        match q.progress_color {
+            Some(c) => set("progressColor", &JsValue::from_f64(f64::from(c))),
+            None => set("progressColor", &JsValue::NULL),
+        }
+        set("progressFill", &JsValue::from_bool(q.progress_fill));
+        set("cancelable", &JsValue::from_bool(q.cancelable));
+        obj.into()
+    }
+
     /// Every tile's 4 packed-map channel material bindings, in `def_id` order — a
     /// per-def table the host fetches once and indexes by the `defId` a tile prim
     /// carries (like [`tileTextureStems`]). Flat **stride-8** per def:

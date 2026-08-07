@@ -110,8 +110,17 @@ impl TicEstimate {
             }
             return false;
         }
-        self.behind_streak = 0;
-        self.ahead_streak = 0;
+        // intent-queue-ui: only an in-band arrival AT-OR-AHEAD of the estimate counts as
+        // health. A poisoned-low anchor sees all live traffic implausibly ahead — and the
+        // ONLY in-band arrivals are replays of the very stale row that seeded it, always
+        // BEHIND. Letting those reset the streak made the poison defend itself forever
+        // (seen live: a page anchored on a 3-hour-old resting row never healed while the
+        // row kept re-replaying on zone churn). Healthy streams re-anchor on in-band-ahead
+        // arrivals constantly, so the streaks still reset in normal operation.
+        if ahead >= 0.0 {
+            self.behind_streak = 0;
+            self.ahead_streak = 0;
+        }
 
         if wall_ms - awall > REANCHOR_MS {
             // The anchor aged out: retire it as the rate baseline and take the fresh arrival
@@ -265,5 +274,26 @@ mod tests {
         assert!(reanchored, "streak should hard-reset the anchor");
         let d = e.delta_since(9_040 + POISON_STREAK as u16 - 1, 2_300.0).unwrap();
         assert!(d.abs() < 2.0, "d {d}");
+    }
+
+    #[test]
+    fn a_replayed_stale_row_cannot_defend_a_poisoned_anchor() {
+        // Seen live (intent-queue-ui): the anchor seeded off a ~10k-stale resting row, and
+        // ZONE CHURN kept replaying THAT row — always in-band-BEHIND the estimate it
+        // created — zeroing the ahead streak before live traffic (always far ahead) could
+        // reach POISON_STREAK. The heal must survive interleaved stale replays.
+        let mut e = TicEstimate::default();
+        assert!(e.observe(9_267, 0.0)); // the stale resting row anchors first
+        let mut reanchored = false;
+        for i in 0..POISON_STREAK as u16 {
+            let wall = 100.0 + f64::from(i) * 400.0;
+            // live traffic, far ahead…
+            reanchored = e.observe(19_800 + i * 2, wall);
+            // …interleaved with the SAME stale row replaying (in-band, behind).
+            e.observe(9_267, wall + 100.0);
+        }
+        assert!(reanchored, "the interleaved stale replay must not reset the streak");
+        let d = e.delta_since(19_800 + (POISON_STREAK as u16 - 1) * 2, 3_000.0).unwrap();
+        assert!(d.abs() < 12.0, "d {d}");
     }
 }

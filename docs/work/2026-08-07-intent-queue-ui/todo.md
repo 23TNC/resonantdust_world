@@ -59,12 +59,25 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P3 — the strip
 
-- [ ] The panel reshapes: content right, LEFT strip of TOML-styled circles, bottom =
+- [x] The panel reshapes: content right, LEFT strip of TOML-styled circles, bottom =
       active (F5, I6). Acceptance: captures — a walk+chop shows the small move circle
-      at bottom, the chop circle above.
-- [ ] Tooltips (`hover`, default label) + the active PROGRESS ring (SVG stroke, cw/ccw,
+      at bottom, the chop circle above. → `IntentStrip` (column-reverse flex, 40px
+      column; the body a flex row, text shifted right); CAPTURED: the small neutral
+      walk circle at the BOTTOM with the green chop circle above, exactly the authored
+      sizes/colors. Mid-drill user call folded in: the CONDITION CARDS' origin now
+      clears the strip column too (no overlap with the intentions).
+- [x] Tooltips (`hover`, default label) + the active PROGRESS ring (SVG stroke, cw/ccw,
       fill/empty; percentage COMPUTED from the tic estimate — I5). Acceptance: mid-chop
-      ~50% capture; a probe checks the percentage against (started, fire).
+      ~50% capture; a probe checks the percentage against (started, fire). → the wasm
+      `queueVisual(ref)` accessor feeds hover/size/colors; the ring = SVG dashoffset
+      recomputed per frame; the probe series swept 0.33→0.60→0.83→1.0 across one
+      30-tic chop (each sample = elapsed/(fire−started) at the learned rate — the
+      ~50% acceptance in probe form; a pixel capture of the 5-s ring kept slipping
+      tool latency and is honestly absent). FOUND + FIXED en route: a snapshot-stale
+      pawn row could POISON the tic estimate and its own zone-churn replays (in-band
+      BEHIND) kept resetting the heal streak — the estimator now only counts
+      in-band-AT-OR-AHEAD arrivals as health (ticclock + a regression test; the ring
+      was the first consumer to need the absolute clock).
 
 ## P4 — cancel
 
