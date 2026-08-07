@@ -91,3 +91,25 @@ _Nothing delivered yet. Items land here with their measured result when ticked i
   Both keep the convention — solid masses, hard black outlines, flat fills, unbroken bottom edges,
   correct side-profile framing. Both also have **colour** (brown anteater, grey-and-white cat), so
   the white-collapse that dogged every previous run past g10 is absent at g8.
+
+## P4 — Through the real pipeline, with the knobs corrected
+
+- **2026-08-06 · P4 · The pipeline DOES produce usable art on two of three directions — and my
+  earlier "ControlNet does not rescue it" was too broad.** Ran `bin/art generate` on the wolf
+  template with `--cn 0.5 --cn-end 0.9 --lora-strength 0.7`, against the previous attempt's
+  `dn=1 cn=0.2 strength=0.85`. Sheet: `.staging/p4-pipeline.png`.
+
+  | | r11g08 @ cn 0.2 / str 0.85 | r16g08 @ cn 0.5 / str 0.70 |
+  |---|---|---|
+  | **east** | **featureless white slab** with a head stuck on | lying wolf that **follows the template pose** — head, muzzle, tail, grey back, white belly |
+  | **south** | grey cap, yellow slit eyes, no wolf | ears + cap + white face, but **oversized orange eye shapes** that read as flames |
+  | **north** | **eyes on a BACK view** (wrong) + stray blue patches | **no eyes** (correct), clean grey back, white legs and rear — usable |
+
+  **North is now correct. East went from unusable to close. South is still wrong.** So the earlier
+  verdict conflated two things: a weak LoRA *and* a recipe whose control strength let the LoRA erase
+  the template. Raising `cn` 0.2 → 0.5 and dropping strength 0.85 → 0.70 recovered the template's
+  pose in every direction.
+
+  **Not a clean attribution** — the LoRA and both knobs changed together, so this does not say how
+  much each contributed. Recorded as such rather than claimed as a controlled result. The strength
+  sweep was folded into this single comparison rather than run as three separate generations.

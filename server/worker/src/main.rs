@@ -1022,8 +1022,9 @@ async fn main() {
                     // (stat-model F9 binding; walls not carrying move_to is exactly this
                     // refusal — input-rework F9). Things probe first: a tree stands ON
                     // grass, and the thing is the more specific carrier.
-                    // (position, is_thing, owning cold_row — 0 for tiles).
-                    let mut carrier: Option<(u32, bool, u32)> = None;
+                    // (position, is_thing, owning cold_row — 0 for tiles, kind_reference —
+                    // the destroy composer resolves the BINDING's yield through it).
+                    let mut carrier: Option<(u32, bool, u32, u16)> = None;
                     for &c in &candidates {
                         let zone = position_macro(c);
                         let cell = (position_micro(c) >> 8) as u8;
@@ -1031,15 +1032,15 @@ async fn main() {
                             if bundle
                                 .thing_interactions(kr >> 4)
                                 .iter()
-                                .any(|(i, _)| i == &iname)
+                                .any(|b| b.name == iname)
                             {
-                                carrier = Some((c, true, row));
+                                carrier = Some((c, true, row, kr));
                                 break;
                             }
                         }
                         if let Some(kr) = tile_kind_at(zone, cell) {
-                            if bundle.tile_interactions(kr >> 4).iter().any(|(i, _)| i == &iname) {
-                                carrier = Some((c, false, 0));
+                            if bundle.tile_interactions(kr >> 4).iter().any(|b| b.name == iname) {
+                                carrier = Some((c, false, 0, kr));
                                 break;
                             }
                         }
@@ -1238,15 +1239,33 @@ async fn main() {
                     }
                     // The destroy effect (lumberjack F5): clear the validated CARRIER's
                     // cell through the cold overlay — the build-walls SET path, kind 0 =
-                    // remove. Tile carriers refuse: nothing authors tile destruction, and
-                    // clearing ground is a different conversation. The `yields` successor
-                    // (I9) will emit its placing SET beside this one.
+                    // remove. When the carrier's BINDING authors a yield (logs-drop
+                    // F1/F2), the SAME SET carries the yielded thing's kind_reference
+                    // instead: destroy becomes a REPLACE — the tree's cell holds logs.
+                    // Tile carriers refuse: nothing authors tile destruction.
+                    let mut yielded: Option<String> = None;
                     if params.destroy.is_some() {
-                        let (cpos, is_thing, cold_row) = carrier;
+                        let (cpos, is_thing, cold_row, ckind) = carrier;
                         if !is_thing {
                             reject("destroy names a TILE carrier — only things fell (lumberjack F5)");
                             continue;
                         }
+                        let yield_kind: u32 = bundle
+                            .thing_interactions(ckind >> 4)
+                            .iter()
+                            .find(|b| b.name == iname)
+                            .and_then(|b| b.yields.as_ref())
+                            .and_then(|y| {
+                                let k = bundle.thing_object_id(y);
+                                if k.is_none() {
+                                    // Load-validated, so only a registry drift reaches here.
+                                    tracing::warn!(yield_name = %y,
+                                        "yield names a thing the bundle cannot number — clearing instead");
+                                }
+                                yielded = k.map(|_| y.clone());
+                                k.map(|id| u32::from(pack_kind_reference(id, 0)))
+                            })
+                            .unwrap_or(0);
                         let cell = u32::from((position_micro(cpos) >> 8) as u8);
                         program.extend_from_slice(&[
                             PROMOTE,
@@ -1254,7 +1273,7 @@ async fn main() {
                             cold_row,
                             u32::from(TYPE_BIOME_THING),
                             cell,
-                            0,
+                            yield_kind,
                             0,
                         ]);
                     }
@@ -1316,6 +1335,7 @@ async fn main() {
                             satisfied = ?satisfied_need, from = log_from, to = log_to,
                             moved = params.move_effect.is_some(),
                             destroyed = params.destroy.is_some(),
+                            yielded = ?yielded,
                             dest = dest.map(|d| format!("{:?}", position_to_tile(d))),
                             grants = params.grants.len(), version,
                             "interaction executed");

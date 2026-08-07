@@ -15,10 +15,15 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P1 — the corpus
 
-- [ ] The `logs` thing (F3: placeholder tint, no interactions); the tree's binding
+- [x] The `logs` thing (F3: placeholder tint, no interactions); the tree's binding
       gains `yields = "logs"`; loader validates `yields` against thing kinds, ONE
       accessor shape swept (I1). Acceptance: content-check clean; a ghost yield
-      refuses loudly.
+      refuses loudly. → `logs` APPENDED last (a mid-file insert would collide the
+      registry — noted in the corpus); `InteractionBind { name, magnitude, yields }`
+      replaces the tuple through loader, both accessors, sim-version hashes (the yield
+      BUMPS — sim-visible), wasm filter, and the worker's probes; ghost-yield refusal
+      unit-tested; content-check clean, all gates (content tests 40, shared, core,
+      worker, tsc) green.
 - [ ] Golden re-blessed (I4) and ALL FOUR sim crates rebuilt + restarted (I2 —
       lumberjack I11's law). Acceptance: golden diff = the authored rows; the registry
       shows the logs def after the master reseeds.

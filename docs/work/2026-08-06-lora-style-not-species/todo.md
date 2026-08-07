@@ -34,9 +34,9 @@ caption.**
 
 ## P4 — Through the real pipeline, with the knobs corrected
 
-- [ ] Re-run the ControlNet pipeline at stronger control than the default recipe. Acceptance: `--cn 0.5 --cn-end 0.9` versus the `dn=1 cn=0.2` that let the LoRA erase the template.
-- [ ] Sweep LoRA strength 0.5 / 0.7 / 0.85 on one direction. Acceptance: three sprites; the strength where the template survives is recorded.
-- [ ] State whether the pipeline produces usable art from this LoRA. Acceptance: a plain yes or no in `completed.md`, with the sheet.
+- [x] Re-run the ControlNet pipeline at stronger control than the default recipe. Acceptance: `--cn 0.5 --cn-end 0.9` versus the `dn=1 cn=0.2` that let the LoRA erase the template.
+- [x] Sweep LoRA strength 0.5 / 0.7 / 0.85 on one direction. Acceptance: three sprites; the strength where the template survives is recorded.
+- [x] State whether the pipeline produces usable art from this LoRA. Acceptance: a plain yes or no in `completed.md`, with the sheet.
 
 ## P5 — Close out
 
