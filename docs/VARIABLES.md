@@ -601,9 +601,12 @@ write), never a stored countdown and never a forecast. A re-grant refreshes the 
 [[need]]       name/label · min/max (the authored value domain, f32) · winner ·
                deplete (TICS max→min; 0 = never drains) ·
                band = [{ condition, lo, hi }]  in the need's OWN units — exclusive, ≤1 active
-[[condition]]  name/label · mood (-1..1) · duration (TICS a TIMED grant lives; 0 = DERIVED) ·
-               priority · stats/needs modifier lists (§ TOML content schema)
-[[trait]]      name/label · per-LEVEL stats/needs modifier lists (§ TOML content schema)
+[[condition]]  name/label · duration (TICS a TIMED grant lives; 0 = DERIVED) ·
+               priority · stats/needs/emotions modifier lists (§ TOML content schema)
+[[trait]]      name/label · per-LEVEL stats/needs/emotions modifier lists (§ TOML content schema)
+[[emotion]]    name/label · color — SIXTEEN, declaration-ordered; the u4 INDEX is the
+               whole identity (`fine` REQUIRED first — emotions F1; not registry-numbered:
+               emotions never ride the wire)
 [[thing]]      needs = ["thirst", …] · traits = ["biological_lifeform", { name = "walks", level = 2 }]
 ```
 (TOML spellings — § TOML content schema. Ids are REGISTRY-allocated from the derived
@@ -619,14 +622,32 @@ the top 4 conditions and minimizes the rest, so the ranking is a game-design dec
 the corpus where it can be tuned without a rebuild. Author in **tens** (10/20/30) so a new
 condition slots between two without renumbering; absent = `0`.
 
-**The sort is `priority` desc → `|mood|` desc → `condition_id` asc**, and it is computed **once**,
-inside `needs_eval::active_conditions` (F3) — never in a consumer. Every observer therefore ranks
-identically: the panel's card order and the npc's decision order are the same list. The two
-tie-breaks make it a TOTAL order, so a pawn whose state has not changed cannot have its cards swap
-places between evaluations. `pawnConditions` (wasm) returns **stride 4** —
-`[condition_id, mood, remaining, priority]` — already in that order; `priority` rides along to be
-*shown*, not to be re-sorted. Do not derive priority from `|mood|`: it cannot express "mild but
-urgent", and it degenerates entirely once a condition's effect is a need rather than a mood.
+**The sort is `priority` desc → Σ emotion magnitude desc → `condition_id` asc** (emotions F4
+retired the old `|mood|` tie-break; the summed magnitude is the condition's total INTENSITY), and
+it is computed **once**, inside `needs_eval::active_conditions` (F3) — never in a consumer. Every
+observer therefore ranks identically: the panel's card order and the npc's decision order are the
+same list. The two tie-breaks make it a TOTAL order, so a pawn whose state has not changed cannot
+have its cards swap places between evaluations. `pawnConditions` (wasm) returns **stride 4** —
+`[condition_id, magnitude_sum, remaining, priority]` — already in that order; `priority` rides
+along to be *shown*, not to be re-sorted. Do not derive priority from intensity: it cannot express
+"mild but urgent".
+
+**THE ACTIVE EMOTION** (emotions F3): one per pawn, = the ARGMAX of per-emotion magnitude sums
+over the pawn's traits + ACTIVE conditions, through the ONE `emotion_eval::active_emotion` —
+the user's worked example verbatim: 3 playful + 5 uncomfortable + 2 focused + 6 happy → happy.
+No contributions → `fine` (index 0); a tie → the LOWEST index wins (deterministic; fine-first
+ordering resolves ties toward calm). An emotion MODIFIER packs to ONE u8 —
+`emotion:4 | magnitude:4` (the user's layout; max +15; +0 is authored by ABSENCE) — and the pack
+lives in ONE place. MOOD IS RETIRED (F4, user-confirmed "replaced entirely"): the scalar, its
+clamp formula, `pawnMood`, and the panel's mood row are gone; the wire never carried it.
+
+**Emotion DISPLAY laws** (emotions F5/F6/F7): a condition renders as a SQUARE whose background is
+a `conic-gradient` PIE — one slice per emotion modifier, proportional to magnitude, slices in
+emotion-index order from 12 o'clock (+1 happy +2 sad = 120°/240° of each color); ONE modifier =
+solid; NONE = solid `fine` gray; NO text on the card. Hover = the everything-tooltip: label,
+one `+N <Emotion>` line per modifier (+0 omitted by construction, the `+` always rendered),
+`priority`, `remaining` tics for a TIMED grant, and the need modifiers. First pass: the details
+panel BODY background washes in the active emotion's color, alpha-dimmed for legibility.
 
 **The details panel layout** (intent-queue-ui): the panel's information content sits in a
 container SHIFTED RIGHT to clear a vertical **intent-queue strip** pinned along the
@@ -641,7 +662,7 @@ re-show). Clicking a circle sends `CANCEL_INTENT` with the entry's order
 `event_reference` (`ACTIONS.md` § The intent queue).
 
 **A condition's effects are an OPEN set** (conditions F6), and the stat-model realizes it:
-`mood` (offset; mood = `clamp(0.5 + Σ active offsets, 0..1)`, needs-moodlets F5) sits beside the
+the `emotions` modifiers (emotions F2 — what the condition makes the pawn FEEL) sit beside the
 `stats`/`needs` modifier lists — a condition caps a stat, floors a need, or scales a rate through
 the SAME combiner traits use. The two kinds of condition:
 **DERIVED (`duration 0`)** — a band on a need's satisfaction, computed from `(row, tic, corpus)` by
@@ -856,16 +877,23 @@ band = [                    # exclusive ranges in the need's OWN units; ≤1 act
   { condition = "dehydrated", lo = 0,  hi = 10 },
 ]
 
+[[emotion]]                 # SIXTEEN, declaration-ordered — the u4 INDEX is the identity
+name = "fine"               # (emotions F1); `fine` REQUIRED first: index 0 = the "alters
+label = "Fine"              # nothing" default, gray. Never registry-numbered — emotions
+color = "#9aa4b0"           # never ride the wire; the corpus owns look AND membership.
+
 [[condition]]
 name = "quenched"
 label = "Quenched"
-mood = 0.2                  # offset while active; mood = clamp(0.5 + Σ)
 duration = 3600             # TICS a TIMED grant lives; 0 = DERIVED (band-computed)
 priority = 10               # card sort key, desc; absent = 0
-# modifier lists (both optional; conditions contribute SCALARS — no levels):
-#   add SUMS into the stat; min/max join the range intersection; rate multiplies
+# modifier lists (all optional; conditions contribute SCALARS — no levels):
+#   add SUMS into the stat; min/max join the range intersection; rate multiplies;
+#   emotions feed the active-emotion argmax (emotions F2/F3 — magnitude 1..15, the u8
+#   pack `emotion:4|magnitude:4`; +0 = author NOTHING; mood is RETIRED, emotions F4)
 stats = [ { stat = "metabolism", add = 0.0 } ]          # (illustrative shapes)
 needs = [ { need = "thirst", rate = 0.5 } ]             # quenched halves thirst depletion
+emotions = [ { emotion = "happy", magnitude = 2 } ]
 
 [[trait]]                   # a LEVELED stat contributor — "traits/skills" (stat-model F1/F5)
 name = "walks"
@@ -874,6 +902,7 @@ label = "Walks"
 # a pawn's row stores its level; same fields as conditions, but arrays
 stats = [ { stat = "ground_speed", add = [24, 12, 6] } ]   # tics/tile at level 1/2/3
 # needs = [ { need = "thirst", rate = [1.0, 0.9] } ]       # need modifiers take levels too
+# emotions = [ { emotion = "playful", magnitude = [1, 2] } ]  # emotions take levels too
 
 [[interaction]]             # something a pawn can DO (interactions F5)
 name = "drink"

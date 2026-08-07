@@ -6,11 +6,17 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P0 — the paper
 
-- [ ] VARIABLES.md: the `[[emotion]]` category (u4 declaration order, `fine` first —
+- [x] VARIABLES.md: the `[[emotion]]` category (u4 declaration order, `fine` first —
       F1), condition/trait `emotions` modifiers (F2), the u8 pack (I3), the argmax
-      law (F3), MOOD's retirement (F4). Acceptance: docs-check green.
-- [ ] VARIABLES.md: the display laws — pie squares (F5), the everything-tooltip (F6),
-      the panel wash (F7). Acceptance: docs-check green.
+      law (F3), MOOD's retirement (F4). Acceptance: docs-check green. → the summary
+      table + THE ACTIVE EMOTION law (argmax, fine, ties, the u8 pack, the worked
+      example) + the sort's tie-break rewritten to Σ magnitude; the schema examples
+      show `[[emotion]]`, condition `emotions`, trait per-level arrays; `mood` remains
+      only in retirement notes; green.
+- [x] VARIABLES.md: the display laws — pie squares (F5), the everything-tooltip (F6),
+      the panel wash (F7). Acceptance: docs-check green. → the Emotion DISPLAY laws
+      paragraph (conic pie from 12 o'clock, 120°/240° example, solid/gray degenerate
+      cases, no card text, the tooltip contents, the alpha-dimmed wash); green.
 
 ## P1 — the corpus
 
