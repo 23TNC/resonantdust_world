@@ -33,12 +33,17 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P3 — the worker walks around water
 
-- [ ] Worker: MOVE_TO seed + MOVE_STEP/CONTINUE hops step via `path_eval` over the
+- [x] Worker: MOVE_TO seed + MOVE_STEP/CONTINUE hops step via `path_eval` over the
       mirrored composed tiers; unreachable/impathable dest = logged no-op (F5).
-      Acceptance: hop logs show a detour; the no-op line fires on a water click.
-- [ ] Drill on a water zone at `ambient=0.8`: order a trip across a bay — the pawn
+      Acceptance: hop logs show a detour; the no-op line fires on a water click. →
+      probes hoisted to pass level; F5 fired live ("move_to no-op: destination
+      impathable or unreachable"); blocked hops idle-and-resume (bare requeue).
+- [x] Drill on a water zone at `ambient=0.8`: order a trip across a bay — the pawn
       walks the shoreline (captures + worker hop logs); a click ON water no-ops
-      (I5 posture). Acceptance: captures + logs in completed.md.
+      (I5 posture). Acceptance: captures + logs in completed.md. → a minted pawn
+      crossed lake (95,75)→(113,76) ARRIVING via the north tip (seen mid-detour);
+      water click F5-refused; BONUS: drink-on-water walked to beach (110,72) and
+      drank (I4 proven live).
 
 ## P4 — trees block, fells reopen
 

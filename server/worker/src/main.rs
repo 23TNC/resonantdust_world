@@ -336,6 +336,67 @@ async fn main() {
 
         let master = index.db().master_clock().realm().find(&realm).map(|c| c.tic as u16).unwrap_or(0);
 
+        // ── composed-tier kind probes (lumberjack I1, HOISTED by pathfinding F2) ── the
+        // interaction arm's carrier resolution AND the movement chain's pathability read
+        // the SAME view. `tile_kind_at`: a zone's ground is one baseline row per biome
+        // subtype (a nonzero cell wins), overlays override. `thing_kind_at`: sparse
+        // baseline ⊕ overlay where an overlay kind 0 SUPPRESSES (a felled tree neither
+        // offers nor blocks); returns the owning cold_row for the destroy composer.
+        let tile_kind_at = |zone: u16, cell: u8| -> Option<u16> {
+            let mut k = tile
+                .db()
+                .entity_state()
+                .iter()
+                .filter(|r| r.macro_position_reference == zone)
+                .find_map(|r| {
+                    r.items
+                        .get(usize::from(cell))
+                        .map(|i| i.kind_reference)
+                        .filter(|&k| k != 0)
+                });
+            for o in tile.db().overlay().iter().filter(|r| r.macro_position_reference == zone) {
+                for it in &o.items {
+                    if it.tile_reference == cell && it.kind_reference != 0 {
+                        k = Some(it.kind_reference);
+                    }
+                }
+            }
+            k
+        };
+        let thing_kind_at = |zone: u16, cell: u8| -> Option<(u16, u32)> {
+            let mut k = thing
+                .db()
+                .entity_state()
+                .iter()
+                .filter(|r| r.macro_position_reference == zone)
+                .find_map(|r| {
+                    r.items
+                        .iter()
+                        .find(|i| i.tile_reference == cell && i.kind_reference != 0)
+                        .map(|i| (i.kind_reference, r.cold_row_reference))
+                });
+            for o in thing.db().overlay().iter().filter(|r| r.macro_position_reference == zone) {
+                for it in &o.items {
+                    if it.tile_reference == cell {
+                        k = (it.kind_reference != 0)
+                            .then_some((it.kind_reference, o.cold_row_reference));
+                    }
+                }
+            }
+            k
+        };
+        // ── the ONE pathability probe (pathfinding F1) ── a cell is enterable iff its
+        // tile kind AND its occupant agree; kind 0 / an unknown zone reads OPEN (version
+        // skew degrades to ground, never an invisible wall — the Bundle carries the same
+        // guard). Every hop, seed check, and walk-dest pick this pass asks HERE.
+        let cell_pathable = |x: i32, y: i32| -> bool {
+            let pos = tile_to_position(x, y);
+            let zone = position_macro(pos);
+            let cell = (position_micro(pos) >> 8) as u8;
+            tile_kind_at(zone, cell).is_none_or(|k| bundle.tile_pathable(k >> 4))
+                && thing_kind_at(zone, cell).is_none_or(|(k, _)| bundle.thing_pathable(k >> 4))
+        };
+
         // ── INTENT ADVANCEMENT, move half (lumberjack I4) ── a Move-running queue head
         // completes when the pawn's authoritative row reaches its dest; completing an
         // event queues the NEXT one automatically (the user's law, F1). Runs BEFORE the
@@ -492,7 +553,7 @@ async fn main() {
             }
             let mut promote: HashSet<u32> = HashSet::new();
             for (event_reference, actions) in &events {
-                apply(actions, &mut scratch, &mut promote, *event_reference);
+                apply(actions, &mut scratch, &mut promote, *event_reference, &cell_pathable);
             }
 
             // ── WRITE (hot) ── absolute finals, each to its OWN shard (pawn vs the data catch-all).
@@ -790,12 +851,17 @@ async fn main() {
                     }
                     let (cx, cy) = position_to_tile(p.position_reference);
                     let (tx, ty) = position_to_tile(dest);
-                    let d = (tx - cx).abs().max((ty - cy).abs());
-                    if d == 0 {
+                    if (cx, cy) == (tx, ty) {
                         continue; // arrived — the chain ends
                     }
                     let next_tic = tic_add(t, ground_speed_tics(obj, t));
-                    let program = if d == 1 {
+                    // The FINAL hop keys on the shared PATH's length, not cheb distance
+                    // (pathfinding F3): a detour's last tile is what earns the PROMOTE
+                    // anchor. A blocked path (`None`) queues a BARE hop — the chain idles
+                    // at pace, re-pathing every hop, and resumes if the blockage clears.
+                    let plen =
+                        resonantdust_content::path_eval::path_len((cx, cy), (tx, ty), &cell_pathable);
+                    let program = if plen == Some(1) {
                         vec![PROMOTE, MOVE_STEP, obj, dest, serial]
                     } else {
                         vec![MOVE_STEP, obj, dest, serial]
@@ -1101,60 +1167,9 @@ async fn main() {
                             continue;
                         }
                     };
-                    // The offer probe (lumberjack I1 — tile AND thing carriers, resolved
-                    // exactly like the client filter): a zone's ground is one row PER
-                    // BIOME (subtype), a nonzero cell wins; the thing layer is sparse
-                    // baseline ⊕ overlay where an overlay kind 0 SUPPRESSES (a felled
-                    // tree no longer offers).
-                    let tile_kind_at = |zone: u16, cell: u8| -> Option<u16> {
-                        let mut k = tile
-                            .db()
-                            .entity_state()
-                            .iter()
-                            .filter(|r| r.macro_position_reference == zone)
-                            .find_map(|r| {
-                                r.items
-                                    .get(usize::from(cell))
-                                    .map(|i| i.kind_reference)
-                                    .filter(|&k| k != 0)
-                            });
-                        for o in
-                            tile.db().overlay().iter().filter(|r| r.macro_position_reference == zone)
-                        {
-                            for it in &o.items {
-                                if it.tile_reference == cell && it.kind_reference != 0 {
-                                    k = Some(it.kind_reference);
-                                }
-                            }
-                        }
-                        k
-                    };
-                    // Returns (kind, the owning row's cold_row_reference) — the address
-                    // the destroy effect's clearing SET targets (lumberjack F5).
-                    let thing_kind_at = |zone: u16, cell: u8| -> Option<(u16, u32)> {
-                        let mut k = thing
-                            .db()
-                            .entity_state()
-                            .iter()
-                            .filter(|r| r.macro_position_reference == zone)
-                            .find_map(|r| {
-                                r.items
-                                    .iter()
-                                    .find(|i| i.tile_reference == cell && i.kind_reference != 0)
-                                    .map(|i| (i.kind_reference, r.cold_row_reference))
-                            });
-                        for o in
-                            thing.db().overlay().iter().filter(|r| r.macro_position_reference == zone)
-                        {
-                            for it in &o.items {
-                                if it.tile_reference == cell {
-                                    k = (it.kind_reference != 0)
-                                        .then_some((it.kind_reference, o.cold_row_reference));
-                                }
-                            }
-                        }
-                        k
-                    };
+                    // The offer probe (lumberjack I1): `tile_kind_at`/`thing_kind_at` are
+                    // the pass-level composed-tier probes (hoisted by pathfinding F2 —
+                    // the movement chain reads the same view).
                     // The first candidate whose def OFFERS this interaction wins
                     // (stat-model F9 binding; walls not carrying move_to is exactly this
                     // refusal — input-rework F9). Things probe first: a tree stands ON
@@ -1230,7 +1245,39 @@ async fn main() {
                     // carrier, park THIS order behind the walk. The seed is its own
                     // durable event; the parked order re-enters as version-2 on arrival.
                     if needs_walk {
-                        let d = dest.expect("needs_walk only sets with a bound destination");
+                        let dc = dest.expect("needs_walk only sets with a bound destination");
+                        // The walk stops at the nearest PATHABLE cell within the location
+                        // rule's range of the carrier (pathfinding I4): drink at water
+                        // must land on the SHORELINE, never in the lake. Deterministic
+                        // pick — shortest shared path, ties by (y, x). None reachable →
+                        // the whole order no-ops (F5).
+                        let (dx, dy) = position_to_tile(dc);
+                        let mut best: Option<(usize, i32, i32)> = None;
+                        for oy in -1i32..=1 {
+                            for ox in -1i32..=1 {
+                                let (nx, ny) = (dx + ox, dy + oy);
+                                let plen = if (nx, ny) == (px, py) {
+                                    Some(0)
+                                } else {
+                                    resonantdust_content::path_eval::path_len(
+                                        (px, py),
+                                        (nx, ny),
+                                        &cell_pathable,
+                                    )
+                                };
+                                if let Some(l) = plen {
+                                    let cand = (l, ny, nx);
+                                    if best.is_none_or(|b| cand < b) {
+                                        best = Some(cand);
+                                    }
+                                }
+                            }
+                        }
+                        let Some((_, by, bx)) = best else {
+                            reject("no pathable cell in the carrier's range is reachable (pathfinding F5)");
+                            continue;
+                        };
+                        let d = tile_to_position(bx, by);
                         let q = intent_queues.entry(target).or_insert_with(PawnQueue::new);
                         if q.pending.len() >= INTENT_CAP {
                             reject("intent queue full (cap 5, F3) — order rejected whole");
@@ -1412,6 +1459,19 @@ async fn main() {
                     // reference, so supersession works unchanged (I2).
                     if params.move_effect.is_some() {
                         let d = dest.expect("the location checks above guarantee a destination");
+                        // pathfinding F5: an impathable or unreachable destination no-ops
+                        // the order at SEED time — a water click is normal play, quietly
+                        // refused here (menu graying is the recorded successor, I5).
+                        if resonantdust_content::path_eval::find_path(
+                            (px, py),
+                            position_to_tile(d),
+                            &cell_pathable,
+                        )
+                        .is_none()
+                        {
+                            reject("move_to no-op: destination impathable or unreachable (pathfinding F5)");
+                            continue;
+                        }
                         program.extend_from_slice(&[PROMOTE_EVENT, PROMOTE, MOVE_TO, target, d]);
                     }
                     // The destroy effect (lumberjack F5): clear the validated CARRIER's
@@ -1596,7 +1656,13 @@ async fn main() {
 /// action, whose write targets then join `promote` (they project to the client-visible table on write).
 /// `event_reference` mints the trip-serial a `MOVE_TO` seed stamps (chain identity — ACTIONS.md
 /// §Movement; unique even for two same-tic intents, where a tic-derived serial would collide).
-fn apply(actions: &[u32], scratch: &mut HashMap<u32, Payload>, promote: &mut HashSet<u32>, event_reference: u32) {
+fn apply(
+    actions: &[u32],
+    scratch: &mut HashMap<u32, Payload>,
+    promote: &mut HashSet<u32>,
+    event_reference: u32,
+    pathable: &dyn Fn(i32, i32) -> bool,
+) {
     let mut pending_promote = false; // set by a `PROMOTE` prefix; consumed by the next action
     for inst in action::program(actions) {
         let inst = match inst {
@@ -1656,11 +1722,32 @@ fn apply(actions: &[u32], scratch: &mut HashMap<u32, Payload>, promote: &mut Has
                     } else {
                         let (cx, cy) = position_to_tile(p.position_reference);
                         let (tx, ty) = position_to_tile(*dest);
-                        let (sx, sy) = ((tx - cx).signum(), (ty - cy).signum());
-                        if sx != 0 || sy != 0 {
-                            p.position_reference = tile_to_position(cx + sx, cy + sy);
-                            let facing: u8 = if sx > 0 { 1 } else if sx < 0 { 3 } else if sy > 0 { 0 } else { 2 };
-                            p.data = pack_pawn_data(facing, pawn_trip_serial(p.data));
+                        if (cx, cy) != (tx, ty) {
+                            // The shared path's FIRST hop (pathfinding F3) — recomputed
+                            // statelessly from the CURRENT cell, so supersession and
+                            // mid-trip world changes stay correct with no stored route.
+                            match resonantdust_content::path_eval::next_step(
+                                (cx, cy),
+                                (tx, ty),
+                                pathable,
+                            ) {
+                                Some((nx, ny)) => {
+                                    let (sx, sy) = (nx - cx, ny - cy);
+                                    p.position_reference = tile_to_position(nx, ny);
+                                    let facing: u8 = if sx > 0 { 1 } else if sx < 0 { 3 } else if sy > 0 { 0 } else { 2 };
+                                    p.data = pack_pawn_data(facing, pawn_trip_serial(p.data));
+                                }
+                                None => {
+                                    // Blocked THIS hop (the world changed mid-trip): step
+                                    // nothing. The chain keeps re-queuing at pace and
+                                    // re-paths every hop — a cleared blockage (a felled
+                                    // tree) resumes the trip by itself.
+                                    tracing::debug!(
+                                        obj = format!("{obj:#010x}"),
+                                        "move_step blocked — no path this hop"
+                                    );
+                                }
+                            }
                         }
                     }
                     if pending_promote {
