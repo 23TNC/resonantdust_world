@@ -17,9 +17,11 @@ anticipated-issue inventory in [`issues.md`](issues.md) (I#)._
 
 ## P1 — the codec
 
-- [ ] codec: `pack_pawn_subtile`/`position_subtile` + fractional `position_to_point`
+- [x] codec: `pack_pawn_subtile`/`position_subtile` + fractional `position_to_point`
       (tile + sixteenths); `position_to_tile` unchanged = the floor. Acceptance:
-      round-trip tests; an old-style position reads subtile (0, 0).
+      round-trip tests; an old-style position reads subtile (0, 0). →
+      `pawn_position`/`position_subtile`/`position_to_point`/`point_to_position`
+      (rounding carries the sixteenth); 71/71 codec tests green.
 
 ## P2 — the route
 

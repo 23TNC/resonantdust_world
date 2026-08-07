@@ -404,6 +404,47 @@ pub fn position_layer_reference(r: u32) -> u8 {
     (r & POSITION_BYTE_MASK) as u8
 }
 
+// ── pawn SUBTILE positions (chord-movement F1) ──────────────────────────────────────────────────
+//
+// The low byte of a PAWN's position_reference is `subtile_x:4 | subtile_y:4` — sixteenths of a
+// tile from the tile's origin (VARIABLES.md §Where it is; the per-shard low-byte law). Cold rows
+// keep the layer reading; these helpers exist so the two meanings never mix in code. Pawns
+// historically wrote 0 and `position_to_tile` ignores the byte, so an old-style position reads
+// subtile (0, 0) and every legacy decoder floors — graceful degrade by construction.
+
+/// Pack a pawn `position_reference` for global tile `(x, y)` PLUS a subtile offset in
+/// sixteenths (`0..16` each axis; masked). `sub = (0, 0)` reproduces [`tile_to_position`].
+pub fn pawn_position(tile_x: i32, tile_y: i32, sub_x: u8, sub_y: u8) -> u32 {
+    tile_to_position(tile_x, tile_y) | (((sub_x as u32 & 0xF) << 4) | (sub_y as u32 & 0xF))
+}
+
+/// A pawn position's subtile nibbles `(sx, sy)` — sixteenths of a tile.
+pub fn position_subtile(r: u32) -> (u8, u8) {
+    (((r >> 4) & 0xF) as u8, (r & 0xF) as u8)
+}
+
+/// A pawn position as a FRACTIONAL world point in tiles — `tile + sixteenths/16`. The floor of
+/// each axis is exactly [`position_to_tile`] (the half-open edge rule: subtile 0 belongs to the
+/// tile — chord-movement I2).
+pub fn position_to_point(r: u32) -> (f64, f64) {
+    let (x, y) = position_to_tile(r);
+    let (sx, sy) = position_subtile(r);
+    (x as f64 + sx as f64 / 16.0, y as f64 + sy as f64 / 16.0)
+}
+
+/// The pawn position nearest a fractional world point — floor to tile + round the fraction to
+/// sixteenths, carrying a rounded-up sixteenth into the next tile so `point → position → point`
+/// never drifts more than 1/32 tile.
+pub fn point_to_position(x: f64, y: f64) -> u32 {
+    let quant = |v: f64| -> (i32, u8) {
+        let s = (v * 16.0).round() as i64;
+        (s.div_euclid(16) as i32, s.rem_euclid(16) as u8)
+    };
+    let (tx, sx) = quant(x);
+    let (ty, sy) = quant(y);
+    pawn_position(tx, ty, sx, sy)
+}
+
 /// A cold cell's **deterministic** `entity_reference` — a pure function of position, because a cold
 /// cell's identity *is* its position (one entity per cell). `object_reference` = `macro_position:16 |
 /// tile_reference:8` (fits the `u24` exactly; the layer is the shard's). The caller computes this and
@@ -726,6 +767,30 @@ mod tests {
         let lr = pack_layer_reference(3, 5);
         assert_eq!(layer_ref_type_id(lr), 3);
         assert_eq!(layer_ref_layer_id(lr), 5);
+    }
+
+    #[test]
+    fn pawn_subtile_round_trips_and_degrades_to_the_floor() {
+        // chord-movement F1: sixteenths ride the dead layer byte; floor = position_to_tile.
+        for &(tx, ty, sx, sy) in
+            &[(0i32, 0i32, 0u8, 0u8), (95, 75, 8, 12), (4095, 4095, 15, 15), (113, 76, 1, 0)]
+        {
+            let p = pawn_position(tx, ty, sx, sy);
+            assert_eq!(position_subtile(p), (sx, sy));
+            assert_eq!(position_to_tile(p), (tx, ty), "the floor ignores the subtile");
+            let (fx, fy) = position_to_point(p);
+            assert_eq!(fx, tx as f64 + sx as f64 / 16.0);
+            assert_eq!(fy, ty as f64 + sy as f64 / 16.0);
+            assert_eq!(point_to_position(fx, fy), p, "point → position → point is exact");
+        }
+        // An OLD-STYLE position (layer byte 0) reads subtile (0, 0) — graceful degrade.
+        let old = tile_to_position(100, 50);
+        assert_eq!(position_subtile(old), (0, 0));
+        assert_eq!(position_to_point(old), (100.0, 50.0));
+        // The half-open edge (I2): a fraction rounding UP to 16/16 carries into the next tile.
+        let carried = point_to_position(9.999, 3.0);
+        assert_eq!(position_to_tile(carried), (10, 3));
+        assert_eq!(position_subtile(carried), (0, 0));
     }
 
     #[test]
