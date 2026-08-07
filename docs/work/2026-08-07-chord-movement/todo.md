@@ -25,9 +25,11 @@ anticipated-issue inventory in [`issues.md`](issues.md) (I#)._
 
 ## P2 — the route
 
-- [ ] `path_eval`: octile A* (integer costs) + string-pull on DOUBLED corners →
+- [x] `path_eval`: octile A* (integer costs) + string-pull on DOUBLED corners →
       chord polyline + f64 length; supercover LOS, footprint-radius arg (F5/F7).
-      Acceptance: tests — minimal chords, corner rule, byte-identical determinism.
+      Acceptance: tests — minimal chords, corner rule, byte-identical determinism. →
+      `find_path_octile`/`line_of_sight` (Dedu supercover, exact-corner = both
+      flanks)/`find_chords` (fat-probe inflation)/`chord_len`; 13/13 green.
 
 ## P3 — the worker
 
