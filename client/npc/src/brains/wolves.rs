@@ -493,23 +493,27 @@ impl Wolves {
             tracing::error!("engine gone during move");
             return;
         }
-        // The trip length is the SHARED path's (pathfinding I7) over the bot's TILE
-        // mirror — a shoreline detour no longer under-counts and fires the deadline
-        // early. The bot holds no THING occupancy (its mirror is tiles-only; the
-        // thing-aware npc view is a recorded successor), so tree detours still read
-        // optimistic; unknown tiles read OPEN; no path → cheb × 2, the honest guess.
+        // The trip time is the SHARED CHORD schedule's (chord-movement F6, superseding
+        // pathfinding I7's hop count): `ceil(chord_len × tics_per_tile)` over the bot's
+        // TILE mirror — Euclidean, exactly the worker's arithmetic. The bot holds no
+        // THING occupancy (tiles-only; the thing-aware npc view is a recorded
+        // successor), so tree detours still read optimistic; unknown tiles read OPEN;
+        // no route → cheb × 2 hop-times, the honest guess.
+        let pace = u64::from(self.derived_speed());
         let cheb = (dest.0 - self.at.0).abs().max((dest.1 - self.at.1).abs()).max(1) as u64;
         let pathable =
             |x: i32, y: i32| bot.tile_kind_at((x, y)).is_none_or(|k| bundle.tile_pathable(k));
-        let hops = resonantdust_content::path_eval::path_len(self.at, dest, &pathable)
-            .map(|l| l.max(1) as u64)
-            .unwrap_or(cheb * 2);
-        // `hops + 1`: the seed hop promotes the start WITHOUT stepping (ACTIONS.md §Movement),
-        // so the first step lands one tics_per_tile after the intent.
-        let trip_ms = (hops + 1) * self.derived_speed() as u64 * 1000 / TIC_HZ as u64;
+        let est_tics = resonantdust_content::path_eval::find_chords(self.at, dest, 0, &pathable)
+            .map(|c| {
+                (resonantdust_content::path_eval::chord_len(self.at, &c) * pace as f64).ceil()
+                    as u64
+            })
+            .unwrap_or(cheb * 2 * pace);
+        // `+ pace`: the seed slot — the first hop lands one stride after the intent.
+        let trip_ms = (est_tics + pace) * 1000 / TIC_HZ as u64;
         self.deadline = std::time::Instant::now() + Duration::from_millis(trip_ms + 5000);
         self.dest = Some(dest);
-        tracing::info!(wolf = format!("{wolf:#010x}"), from = ?self.at, to = ?dest, hops, "trip issued");
+        tracing::info!(wolf = format!("{wolf:#010x}"), from = ?self.at, to = ?dest, est_tics, "trip issued");
     }
 }
 

@@ -64,9 +64,11 @@ anticipated-issue inventory in [`issues.md`](issues.md) (I#)._
 
 ## P5 — the observers
 
-- [ ] npc + intent strip: deadlines and the walk leg's fire tics from CHORD length
+- [x] npc + intent strip: deadlines and the walk leg's fire tics from CHORD length
       (I4); wolves soak at the lake. Acceptance: rings finish at arrival; trips
-      arrive without deadline churn.
+      arrive without deadline churn. → npc est = ceil(chord_len × pace) (est_tics=27
+      for a (2,1) trip — Euclidean); soak 6 arrivals, ZERO churn; the strip needs
+      nothing (rings render only on TIMED acts — walk circles are progress-none).
 
 ## P6 — the verdict
 

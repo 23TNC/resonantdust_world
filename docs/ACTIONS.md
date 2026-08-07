@@ -214,10 +214,12 @@ avoiding. The cadence:
   backtrack visual. With subtile positions the client arms speculation from its CURRENT
   belief instead; the landing still corrects exactly. The seed still stamps the
   trip-serial and turns facing (chain identity below); it steps nothing and fans nothing.
-- **The every-N re-anchor is ON** (chord-movement F4 — the knob first-pawns held): a bare
-  subtile-accurate `PROMOTE` every `REANCHOR_TICS` (32 to start; the recorded spec error
-  tunes it) bounds drift for late joiners and bad estimates. Because it carries subtile
-  position, a correction NUDGES — it cannot reproduce the old one-tile snap.
+- **The every-N re-anchor is ON, merged into the hops** (chord-movement F4/F8 — the knob
+  first-pawns held): a hop's STRIDE is `clamp(REANCHOR_TICS / tics_per_tile, 1, 8)` tiles,
+  so hops fire every ≤ `REANCHOR_TICS` (32 to start; the recorded spec error tunes it) and
+  EVERY hop promotes its subtile-accurate progress point — the write IS the re-anchor
+  (you cannot fan without an event, so separate anchors would only cost more). Fan ≈ one
+  frame per 32 tics per MOVING pawn; a correction NUDGES — never the old one-tile snap.
 - **Resolve-on-touch is law** (chord-movement F3): any other event touching `obj` first
   RESOLVES its mid-chord position, then composes (and, promoting, publishes) it.
 - **Authoritative state steers the SPECULATION; the RENDER chases** (user, 2026-07-28 —

@@ -30,3 +30,14 @@
   EXACTLY +32 tics; a 6.803-tile trip landed in 164 = ceil(6.803 × 24) tics; the
   interrupt resolved `(99.0, 69.9375) → (99.25, 69.6875)` — a quarter-tile nudge
   along the chord, no teleport, no backtrack.
+- **2026-08-07 — P4: the client glides chords from belief.** StateObject carries
+  subX/subY (marshal + TS + headless); authX/authY fractional; wasm `findChords`;
+  `walkPath` walks DISTANCE along the polyline; speculation ARMS FROM THE RENDERED
+  BELIEF (F4 — no anchor). Drilled: a 22-tile trip speculated as FOUR chords from
+  (95.81, 73.94); the scripted mid-trip interrupt's 22-sample render trail TURNED IN
+  PLACE at (104.65, 67.7) — max inter-sample step 0.4 tiles = walking pace, zero
+  snap-back, matching the worker's own resolve log (I5 both halves).
+- **2026-08-07 — P5: the observers.** npc trip estimate = `ceil(chord_len × pace)`
+  over its tiles-only mirror (est_tics=27 for a (2,1) trip — Euclidean to the tic);
+  lake soak: 6 arrivals, ZERO deadline churn. The intent strip needs no change —
+  rings render only on TIMED acts; walk circles are progress-none by TOML.
