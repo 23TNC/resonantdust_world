@@ -31,6 +31,12 @@
   `intent completion NO-OP why="cancelled by CANCEL_INTENT"` AT the fire tic (the
   tree stands); `walk; queue cleared, glide finishes`. The executing cancel landed at
   ring 0.27; the mirror emptied after each.
+- **POST-DELIVERY (user report, same day)**: a BARE `Move To` executed through the
+  seed path without touching the queue — only COMPOSED walks registered, so a plainly
+  walking pawn showed an empty strip. Fixed: any executed move-effect order now
+  registers as `Running::Move` (fresh entry id, walking phase, fanned) and the
+  standing arrival poll completes it. Drilled: the walk circle appeared within one
+  fan, persisted the whole 18 s glide, cleared on arrival.
 - **P5**: lumberjack I7 bannered superseded; the memory + index rows record delivery.
   The bounce drill OBSERVED: the strip held its stale snapshot through the worker
   bounce, a fresh order's fan replaced it whole (entry ids restarting — the mint is

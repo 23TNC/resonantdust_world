@@ -1507,6 +1507,25 @@ async fn main() {
                     if let Err(err) = event.reducers().queue_at(program, effect_tic) {
                         tracing::warn!(%err, tic = t, "interaction effect queue failed — dropped");
                     } else {
+                        // A BARE walk is an active event too (user, 2026-08-07: "move to
+                        // interactions are not showing up in our intent queue despite
+                        // executing"): a move-effect order registers as the queue's
+                        // Running::Move — the strip's bottom circle — and the arrival
+                        // poll completes it exactly like a composed walk. The fresh-order
+                        // replace above already cleared any previous queue.
+                        if params.move_effect.is_some() && !is_completion {
+                            let d = dest.expect("the location checks above guarantee a destination");
+                            intent_entry_seq += 1;
+                            let q = intent_queues.entry(target).or_insert_with(PawnQueue::new);
+                            q.running = Some(Running::Move {
+                                entry_id: intent_entry_seq,
+                                interaction_ref,
+                                dest: d,
+                            });
+                            let _ = event
+                                .reducers()
+                                .queue_at(q.fan_program(target), effect_tic);
+                        }
                         tracing::info!(tic = t, effect_tic, interaction = %iname,
                             target = format!("{target:#010x}"),
                             satisfied = ?satisfied_need, from = log_from, to = log_to,
