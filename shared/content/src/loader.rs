@@ -505,9 +505,22 @@ pub(crate) struct TileDef {
   pub height: Option<f64>,
   /// `[linked_w, linked_h, padding, rotation, cast_shadow, receives_shadows]`.
   pub lanes: [f64; 6],
-  /// Interaction bindings — `(interaction name, magnitude)`: what this carrier OFFERS
-  /// (stat-model F5/F9 — the interaction carries its own affordance gate).
-  pub interactions: Vec<(String, f64)>,
+  /// Interaction bindings: what this carrier OFFERS (stat-model F5/F9 — the
+  /// interaction carries its own affordance gate).
+  pub interactions: Vec<InteractionBind>,
+}
+
+/// One carrier→interaction binding — the PER-CARRIER lane (stat-model F9 for the
+/// offer + magnitude; logs-drop F1 for the yield). The water binds `drink 3`; the
+/// tree binds `cut_down` with `yields = "logs"`.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct InteractionBind {
+  pub name: String,
+  /// The carrier's magnitude for the `amount` input (the pie menu bakes it in).
+  pub magnitude: f64,
+  /// The thing a destroy-effect interaction leaves at this carrier's cell
+  /// (logs-drop F1/F2) — load-validated against thing kinds; `None` = clear.
+  pub yields: Option<String>,
 }
 
 /// One thing def, fully evaluated. `name` may be `""` for a retired id.
@@ -526,8 +539,8 @@ pub(crate) struct ThingDef {
   /// The STARTING trait bindings — `(trait name, level ≥ 1)` — minted at CREATE
   /// (stat-model F11). A bare-string binding authors level 1.
   pub traits: Vec<(String, u16)>,
-  /// Interaction bindings — `(interaction name, magnitude)` (stat-model F5/F9).
-  pub interactions: Vec<(String, f64)>,
+  /// Interaction bindings (stat-model F5/F9; the yield lane — logs-drop F1).
+  pub interactions: Vec<InteractionBind>,
 }
 
 /// One biome, with its classifier body in either dialect.
@@ -1046,16 +1059,15 @@ impl Bundle {
   }
   /// A thing kind's interaction bindings — `(interaction name, magnitude)`
   /// (stat-model F5/F9): what this carrier OFFERS.
-  pub fn thing_interactions(&self, object_id: u16) -> Vec<(String, f64)> {
+  pub fn thing_interactions(&self, object_id: u16) -> Vec<InteractionBind> {
     self
       .things
       .get(object_id.checked_sub(1).map(usize::from).unwrap_or(usize::MAX))
       .map(|d| d.interactions.clone())
       .unwrap_or_default()
   }
-  /// A tile def's interaction bindings — `(interaction name, magnitude)`. The water tile's
-  /// `drink 3` lives here.
-  pub fn tile_interactions(&self, def_id: u16) -> Vec<(String, f64)> {
+  /// A tile def's interaction bindings. The water tile's `drink 3` lives here.
+  pub fn tile_interactions(&self, def_id: u16) -> Vec<InteractionBind> {
     self
       .tiles
       .get(def_id.checked_sub(1).map(usize::from).unwrap_or(usize::MAX))

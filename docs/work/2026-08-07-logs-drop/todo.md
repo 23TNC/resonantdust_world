@@ -6,9 +6,12 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P0 — the paper
 
-- [ ] VARIABLES.md: `yields` on the CARRIER BINDING (F1) beside `magnitude`, the `logs`
+- [x] VARIABLES.md: `yields` on the CARRIER BINDING (F1) beside `magnitude`, the `logs`
       thing block, and the destroy-becomes-REPLACE note (F2) — the lumberjack RESERVED
-      `yields` note consumed. Acceptance: docs-check green.
+      `yields` note consumed. Acceptance: docs-check green. → the binding schema gains
+      the per-carrier `yields` lane (tree binds, shrub/cactus clear, name must resolve
+      at load); the cut_down block's RESERVED note replaced by the REPLACE semantics;
+      green. (The logs thing itself is corpus — P1.)
 
 ## P1 — the corpus
 

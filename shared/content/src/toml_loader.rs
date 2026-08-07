@@ -554,6 +554,10 @@ struct InteractionBindToml {
   name: String,
   #[serde(default)]
   magnitude: f64,
+  /// The thing a destroy-effect interaction leaves at this carrier's cell
+  /// (logs-drop F1) — must name a `[[thing]]` kind.
+  #[serde(default)]
+  yields: Option<String>,
 }
 
 /// A thing's STARTING trait binding (stat-model F11): a bare string (level 1) or

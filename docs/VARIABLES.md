@@ -744,6 +744,11 @@ interactions = [            # the interactions this carrier OFFERS + its paramet
   { name = "move_to" },                #  interaction carries its own affordance gate)
 ]                           # ground tiles carry move_to; WALLS deliberately don't —
                             # soft passability by authoring (input-rework F9)
+# The binding is the PER-CARRIER lane. `yields` (logs-drop F1) names the thing a
+# destroy-effect interaction leaves at this carrier's cell — the TREE binds
+# `{ name = "cut_down", yields = "logs" }`; shrub/cactus bind no yield and clear.
+# Authored here, not on the interaction, or every fellable would drop logs. The name
+# must resolve to a `[[thing]]` kind at load.
 
 # ── things.toml — flora, walls' kinds, PAWNS (a pawn is a thing with parts) ──
 [[thing]]
@@ -910,9 +915,10 @@ menu_text = "Cut Down"
 affordances = ["can_fell_trees"]
 inputs = ["pawn", "destination"]
 # The `destroy` effect (fourth effect kind): clear the CARRIER — the validated
-# offerer's cell — via the cold-overlay `SET … kind 0` (the build-walls path). The
-# named successor `yields = "<thing>"` (place a thing where the carrier stood —
-# lumberjack I9) is RESERVED beside it, not built.
+# offerer's cell — via the cold-overlay `SET … kind 0` (the build-walls path). When
+# the carrier's BINDING authors `yields` (logs-drop F1/F2), the same SET carries the
+# yielded thing's kind_reference instead of 0 — destroy becomes a REPLACE, one event,
+# one cell: the tree's cell holds logs.
 destroy = "carrier"
 location = "adjacent"
 duration = 30               # ≈5 s at 6 Hz; the completion re-validates (see drink above)

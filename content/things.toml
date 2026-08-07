@@ -9,7 +9,9 @@ subType = ["default"]
 variant = ["0","1","2","3","4","5","6","7","8","9","10","11","12","13","14","15"]
 packed = [ { tint = "#46d64f" }, { tint = "#b0754f" } ]
 # Fellable (lumberjack F6): the pie menu on a tree offers Cut Down to logging pawns.
-interactions = [ { name = "cut_down" } ]
+# logs-drop F1: the YIELD is the binding's — the tree leaves logs where it stood;
+# shrub/cactus bind no yield and clear.
+interactions = [ { name = "cut_down", yields = "logs" } ]
 
   [[thing.part]]
   tint = "#ffffff"
@@ -253,3 +255,23 @@ traits = ["biological_lifeform", { name = "walks", level = 1 }, { name = "lumber
   "s" = { x = 0.1406, y = 0.0312, w = 0.7266, h = 0.9375 }
   "e" = { x = 0.1016, y = 0.0391, w = 0.8047, h = 0.9219 }
   "n" = { x = 0.125, y = 0.0469, w = 0.75, h = 0.9141 }
+
+# Felled-tree yield (logs-drop F3): ordinary scatter, PLACEHOLDER visual (the
+# shrub/rock pattern — real log art is a later manifest drop-in). NO interactions:
+# logs are not tree-like (lumberjack F6 stands), and picking them up is the hauling
+# successor (logs-drop I5). APPENDED last — kind ids are declaration-ordered, and a
+# mid-file insert would collide the registry (lumberjack I11's family).
+[[thing]]
+name = "logs"
+type = "biome-thing"
+kind = "logs"
+subType = ["default"]
+variant = ["0"]
+
+  [[thing.part]]
+  texture = "white"
+  tint = "#8a6a42"
+  anchor = { x = 0.5, y = 1.0 }
+  sprite_anchor = { x = 0.5, y = 1.0 }
+  size = 0.5
+  sprite_scale = { w = 0.6, h = 0.35 }

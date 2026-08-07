@@ -46,3 +46,26 @@ _Nothing delivered yet. Items land here with their measured result when ticked i
   do with this stream's thesis. `--cache_latents_to_disk` writes a `.npz` beside each image, and I
   had built the dataset over SSH as root (`0:0`) while the working one is `1025:1025`. Fixed by
   `chown --reference`; relaunched and caching now proceeds past the file that failed.
+- **2026-08-06 · P2.1 · Run-16 trained clean.** 2112/2112 steps in **1h 05m**, `TRAIN_EXIT_OK`,
+  12 checkpoints, 60 samples, loss **0.0248 → 0.0194**. Config frozen; captions the only variable.
+  It survived a container restart mid-flight (see [I5](issues.md#i5)) and completed unattended.
+- **2026-08-06 · P2.3 · All 12 generations saved** as `rd_styl_anima_r16_g01…g12` in
+  `models/loras`, **5.2 GB**.
+- **2026-08-06 · P3.1 · Comparison sheet built** — run-16 vs run-10 interleaved at gens 8/10/12,
+  same prompts and seeds, five subjects.
+
+  **Result: the thesis holds on stability, and costs the thinnest body plan.**
+  - **Run-16 is far more stable across generations.** Tiger, wolf, duck and bear are near-identical
+    at g8/g10/g12. Run-10's wolf-south mutates every two generations — dark cap at g8, tongue-out
+    face at g10, fragmented spiky bib at g12. Removing species tokens removed the churn.
+  - **Run-16's wolf-south is the cleanest in the project** — symmetric, ears resolved, correctly
+    proportioned, and *stable*. That is the subject that broke in every previous run.
+  - **[I3](issues.md#i3)'s blurry-average prediction did NOT happen.** 165 images sharing one
+    caption produced crisp silhouettes, not mush. Prediction recorded before the run; refuted by it.
+  - **Cost: the snake.** Run-10 coils at g8; run-16 gives a rearing cobra at g8 then a small flat
+    green disc at g10/g12. `rd_legless` has only 27 examples and losing its species words hurt it.
+  - Tiger is smaller and flatter; the duck gains a belly fold at g10/g12. Both runs are white —
+    **value is unchanged by captioning**, as expected, since it was never a caption problem.
+
+  **What this does NOT yet show:** every subject here is one the corpus contains. The actual claim —
+  that species identity now comes from the PROMPT — is untested until [P3.3/P3.4](todo.md).

@@ -108,3 +108,30 @@ host needs the same treatment** — the natural way to create it is the wrong wa
 Worth noting what it does NOT indicate: the captions were fine. The log shows
 `read caption: 100%|██████████| 701/701` before the crash, so [P1](todo.md)'s work was already
 validated by the failed run.
+
+## I5 — I killed the ComfyUI container by misreading idle VRAM {#i5}
+_2026-08-06 · my error, twice in a row_
+
+Run-16's first launch died on [I4](#i4). Checking the GPU afterwards showed `0%, 12681 MiB`. I read
+**0% utilisation as idle** and treated the 12.6 GB as a leaked trainer. The relaunch then OOM'd:
+
+```
+Process 93702  : 12.38 GiB   <- actually ComfyUI's own server, model resident
+Process 2242524: 11.17 GiB   <- the retry
+free: 1.69 MiB
+```
+
+I killed every compute PID to clear it. **93702 was ComfyUI itself**, so the container went down and
+the next `docker exec` had nothing to exec into.
+
+**The misread was the same one twice**: `0% utilisation` means no kernel is running *this instant*,
+not that memory is free. A resident model holds GB at 0%. The number that mattered was the memory,
+and I used it to justify the opposite conclusion.
+
+Recovered by `docker start`; the run I had already launched survived and finished unattended. Cost
+was a container restart and two failed launches — nothing lost.
+
+**Rule for next time:** before killing a GPU PID, check what it belongs to
+(`nvidia-smi --query-compute-apps=pid` cross-referenced against the container's own processes).
+On this box the trainer and the inference server share one card, so "a process holding VRAM" is
+ambiguous by default.
