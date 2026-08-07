@@ -520,6 +520,29 @@ struct InteractionToml {
   /// at +N (lumberjack — the I9 reservation consumed).
   #[serde(default)]
   duration: f64,
+  /// The intent-queue DISPLAY block (intent-queue-ui F2).
+  #[serde(default)]
+  queue: Option<QueueToml>,
+}
+
+/// The `queue = { … }` display block — all fields optional (intent-queue-ui F2).
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+struct QueueToml {
+  #[serde(default)]
+  hover: Option<String>,
+  #[serde(default)]
+  size: Option<f64>,
+  #[serde(default)]
+  background: Option<String>,
+  #[serde(default)]
+  progress: Option<String>,
+  #[serde(default)]
+  progress_color: Option<String>,
+  #[serde(default)]
+  progress_fill: Option<bool>,
+  #[serde(default)]
+  cancelable: Option<bool>,
 }
 
 fn on() -> String {
@@ -990,6 +1013,45 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
           ),
         });
       }
+      // The queue-strip display block (intent-queue-ui F2): defaults for the
+      // unauthored case; the ring direction is a closed set.
+      let q = i.queue.as_ref();
+      let progress =
+        q.and_then(|q| q.progress.clone()).unwrap_or_else(|| "none".into());
+      if !matches!(progress.as_str(), "cw" | "ccw" | "none") {
+        errors.push(LoadError {
+          file: String::new(),
+          message: format!(
+            "interaction `{}`: queue.progress `{progress}` — the ring directions are \
+             `cw`, `ccw` and `none`",
+            i.name
+          ),
+        });
+      }
+      let size = q.and_then(|q| q.size).unwrap_or(1.0);
+      if size <= 0.0 {
+        errors.push(LoadError {
+          file: String::new(),
+          message: format!("interaction `{}`: queue.size {size} is not positive", i.name),
+        });
+      }
+      let queue = crate::loader::QueueVisual {
+        hover: q.and_then(|q| q.hover.clone()),
+        size,
+        background: color(
+          &q.and_then(|q| q.background.clone()),
+          &format!("interaction `{}` queue.background", i.name),
+          &mut errors,
+        ),
+        progress,
+        progress_color: color(
+          &q.and_then(|q| q.progress_color.clone()),
+          &format!("interaction `{}` queue.progress_color", i.name),
+          &mut errors,
+        ),
+        progress_fill: q.and_then(|q| q.progress_fill).unwrap_or(true),
+        cancelable: q.and_then(|q| q.cancelable).unwrap_or(false),
+      };
       let label = i.label.clone().unwrap_or_else(|| i.name.clone());
       (i.name.clone(), InteractionParams {
         menu_text: i.menu_text.clone().unwrap_or_else(|| label.clone()),
@@ -1002,6 +1064,7 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
         destroy: i.destroy.clone(),
         location: i.location.clone(),
         duration: i.duration,
+        queue,
       })
     })
     .collect();
@@ -1778,6 +1841,31 @@ tint = "#ffffff"
     )])
     .unwrap_err();
     assert!(e.iter().any(|e| e.message.contains("yields unknown thing `ghost`")), "{e:?}");
+    // The queue display block (intent-queue-ui F2): round-trip + defaults + refusals.
+    let b = load(&[src(
+      "t.toml",
+      "[[interaction]]\nname = \"cut\"\ndestroy = \"carrier\"\nduration = 30\n\
+       queue = { hover = \"Chopping\", size = 0.6, background = \"#4a6a3a\", \
+       progress = \"ccw\", progress_color = \"#3ad64f\", progress_fill = false, \
+       cancelable = true }\n",
+    )])
+    .expect("queue block loads");
+    let qv = &b.interaction_params("cut").expect("cut").queue;
+    assert_eq!(qv.hover.as_deref(), Some("Chopping"));
+    assert_eq!((qv.size, qv.progress.as_str(), qv.progress_fill, qv.cancelable), (0.6, "ccw", false, true));
+    assert_eq!((qv.background, qv.progress_color), (Some(0x4a6a3a), Some(0x3ad64f)));
+    let dq = &b.interaction_params("cut").unwrap().queue; // defaults on an UNAUTHORED block:
+    let _ = dq;
+    let b2 = load(&[src("t.toml", "[[interaction]]\nname = \"d\"\ndestroy = \"carrier\"\n")])
+      .expect("no queue block");
+    let dv = &b2.interaction_params("d").expect("d").queue;
+    assert_eq!((dv.size, dv.progress.as_str(), dv.cancelable), (1.0, "none", false));
+    let e = load(&[src(
+      "t.toml",
+      "[[interaction]]\nname = \"d\"\ndestroy = \"carrier\"\nqueue = { progress = \"spiral\" }\n",
+    )])
+    .unwrap_err();
+    assert!(e.iter().any(|e| e.message.contains("ring directions")), "{e:?}");
     // A carrier binding a ghost interaction refuses too.
     let e = load(&[src("t.toml", "[[tile]]\nname = \"w\"\ninteractions = [{ name = \"x\" }]\n")])
       .unwrap_err();

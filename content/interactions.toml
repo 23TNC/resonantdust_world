@@ -92,6 +92,8 @@ grant = ["quenched"]
 # order composes a walk first via the intent queue (ACTIONS.md § The intent queue).
 location = "adjacent"
 duration = 0
+# The queue-strip circle (intent-queue-ui): fill, green, cw; cancelable while executing.
+queue = { hover = "Drinking", background = "#2e5a78", progress = "cw", progress_color = "#3ad64f", progress_fill = true, cancelable = true }
 
 # Movement as an interaction (input-rework F2/F6): the worker validates (the DESTINATION
 # tile offers this — location "target") and queues the movement-chain seed; chain spacing
@@ -105,6 +107,8 @@ inputs = ["pawn", "destination"]
 move = { target = "@pawn", to = "@destination" }
 location = "target"
 duration = 0
+# Smaller + ringless in the queue strip (intent-queue-ui): walks are plumbing, not work.
+queue = { hover = "Moving", size = 0.6, progress = "none" }
 
 # Timed work on the world (lumberjack F5/F7): fell the carrier thing. `destination` is
 # the tree's tile; adjacency gates the swing; the COMPLETION at +duration re-validates
@@ -119,6 +123,7 @@ inputs = ["pawn", "destination"]
 destroy = "carrier"
 location = "adjacent"
 duration = 30
+queue = { hover = "Cutting down", background = "#4a6a3a", progress = "cw", progress_color = "#3ad64f", progress_fill = true, cancelable = true }
 
 # ── affordances ───────────────────────────────────────────────────────────────
 

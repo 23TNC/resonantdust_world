@@ -341,6 +341,45 @@ pub struct InteractionParams {
   /// instantaneous; N > 0 queues a completion event at +N which RE-VALIDATES
   /// affordances + location at fire (ACTIONS.md § The intent queue).
   pub duration: f64,
+  /// The intent-queue DISPLAY block (intent-queue-ui F2) — how this interaction's
+  /// circle renders in the details panel's strip, and whether a click may cancel it
+  /// while executing. All presentation; the worker reads only `cancelable`.
+  pub queue: QueueVisual,
+}
+
+/// An interaction's queue-strip presentation (intent-queue-ui F2; schema in
+/// `VARIABLES.md`). Defaults = a standard neutral circle, no ring, not cancelable.
+#[derive(Debug, Clone, PartialEq)]
+pub struct QueueVisual {
+  /// Tooltip text; `None` = the interaction's `label`.
+  pub hover: Option<String>,
+  /// Circle scale, 1.0 = standard (move_to authors 0.6).
+  pub size: f64,
+  /// Circle fill color (`0xRRGGBB`), `None` = the panel's neutral.
+  pub background: Option<u32>,
+  /// The ACTIVE entry's ring: `"cw"` | `"ccw"` | `"none"`.
+  pub progress: String,
+  /// Ring color, `None` = the panel's neutral.
+  pub progress_color: Option<u32>,
+  /// `true` = the ring FILLS as the event progresses; `false` = it empties.
+  pub progress_fill: bool,
+  /// May a click cancel this interaction WHILE EXECUTING (pending entries are always
+  /// removable).
+  pub cancelable: bool,
+}
+
+impl Default for QueueVisual {
+  fn default() -> Self {
+    QueueVisual {
+      hover: None,
+      size: 1.0,
+      background: None,
+      progress: "none".into(),
+      progress_color: None,
+      progress_fill: true,
+      cancelable: false,
+    }
+  }
 }
 
 /// The ONE placement-rule range check (lumberjack F2), shared by the worker's

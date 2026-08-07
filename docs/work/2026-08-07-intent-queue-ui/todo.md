@@ -12,18 +12,27 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
       ring) beside the panel-ordering law; the `queue` block documented on drink with
       all seven fields, move_to (0.6/none) and cut_down authored in the schema
       examples; green.
-- [ ] ACTIONS.md: `QUEUE_STATE` (worker-only, promoted — F1) and `CANCEL_INTENT pawn
+- [x] ACTIONS.md: `QUEUE_STATE` (worker-only, promoted — F1) and `CANCEL_INTENT pawn
       order_ref` with the phase-by-phase cancel law + the ephemeral cancelled-set
-      caveat (F3/F4, I4). Acceptance: docs-check green.
+      caveat (F3/F4, I4). Acceptance: docs-check green. → palette rows 13/14 (entry
+      packing `phase:2|started:15|fire:15`, entry 0 = active; cancel resolution +
+      bounce caveat on the row) + the visible-and-clickable section under § The intent
+      queue; green.
 
 ## P1 — the corpus
 
-- [ ] Loader: `QueueVisual` on `InteractionParams` (F2 defaults), the `queue` sub-table
+- [x] Loader: `QueueVisual` on `InteractionParams` (F2 defaults), the `queue` sub-table
       parsed + validated (progress ∈ cw|ccw|none). Acceptance: round-trip + refusal
-      tests green.
-- [ ] Author drink + cut_down (fill, green, cw, cancelable) and move_to (none, 0.6);
+      tests green. → `QueueVisual` with Default (neutral, none, not cancelable);
+      colors through the shared `color` helper; size must be positive; round-trip,
+      defaults, and spiral-refusal unit-tested (40 green).
+- [x] Author drink + cut_down (fill, green, cw, cancelable) and move_to (none, 0.6);
       golden re-blessed; ALL SIX consumers rebuilt, wasm cache-busted (I2).
-      Acceptance: golden diff = the authored rows; edge hot-reload clean.
+      Acceptance: golden diff = the authored rows; edge hot-reload clean. → golden
+      shows exactly the three authored blocks (colors decode 0x2E5A78/0x3AD64F/
+      0x4A6A3A); shared+core+master+orch+worker+npc+edge rebuilt, sim crates + edge
+      restarted; worker corpus interactions=3 clean; edge log: 0 reload-skips, 0 bind
+      failures, ColdState frames flowing.
 
 ## P2 — the fan
 
