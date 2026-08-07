@@ -149,3 +149,20 @@ that number it would have passed unnoticed.
 
 **Applies retroactively:** the same glob promoted run-10's generations. Its final generation (g20)
 should be re-checked, though g20 is far past the useful range so nothing depends on it.
+
+## I7 — The `e07` head-to-head needs TWO bases, which the harness cannot do in one pass {#i7}
+_2026-08-06 · found at P5.1 · **plan gap, not a defect**_
+
+[P5.1](todo.md) says "compare the chosen generation against `e07` on gate + `iou_ref` + the eye".
+`lora_eval` takes **one** `model` from `eval_set.json` and applies every LoRA to it — but `e07` was
+trained on **cyberrealisticXL** and run-16 on **animagine**. Loading `e07` onto animagine would
+measure a mismatch, not `e07`.
+
+**It is still runnable, in two passes:** one `RD_EVAL_SET` pinning cyberrealisticXL + `e07`, one
+pinning animagine + `rd_styl_anima_r16_g08`, then compare `iou_ref` across them. That is valid
+precisely because **`iou_ref` scores the generated silhouette against the real corpus sprite and
+never looks at the producing model** — the property that made it survive a base change in the
+predecessor stream.
+
+Recorded rather than silently run the invalid single-pass version, which would have produced a
+number that looked like a comparison and was not one.
