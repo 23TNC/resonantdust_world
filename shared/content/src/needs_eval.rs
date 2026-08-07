@@ -178,7 +178,29 @@ pub fn need_bounds(
         }
         contribs.extend(cp.needs.iter().filter(|m| m.need == need_name).map(|m| (m.min, m.max)));
     }
-    crate::stat_eval::combine_bounds((np.min, np.max), contribs.into_iter(), np.min_wins)
+    // food-chain F2: need CAPS TIER UPWARD — among authored MAX modifiers the HIGHEST
+    // wins (unlike stat ranges, which intersect), so a leveled cap trait (`corpus`)
+    // raises the ceiling by leveling and a second source can never silently shrink it.
+    // No max authored anywhere = the authored domain max. Mins keep the max-of-mins
+    // floor; the authored domain stays the OUTERMOST clamp (the encoding bound).
+    let mut lo = np.min;
+    let mut hi: Option<f64> = None;
+    for (cmin, cmax) in contribs {
+        if let Some(m) = cmin {
+            lo = lo.max(m);
+        }
+        if let Some(m) = cmax {
+            hi = Some(hi.map_or(m, |h: f64| h.max(m)));
+        }
+    }
+    let hi = hi.unwrap_or(np.max).clamp(np.min, np.max);
+    let lo = lo.clamp(np.min, np.max);
+    if lo > hi {
+        let pin = if np.min_wins { lo } else { hi };
+        (pin, pin)
+    } else {
+        (lo, hi)
+    }
 }
 
 /// The current satisfaction of a need row at `now`, on the need's authored domain:
@@ -718,6 +740,33 @@ needs = [ { need = "thirst", rate = 0.5 } ]
         assert!((s - 0.8).abs() < 1e-6, "5 tics in the future = fresh (got {s})");
         let c = active_conditions(&b, &[], &[(need_row(&b, "thirst", 0.8), 105)], &[], 100);
         assert!(c.is_empty(), "0.8 is band-free — no phantom Dehydrated");
+    }
+
+    #[test]
+    fn need_caps_tier_upward_by_the_leveled_trait() {
+        // food-chain F2: corpus authors the 0..2 ENCODING domain; the leveled corpus
+        // trait's per-level max caps it — level 1 → 1, level 2 → 2 (highest wins).
+        let src = r##"
+[[need]]
+name = "corpus"
+min = 0
+max = 2
+
+[[trait]]
+name = "corpus"
+needs = [ { need = "corpus", max = [1.0, 2.0] } ]
+"##;
+        let b = load(&[("t.toml".into(), src.into())]).expect("loads");
+        let np = b.need_params("corpus").expect("corpus");
+        let tref = b.gameplay_reference("trait", "corpus").expect("trait ref");
+        let level1 = [pack_gameplay_row(tref, 1)];
+        let level2 = [pack_gameplay_row(tref, 2)];
+        assert_eq!(need_bounds(&b, "corpus", &np, &level1, &[], 0), (0.0, 1.0), "level 1 caps 1");
+        assert_eq!(need_bounds(&b, "corpus", &np, &level2, &[], 0), (0.0, 2.0), "level 2 caps 2");
+        assert_eq!(need_bounds(&b, "corpus", &np, &[], &[], 0), (0.0, 2.0), "unraited = domain");
+        // Two sources: the HIGHEST authored cap stands (a second source cannot shrink).
+        let both = [pack_gameplay_row(tref, 1), pack_gameplay_row(tref, 2)];
+        assert_eq!(need_bounds(&b, "corpus", &np, &both, &[], 0), (0.0, 2.0));
     }
 
     #[test]

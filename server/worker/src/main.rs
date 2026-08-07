@@ -95,22 +95,82 @@ fn load_corpus(root: &str) -> Result<resonantdust_content::loader::Bundle, Strin
 /// packed need rows, composed HERE from the corpus — the pawn module holds none.
 fn mint_sidecars(bundle: &resonantdust_content::loader::Bundle, def: u32) -> (Vec<u32>, Vec<u32>) {
     let kind = def_kind_id(def);
+    let mut trait_rows = Vec::new();
     let mut trait_words = Vec::new();
     for (name, level) in bundle.thing_traits(kind) {
         if let Some(r) = bundle.gameplay_reference("trait", &name) {
-            trait_words.extend_from_slice(&resonantdust_codec::payload::trait_entry(
-                resonantdust_codec::object::pack_gameplay_row(r, level),
-            ));
+            let row = resonantdust_codec::object::pack_gameplay_row(r, level);
+            trait_rows.push(row);
+            trait_words.extend_from_slice(&resonantdust_codec::payload::trait_entry(row));
         }
     }
     let mut need_rows = Vec::new();
     for nref in bundle.thing_needs(kind) {
         if let Some(np) = bundle.need_params_by_ref(nref) {
-            let q = resonantdust_codec::value::quantize(np.max as f32, np.min as f32, np.max as f32);
+            // Needs mint FULL at the EFFECTIVE max (food-chain F2/I2): the kind's own
+            // traits cap the ceiling (the leveled `corpus` trait — a bunny mints 1, a
+            // wolf 2), quantized on the ONE authored encoding domain.
+            let (_, name) = bundle
+                .gameplay_lookup(nref)
+                .unwrap_or_else(|| (String::new(), String::new()));
+            let (_, eff_max) = resonantdust_content::needs_eval::need_bounds(
+                bundle, &name, &np, &trait_rows, &[], 0,
+            );
+            let q = resonantdust_codec::value::quantize(
+                eff_max as f32,
+                np.min as f32,
+                np.max as f32,
+            );
             need_rows.push(resonantdust_codec::object::pack_gameplay_row(nref, q));
         }
     }
     (trait_words, need_rows)
+}
+
+#[cfg(test)]
+mod mint_tests {
+    use super::mint_sidecars;
+    use resonantdust_codec::object::{pack_definition_reference, pack_kind_reference};
+
+    /// food-chain I2: the mint quantizes the EFFECTIVE max — the leveled corpus trait
+    /// caps a bunny at 1 and a wolf at 2, on the ONE 0..2 encoding.
+    #[test]
+    fn needs_mint_at_the_effective_max() {
+        let src = r##"
+[[need]]
+name = "corpus"
+min = 0
+max = 2
+
+[[trait]]
+name = "corpus"
+needs = [ { need = "corpus", max = [1.0, 2.0] } ]
+
+[[thing]]
+name = "bunny"
+needs = ["corpus"]
+traits = [ { name = "corpus", level = 1 } ]
+packed = [ { tint = "#b0a090" } ]
+
+[[thing]]
+name = "wolf"
+needs = ["corpus"]
+traits = [ { name = "corpus", level = 2 } ]
+packed = [ { tint = "#5f6b3c" } ]
+"##;
+        let b = resonantdust_content::loader::load(&[("t.toml".into(), src.into())])
+            .expect("fixture loads");
+        let np = b.need_params("corpus").expect("corpus");
+        let value_of = |kind_name: &str| -> f64 {
+            let kind = b.thing_object_id(kind_name).expect(kind_name);
+            let def = pack_definition_reference(0, pack_kind_reference(kind, 0));
+            let (_, needs) = mint_sidecars(&b, def);
+            let q = resonantdust_codec::object::gameplay_row_data(needs[0]);
+            f64::from(resonantdust_codec::value::dequantize(q, np.min as f32, np.max as f32))
+        };
+        assert!((value_of("bunny") - 1.0).abs() < 0.01, "the bunny mints 1");
+        assert!((value_of("wolf") - 2.0).abs() < 0.01, "the wolf mints 2");
+    }
 }
 
 fn shard_of(entity: u32) -> Shard {

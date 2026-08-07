@@ -19,11 +19,13 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
       Acceptance: round-trip + refusal tests green. → AffordanceCheck::Stat|Need +
       trigger_need(), SpawnEffect, remove; 59 lib tests green; the eval signature
       gained (need_rows, cond_rows, now) — worker/wasm/npc call sites swept.
-- [ ] Eval: need MAX modifiers combine HIGHEST-wins (F2) in the ONE needs eval; the
+- [x] Eval: need MAX modifiers combine HIGHEST-wins (F2) in the ONE needs eval; the
       need-check affordance evaluates lazily beside stat checks. Acceptance: unit
-      tests — bunny cap 1 / wolf cap 2; corpus ≤ 0 gates can_die.
-- [ ] Worker mint: needs quantize the EFFECTIVE max from the kind's traits (I2).
-      Acceptance: mint unit test — bunny corpus 1, wolf 2, one 0..2 encoding.
+      tests — bunny cap 1 / wolf cap 2; corpus ≤ 0 gates can_die. → need_bounds
+      tiers caps upward; need_satisfaction feeds the check; 61 lib tests green.
+- [x] Worker mint: needs quantize the EFFECTIVE max from the kind's traits (I2).
+      Acceptance: mint unit test — bunny corpus 1, wolf 2, one 0..2 encoding. →
+      mint_sidecars routes through need_bounds; the in-binary test proves 1 vs 2.
 - [ ] Worker: the NEED-WRITE TRIGGER (F5, the user's law) — every need write sweeps
       the target's interactions for need-check affordances on THAT need, queueing
       the passers. Acceptance: SET_NEED corpus→0 queues death by itself.

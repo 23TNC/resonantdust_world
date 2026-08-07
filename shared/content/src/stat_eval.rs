@@ -291,6 +291,43 @@ stats = [ { stat = "s", add = 2.0 } ]
     }
 
     #[test]
+    fn a_need_check_gates_on_the_lazy_value() {
+        // food-chain F4: can_die ⇔ corpus ≤ 0, evaluated from the pawn's OWN rows at
+        // `now`; a pawn with no corpus row never passes.
+        let src = r#"
+[[need]]
+name = "corpus"
+min = 0
+max = 2
+
+[[interaction]]
+name = "death"
+affordances = ["can_die"]
+inputs = ["pawn"]
+location = "self"
+remove = "target"
+
+[[affordance]]
+name = "can_die"
+check = { need = "corpus", lte = 0.0 }
+"#;
+        let b = bundle(src);
+        let nref = b.gameplay_reference("need", "corpus").expect("corpus ref");
+        let quant = |v: f32| {
+            let np = b.need_params("corpus").unwrap();
+            resonantdust_codec::value::quantize(v, np.min as f32, np.max as f32)
+        };
+        let alive = [(pack_gameplay_row(nref, quant(1.0)), 0u16)];
+        let dead = [(pack_gameplay_row(nref, quant(0.0)), 0u16)];
+        assert!(!affordance_passes(&b, "can_die", &[], &alive, &[], &[], 0));
+        assert!(affordance_passes(&b, "can_die", &[], &dead, &[], &[], 0));
+        assert!(interaction_available(&b, "death", &[], &dead, &[], &[], 0));
+        assert!(!affordance_passes(&b, "can_die", &[], &[], &[], &[], 0), "no row never dies");
+        // The trigger key reads back (F5).
+        assert_eq!(b.affordance_params("can_die").unwrap().trigger_need(), Some("corpus"));
+    }
+
+    #[test]
     fn unknown_names_and_absent_levels_are_calm() {
         let b = bundle(CORPUS);
         assert_eq!(stat_value(&b, "nonsense", &[], &[]), 0.0);
