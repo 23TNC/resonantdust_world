@@ -454,7 +454,12 @@ pub fn log_event(event: &Event) {
         Event::MoveIntent { macro_position: zone, entity_reference, tile_x, tile_y, event_tic } => {
             tracing::info!(zone, entity_reference, tile_x, tile_y, event_tic, "move intent")
         }
-        Event::ColdState { .. } | Event::CallStats(_) | Event::SubStats { .. } | Event::ClockSync(_) => {}
+        // QueueState is a DISPLAY fan (intent-queue-ui F1) — nothing for a brain to act on.
+        Event::QueueState { .. }
+        | Event::ColdState { .. }
+        | Event::CallStats(_)
+        | Event::SubStats { .. }
+        | Event::ClockSync(_) => {}
     }
 }
 

@@ -763,7 +763,12 @@ export class WorldBridge {
       this.coldCellWinner.delete(ck);
       return false;
     }
-    if (ticAfter(ov.tic, rowTic)) {
+    // logs-drop: a WORLDGEN baseline is EPOCH ZERO (`tic 0` — seeded once, never re-stamped)
+    // and always loses to an override. Without this, the u16 tic ring wrapping past 32768
+    // made every fresh override read as "older" than tic 0 and felled trees resurrected.
+    // The real successor is PACK re-stamping baselines (fold), which keeps the wrap window
+    // closed for post-fold rows.
+    if (rowTic === 0 || ticAfter(ov.tic, rowTic)) {
       if (ov.rowKey !== rowKey) this.coldOverrides.set(ent, { ...ov, rowKey }); // learn the owning row
       return true;
     }
@@ -859,7 +864,9 @@ export class WorldBridge {
 
     // Race resolution: only draw the override if it is MORE RECENT than the baseline. If the baseline
     // has caught up (folded the value in), it is authoritative — ignore the stale override.
-    if (!ticAfter(o.tic, baselineTic)) {
+    // logs-drop: an EPOCH-ZERO baseline (worldgen seed, tic 0) never outranks an override —
+    // see baselineSuppressed for the tic-ring-wrap failure this closes.
+    if (baselineTic !== 0 && !ticAfter(o.tic, baselineTic)) {
       if (rowKey !== "") this.reExpandRow(rowKey);
       return;
     }
