@@ -207,6 +207,8 @@ export class WorldBridge {
    *  sites (baseline rows + overrides); a change queues the 4-neighbor ring for re-cell.
    *  A closed zone's entries go stale harmlessly (its neighbors' walls are off-screen with it). */
   private readonly tileKindAt = new Map<number, number>();
+  /** Drawn THING kind per cell (packed `x<<16|y`) — {@link thingDefAt}'s backing (lumberjack). */
+  private readonly thingKindMap = new Map<number, number>();
   /** Tiles whose neighbors must re-pick their linked cell after the current paint. */
   private readonly reCellQueue = new Set<number>();
 
@@ -613,6 +615,20 @@ export class WorldBridge {
     return this.tileKindAt.get(((tileX & 0xffff) << 16) | (tileY & 0xffff)) ?? 0;
   }
 
+  /** The scatter THING's `def_id` at global tile `(x, y)`, or 0 for none — the pie menu's
+   *  thing-carrier lookup (lumberjack: a tree offers `cut_down`). Drawn-kind semantics
+   *  like {@link tileDefAt}: baseline cells record on expansion, overrides overwrite, a
+   *  winning tombstone (felled tree) deletes. */
+  thingDefAt(tileX: number, tileY: number): number {
+    return this.thingKindMap.get(((tileX & 0xffff) << 16) | (tileY & 0xffff)) ?? 0;
+  }
+
+  private recordThingKind(tileX: number, tileY: number, kindId: number): void {
+    const k = ((tileX & 0xffff) << 16) | (tileY & 0xffff);
+    if (kindId === 0) this.thingKindMap.delete(k);
+    else this.thingKindMap.set(k, kindId);
+  }
+
   /** The 4-neighbor same-kind mask for a tile (N/E/S/W bits — north is −y). */
   private neighborMask(tileX: number, tileY: number, defId: number): number {
     const at = (x: number, y: number): boolean => this.tileKindAt.get(((x & 0xffff) << 16) | (y & 0xffff)) === defId;
@@ -706,6 +722,7 @@ export class WorldBridge {
       const variant = flat[i + 6];
       const ck = cellKey(typeId, tileX, tileY);
       if (this.baselineSuppressed(ck, key, tic)) continue; // a newer override wins this cell — skip baseline
+      this.recordThingKind(tileX, tileY, kindId); // the menu's carrier lookup (lumberjack)
       const tex = thingTexture(this.thingStems[kindId - 1], data, variant, this.hasStem);
       // Anchor/size/footprint from the def layout; a tall sprite rises past its cell,
       // a west facing mirrors the pivot with the art (see placeThing).
@@ -871,6 +888,7 @@ export class WorldBridge {
         ground = { tileX, tileY, kindId, tint, geoColor }; // tile-lighting I1: repaintable
       } else {
         // Thing override — the thing sprite, bottom-anchored like the scatter.
+        this.recordThingKind(tileX, tileY, kindId);
         const tex = thingTexture(this.thingStems[kindId - 1], data, variant, this.hasStem);
         const p = placeThing(tileX, tileY, readLayout(this.thingLayout, kindId), tex.flipX, !tex.name);
         id = this.viewport.addPrim({
@@ -895,8 +913,10 @@ export class WorldBridge {
     this.coldOverrides.set(o.entityReference, { id, macroPosition: o.macroPosition, cellKey: ck, rowKey, tic: o.tic, ground });
     this.coldCellWinner.set(ck, o.entityReference);
     // build-walls P1: a winning tombstone removes the ground kind; either way the neighbor
-    // ring re-picks its linked cells now.
+    // ring re-picks its linked cells now. A THING tombstone (felled tree — lumberjack)
+    // clears its cell from the menu's carrier map the same way.
     if (typeId === this.content.typeBiomeTile() && flat.length < 8) this.recordTileKind(tileX, tileY, 0);
+    if (typeId === this.content.typeBiomeThing() && flat.length < 8) this.recordThingKind(tileX, tileY, 0);
     this.processReCells();
   }
 

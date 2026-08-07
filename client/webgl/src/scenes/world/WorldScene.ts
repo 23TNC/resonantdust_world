@@ -563,11 +563,11 @@ export class WorldScene extends Scene {
   }
 
   /** input-rework F1/F4/F5: the LEFT-click context pie menu — what the ACTIVE pawn can do
-   *  with the clicked object. Availability comes WHOLE from the wasm `tileMenuOptions`
+   *  with the clicked object. Availability comes WHOLE from the wasm menu filters
    *  (predicates + the location rule — the same questions the worker enforces); an empty
-   *  set opens NOTHING (F7). Thing targets offer nothing this stream (I9 — no thing
-   *  carries interactions, and prims don't expose their kind yet); pawn targets are the
-   *  recorded social successor. */
+   *  set opens NOTHING (F7). A clicked THING asks its OWN carrier bindings at its ANCHOR
+   *  cell (lumberjack — a tree offers Cut Down); pawn targets are the recorded social
+   *  successor. */
   private openContextMenu(cx: number, cy: number): void {
     this.pieMenu.close();
     const primary = this.selection.primary;
@@ -576,20 +576,36 @@ export class WorldScene extends Scene {
     const info = this.moverLayer.pawnInfo(actor);
     if (!info) return;
     const w = this.clientToWorld(cx, cy);
-    if (this.moverLayer.pawnAt(w.x, w.y) || this.panel.view.thingAt(w.x, w.y)) return;
-    const tileX = Math.floor(w.x / SQUARE);
-    const tileY = Math.floor(w.y / SQUARE);
-    const defId = this.bridge.tileDefAt(tileX, tileY);
-    if (defId === 0) return; // unstreamed ground — nothing to offer
+    if (this.moverLayer.pawnAt(w.x, w.y)) return;
     const d = this.ctx.client.ticDelta(0);
     if (d === null) return;
     const now = ((Math.floor(d) % 0x10000) + 0x10000) % 0x10000;
     const payload = this.moverLayer.pawnPayload(actor) ?? new Uint32Array(0);
     const needs = this.moverLayer.pawnNeeds(actor);
-    // lumberjack F2: the filter takes the Chebyshev pawn↔clicked-cell distance and runs
-    // the SHARED location_in_range — "on" = 0, "adjacent" ≤ 1 (inclusive).
-    const cheb = Math.max(Math.abs(info.tileX - tileX), Math.abs(info.tileY - tileY));
-    const options = getContent().tileMenuOptions(defId, payload, needs, now, cheb) as unknown as PieMenuOption[];
+    // lumberjack F2: the filters take the Chebyshev pawn↔carrier-cell distance and run
+    // the SHARED location_in_range — "on" = 0, "adjacent" ≤ 1 inclusive; destination-
+    // bearing signatures relax it (the worker composes the walk).
+    const cheb = (tx: number, ty: number): number =>
+      Math.max(Math.abs(info.tileX - tx), Math.abs(info.tileY - ty));
+    const thing = this.panel.view.thingAt(w.x, w.y);
+    if (thing) {
+      // The thing's ANCHOR cell (a tall sprite rises past it — the canopy click must
+      // resolve to the trunk): bottom-centre of its prim box.
+      const p = this.panel.view.getPrim(thing.primId);
+      if (!p) return;
+      const tileX = Math.floor((p.x + p.width / 2) / SQUARE);
+      const tileY = Math.floor((p.y + p.height - 1) / SQUARE);
+      const kind = this.bridge.thingDefAt(tileX, tileY);
+      if (kind === 0) return;
+      const options = getContent().thingMenuOptions(kind, payload, needs, now, cheb(tileX, tileY)) as unknown as PieMenuOption[];
+      this.pieMenu.open(cx, cy, options, (o) => this.fireOption(o, actor, tileX, tileY));
+      return;
+    }
+    const tileX = Math.floor(w.x / SQUARE);
+    const tileY = Math.floor(w.y / SQUARE);
+    const defId = this.bridge.tileDefAt(tileX, tileY);
+    if (defId === 0) return; // unstreamed ground — nothing to offer
+    const options = getContent().tileMenuOptions(defId, payload, needs, now, cheb(tileX, tileY)) as unknown as PieMenuOption[];
     this.pieMenu.open(cx, cy, options, (o) => this.fireOption(o, actor, tileX, tileY));
   }
 
