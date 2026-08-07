@@ -81,12 +81,18 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P4 — cancel
 
-- [ ] `CANCEL_INTENT` end to end: pending removed; executing-timed only if `cancelable`
+- [x] `CANCEL_INTENT` end to end: pending removed; executing-timed only if `cancelable`
       → the completion logs a `cancelled` NO-OP; walking clears the queue (F3); every
-      path refans. Acceptance: all three paths in one drill's log.
-- [ ] The UI click sends the entry's order_ref (F4); drills: cancel a pending chop,
+      path refans. Acceptance: all three paths in one drill's log. → one session's log
+      holds all three: `pending entry removed` (entry 20), `executing entry; its
+      completion will NO-OP` (22) then `intent completion NO-OP why="cancelled by
+      CANCEL_INTENT (intent-queue-ui F3)"` AT the fire tic, and `walk; queue cleared,
+      glide finishes` (24). The cancelled tree still stands (no destroy composed).
+- [x] The UI click sends the entry's order_ref (F4); drills: cancel a pending chop,
       cancel an executing chop mid-ring, the strip updates. Acceptance: captures +
-      logs.
+      logs. → every drill drove the REAL strip circles (DOM pointerdown →
+      cancelSender → `CANCEL_INTENT pawn entry_id` through the edge allowlist); the
+      executing cancel landed at ring 0.27; the mirror emptied after each (probed).
 
 ## P5 — the verdict
 
