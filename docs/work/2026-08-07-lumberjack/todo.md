@@ -12,9 +12,11 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
       §"The intent queue, and interactions that cost tics" after §Movement: one
       composer, replace-whole, per-kind advancement (in-pass / final-hop-by-serial /
       queue_at +N), the no-op law; docs-check green.
-- [ ] VARIABLES.md: the `"adjacent"` location rule (F2), `duration`,
+- [x] VARIABLES.md: the `"adjacent"` location rule (F2), `duration`,
       `destroy = "carrier"` + reserved `yields` (F5) in the TOML schema. Acceptance:
-      docs-check green.
+      docs-check green. → the three location rules enumerated on drink's block (drink
+      shown `adjacent`), duration's completion/re-validate comment, a full `cut_down`
+      example block with `destroy = "carrier"` + the RESERVED `yields` note; green.
 
 ## P1 — the corpus
 

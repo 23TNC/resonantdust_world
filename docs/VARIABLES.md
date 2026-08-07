@@ -898,11 +898,24 @@ inputs = ["pawn", "destination"]
 # pawn's `ground_speed` stat (input-rework F8: the `speed` field is DELETED).
 move = { target = "@pawn", to = "@destination" }
 # location "target" (input-rework F4): the DESTINATION tile is the carrier — it must
-# offer this interaction ("on" requires standing on the carrier instead). The pie
-# menu enforces the same rule: "on" options show only while standing on the clicked
-# tile. An interaction must author at least one effect (`satisfy` or `move`).
+# offer this interaction. The pie menu enforces the same rules as the worker. An
+# interaction must author at least one effect (`satisfy`, `move`, or `destroy`).
 location = "target"
 duration = 0
+
+[[interaction]]             # timed work on the world (lumberjack F5/F7)
+name = "cut_down"
+label = "Cut Down"
+menu_text = "Cut Down"
+affordances = ["can_fell_trees"]
+inputs = ["pawn", "destination"]
+# The `destroy` effect (fourth effect kind): clear the CARRIER — the validated
+# offerer's cell — via the cold-overlay `SET … kind 0` (the build-walls path). The
+# named successor `yields = "<thing>"` (place a thing where the carrier stood —
+# lumberjack I9) is RESERVED beside it, not built.
+destroy = "carrier"
+location = "adjacent"
+duration = 30               # ≈5 s at 6 Hz; the completion re-validates (see drink above)
 
 [[affordance]]              # a named PREDICATE over pawn stats (stat-model F5/F10)
 name = "can_drink"
