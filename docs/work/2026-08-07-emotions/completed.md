@@ -40,3 +40,13 @@
   vs quenched+2h, the TIE taking the lowest index) → uncomfortable-olive (7 = itchy 5 +
   thirsty 2 beating elated's 6) across live states; four oracle conditions
   (elated/itchy/frisky/engrossed) authored into the corpus, registry seeded 203.
+- **2026-08-07 — P4: the verdict (eyes pending).** The oracle LIVE: the four grants
+  queued client-side (GRANT_CONDITION is client-open) onto pawn 0x30800002 — exactly
+  3 playful + 5 uncomfortable + 2 focused + 6 happy — and the wash turned happy-gold;
+  captured beside the sorted pies. The wolf's stacked states cross-checked npc vs
+  client (`emotion=15` playful, then `emotion=14` uncomfortable — both matched the
+  panel). Truth pass done: memory updated (mood retirement noted in needs-moodlets;
+  emotions-delivered written), VARIABLES.md was P0. Stack bounce: edge redeployed +
+  master/worker/orchestrator/npc restarted on new binaries; arcs green (npc trips
+  arriving, orchestrator assigning, worker error-free). B1 records the last step: the
+  user's eyes close the stream.

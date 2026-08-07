@@ -57,9 +57,11 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P4 — the verdict
 
-- [ ] Drills: the oracle live (3 playful + 5 uncomfortable + 2 focused + 6 happy
+- [x] Drills: the oracle live (3 playful + 5 uncomfortable + 2 focused + 6 happy
       grants → the wash turns happy); standing arcs beside. Acceptance: captures +
-      logs; the probe agrees with the eval.
+      logs; the probe agrees with the eval. → the four grants queued client-side to
+      0x30800002: happy-gold wash + Elated/Itchy/Frisky/Engrossed pies captured; the
+      wolf's stacked states (playful→uncomfortable) matched npc `emotion=` logs.
 - [ ] Docs + memory truth pass (mood retirement noted; index row records delivery) +
       a stack bounce with arcs green; **the user's eyes close the stream**.
       Acceptance: docs-check green; captures + logs in completed.md.
