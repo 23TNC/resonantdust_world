@@ -44,8 +44,12 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
       pawn/destination generalized to the reserved inputs (destroy-only interactions
       have no satisfy/move); thing uplink subscribes the composed tiers. Gates:
       shared+core+worker builds, 40+2 content tests, tsc clean.
-- [ ] Drill: a human drinks from the SHORE tile; the wolf's stand-on-water drink still
+- [x] Drill: a human drinks from the SHORE tile; the wolf's stand-on-water drink still
       lands (F2, I6). Acceptance: both `satisfied=Some("thirst")` in one worker log.
+      → 02:39:51 wolf 0x30800000 ON the water 34.62→37.62 (cheb 0 through the new
+      probe); 02:41:03 human 0x30800005 from the SHORE (102,67)→water (102,68) at cheb 1,
+      0.0→3.0. Negative proven first: the same water menu from cheb 5 offered
+      `["Move To"]` only — Drink suppressed by the strict pre-queue gate.
 
 ## P3 — the intent queue
 

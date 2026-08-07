@@ -13,6 +13,24 @@
   completion-re-validates comment; a full `cut_down` block with `destroy = "carrier"`
   and the RESERVED `yields` successor note. Verified: docs-check green.
 
+## 2026-08-07 — P2: adjacency
+
+- **One rule, both gates**: `location_in_range` lives in shared/content (unit-tested:
+  on=0, adjacent ≤ 1 inclusive, target unbounded); the wasm menu filter takes the
+  Chebyshev pawn↔clicked-cell distance (both wrappers + WorldScene); the worker resolves
+  CANDIDATE carriers per rule — a bound `destination` names the cell (pawn within 1), a
+  destless signature (drink) scans the pawn's 3×3 — and probes tile AND thing layers
+  (things first; a thing-overlay kind 0 SUPPRESSES, so a felled tree stops offering).
+  Acting pawn + destination generalized to the reserved inputs (a destroy-only
+  interaction binds neither satisfy nor move); the thing uplink subscribes the composed
+  `entity_state`/`overlay`. Verified: shared+core+worker builds, 40+2 content tests,
+  tsc clean.
+- **The shore drill**: negative first — the water menu from cheb 5 offered `["Move To"]`
+  only. Then the human 0x30800005 menu-walked to the shore (102,67) and drank the water
+  at (102,68) from cheb 1 (`satisfied=Some("thirst") 0.0→3.0` — her row had lazily
+  drained to empty, the +3 exact); the wolf 0x30800000's stand-ON-water thermostat drink
+  landed 72 s earlier in the same log (34.62→37.62, cheb 0 through the new probe).
+
 ## 2026-08-07 — P1: the corpus
 
 - **The loader learned the lumberjack surface**: `InteractionParams.destroy`
