@@ -135,3 +135,17 @@ was a container restart and two failed launches — nothing lost.
 (`nvidia-smi --query-compute-apps=pid` cross-referenced against the container's own processes).
 On this box the trainer and the inference server share one card, so "a process holding VRAM" is
 ambiguous by default.
+
+## I6 — kohya writes the FINAL generation without a number {#i6}
+_2026-08-06 · caught at P2.3 by the acceptance count_
+
+`output_run16/` holds `rd_styl_anima-000001` … `-000011` and then **`rd_styl_anima.safetensors`**
+— the twelfth save carries no generation suffix. A glob on `-0000*` therefore promotes 11 of 12 and
+**silently drops the last generation**, which for a 12-generation run is one of the two the user
+targets.
+
+Caught only because the acceptance criterion said "12 files" and the count came back 11. Without
+that number it would have passed unnoticed.
+
+**Applies retroactively:** the same glob promoted run-10's generations. Its final generation (g20)
+should be re-checked, though g20 is far past the useful range so nothing depends on it.

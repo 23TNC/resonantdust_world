@@ -712,7 +712,7 @@ impl Content {
 #[cfg(feature = "js")]
 fn menu_options(
     bundle: &dsl::loader::Bundle,
-    binds: Vec<(String, f64)>,
+    binds: Vec<dsl::loader::InteractionBind>,
     payload: Vec<u32>,
     needs: Vec<u32>,
     now_tic: u16,
@@ -724,7 +724,7 @@ fn menu_options(
         bundle, &traits, &need_rows, &conditions, now_tic,
     );
     let out = js_sys::Array::new();
-    for (name, magnitude) in binds {
+    for dsl::loader::InteractionBind { name, magnitude, .. } in binds {
         let Some(ip) = bundle.interaction_params(&name) else { continue };
         // The location rule (F4 / lumberjack F2): the SHARED range check — the menu must
         // never offer what the worker would refuse. RELAXED for signatures that bind a

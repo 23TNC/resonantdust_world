@@ -69,3 +69,25 @@ _Nothing delivered yet. Items land here with their measured result when ticked i
 
   **What this does NOT yet show:** every subject here is one the corpus contains. The actual claim —
   that species identity now comes from the PROMPT — is untested until [P3.3/P3.4](todo.md).
+- **2026-08-06 · P2.3 corrected · 12 of 12 saved, after catching a silent drop.** The first pass
+  promoted only **11** — kohya names the final generation `rd_styl_anima.safetensors` with no
+  number, so a `-0000*` glob loses it ([I6](issues.md#i6)). Caught by the acceptance count, not by
+  eye. Total **5.2 GB**.
+- **2026-08-06 · P3.3/P3.4 · THE THESIS IS CONFIRMED.** Same prompt, same seed (7700), same
+  strength (0.85), r10 g8 (species captions) vs r16 g8 (style-only). Sheet:
+  `.staging/p3-thesis-test.png`.
+
+  | subject | corpus support | r10 species captions | r16 STYLE-only |
+  |---|---|---|---|
+  | **anteater** | **none** — no body-plan analogue | brown blob, dot for an eye, blunt snout | pale facial marking, **defined eye**, longer tapered snout |
+  | **cat** | **3 images** | rounded lump with a face pasted on the end | **recognisable cat** — white chest bib, white paws, correct head and ear placement, feline posture |
+
+  **P3.4's criterion was "does the gap between a barely-covered and a well-covered species
+  narrow?"** It does not merely narrow — the barely-covered species is now *good*. And the anteater,
+  which has **no corpus analogue at all**, gained facial detail that can only have come from the
+  base model. That is the division of labour the stream set out to test: **species identity from
+  the prompt, convention from the LoRA.**
+
+  Both keep the convention — solid masses, hard black outlines, flat fills, unbroken bottom edges,
+  correct side-profile framing. Both also have **colour** (brown anteater, grey-and-white cat), so
+  the white-collapse that dogged every previous run past g10 is absent at g8.

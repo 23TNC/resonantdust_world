@@ -678,6 +678,8 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
   let stat_exists = |name: &str| all.stat.iter().any(|s| s.name == name);
   let affordance_exists = |name: &str| all.affordance.iter().any(|a| a.name == name);
   let interaction_exists = |name: &str| all.interaction.iter().any(|i| i.name == name);
+  // A binding's `yields` must name a thing kind (logs-drop F1).
+  let thing_exists = |name: &str| all.thing.iter().any(|t| t.name == name);
 
   // The empty-intersection rule (stat-model F6): `"min"` (default) or `"max"`.
   fn parse_winner(
@@ -1042,7 +1044,7 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
 
   for slot in &tiles {
     b.tiles.push(match slot {
-      Some(t) => tile_def(t, &material_id, &interaction_exists, &mut errors),
+      Some(t) => tile_def(t, &material_id, &interaction_exists, &thing_exists, &mut errors),
       None => TileDef::default(), // a retired id holds its place
     });
   }
@@ -1054,6 +1056,7 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
         &need_exists,
         &trait_level_counts,
         &interaction_exists,
+        &thing_exists,
         &mut errors,
       ),
       None => ThingDef::default(),
@@ -1278,6 +1281,7 @@ fn tile_def(
   t: &TileToml,
   material_id: &dyn Fn(&str) -> u16,
   interaction_exists: &dyn Fn(&str) -> bool,
+  thing_exists: &dyn Fn(&str) -> bool,
   errors: &mut Vec<LoadError>,
 ) -> TileDef {
   // A tile's visual is the single-part degenerate case: synthesize the one part from
@@ -1321,18 +1325,20 @@ fn tile_def(
       t.cast_shadow.unwrap_or(0.0),
       t.receives_shadows.unwrap_or(0.0),
     ],
-    interactions: interaction_binds(&t.interactions, interaction_exists, "tile", &t.name, errors),
+    interactions: interaction_binds(&t.interactions, interaction_exists, thing_exists, "tile", &t.name, errors),
   }
 }
 
-/// Validate + flatten a carrier's interaction bindings (stat-model F5/F9).
+/// Validate + flatten a carrier's interaction bindings (stat-model F5/F9; the yield
+/// lane — logs-drop F1).
 fn interaction_binds(
   binds: &[InteractionBindToml],
   interaction_exists: &dyn Fn(&str) -> bool,
+  thing_exists: &dyn Fn(&str) -> bool,
   what: &str,
   name: &str,
   errors: &mut Vec<LoadError>,
-) -> Vec<(String, f64)> {
+) -> Vec<crate::loader::InteractionBind> {
   for b in binds {
     if !interaction_exists(&b.name) {
       errors.push(LoadError {
@@ -1340,8 +1346,25 @@ fn interaction_binds(
         message: format!("{what} `{name}`: unknown interaction `{}`", b.name),
       });
     }
+    // The yield must name a real thing kind (logs-drop F1) — a ghost yield would
+    // compose a SET with a kind the world can't draw.
+    if let Some(y) = &b.yields {
+      if !thing_exists(y) {
+        errors.push(LoadError {
+          file: String::new(),
+          message: format!("{what} `{name}`: binding `{}` yields unknown thing `{y}`", b.name),
+        });
+      }
+    }
   }
-  binds.iter().map(|b| (b.name.clone(), b.magnitude)).collect()
+  binds
+    .iter()
+    .map(|b| crate::loader::InteractionBind {
+      name: b.name.clone(),
+      magnitude: b.magnitude,
+      yields: b.yields.clone(),
+    })
+    .collect()
 }
 
 /// Build a def's [`Taxonomy`] from its authored fields, or `None` if it authors none.
@@ -1393,6 +1416,7 @@ fn thing_def(
   need_exists: &dyn Fn(&str) -> bool,
   trait_level_counts: &HashMap<String, usize>,
   interaction_exists: &dyn Fn(&str) -> bool,
+  thing_exists: &dyn Fn(&str) -> bool,
   errors: &mut Vec<LoadError>,
 ) -> ThingDef {
   let tax = taxonomy(&t.type_name, &t.kind, &t.sub_type, &t.variant, &format!("thing `{}`", t.name), errors);
@@ -1435,7 +1459,7 @@ fn thing_def(
     visual,
     needs,
     traits,
-    interactions: interaction_binds(&t.interactions, interaction_exists, "thing", &t.name, errors),
+    interactions: interaction_binds(&t.interactions, interaction_exists, thing_exists, "thing", &t.name, errors),
   }
 }
 
@@ -1695,7 +1719,10 @@ tint = "#ffffff"
     assert_eq!((q.needs[0].need.as_str(), q.needs[0].rate), ("thirst", 0.5));
 
     // Carrier bindings: interactions on the tile, leveled traits on the thing (bare = 1).
-    assert_eq!(b.tile_interactions(1), vec![("drink".to_string(), 3.0)]);
+    assert_eq!(
+      b.tile_interactions(1),
+      vec![crate::loader::InteractionBind { name: "drink".into(), magnitude: 3.0, yields: None }]
+    );
     assert_eq!(b.thing_traits(1), vec![("biological_lifeform".to_string(), 1)]);
 
     // Refs pack under the derived taxonomy, and the reverse lookup agrees — `stat` too.
@@ -1732,6 +1759,25 @@ tint = "#ffffff"
     let e = load(&[src("t.toml", "[[interaction]]\nname = \"d\"\ndestroy = \"self\"\n")])
       .unwrap_err();
     assert!(e.iter().any(|e| e.message.contains("the only target")), "{e:?}");
+    // The yield lane (logs-drop F1): the binding round-trips it, and a ghost yield
+    // refuses loudly.
+    let b = load(&[src(
+      "t.toml",
+      "[[interaction]]\nname = \"cut\"\ndestroy = \"carrier\"\nlocation = \"adjacent\"\n\
+       [[thing]]\nname = \"logs\"\n[[thing.part]]\ntint = \"#8a6a42\"\n\
+       [[thing]]\nname = \"tree\"\ninteractions = [{ name = \"cut\", yields = \"logs\" }]\n\
+       [[thing.part]]\ntint = \"#4a7a3a\"\n",
+    )])
+    .expect("yield binds");
+    assert_eq!(b.thing_interactions(2)[0].yields.as_deref(), Some("logs"));
+    let e = load(&[src(
+      "t.toml",
+      "[[interaction]]\nname = \"cut\"\ndestroy = \"carrier\"\n\
+       [[thing]]\nname = \"tree\"\ninteractions = [{ name = \"cut\", yields = \"ghost\" }]\n\
+       [[thing.part]]\ntint = \"#4a7a3a\"\n",
+    )])
+    .unwrap_err();
+    assert!(e.iter().any(|e| e.message.contains("yields unknown thing `ghost`")), "{e:?}");
     // A carrier binding a ghost interaction refuses too.
     let e = load(&[src("t.toml", "[[tile]]\nname = \"w\"\ninteractions = [{ name = \"x\" }]\n")])
       .unwrap_err();
@@ -1777,7 +1823,10 @@ interactions = [ { name = "move_to" } ]
     assert_eq!(mv.target, crate::loader::Operand::Input(0));
     assert_eq!(mv.to, crate::loader::Operand::Input(1));
     assert!(m.satisfy.is_none());
-    assert_eq!(b.tile_interactions(1), vec![("move_to".to_string(), 0.0)]);
+    assert_eq!(
+      b.tile_interactions(1),
+      vec![crate::loader::InteractionBind { name: "move_to".into(), magnitude: 0.0, yields: None }]
+    );
 
     // menu_text defaults to the label.
     let b2 = load(&[src(

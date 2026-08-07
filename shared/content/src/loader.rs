@@ -817,9 +817,11 @@ impl Bundle {
     fnv_str(&mut h, &d.name);
     fnv_str(&mut h, d.build.as_deref().unwrap_or(""));
     fnv_bytes(&mut h, &d.height.unwrap_or(0.0).to_bits().to_le_bytes());
-    for (i, m) in &d.interactions {
-      fnv_str(&mut h, i);
-      fnv_bytes(&mut h, &m.to_le_bytes());
+    for b in &d.interactions {
+      fnv_str(&mut h, &b.name);
+      fnv_bytes(&mut h, &b.magnitude.to_le_bytes());
+      // The yield is SIM-visible (a fell composes a different SET) — it bumps.
+      fnv_str(&mut h, b.yields.as_deref().unwrap_or(""));
     }
     Some(h)
   }
@@ -837,9 +839,10 @@ impl Bundle {
       fnv_str(&mut h, t);
       fnv_bytes(&mut h, &level.to_le_bytes());
     }
-    for (i, m) in &d.interactions {
-      fnv_str(&mut h, i);
-      fnv_bytes(&mut h, &m.to_le_bytes());
+    for b in &d.interactions {
+      fnv_str(&mut h, &b.name);
+      fnv_bytes(&mut h, &b.magnitude.to_le_bytes());
+      fnv_str(&mut h, b.yields.as_deref().unwrap_or(""));
     }
     Some(h)
   }
