@@ -171,6 +171,37 @@ packed = [ { tint = "#5f6b3c" } ]
         assert!((value_of("bunny") - 1.0).abs() < 0.01, "the bunny mints 1");
         assert!((value_of("wolf") - 2.0).abs() < 0.01, "the wolf mints 2");
     }
+
+    /// inventory F1/I2: the need counts FREE slots, so the SAME mint-at-effective-max
+    /// law births a human with 6 free on the 0..16 encoding — no mint-empty rule.
+    #[test]
+    fn the_inventory_need_mints_all_slots_free() {
+        let src = r##"
+[[need]]
+name = "inventory"
+min = 0
+max = 16
+
+[[trait]]
+name = "inventory"
+needs = [ { need = "inventory", max = [6.0] } ]
+
+[[thing]]
+name = "human"
+needs = ["inventory"]
+traits = [ { name = "inventory", level = 1 } ]
+packed = [ { tint = "#c0b0a0" } ]
+"##;
+        let b = resonantdust_content::loader::load(&[("t.toml".into(), src.into())])
+            .expect("fixture loads");
+        let np = b.need_params("inventory").expect("inventory");
+        let kind = b.thing_object_id("human").expect("human");
+        let def = pack_definition_reference(0, pack_kind_reference(kind, 0));
+        let (_, needs) = mint_sidecars(&b, def);
+        let q = resonantdust_codec::object::gameplay_row_data(needs[0]);
+        let v = f64::from(resonantdust_codec::value::dequantize(q, np.min as f32, np.max as f32));
+        assert!((v - 6.0).abs() < 0.01, "6 free slots at birth, got {v}");
+    }
 }
 
 fn shard_of(entity: u32) -> Shard {
@@ -1874,16 +1905,20 @@ async fn main() {
                     // (dy, dx) scan (forage; all full = a logged no-yield, never an
                     // overwrite). The emptiness/pathability probes are the SAME
                     // pass-level ones movement uses (I5).
-                    if let Some(sp) = &params.spawn {
+                    if let Some(resonantdust_content::loader::SpawnEffect::Thing {
+                        thing: sp_thing,
+                        at: sp_at,
+                    }) = &params.spawn
+                    {
                         let spawn_kind: u32 = bundle
-                            .thing_object_id(&sp.thing)
+                            .thing_object_id(sp_thing)
                             .map(|id| u32::from(pack_kind_reference(id, 0)))
                             .unwrap_or(0);
                         let cell_pos: Option<u32> = if spawn_kind == 0 {
-                            tracing::warn!(thing = %sp.thing,
+                            tracing::warn!(thing = %sp_thing,
                                 "spawn names a thing the bundle cannot number — skipped");
                             None
-                        } else if sp.at == "on" {
+                        } else if sp_at == "on" {
                             Some(tile_to_position(px, py))
                         } else {
                             let (cx0, cy0) = position_to_tile(carrier.0);

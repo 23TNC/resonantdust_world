@@ -105,3 +105,15 @@ name = "corpus"
 label = "Corpus"
 min = 0
 max = 2
+
+# INVENTORY — FREE SLOTS (inventory F1, the user's inversion: "at 0 we have 0 free
+# slots"). The 0..16 domain is the ENCODING headroom; the EFFECTIVE cap is the leveled
+# `inventory` trait's per-level max (level 1 → 6 — humans; future backpack tiers
+# append). Mint-at-effective-max = ALL slots free at birth. No deplete, no bands:
+# pick_up decrements (uses a slot), drop increments; the held ITEMS are rows in the
+# pawn shard's inventory sub-table — rows = FILLED, this need = FREE, never conflate.
+[[need]]
+name = "inventory"
+label = "Inventory"
+min = 0
+max = 16

@@ -105,6 +105,15 @@ name = "corpus"
 label = "Corpus"
 needs = [ { need = "corpus", max = [1.0, 2.0] } ]
 
+# The CARRYING capacity (inventory F1, the user's shape): ONE leveled trait provides
+# the inventory need and caps it — the need counts FREE slots, so the standing
+# mint-at-effective-max law births every carrier with all slots free. Level 1 = 6
+# (humans); future backpack tiers append per-level values.
+[[trait]]
+name = "inventory"
+label = "Inventory"
+needs = [ { need = "inventory", max = [6.0] } ]
+
 [[trait]]
 name = "forager"
 label = "Forager"
@@ -236,6 +245,38 @@ location = "adjacent"
 duration = 20
 queue = { hover = "Eating", background = "#6a3a2a", progress = "cw", progress_color = "#d65a3a", progress_fill = true, cancelable = true }
 
+# PICK UP (inventory F4): walk-then-act on a portable thing — the carrier leaves the
+# world (the destroy tombstone lane) and its kind def lands in the acting pawn's
+# first free inventory slot, with the free-count SET_NEED in the SAME program (F3).
+# can_carry = the inventory need > 0 (has the need AND a free slot; absent row never
+# passes). The completion re-validates carrier + free slot (a raced log: loser no-ops).
+[[interaction]]
+name = "pick_up"
+label = "Pick Up"
+menu_text = "Pick Up"
+affordances = ["can_carry"]
+inputs = ["pawn", "destination"]
+location = "adjacent"
+store = "carrier"
+duration = 10
+queue = { hover = "Picking up", background = "#5a5a3a", progress = "cw", progress_color = "#d6c23a", progress_fill = true, cancelable = true }
+
+# DROP (inventory F5, the generic shape): ONE interaction on the inventory-bearing
+# PAWN kinds — location "slot" makes the carrier an inventory slot of the ACTING pawn
+# (the slot index + expected item ride the inputs; the completion re-validates the
+# slot still holds that item). spawn = "carried" places the SLOT's kind on the first
+# EMPTY pathable adjacent cell — and REFUSES when none exists (the item stays held;
+# never forage's all-full-swallows rule). Then INV_REMOVE + the free-count SET_NEED.
+[[interaction]]
+name = "drop"
+label = "Drop"
+menu_text = "Drop"
+inputs = ["pawn", "slot"]
+location = "slot"
+spawn = "carried"
+duration = 0
+queue = { hover = "Dropping", size = 0.8 }
+
 # ── affordances ───────────────────────────────────────────────────────────────
 
 [[affordance]]
@@ -277,3 +318,10 @@ check = { stat = "meat_eating", above = 0.0 }
 name = "can_die"
 label = "Can Die"
 check = { need = "corpus", lte = 0.0 }
+
+# The carry gate (inventory F1/F4): the need counts FREE slots, so `> 0` is both "has
+# an inventory" (an absent row never passes) and "a slot is free" — no new machinery.
+[[affordance]]
+name = "can_carry"
+label = "Can Carry"
+check = { need = "inventory", gt = 0.0 }

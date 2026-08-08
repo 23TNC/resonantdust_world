@@ -373,9 +373,16 @@ pub struct InteractionParams {
   /// The remove effect (food-chain F5): `"target"` deletes the target pawn via the pawn
   /// shard's `remove` reducer — death's second half. Idempotent at execution.
   pub remove: Option<String>,
+  /// The store effect (inventory F4): `"carrier"` — the validated offerer leaves the
+  /// world (the destroy tombstone lane) and its kind def lands in the acting pawn's
+  /// first free inventory slot, with the free-count `SET_NEED` in the SAME program
+  /// (F3/I3 — rows and count never diverge).
+  pub store: Option<String>,
   /// The placement rule (input-rework F4 / lumberjack F2): `"on"` = the ACTING pawn
   /// stands on the carrier; `"adjacent"` = Chebyshev ≤ 1 from the carrier's cell,
-  /// INCLUSIVE of it; `"target"` = the DESTINATION tile is the carrier.
+  /// INCLUSIVE of it; `"target"` = the DESTINATION tile is the carrier; `"self"` = the
+  /// carrier IS the target pawn (food-chain I9); `"slot"` = the carrier is an inventory
+  /// SLOT of the acting pawn (inventory F5 — the slot index rides the inputs).
   pub location: String,
   /// TICS this interaction takes (lumberjack, consuming the I9 reservation): 0 =
   /// instantaneous; N > 0 queues a completion event at +N which RE-VALIDATES
@@ -387,12 +394,15 @@ pub struct InteractionParams {
   pub queue: QueueVisual,
 }
 
-/// The spawn effect's authored shape (food-chain F5/F6) — `thing` is load-validated
-/// against thing kinds; `at` ∈ `"on"` | `"adjacent"`.
+/// The spawn effect's authored shape — either a NAMED thing at a placement
+/// (food-chain F5/F6) or `"carried"` (inventory F5): spawn the acting pawn's SLOT
+/// item beside it (the adjacent scan), which is what makes ONE drop generic over
+/// every item. `Carried` REFUSES when no empty pathable cell exists — the item
+/// stays held (inventory I10; never forage's all-full-swallows rule).
 #[derive(Debug, Clone, PartialEq)]
-pub struct SpawnEffect {
-  pub thing: String,
-  pub at: String,
+pub enum SpawnEffect {
+  Thing { thing: String, at: String },
+  Carried,
 }
 
 /// An interaction's queue-strip presentation (intent-queue-ui F2; schema in
@@ -440,7 +450,8 @@ pub fn location_in_range(location: &str, cheb: u32) -> bool {
     "on" => cheb == 0,
     "adjacent" => cheb <= 1,
     // "self" (food-chain I9): the carrier IS the target pawn — distance is definitionally
-    // zero, so no spatial constraint. "target" likewise places none (movement's rule).
+    // zero, so no spatial constraint. "slot" (inventory F5): the carrier is a slot OF the
+    // acting pawn — likewise zero. "target" places none (movement's rule).
     _ => true,
   }
 }

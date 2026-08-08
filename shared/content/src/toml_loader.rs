@@ -552,6 +552,10 @@ struct InteractionToml {
   /// The remove effect (food-chain F5): `"target"` is the only value.
   #[serde(default)]
   remove: Option<String>,
+  /// The store effect (inventory F4): `"carrier"` is the only value — the offerer
+  /// leaves the world and lands in the acting pawn's first free inventory slot.
+  #[serde(default)]
+  store: Option<String>,
   /// The placement rule (input-rework F4 / lumberjack F2): `"on"` | `"adjacent"` | `"target"`.
   #[serde(default = "on")]
   location: String,
@@ -623,10 +627,18 @@ struct CheckToml {
   lte: Option<f64>,
 }
 
-/// The spawn effect's TOML shape (food-chain F5/F6).
+/// The spawn effect's TOML shape — a `{ thing, at }` table (food-chain F5/F6) or the
+/// string `"carried"` (inventory F5: spawn the acting pawn's SLOT item beside it).
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum SpawnToml {
+  Carried(String),
+  Thing(SpawnThingToml),
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct SpawnToml {
+struct SpawnThingToml {
   thing: String,
   at: String,
 }
@@ -1140,12 +1152,13 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
         && i.destroy.is_none()
         && i.spawn.is_none()
         && i.remove.is_none()
+        && i.store.is_none()
       {
         errors.push(LoadError {
           file: String::new(),
           message: format!(
             "interaction `{}` authors no effect — at least one of `satisfy`/`move`/`destroy`/\
-             `spawn`/`remove` is required",
+             `spawn`/`remove`/`store` is required",
             i.name
           ),
         });
@@ -1185,12 +1198,13 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
           });
         }
       }
-      if !matches!(i.location.as_str(), "on" | "adjacent" | "target" | "self") {
+      if !matches!(i.location.as_str(), "on" | "adjacent" | "target" | "self" | "slot") {
         errors.push(LoadError {
           file: String::new(),
           message: format!(
             "interaction `{}`: location `{}` — the built rules are `on`, `adjacent`, \
-             `target`, and `self` (input-rework F4 / lumberjack F2 / food-chain I9)",
+             `target`, `self`, and `slot` (input-rework F4 / lumberjack F2 / \
+             food-chain I9 / inventory F5)",
             i.name, i.location
           ),
         });
@@ -1234,27 +1248,54 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
         progress_fill: q.and_then(|q| q.progress_fill).unwrap_or(true),
         cancelable: q.and_then(|q| q.cancelable).unwrap_or(false),
       };
-      // The spawn effect (food-chain F5/F6): the thing must exist; `at` is closed.
-      let spawn = i.spawn.as_ref().map(|s| {
-        if !thing_exists(&s.thing) {
-          errors.push(LoadError {
-            file: String::new(),
-            message: format!(
-              "interaction `{}`: spawn names unknown thing `{}`",
-              i.name, s.thing
-            ),
-          });
+      // The spawn effect: a named thing (food-chain F5/F6 — the thing must exist,
+      // `at` is closed) or `"carried"` (inventory F5 — spawn the SLOT's item, which
+      // only makes sense where a slot IS the carrier, so the location must be `slot`).
+      let spawn = i.spawn.as_ref().map(|s| match s {
+        SpawnToml::Thing(s) => {
+          if !thing_exists(&s.thing) {
+            errors.push(LoadError {
+              file: String::new(),
+              message: format!(
+                "interaction `{}`: spawn names unknown thing `{}`",
+                i.name, s.thing
+              ),
+            });
+          }
+          if s.at != "on" && s.at != "adjacent" {
+            errors.push(LoadError {
+              file: String::new(),
+              message: format!(
+                "interaction `{}`: spawn.at `{}` — `on` or `adjacent` (food-chain F6)",
+                i.name, s.at
+              ),
+            });
+          }
+          SpawnEffect::Thing { thing: s.thing.clone(), at: s.at.clone() }
         }
-        if s.at != "on" && s.at != "adjacent" {
-          errors.push(LoadError {
-            file: String::new(),
-            message: format!(
-              "interaction `{}`: spawn.at `{}` — `on` or `adjacent` (food-chain F6)",
-              i.name, s.at
-            ),
-          });
+        SpawnToml::Carried(word) => {
+          if word != "carried" {
+            errors.push(LoadError {
+              file: String::new(),
+              message: format!(
+                "interaction `{}`: spawn `{word}` — a `{{ thing, at }}` table or the \
+                 string `\"carried\"` (inventory F5)",
+                i.name
+              ),
+            });
+          }
+          if i.location != "slot" {
+            errors.push(LoadError {
+              file: String::new(),
+              message: format!(
+                "interaction `{}`: spawn = \"carried\" requires location = \"slot\" — \
+                 the carried item IS the slot carrier (inventory F5)",
+                i.name
+              ),
+            });
+          }
+          SpawnEffect::Carried
         }
-        SpawnEffect { thing: s.thing.clone(), at: s.at.clone() }
       });
       if let Some(r) = &i.remove {
         if r != "target" {
@@ -1262,6 +1303,19 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
             file: String::new(),
             message: format!(
               "interaction `{}`: remove `{r}` — `target` is the only value (food-chain F5)",
+              i.name
+            ),
+          });
+        }
+      }
+      // The store effect names the CARRIER and nothing else (inventory F4).
+      if let Some(s) = &i.store {
+        if s != "carrier" {
+          errors.push(LoadError {
+            file: String::new(),
+            message: format!(
+              "interaction `{}`: store = `{s}` — `\"carrier\"` is the only target \
+               (inventory F4)",
               i.name
             ),
           });
@@ -1279,6 +1333,7 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
         destroy: i.destroy.clone(),
         spawn,
         remove: i.remove.clone(),
+        store: i.store.clone(),
         location: i.location.clone(),
         duration: i.duration,
         queue,
@@ -2071,7 +2126,10 @@ check = { need = "corpus", lte = 0.0 }
     );
     assert_eq!(ap.trigger_need(), Some("corpus"), "the need check IS the trigger key");
     let ip = b.interaction_params("death").expect("death");
-    assert_eq!(ip.spawn.as_ref().map(|s| (s.thing.as_str(), s.at.as_str())), Some(("meat", "on")));
+    assert_eq!(
+      ip.spawn,
+      Some(crate::loader::SpawnEffect::Thing { thing: "meat".into(), at: "on".into() })
+    );
     assert_eq!(ip.remove.as_deref(), Some("target"));
 
     // Refusals: unknown need; zero ops; a check naming BOTH forms; spawn's unknown
@@ -2103,6 +2161,53 @@ check = { need = "corpus", lte = 0.0 }
     )])
     .unwrap_err();
     assert!(e.iter().any(|e| e.message.contains("`target` is the only value")), "{e:?}");
+  }
+
+  #[test]
+  fn the_inventory_surfaces_round_trip_and_refuse() {
+    // inventory F4/F5: `store = "carrier"`, `location = "slot"`, `spawn = "carried"` —
+    // round-trips first (pick_up + drop shapes verbatim).
+    let text = r##"
+[[interaction]]
+name = "pick_up"
+inputs = ["pawn", "destination"]
+location = "adjacent"
+store = "carrier"
+duration = 10
+
+[[interaction]]
+name = "drop"
+inputs = ["pawn", "slot"]
+location = "slot"
+spawn = "carried"
+"##;
+    let b = load(&[src("t.toml", text)]).expect("clean load");
+    let pu = b.interaction_params("pick_up").expect("pick_up");
+    assert_eq!(pu.store.as_deref(), Some("carrier"));
+    assert_eq!(pu.location, "adjacent");
+    let dr = b.interaction_params("drop").expect("drop");
+    assert_eq!(dr.spawn, Some(crate::loader::SpawnEffect::Carried));
+    assert_eq!(dr.location, "slot");
+    // The range check: a slot carrier is definitionally the acting pawn's — no gate.
+    assert!(crate::loader::location_in_range("slot", 0));
+
+    // Refusals: store's only value; spawn = "carried" outside a slot location; a
+    // misspelled carried word; the unknown-location message names `slot` now.
+    let e = load(&[src("t.toml", "[[interaction]]\nname = \"i\"\ninputs = [\"pawn\"]\nstore = \"self\"\n")])
+      .unwrap_err();
+    assert!(e.iter().any(|e| e.message.contains("`\"carrier\"` is the only target")), "{e:?}");
+    let e = load(&[src("t.toml", "[[interaction]]\nname = \"i\"\ninputs = [\"pawn\"]\nlocation = \"adjacent\"\nspawn = \"carried\"\n")])
+      .unwrap_err();
+    assert!(e.iter().any(|e| e.message.contains("requires location = \"slot\"")), "{e:?}");
+    let e = load(&[src("t.toml", "[[interaction]]\nname = \"i\"\ninputs = [\"pawn\"]\nlocation = \"slot\"\nspawn = \"carreid\"\n")])
+      .unwrap_err();
+    assert!(
+      e.iter().any(|e| e.message.contains("a `{ thing, at }` table or the string")),
+      "{e:?}"
+    );
+    let e = load(&[src("t.toml", "[[interaction]]\nname = \"i\"\ninputs = [\"pawn\"]\nlocation = \"pocket\"\nstore = \"carrier\"\n")])
+      .unwrap_err();
+    assert!(e.iter().any(|e| e.message.contains("`slot`")), "{e:?}");
   }
 
   #[test]

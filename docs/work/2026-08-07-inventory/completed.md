@@ -34,3 +34,24 @@
   client/core (engine + web), the wasm emit, and `WasmClient.onPawnInventory`.
   Verified in the browser: insert → `{slot:0, item:805372112}`, delete →
   `{item:0}`, both via a live CLI drill against the wolf.
+
+## 2026-08-08 — P2: the corpus and the loader
+
+- Loader: `SpawnEffect` became `Thing { thing, at } | Carried` (TOML untagged —
+  a table or the string `"carried"`), `store: Option<String>` beside `remove`,
+  location `"slot"` in the whitelist + `location_in_range` (definitionally 0,
+  like `self`), spawn-carried-requires-slot-location validation, store's
+  carrier-only validation, effect-required includes store. Round-trip test
+  (pick_up + drop shapes verbatim) + 4 refusals; 62 lib tests green. The worker's
+  spawn arm mechanically rebound to `SpawnEffect::Thing`.
+- Content: need `inventory` (0..16, deplete 0 — FREE slots per F1); leveled trait
+  `inventory` (`max = [6.0]`); affordance `can_carry = { need = "inventory",
+  gt = 0 }`; interactions `pick_up` (adjacent, can_carry, `store = "carrier"`,
+  duration 10) and `drop` (location slot, `spawn = "carried"`, inputs
+  [pawn, slot]); humans gained the need + trait level 1 + the drop binding;
+  pick_up authored on reed, rock, logs, torch, torch_blue, meat, plant_matter
+  (F6 — rooted things excluded). Golden re-blessed showing exactly the rows.
+- The mint law held with NO new rule (the free-slots inversion):
+  `the_inventory_need_mints_all_slots_free` proves a human mints 6.0 on the
+  0..16 encoding. Master seeds 231 defs (+5); worker loads 9 interactions (+2);
+  wasm/webgl/edge/npc rebuilt; both npc brains re-adopted on the new corpus.

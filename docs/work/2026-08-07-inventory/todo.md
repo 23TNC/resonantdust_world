@@ -36,17 +36,21 @@ in [`forks.md`](forks.md) (F#), the anticipated-issue inventory in
 
 ## P2 — the corpus and the loader
 
-- [ ] Loader: location rule `"slot"`; effect `spawn = "carried"` + `store =
+- [x] Loader: location rule `"slot"`; effect `spawn = "carried"` + `store =
       "carrier"`; refusals for misuse (store on a tile carrier, carried without a
-      slot location…). Acceptance: round-trip + refusal tests green.
-- [ ] Content: need `inventory` (0..16, deplete 0 — FREE slots, F1); leveled trait
+      slot location…). Acceptance: round-trip + refusal tests green. → SpawnEffect
+      became Thing|Carried (untagged TOML), store beside remove, slot in the
+      whitelist + range check; 4 refusals tested; 62 lib tests green.
+- [x] Content: need `inventory` (0..16, deplete 0 — FREE slots, F1); leveled trait
       `inventory` (max = [6]); humans get {inventory, 1}; affordance can_carry =
       `{need inventory, gt 0}`. Acceptance: golden diff = the authored rows; mint
-      unit test — a human mints 6 free, 0 rows (I2).
-- [ ] Content: `pick_up` (adjacent, can_carry, store, duration 10) on meat/
+      unit test — a human mints 6 free, 0 rows (I2). → golden shows exactly the
+      rows; `the_inventory_need_mints_all_slots_free` proves 6.0 on 0..16.
+- [x] Content: `pick_up` (adjacent, can_carry, store, duration 10) on meat/
       plant_matter/logs/rock/reed/torch/torch_blue (F6); `drop` (location slot,
       spawn carried) on human kinds. Acceptance: golden re-blessed; six consumers
-      rebuilt (I8).
+      rebuilt (I8). → blessed; master seeds 231 (+5), worker 9 interactions (+2);
+      both npc brains healthy on the new corpus.
 
 ## P3 — the worker executes
 

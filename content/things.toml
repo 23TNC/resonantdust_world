@@ -75,6 +75,8 @@ type = "biome-thing"
 kind = "reed"
 subType = ["default"]
 variant = ["0","1","2","3","4","5","6","7","8","9","10","11","12","13","14","15"]
+# Portable (inventory F6): a carrier may pick it up into a slot.
+interactions = [ { name = "pick_up" } ]
 
   [[thing.part]]
   texture = "white"
@@ -90,6 +92,8 @@ type = "biome-thing"
 kind = "rock"
 subType = ["default"]
 variant = ["0","1","2","3","4","5","6","7","8","9","10","11","12","13","14","15"]
+# Portable (inventory F6).
+interactions = [ { name = "pick_up" } ]
 
   [[thing.part]]
   texture = "white"
@@ -167,6 +171,9 @@ kind = "torch"
 subType = ["default"]
 variant = ["0"]
 light = { r = 1.0, g = 0.85, b = 0.55, intensity = 1.0, reach = 16.0, radius = 0.35, height = 2.5, flicker = true }
+# Portable (inventory F6) — picking a torch up takes its LIGHT out of the world
+# through the same tombstone lane; a nice stress of the render path.
+interactions = [ { name = "pick_up" } ]
 
   [[thing.part]]
   texture = "white"
@@ -183,6 +190,8 @@ kind = "torch_blue"
 subType = ["default"]
 variant = ["0"]
 light = { r = 0.55, g = 0.75, b = 1.0, intensity = 1.0, reach = 16.0, radius = 0.35, height = 2.5, flicker = true }
+# Portable (inventory F6).
+interactions = [ { name = "pick_up" } ]
 
   [[thing.part]]
   texture = "white"
@@ -204,9 +213,11 @@ variant = ["0"]
 # offers Drink (metabolism passes) and the worker refuses (no row): the drift class.
 # lumberjack F4: every human fells (dev posture, like walks); wolves refuse by the gate.
 # food-chain: humans hunger + carry health (corpus 1), forage, and eat BOTH (omnivore).
-needs = ["thirst", "hunger", "corpus"]
-traits = ["biological_lifeform", { name = "walks", level = 1 }, { name = "lumberjack", level = 1 }, { name = "corpus", level = 1 }, "forager", "omnivore"]
-interactions = [ { name = "death" } ]
+# inventory F1: the leveled inventory trait caps the FREE-SLOTS need at 6; the mint
+# births all slots free. drop rides the pawn's OWN kind (the slot pie menu offers it).
+needs = ["thirst", "hunger", "corpus", "inventory"]
+traits = ["biological_lifeform", { name = "walks", level = 1 }, { name = "lumberjack", level = 1 }, { name = "corpus", level = 1 }, { name = "inventory", level = 1 }, "forager", "omnivore"]
+interactions = [ { name = "death" }, { name = "drop" } ]
 
   [[thing.part]]
   tint = "#ffffff"
@@ -239,9 +250,9 @@ type = "pawn"
 kind = "male"
 subType = ["human"]
 variant = ["0"]
-needs = ["thirst", "hunger", "corpus"]
-traits = ["biological_lifeform", { name = "walks", level = 1 }, { name = "lumberjack", level = 1 }, { name = "corpus", level = 1 }, "forager", "omnivore"]
-interactions = [ { name = "death" } ]
+needs = ["thirst", "hunger", "corpus", "inventory"]
+traits = ["biological_lifeform", { name = "walks", level = 1 }, { name = "lumberjack", level = 1 }, { name = "corpus", level = 1 }, { name = "inventory", level = 1 }, "forager", "omnivore"]
+interactions = [ { name = "death" }, { name = "drop" } ]
 
   [[thing.part]]
   tint = "#ffffff"
@@ -279,6 +290,8 @@ type = "biome-thing"
 kind = "logs"
 subType = ["default"]
 variant = ["0"]
+# Portable (inventory F6): hauling starts here.
+interactions = [ { name = "pick_up" } ]
 
   [[thing.part]]
   texture = "white"
@@ -317,7 +330,7 @@ type = "biome-thing"
 kind = "meat"
 subType = ["default"]
 variant = ["0"]
-interactions = [ { name = "eat_meat", magnitude = 30 } ]
+interactions = [ { name = "eat_meat", magnitude = 30 }, { name = "pick_up" } ]
 
   [[thing.part]]
   texture = "white"
@@ -334,7 +347,7 @@ type = "biome-thing"
 kind = "plant_matter"
 subType = ["default"]
 variant = ["0"]
-interactions = [ { name = "eat_plant_matter", magnitude = 30 } ]
+interactions = [ { name = "eat_plant_matter", magnitude = 30 }, { name = "pick_up" } ]
 
   [[thing.part]]
   texture = "white"
