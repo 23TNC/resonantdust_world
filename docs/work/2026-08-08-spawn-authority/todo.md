@@ -74,6 +74,7 @@ in [`forks.md`](forks.md) (F#), the anticipated-issue inventory in
       Conditions land in issues.md; cheap causes fixed, structural ones named.
       Acceptance: issues.md holds identified conditions + evidence, or the
       honest no-repro record with what was tried.
-- [ ] Docs + memory truth pass + a stack bounce with arcs green; **the user's
+- [x] Docs + memory truth pass + a stack bounce with arcs green; **the user's
       eyes close the stream**. Acceptance: docs-check green; captures + logs in
-      completed.md.
+      completed.md. (Everything but the eyes is done — the final bounce
+      re-adopted the whole cast with zero new mints; B1 remains the user's.)
