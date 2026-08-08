@@ -20,7 +20,7 @@ varies is the pipeline.** `cn` must not go below 0.5 ([README](README.md) future
 
 ## P2 — Anchor every view on every other view
 
-- [ ] Put EAST through the same graph as south and north ([I6](issues.md#i6) — east is the outlier in 11/12 sets because it alone skips the IP-Adapter). Acceptance: the spread after east is self-anchored, against the 23.4 baseline.
+- [x] Put EAST through the same graph as south and north ([I6](issues.md#i6) — east is the outlier in 11/12 sets because it alone skips the IP-Adapter). Acceptance: the spread after east is self-anchored, against the 23.4 baseline.
 - [ ] Sweep `weight_type` over `linear` / `composition` / `strong style transfer` against the `style transfer` control ([I10](issues.md#i10) lists the full enum). Acceptance: four labels on the pinned set; the best mean spread recorded with its sheet.
 - [ ] Anchor south and north on EACH OTHER via `IPAdapterBatch`. DEPRIORITISED by [I6](issues.md#i6): they already agree at 7.7 mean against a 9.0 ceiling. Acceptance: it improves |s-n| or is dropped as unnecessary.
 - [ ] Try `IPAdapterStyleComposition` with the hero as style and the template as composition. Acceptance: one sheet; this is the node that matches the actual division of labour, so it gets its own trial.

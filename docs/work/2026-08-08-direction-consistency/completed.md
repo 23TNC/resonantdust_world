@@ -168,3 +168,40 @@ _Dated entries: what landed and **how it was verified**. Newest last._
     and the stale path was the whole story.
   - **A transient HTTP failure** to ComfyUI killed two of bear/9103's directions. Regenerated;
     unrelated to the prompt form.
+
+## P2 — Anchoring
+
+- **2026-08-08 · P2.1 · East self-anchoring does NOT close the east gap. [I6](issues.md#i6)'s
+  observation stands; its MECHANISM is falsified.** 48 generations (the extra east pass costs one
+  per set).
+
+  | | mean spread | worst | clears 9.0 | `e` is extreme | `\|e−mean(s,n)\|` | `\|s−n\|` | `\|s−n\|≤9` |
+  |---|---|---|---|---|---|---|---|
+  | baseline | 23.4 | 61.0 | 2/12 | 11/12 | 19.3 | 7.7 | 8/12 |
+  | east-anchor | 22.3 | 54.7 | 2/12 | 10/12 | **19.6** | **4.9** | **10/12** |
+
+  Mean moved −1.1 with 6 cells better and 6 worse — a coin flip. **The east gap is unchanged
+  (19.3 → 19.6).** I6 proposed that east is the outlier *because* it alone skips the IP-Adapter;
+  putting it through the same graph moved that number not at all, so the graph difference is **not
+  the cause**. What did improve is `|s−n|`, 7.7 → 4.9, now clearing the ceiling in 10 of 12 — the
+  adapter tightens the views it touches, which was never the problem.
+
+  **A second hypothesis of mine, also tested and also wrong:** that the metric was confounded by
+  silhouette coverage (east has the largest subject, so its dark outline is a smaller fraction of
+  its area). Measured `corr(coverage, luminance) = +0.154` across all 36 sprites — too weak to
+  explain a 19-point gap. The ruler is not the problem.
+
+  **What the sheet shows, and it is not subtle drift.** `.staging/p21-east-anchor.png`, bear 9101:
+  **east is a cream-bodied animal with a large orange tail while south and north are orange-brown**.
+  These are different-coloured animals, not one animal with a luminance wobble. Colour identity is
+  *content*, and `weight_type: "style transfer"` discards content by design — so
+  [I3](issues.md#i3), not I6, is the live hypothesis, and [P2.2](todo.md) is the indicated next
+  move rather than a speculative one.
+
+- **2026-08-08 · P2 · PARKED on the user's redirect.** *"this bear looks like a wolf... and our
+  rotational consistency is getting much worse. Lets take a step back."* Both observations are
+  correct and the first is a defect I built: `consistency_set.json` points **every** subject at the
+  **wolf** template, so a bear can only ever come out wolf-shaped. I recorded that as a deliberate
+  limit when pinning the set — it makes the interior numbers comparable across cells — and it also
+  makes species fidelity unmeasurable, which is the more important property. Successor stream:
+  [`2026-08-08-east-pipeline`](../2026-08-08-east-pipeline/README.md).
