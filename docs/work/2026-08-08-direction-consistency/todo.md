@@ -14,8 +14,8 @@ varies is the pipeline.** `cn` must not go below 0.5 ([README](README.md) future
 
 ## P1 — The prompt form (cheapest lever, already evidenced)
 
-- [ ] Replace `generate.py`'s prose `STYLE` with the LoRA's trained tag form, per direction. Acceptance: the emitted positive prompt for `--dir s` opens `rd_south, rd_south, rd_south, rd_style, rd_animal`.
-- [ ] Keep the prose form reachable behind a flag for non-tag LoRAs. Acceptance: `--style-form prose|tags` selects; `e07` and any future prose-captioned model still work.
+- [x] Replace `generate.py`'s prose `STYLE` with the LoRA's trained tag form, per direction. Acceptance: the emitted positive prompt for `--dir s` opens `rd_south, rd_south, rd_south, rd_style, rd_animal`.
+- [x] Keep the prose form reachable behind a flag for non-tag LoRAs. Acceptance: `--style-form prose|tags` selects; `e07` and any future prose-captioned model still work.
 - [ ] Re-measure the spread with tags versus prose on the pinned set. Acceptance: two numbers; today's evidence says the cyan/peach artifacts vanish ([I1](issues.md#i1)) — confirm it moves the spread or say it does not.
 
 ## P2 — Anchor every view on every other view

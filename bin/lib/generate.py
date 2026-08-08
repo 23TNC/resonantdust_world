@@ -55,8 +55,54 @@ FACE = {
   "s": "facing down toward the viewer, front view, head chest and face visible",
   "n": "facing up away from the viewer, back view, seen from behind, back of head body and tail toward the camera",
 }
-STYLE = ("oblique top-down view game creature sprite, {face}, flat cel shading, bold dark outline, "
-         "hand-painted 2D game art, cartoon, on a plain solid white background")
+# The style boilerplate appended to --positive. TWO FORMS, because the right one depends on how the
+# LoRA in use was CAPTIONED (work/2026-08-08-direction-consistency I1):
+#
+#   prose - English sentences. Correct for e07 and anything else trained on natural-language
+#           captions. This was the only form until 2026-08-08.
+#   tags  - the tag list the style-only corpus was captioned with, direction tripled at the head.
+#           Correct for the rd_style family (run-16 onward), which has NEVER SEEN the prose words.
+#
+# Measured on r20g07, same seed and knobs, prompt text the only difference: the prose form produced
+# cyan rim-light and peach hindquarter artifacts in all three directions and a hollow unfilled tail
+# on south, with saturation incoherent ACROSS directions of one animal (48.0 / 20.4 / 28.3). The tag
+# form produced a clean wolf in all three (4.4 / 6.4 / 4.1). The artifacts are the base model's
+# priors filling in for words the LoRA has no response to.
+STYLE_PROSE = ("oblique top-down view game creature sprite, {face}, flat cel shading, bold dark outline, "
+               "hand-painted 2D game art, cartoon, on a plain solid white background")
+# Direction phrases exactly as the corpus was captioned (style-not-species F1 addendum whitelist).
+STYLE_TAG_PHRASE = {
+  "e": "side profile, side view, facing right",
+  "s": "front view, facing the viewer, facing forward",
+  "n": "back view, facing away, seen from behind",
+}
+STYLE_TAG_DIR = {"e": "rd_east", "s": "rd_south", "n": "rd_north"}
+# The body plan is a CAPTION token the LoRA discriminates on (six plans, 27-498 examples each), not
+# decoration. Overridable per-subject; quadruped is the corpus's dominant plan at 498/701.
+STYLE_TAG_BODY_PLAN = "rd_quadruped"
+
+def style_for(d, form, body_plan=None, override=None):
+    """The style boilerplate for direction `d`.
+
+    `override` (--style) wins outright and is passed through .format(face=...) so the existing
+    '{face}' escape keeps working for callers that use it."""
+    if override is not None:
+        return override.format(face=FACE[d]) if "{face}" in override else override
+    if form == "prose":
+        return STYLE_PROSE.format(face=FACE[d])
+    t = STYLE_TAG_DIR[d]
+    return (f"{t}, {t}, {t}, rd_style, rd_animal, {body_plan or STYLE_TAG_BODY_PLAN}, "
+            f"{STYLE_TAG_PHRASE[d]}, single creature, full body")
+
+STYLE = STYLE_PROSE          # retained for callers/tests that import it; --style still overrides
+# Default form. `tags` because every LoRA this project trains from run-16 onward is tag-captioned
+# (the style-not-species thesis produces nothing else). `--style-form prose` restores the old
+# behaviour for e07 and any future natural-language model.
+STYLE_FORM = "tags"
+STYLE_OVERRIDE = None
+# LoRAs known to be PROSE-captioned. Used only to warn on an obvious mismatch — a wrong style form
+# is silent in the output and shows up as artifacts nobody attributes to the prompt (I1).
+PROSE_LORAS = ("rd_quadruped_e07",)
 GENERIC_NEG = "realistic, photo, photorealistic, watermark, text, signature, 3d render, blurry, jpeg artifacts"
 
 # ---------------------------------------------------------------- http helpers
@@ -255,7 +301,7 @@ def resolve_auto(pos_base, neg, seed, probe_dir="e"):
     costs one extra generation instead of three AND keeps the e/s/n set coherent, since a set built
     from three different reference animals would inherit three different body plans."""
     import silhouette_bank
-    full = f"{pos_base}, {STYLE.format(face=FACE[probe_dir])}"
+    full = f"{pos_base}, {style_for(probe_dir, STYLE_FORM, None, STYLE_OVERRIDE)}"
     raw = _run(graph_hero(full, neg, None, None, seed))          # txt2img, no control
     probe = Image.open(io.BytesIO(raw)).convert("RGB")
     hits = silhouette_bank.nearest(probe, probe_dir, k=5)
@@ -535,7 +581,7 @@ def graph_ip(pos, neg, ref_name, edge_name, hero_name, seed):
 
 # ---------------------------------------------------------------- main
 def main():
-    global DN, CN, CN_END, CFG, LORA, LORA_STRENGTH, STYLE   # CLI overrides of the module defaults
+    global DN, CN, CN_END, CFG, LORA, LORA_STRENGTH, STYLE_FORM, STYLE_OVERRIDE   # CLI overrides of the module defaults
     ap = argparse.ArgumentParser(prog="art generate", description="Generate directional creature sprites from a template set.")
     ap.add_argument("--from", dest="from_path", required=True, help="kind path under textures/ holding the kind-level template (type/subtype/kind, e.g. pawn/animal/wolf)")
     ap.add_argument("--to", dest="to_path", default=None, help="output kind path under textures/ (default: same as --from)")
@@ -568,6 +614,10 @@ def main():
     ap.add_argument("--lora", default=None, help="style LoRA to apply, as ComfyUI sees it under models/loras (e.g. rd_quadruped_e07.safetensors); applied to BOTH the model and the text encoders")
     ap.add_argument("--lora-strength", type=float, default=1.0, help="LoRA strength for model+clip (default 1.0; try 0.6-0.9 if it overpowers the template)")
     ap.add_argument("--style", default=None, help="override the style boilerplate appended to --positive (use the LoRA's trained tags, e.g. 'rd_style, rd_animal, rd_quadruped, {face}')")
+    ap.add_argument("--style-form", choices=["tags", "prose"], default=STYLE_FORM,
+                    help=f"which style boilerplate to append (default {STYLE_FORM}). 'tags' = the caption form the rd_style LoRA family was trained on; 'prose' = the English boilerplate correct for e07 and other natural-language-captioned models. Ignored when --style is given.")
+    ap.add_argument("--body-plan", default=STYLE_TAG_BODY_PLAN,
+                    help=f"body-plan caption token for --style-form tags (default {STYLE_TAG_BODY_PLAN}); the corpus discriminates six, so a biped rendered as rd_quadruped asks for the wrong silhouette")
     ap.add_argument("--metrics", dest="metrics", action="store_true", default=True,
                     help="report per-direction interior luminance/saturation/coverage and the cross-direction luminance SPREAD (default on — no sheet should be judged by eye alone)")
     ap.add_argument("--no-metrics", dest="metrics", action="store_false",
@@ -577,7 +627,17 @@ def main():
     d0 = {"dn": DN, "cn": CN, "cn-end": CN_END}   # module defaults, for the --control none notice
     DN, CN, CN_END, CFG = args.dn, args.cn, args.cn_end, args.cfg
     LORA, LORA_STRENGTH = args.lora, args.lora_strength
-    if args.style: STYLE = args.style
+    STYLE_FORM = args.style_form
+    STYLE_OVERRIDE = args.style
+    # A wrong style form is INVISIBLE in the output — it shows up as artifacts nobody attributes to
+    # the prompt (I1). So the form is always echoed, and an obvious mismatch is called out.
+    if STYLE_OVERRIDE:
+        print(f"  style -> --style override (form {STYLE_FORM} ignored)")
+    else:
+        print(f"  style -> {STYLE_FORM}" + (f" ({args.body_plan})" if STYLE_FORM == "tags" else ""))
+        if LORA and STYLE_FORM == "tags" and any(p in LORA for p in PROSE_LORAS):
+            print(f"generate: {LORA} is PROSE-captioned but --style-form is 'tags'; "
+                  f"pass --style-form prose or it will be prompted in a language it never saw", file=sys.stderr)
 
     hsym = {c for c in args.hsym.lower() if not c.isspace() and c != ","}
     vsym = {c for c in args.vsym.lower() if not c.isspace() and c != ","}
@@ -665,7 +725,11 @@ def main():
                 edge_name = _upload(edge_map(tpl, args.edge_thresh), f"artgen_{cseed}_{d}_edge.png")
             else:
                 ref_name = edge_name = None      # template-free: no i2i latent, no ControlNet
-            full_pos = f"{pos}, {STYLE.format(face=FACE[d])}"
+            full_pos = f"{pos}, {style_for(d, STYLE_FORM, args.body_plan, STYLE_OVERRIDE)}"
+            # Echo what is actually SENT. The style form is invisible in the output and its failure
+            # mode is artifacts nobody attributes to the prompt (I1) — so the prompt is not a thing
+            # to be inferred from flags.
+            print(f"  prompt[{d}] -> {full_pos}")
             if d == "e" or hero_name is None:
                 raw = _run(graph_hero(full_pos, neg, ref_name, edge_name, cseed))
             else:
