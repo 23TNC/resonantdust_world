@@ -28,12 +28,16 @@ samples of the depth composite at the fragment's uv + dir*step*uUvPerWorld.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 from pathlib import Path
 
 import numpy as np
 from PIL import Image, ImageDraw
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import texpath
 
 
 # ---- normal -> height (copied verbatim from marigold/normal_depth.py so the proto is
@@ -116,16 +120,26 @@ def height_to_ao(h: np.ndarray, mask: np.ndarray, *, height_scale: float,
 # ---- discovery (mirrors _find_diffuse: the variant-leaf diffuse.png) -----------------
 
 def find_diffuse(paths: list[Path]) -> list[Path]:
+    """The variant-leaf diffuses under `paths` — `diffuse.<dir>.<part>.png` (texpath), the FOLDED
+    leaf name. This read used to glob the pre-fold flat `diffuse.png`, so it matched nothing after
+    the fold and `art ao` could not run at all: every occlusion map in the tree is older than that
+    migration. Discovery and the co-located writes below must share one naming source of truth."""
     out: list[Path] = []
     for p in paths:
         if p.is_dir():
-            out += sorted(p.rglob("diffuse.png"))
-        elif p.is_file() and p.name == "diffuse.png":
+            out += [Path(m) for m in texpath.find_maps(str(p), "diffuse")]
+        elif p.is_file() and texpath.is_map(str(p), "diffuse"):
             out.append(p)
         else:
-            print(f"depth_ao: not a directory or a diffuse.png file: {p}", file=sys.stderr)
+            print(f"depth_ao: not a directory or a diffuse.<dir>.<part>.png file: {p}",
+                  file=sys.stderr)
             return []
     return out
+
+
+def sibling(diffuse: Path, map: str) -> Path:
+    """The co-located `<map>.<dir>.<part>.png` beside a diffuse, at the SAME dir/part."""
+    return Path(texpath.sibling(str(diffuse), map))
 
 
 def _panel(arr_or_img, label: str, scale: int) -> Image.Image:
@@ -153,10 +167,6 @@ def main() -> int:
     ap.add_argument("--power", type=float, default=1.0, help="contrast gamma on AO (default 1.0)")
     ap.add_argument("--no-pack-normal", dest="pack_normal", action="store_false",
                     help="only write occlusion.png; do NOT pack AO into normal.png's alpha")
-    ap.add_argument("--surface", action="store_true",
-                    help="write the co-located surface.png (R=integrated height, G=AO, B=open) "
-                         "and do NOT pack AO into normal.a — the successor to alpha-packing. "
-                         "Alpha carries the silhouette (opaque interior), so it loads premultiply-safe.")
     ap.add_argument("--pack-only", action="store_true",
                     help="skip AO computation; pack an EXISTING occlusion.png into normal.a. "
                          "The maps pipeline computes AO off the UNTILTED normal, then packs "
@@ -187,7 +197,7 @@ def main() -> int:
     t0 = time.time()
     ok = missing = 0
     for i, d in enumerate(diffuse, 1):
-        nrm_path = d.with_name("normal.png")
+        nrm_path = sibling(d, "normal")
         if not nrm_path.exists():
             print(f"  [{i}/{len(diffuse)}] {d.parent.name}: no co-located normal.png — run 'art normal' first",
                   file=sys.stderr)
@@ -200,7 +210,7 @@ def main() -> int:
             alpha = alpha.resize(normal.size, Image.NEAREST)
         mask = np.asarray(alpha) > 16
 
-        op = d.with_name("occlusion.png")
+        op = sibling(d, "occlusion")
         height = None
         if args.pack_only:
             # Reuse the AO already measured off the untilted normal (occlusion.png).
@@ -222,18 +232,12 @@ def main() -> int:
             ao8 = (np.clip(ao, 0.0, 1.0) * 255.0).round().astype(np.uint8)
             Image.fromarray(ao8, mode="L").save(op)   # standalone AO map (unfloored, opaque)
 
-        # The successor to alpha-packing: one RGB(A) map holding R=height, G=AO, B=open.
-        # Alpha is the SILHOUETTE (opaque interior, 0 outside), so a premultiplied upload
-        # leaves the interior data intact — no straight-alpha handling needed. `height`
-        # is None under --pack-only (no integrated relief), so surface needs a real compute.
-        if args.surface and height is not None:
-            h8 = (np.clip(height, 0.0, 1.0) * 255.0).round().astype(np.uint8)
-            zero = np.zeros_like(h8)
-            sil = np.where(mask, np.uint8(255), np.uint8(0))
-            surf = np.dstack([h8, ao8, zero, sil])     # R=height, G=AO, B=open, A=silhouette
-            Image.fromarray(surf, "RGBA").save(d.with_name("surface.png"))
-
-        what = "surface.png" if args.surface else ("normal.a" if args.pack_only else "occlusion.png")
+        # This module writes occlusion.png and NOTHING else. It used to also assemble a
+        # `surface.png` under --surface, at a layout that contradicted the one `bin/art`
+        # `_surface_kind` writes (R=height/G=AO/B=zeros/A=silhouette vs R/G/B and no alpha) —
+        # two writers for one map, and the loser's B=0 renders the sprite invisible. Deleted
+        # 2026-08-08 (surface-channels F2); `_surface_kind` is the only assembler.
+        what = "normal.a" if args.pack_only else "occlusion.png"
         tail = ""
         # Pack AO into the co-located normal's ALPHA (normal.rgb untouched). Alpha carries
         # AO * silhouette: outside the sprite -> 0 (uncovered, transparent); inside -> AO,
@@ -242,7 +246,7 @@ def main() -> int:
         # which needs alpha > 0 (a fully-occluded pixel at alpha 0 is indistinguishable from
         # an uncovered one and would lose its normal). The standalone occlusion.png keeps
         # the true unfloored AO. See docs/lighting.md.
-        if args.pack_normal and not args.surface:
+        if args.pack_normal:
             floored = np.where(mask, np.maximum(np.clip(ao, 0.0, 1.0), args.ao_floor), 0.0)
             packed_a = (floored * 255.0).round().astype(np.uint8)
             rgba = np.dstack([np.asarray(normal), packed_a])          # normal.rgb + AO alpha
@@ -256,7 +260,7 @@ def main() -> int:
                 _panel(h8, "height (integrated)", scale),
                 _panel(ao8, "AO (depth-derived)", scale),
             ]
-            alb_path = d.with_name("albedo.png")
+            alb_path = sibling(d, "albedo")
             if alb_path.exists():
                 alb = np.asarray(Image.open(alb_path).convert("RGB")).astype(np.float64)
                 lit = (alb * ao[..., None]).clip(0, 255).astype(np.uint8)
@@ -270,7 +274,7 @@ def main() -> int:
             for p in panels:
                 sheet.paste(p, (x, gap))
                 x += p.width + gap
-            cp = d.with_name("occlusion-compare.png")
+            cp = texpath.leaf_file(str(d), "occlusion-compare", "png")
             sheet.save(cp)
             tail += f" (+{cp.name})"
 

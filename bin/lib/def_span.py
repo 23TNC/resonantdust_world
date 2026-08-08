@@ -43,6 +43,9 @@ NUM_RE = re.compile(r'^\s*(\w+)\s*=\s*([\d.]+)\s*$')
 # `footprint = { w = 1.0, h = 2.0 }` — an inline table, the only one this reads.
 FOOT_RE = re.compile(r'^\s*footprint\s*=\s*\{([^}]*)\}')
 FOOT_KV_RE = re.compile(r'(\w+)\s*=\s*([\d.]+)')
+# `subType = ["default"]` — the first element is the stem's middle segment. An array, so STR_RE
+# (which wants a bare `key = "value"`) cannot see it.
+ARR_RE = re.compile(r'^\s*(\w+)\s*=\s*\[\s*"([^"]*)"')
 
 
 def next_pow2(n):
@@ -61,9 +64,14 @@ def scan(path=None):
     """
     path = path or os.path.join(REPO, "content", "things.toml")
     out = {}
-    for thing_def, parts in _things(path):
+    for thing_def, parts, derived in _things(path):
         for p in parts:
-            stem = p.get("texture")
+            # The stem is DERIVED from the def's taxonomy (`<type>/<subType[0]>/<kind>`) — the
+            # corpus stopped authoring `texture = "<stem>"` on parts when defs became
+            # registry-numbered with a derived taxonomy. An explicit `texture` still wins where
+            # one is authored. Parts of one thing SHARE the stem; they differ by the `.<part>`
+            # filename segment, not by folder.
+            stem = p.get("texture") or derived
             # `white` is the flat placeholder, not a texture tree path — it has no leaf to size.
             if not stem or stem == "white":
                 continue
@@ -87,7 +95,11 @@ def scan(path=None):
 
 
 def _things(path):
-    """[(thing_name, [part, …]), …] — the corpus grouped, with subframe tables skipped."""
+    """[(thing_name, [part, …], derived_stem), …] — the corpus grouped, subframe tables skipped.
+
+    `derived_stem` is `<type>/<subType[0]>/<kind>`, which is what the texture tree is laid out by
+    and what a part with no explicit `texture` resolves to. None when the def names none of the
+    three (nothing in the tree to size)."""
     things, table, cur = [], None, None
     with open(path) as fh:
         for line in fh:
@@ -95,7 +107,7 @@ def _things(path):
             if m:
                 table = m.group(1)
                 if table == "thing":
-                    cur = ["?", []]
+                    cur = ["?", [], {}]
                     things.append(cur)
                 elif table == "thing.part" and cur is not None:
                     cur[1].append({"footprint": [1.0, 1.0]})
@@ -106,6 +118,11 @@ def _things(path):
                 s = STR_RE.match(line)
                 if s and s.group(1) == "name":
                     cur[0] = s.group(2)
+                if s and s.group(1) in ("type", "kind"):
+                    cur[2][s.group(1)] = s.group(2)
+                a = ARR_RE.match(line)
+                if a and a.group(1) == "subType":
+                    cur[2]["subType"] = a.group(2)
             elif table == "thing.part" and cur[1]:
                 part = cur[1][-1]
                 s = STR_RE.match(line)
@@ -119,7 +136,13 @@ def _things(path):
                     for k, v in FOOT_KV_RE.findall(f.group(1)):
                         if k in ("w", "h"):
                             part["footprint"][0 if k == "w" else 1] = float(v)
-    return [(name, parts) for name, parts in things]
+    return [(name, parts, _stem_of(tax)) for name, parts, tax in things]
+
+
+def _stem_of(tax):
+    """`<type>/<subType[0]>/<kind>` — the texture tree path a def's art lives under, or None."""
+    t, s, k = tax.get("type"), tax.get("subType"), tax.get("kind")
+    return "/".join((t, s, k)) if t and s and k else None
 
 
 def span_for(stem, table=None):
