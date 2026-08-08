@@ -27,7 +27,7 @@ import { SQUARE } from "../../game/viewport/squareMath";
 import { SelectionModel, type Selection } from "../../game/world/SelectionModel";
 import { PieMenu, type PieMenuOption } from "../../game/panels/PieMenu";
 import { tileToPosition, composeInteraction } from "../../client/WasmClient";
-import type { OutlineItem } from "../../game/viewport/outlineOverlay";
+import type { OutlineItem, OutlinePart } from "../../game/viewport/outlineOverlay";
 import { onContentReloaded, getContent } from "../../game/definitions/contentBoot";
 import { definitionRegistry } from "../../game/definitions/definitionRegistry";
 import { parseUrl, type UrlCommand } from "../../debug/urlParams";
@@ -664,9 +664,10 @@ export class WorldScene extends Scene {
     return this.panel.view.screenToWorld(cx - r.left, cy - r.top);
   }
 
-  /** ui-select P1: rebuild the outline set from the selection — per frame, because a selected
-   *  pawn's prim moves. Sprite mode with the surface frame (silhouette outline); box mode for
-   *  tiles and anything whose surface hasn't resolved. */
+  /** ui-select P1 / bug-sweep F4: rebuild the outline set from the selection — per frame,
+   *  because a selected pawn's prims move. A multi-prim OBJECT becomes ONE item whose parts
+   *  form a UNION silhouette (the head occludes the body's edge — the user's neck test); box
+   *  mode for tiles and anything whose surface hasn't resolved. */
   private syncOutlines(): void {
     const items: OutlineItem[] = [];
     for (const s of this.selection.all) {
@@ -674,8 +675,6 @@ export class WorldScene extends Scene {
         items.push({ x: s.x * SQUARE, y: s.y * SQUARE, w: SQUARE, h: SQUARE, mode: "box" });
         continue;
       }
-      // human-pawns-redux P1 (I4): a pawn outlines EVERY part (a human's head with its
-      // body); things stay single-prim.
       const prims = [];
       if (s.kind === "pawn") {
         for (const id of this.moverLayer.partPrimIdsOf(s.entity)) {
@@ -687,13 +686,29 @@ export class WorldScene extends Scene {
         if (p) prims.push(p);
       }
       // despawned/streamed out — outline simply absent until it returns
+      const parts: OutlinePart[] = [];
+      let bx0 = Infinity, by0 = Infinity, bx1 = -Infinity, by1 = -Infinity;
       for (const prim of prims) {
-        let frame;
-        if (prim.textureName) {
-          const surf = this.ctx.textureResolver.resolve(prim.textureName, "surface", prim.cell)?.frame;
-          if (surf) frame = { source: surf.source, x: surf.x, y: surf.y, w: surf.w, h: surf.h };
-        }
-        items.push({ x: prim.x, y: prim.y, w: prim.width, h: prim.height, mode: "sprite", frame, flip: prim.flipX });
+        if (!prim.textureName) continue;
+        const surf = this.ctx.textureResolver.resolve(prim.textureName, "surface", prim.cell)?.frame;
+        if (!surf) continue;
+        parts.push({
+          x: prim.x, y: prim.y, w: prim.width, h: prim.height,
+          frame: { source: surf.source, x: surf.x, y: surf.y, w: surf.w, h: surf.h },
+          flip: prim.flipX,
+        });
+        bx0 = Math.min(bx0, prim.x); by0 = Math.min(by0, prim.y);
+        bx1 = Math.max(bx1, prim.x + prim.width); by1 = Math.max(by1, prim.y + prim.height);
+      }
+      if (parts.length > 0) {
+        // The union bbox, padded so the ring at the extremes isn't clipped by the quad.
+        const PAD = 4;
+        items.push({ x: bx0 - PAD, y: by0 - PAD, w: bx1 - bx0 + PAD * 2, h: by1 - by0 + PAD * 2,
+                     mode: "sprite", parts });
+      } else if (prims.length > 0) {
+        // No resolvable surface (a tint-square placeholder): the box ring on the carrier.
+        const p = prims[0];
+        items.push({ x: p.x, y: p.y, w: p.width, h: p.height, mode: "box" });
       }
     }
     this.panel.view.setOutlines(items);

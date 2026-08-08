@@ -67,14 +67,19 @@ in [`forks.md`](forks.md) (F#), the anticipated-issue inventory in
 
 ## P4 — outlines occlude
 
-- [ ] OutlineOverlay: stamp ALL of the selected object's prims into ONE mask
+- [x] OutlineOverlay: stamp ALL of the selected object's prims into ONE mask
       (sampling exactly as the draw — I5), edge-detect the UNION (F4). Acceptance:
       the neck test — a selected two-part human shows one ring hugging the
       composite silhouette; no line crosses the neck (capture vs the user's
-      screenshot).
-- [ ] Regression: single-prim outlines (wolf, tile squares) unchanged; multi-select
+      screenshot). → one item per OBJECT (union bbox quad, ≤4 parts — the
+      primitive-graph law), the frag lights only outside-ALL + adjacent-to-ANY
+      (per-part frames/rects/flips, ES 3.00 constant-indexed samplers); captured:
+      the ring hugs head+body, the neck is clean.
+- [x] Regression: single-prim outlines (wolf, tile squares) unchanged; multi-select
       outlines each object's own union. Acceptance: captures of wolf + a
-      two-object selection.
+      two-object selection. → the wolf's silhouette ring unchanged (captured);
+      tiles keep box mode; a surface-less placeholder falls back to a box ring
+      on its carrier.
 
 ## P5 — the vanishing wolf, and the verdict
 

@@ -64,6 +64,9 @@ export class Program {
   uVec4Array(name: string, data: Float32Array): void {
     this.gl.uniform4fv(this.loc(name), data);
   }
+  uIntArray(name: string, data: Int32Array): void {
+    this.gl.uniform1iv(this.loc(name), data);
+  }
   uMat3(name: string, m: Float32Array): void {
     this.gl.uniformMatrix3fv(this.loc(name), false, m);
   }
