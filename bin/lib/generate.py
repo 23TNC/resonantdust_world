@@ -461,6 +461,32 @@ def edge_map(rgb, thresh=30):
     e = (np.array(rgb.convert("L").filter(ImageFilter.FIND_EDGES)) > thresh).astype(np.uint8) * 255
     return Image.fromarray(e).convert("RGB")
 
+def frame_fill(rgb, margin=0.06):
+    """Crop a control image to its subject and pad back to square.
+
+    The i2i latent comes from the CONTROL, so the control's framing decides how many pixels the
+    animal gets. Measured on Wolf_Timber: the east subject spans 510 of 512 px, but SOUTH spans only
+    202 - a narrow column using 39% of the width, which leaves the frontal face about 100px to be
+    drawn in. Cropping to the subject and re-squaring hands those same pixels to the animal."""
+    a = np.array(rgb.convert("L")); subj = a < 235
+    ys, xs = np.where(subj)
+    if len(ys) == 0: return rgb
+    y0,y1,x0,x1 = ys.min(), ys.max(), xs.min(), xs.max()
+    side = max(y1-y0+1, x1-x0+1)
+    pad = int(side*margin)
+    side += 2*pad
+    cy, cx = (y0+y1)//2, (x0+x1)//2
+    out = Image.new("RGB", (side, side), (255,255,255))
+    box = rgb.crop((cx-side//2, cy-side//2, cx-side//2+side, cy-side//2+side))
+    out.paste(box, (0,0))
+    return out
+
+def gen_scale(rgb, n):
+    """Resize a control to n x n. SDXL is native at 1024; the bank silhouettes are 512, and since
+    the control becomes the i2i latent, 512 controls mean 512 generations - off-distribution for the
+    base and the usual cause of mangled small features."""
+    return rgb if (not n or rgb.size == (n, n)) else rgb.resize((n, n), Image.LANCZOS)
+
 def silhouette_of(rgba, min_cov=0.02):
     """An RGBA sprite -> its ALPHA as a solid dark shape on white (F6).
 
@@ -640,6 +666,10 @@ def main():
     ap.add_argument("--lora", default=None, help="style LoRA to apply, as ComfyUI sees it under models/loras (e.g. rd_quadruped_e07.safetensors); applied to BOTH the model and the text encoders")
     ap.add_argument("--lora-strength", type=float, default=1.0, help="LoRA strength for model+clip (default 1.0; try 0.6-0.9 if it overpowers the template)")
     ap.add_argument("--style", default=None, help="override the style boilerplate appended to --positive (use the LoRA's trained tags, e.g. 'rd_style, rd_animal, rd_quadruped, {face}')")
+    ap.add_argument("--gen-size", type=int, default=0,
+                    help="resize the CONTROL to N x N before generating, which sets the generation resolution (the control becomes the i2i latent). 0 = leave it. Try 1024: SDXL is native there and the bank is 512, so small frontal faces are drawn at half the resolution the base expects.")
+    ap.add_argument("--frame-fill", type=float, default=0.0,
+                    help="crop the control to its subject and re-square it, with this fractional margin (try 0.06). South subjects span only ~39%% of the frame width against east's ~100%%, so the animal gets far fewer pixels for the same generation size.")
     ap.add_argument("--stage1-cn", type=float, default=0.0,
                     help="SILHOUETTE STAGE (0 = off). Run a first pass against the resolved control at this WEAKER cn so the shape can adapt to the species, then use that pass's filled silhouette as the control for the real pass. Try 0.15-0.30; stage 1 still needs SOME control (I6: an unconstrained probe lands ~52%% short and matches primates).")
     ap.add_argument("--refine", type=float, default=0.0,
@@ -759,6 +789,8 @@ def main():
                 print(f"generate: skipping unknown direction '{d}'", file=sys.stderr); continue
             tpl = resolve_control(args.control, from_path, d, part, tvar)
             if tpl is not None:
+                if args.frame_fill > 0: tpl = frame_fill(tpl, args.frame_fill)
+                if args.gen_size:       tpl = gen_scale(tpl, args.gen_size)
                 ref_name = _upload(tpl, f"artgen_{cseed}_{d}_ref.png")
                 edge_name = _upload(edge_map(tpl, args.edge_thresh), f"artgen_{cseed}_{d}_edge.png")
             else:

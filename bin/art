@@ -3699,6 +3699,22 @@ cmd_normalize_square() {
   RD_REPO_ROOT="$REPO_ROOT" python3 "$SCRIPT_DIR/lib/normalize_square.py" "$@"
 }
 
+# Build the hand-labelled evaluation set: generate sprites through the REAL pipeline into
+# .staging/eval_data/new/ for sorting into good/ and bad/. Never deletes or overwrites, and skips
+# seeds already present in ANY bucket so a rejected image is not regenerated. Delegates to
+# lib/eval_data.py.
+cmd_eval_data() {
+  command -v python3 >/dev/null || { echo "art eval-data: python3 not found" >&2; exit 1; }
+  RD_REPO_ROOT="$REPO_ROOT" exec python3 "$SCRIPT_DIR/lib/eval_data.py" "$@"
+}
+
+# Score the hand-labelled eval_data buckets and report whether our automatic metrics agree with the
+# human labels — the check that decides whether generation selection can be automated at all.
+cmd_eval_agreement() {
+  command -v python3 >/dev/null || { echo "art eval-agreement: python3 not found" >&2; return 1; }
+  RD_REPO_ROOT="$REPO_ROOT" exec python3 "$SCRIPT_DIR/lib/eval_agreement.py" "$@"
+}
+
 cmd_generate_tile() {
   # Ground/terrain tile sheets: plain txt2img (no silhouette, no direction, no alpha), downscaled
   # and cut into a padded sprite map placed in the texture tree. Greyscale by default because the
@@ -3752,6 +3768,8 @@ main() {
   local cmd=${1:-}
   shift || true
   case "$cmd" in
+    eval-data) cmd_eval_data "$@" ;;
+    eval-agreement) cmd_eval_agreement "$@" ;;
     generate) cmd_generate "$@" ;;
     generate-tile) cmd_generate_tile "$@" ;;
     retile-linked) cmd_retile_linked "$@" ;;

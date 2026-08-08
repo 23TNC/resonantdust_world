@@ -25,7 +25,7 @@ decisions in [`forks.md`](forks.md) (F#), the anticipated-issue inventory in
 
 ## P2 — the measurement
 
-- [ ] Scene reset (F3/I1/I7): stop wolves + bunnies + npc, redeploy the pawn
+- [x] Scene reset (F3/I1/I7): stop wolves + bunnies + npc, redeploy the pawn
       module (cast wiped), restart master/orch/worker, verify zero pawns and
       the seed guard quiet. Acceptance: SQL shows 0 entity_state rows; arcs
       green.

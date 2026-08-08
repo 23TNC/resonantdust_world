@@ -55,7 +55,8 @@ def resolve_written(p):
 
 def control_arg(method, cfg, subj):
     m = cfg["methods"][method]["control"]
-    return m.replace("<species>", subj["corpus"]).replace("<family>", subj.get("family", ""))
+    return (m.replace("<species>", subj["corpus"]).replace("<family>", subj.get("family", ""))
+             .replace("<nearest>", subj.get("nearest", "")))
 
 
 def generate(cfg, method, subj, seed):

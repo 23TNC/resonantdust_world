@@ -19,23 +19,65 @@
   "cn": 0.5,
   "cn_end": 0.9,
   "dir": "e",
-  "seeds": [4101, 4102, 4103],
+  "seeds": [
+    4101,
+    4102,
+    4103
+  ],
   "size": 512,
   "template_from": "pawn/animal/wolf",
   "subjects": [
-    { "id": "anteater",  "corpus": "Anteater",  "family": "bear",   "positive": "giant anteater",
-      "body_plan": "rd_quadruped", "why": "no close corpus body plan; nearest family rep is Bear and it is a poor fit" },
-    { "id": "armadillo", "corpus": "Armadillo", "family": "pig",    "positive": "armadillo",
-      "body_plan": "rd_quadruped", "why": "no close corpus body plan; nearest family rep is Pig, armour and proportions differ" },
-    { "id": "okapi",     "corpus": "Okapi",     "family": "equine", "positive": "okapi",
-      "body_plan": "rd_quadruped", "why": "close plan (Horse); the easy case" },
-    { "id": "warthog",   "corpus": "Warthog",   "family": "pig",    "positive": "warthog",
-      "body_plan": "rd_quadruped", "why": "close plan (Pig) but with tusks and a heavier head" }
+    {
+      "id": "anteater",
+      "corpus": "Anteater",
+      "family": "bear",
+      "positive": "giant anteater",
+      "body_plan": "rd_quadruped",
+      "why": "no close corpus body plan; nearest family rep is Bear and it is a poor fit"
+    },
+    {
+      "id": "armadillo",
+      "corpus": "Armadillo",
+      "family": "pig",
+      "positive": "armadillo",
+      "body_plan": "rd_quadruped",
+      "why": "no close corpus body plan; nearest family rep is Pig, armour and proportions differ",
+      "nearest": "VAE_Pangolin"
+    },
+    {
+      "id": "okapi",
+      "corpus": "Okapi",
+      "family": "equine",
+      "positive": "okapi",
+      "body_plan": "rd_quadruped",
+      "why": "close plan (Horse); the easy case",
+      "nearest": "Horse"
+    },
+    {
+      "id": "warthog",
+      "corpus": "Warthog",
+      "family": "pig",
+      "positive": "warthog",
+      "body_plan": "rd_quadruped",
+      "why": "close plan (Pig) but with tusks and a heavier head",
+      "nearest": "WildBoar"
+    }
   ],
   "methods": {
-    "S2a": { "control": "family:<family>", "stages": 1,
-      "why": "the only measured method that can serve an untrained species - S1 needs a corpus sprite that does not exist" },
-    "S0":  { "control": "template", "stages": 1,
-      "why": "the incumbent wolf template, as the floor" }
+    "S2a": {
+      "control": "family:<family>",
+      "stages": 1,
+      "why": "the only measured method that can serve an untrained species - S1 needs a corpus sprite that does not exist"
+    },
+    "S0": {
+      "control": "template",
+      "stages": 1,
+      "why": "the incumbent wolf template, as the floor"
+    },
+    "S1n": {
+      "control": "corpus:<nearest>",
+      "stages": 1,
+      "why": "S1 is UNDEFINED for an untrained species (no corpus sprite of its own). The honest analogue is a HAND-PICKED nearest corpus species - which is what a human would do, and it tests how much the choice of neighbour is worth."
+    }
   }
 }
