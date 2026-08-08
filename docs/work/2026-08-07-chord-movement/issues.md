@@ -76,6 +76,24 @@ a future hop still QUEUED (unassigned) was invisible, so the resolve missed the 
 whenever the interrupt landed before assignment. Fix: `OR worker_reference = 0` rides
 the subscription (the tile mirror's every-row posture, dev-scale).
 
+## I12 — FOUND+FIXED: off-center landings clipped one tile into water (2026-08-08) {#i12}
+
+The user's report: pawns sometimes stepped one tile into a body of water. Cause: the
+chord LOS validates the LATTICE corridor (tile anchor → tile anchor), but three
+consumers interpolate from the pawn's SUBTILE point — the hop landing, the mid-chord
+resolve, and the client glide. An off-center start traverses a DIFFERENT set of tiles
+than the validated ones, and near a shoreline the landing floored into water. Fix:
+ONE shared `path_eval::clear_point_fraction` (the pathable prefix of the CONTINUOUS
+point-segment, 1/32-tile sampling, one-sample backoff so the sixteenth rounding can
+never cross into the refused tile; the start tile stays exempt — F6). The hop landing
+and the resolve clamp to it; a fully-blocked direct segment RECENTERS (steps to the
+own tile's lattice anchor — a one-tile segment is always legal, and from the anchor
+the validated corridor is exact); the client glide prepends the same recenter
+waypoint when its first leg is dirty. Verified: unit test
+`an_off_center_start_clamps_before_the_water` + two full lake-rounding trips with
+all 7 movers sampled at 120 ms — zero water tiles on either the authoritative or the
+rendered track.
+
 ## I9 — TicEstimate pacing vs variable hop intervals {#i9}
 
 Hop events now land at irregular intervals (per-chord durations). The client's rate

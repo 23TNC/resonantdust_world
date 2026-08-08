@@ -360,6 +360,46 @@ pub fn find_chords(
     Some(chords)
 }
 
+/// The pathable PREFIX of the CONTINUOUS point-segment `a → b`, as a fraction of its
+/// length. Closes the off-center gap the chord LOS leaves open: [`line_of_sight`]
+/// validates the LATTICE corridor (tile anchor to tile anchor), but a pawn walks from
+/// its SUBTILE point — an off-center start traverses a DIFFERENT set of tiles, and
+/// near a shoreline an unclamped landing could floor one tile into water (seen live).
+/// Every landing interpolated along a chord must clamp to this.
+///
+/// Returns the largest `f ∈ [0, 1]` such that every sampled point of `a → a + f·(b−a)`
+/// lies in a pathable tile. The START tile is exempt (leaving is always legal — F6).
+/// Sampling is 1/32 tile — finer than the sixteenth position quantization — and a
+/// blocked segment backs off ONE extra sample, so a landing rounded to sixteenths can
+/// never carry across into the refused tile. `1.0` = fully clear (no backoff: the
+/// endpoint is a validated waypoint). IEEE throughout: identical on every observer.
+pub fn clear_point_fraction(
+    a: (f64, f64),
+    b: (f64, f64),
+    pathable: &dyn Fn(i32, i32) -> bool,
+) -> f64 {
+    let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+    let len = dx.hypot(dy);
+    if len <= f64::EPSILON {
+        return 1.0;
+    }
+    let start = (a.0.floor() as i32, a.1.floor() as i32);
+    let steps = (len * 32.0).ceil().max(1.0) as u32;
+    let mut clear = 0u32;
+    for i in 1..=steps {
+        let f = f64::from(i) / f64::from(steps);
+        let (px, py) = (a.0 + dx * f, a.1 + dy * f);
+        let tile = (px.floor() as i32, py.floor() as i32);
+        if tile != start && !pathable(tile.0, tile.1) {
+            // Back off one extra sample below the last clear one — the sixteenth
+            // rounding moves a landing at most 1/32 tile, strictly less than this.
+            return f64::from(clear.saturating_sub(1)) / f64::from(steps);
+        }
+        clear = i;
+    }
+    1.0
+}
+
 /// A polyline's Euclidean length in tiles, from `from` through every waypoint — the
 /// tiles/tic schedule's distance input (F6). IEEE hypot: identical on every observer.
 pub fn chord_len(from: (i32, i32), chords: &[(i32, i32)]) -> f64 {
@@ -465,6 +505,28 @@ mod tests {
         let a = find_path((0, 0), (3, 3), &g).unwrap();
         let b = find_path((0, 0), (3, 3), &g).unwrap();
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn an_off_center_start_clamps_before_the_water() {
+        // The clip the users saw: the LATTICE segment (0,1) → (2,0) is clear, but a
+        // pawn standing at the subtile point (0.9, 1.9) cuts through (1,1) — water.
+        // The clamp must stop the landing strictly before the wet tile; the landing
+        // point itself must floor onto pathable ground.
+        let rows = ["...", ".#."];
+        let g = grid(&rows);
+        let a = (0.9, 1.9);
+        let b = (2.0, 0.0);
+        let f = clear_point_fraction(a, b, &g);
+        assert!(f < 1.0, "the wet corridor must clamp, got {f}");
+        let land = (a.0 + (b.0 - a.0) * f, a.1 + (b.1 - a.1) * f);
+        let tile = (land.0.floor() as i32, land.1.floor() as i32);
+        assert!(g(tile.0, tile.1), "the clamped landing floors onto ground: {tile:?}");
+        // A clear segment is untouched — full fraction, no backoff.
+        assert_eq!(clear_point_fraction((0.5, 0.5), (2.0, 0.0), &g), 1.0);
+        // Leaving an impathable START tile stays legal (F6): stand IN the rock,
+        // walk out to open ground.
+        assert_eq!(clear_point_fraction((1.5, 1.5), (1.0, 0.0), &g), 1.0);
     }
 
     #[test]

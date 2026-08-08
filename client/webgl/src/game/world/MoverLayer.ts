@@ -599,6 +599,27 @@ export class MoverLayer {
     return path;
   }
 
+  /** Is the continuous segment from the fractional belief point to the first waypoint
+   *  clear of impathable tiles (the start tile exempt — leaving is legal)? Sampled at
+   *  1/32 tile, the worker's `clear_point_fraction` rule client-side. */
+  private firstLegClear(bx: number, by: number, w: { x: number; y: number }): boolean {
+    if (!this.pathProbe) return true;
+    const dx = w.x - bx;
+    const dy = w.y - by;
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-9) return true;
+    const startX = Math.floor(bx);
+    const startY = Math.floor(by);
+    const steps = Math.max(1, Math.ceil(len * 32));
+    for (let i = 1; i <= steps; i++) {
+      const f = i / steps;
+      const tx = Math.floor(bx + dx * f);
+      const ty = Math.floor(by + dy * f);
+      if ((tx !== startX || ty !== startY) && !this.pathProbe(tx, ty)) return false;
+    }
+    return true;
+  }
+
   private onMoveIntent(intent: MoveIntent): void {
     const m = this.movers.get(intent.entityReference);
     const d = this.client.ticDelta(intent.eventTic);
@@ -628,6 +649,14 @@ export class MoverLayer {
     // DRAWN and can never snap back to a tile. Re-anchors and the landing correct.
     const bx = m.rx;
     const by = m.ry;
+    let path = this.computePath(Math.floor(bx), Math.floor(by), intent.tileX, intent.tileY);
+    // The chords validate the LATTICE corridor; the glide starts from the fractional
+    // BELIEF point — when that off-center first leg crosses an impathable tile (the
+    // one-tile water clip the worker also clamps), RECENTER: prepend the current
+    // tile's lattice anchor so the drawn path never crosses the wet tile.
+    if (path && path.length > 0 && this.pathProbe && !this.firstLegClear(bx, by, path[0])) {
+      path = [{ x: Math.floor(bx), y: Math.floor(by) }, ...path];
+    }
     m.spec = {
       fromX: bx,
       fromY: by,
@@ -637,7 +666,7 @@ export class MoverLayer {
       ticsPerTile: tpt,
       appliedX: bx,
       appliedY: by,
-      path: this.computePath(Math.floor(bx), Math.floor(by), intent.tileX, intent.tileY),
+      path,
     };
     // speculative-direction P1: the INITIAL AIM — the pawn turns toward its path at the
     // seed (the greedy walk's e/w-first first leg), before any rendered delta exists. The

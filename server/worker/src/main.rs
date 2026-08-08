@@ -294,7 +294,18 @@ fn resolve_walk_position_for(obj: u32, p: &Payload, ctx: &ApplyCtx) -> u32 {
     if len <= f64::EPSILON {
         return p.position_reference;
     }
-    let f = (walked / len).min(1.0);
+    // The same off-center clamp the hop landing applies: the resolved position gets
+    // WRITTEN as the new order's start, so an unclamped resolve could park a pawn in
+    // the water the validated corridor skirted.
+    let clear = resonantdust_content::path_eval::clear_point_fraction(
+        (sx, sy),
+        (wx as f64, wy as f64),
+        ctx.pathable,
+    );
+    let f = (walked / len).min(1.0).min(clear);
+    if f <= f64::EPSILON {
+        return p.position_reference;
+    }
     point_to_position(sx + dxf * f, sy + dyf * f)
 }
 
@@ -2394,11 +2405,34 @@ fn apply(
                                 Some(chords) if !chords.is_empty() => {
                                     let (wx, wy) = chords[0];
                                     let (cxf, cyf) = position_to_point(p.position_reference);
-                                    let (dxf, dyf) = (wx as f64 - cxf, wy as f64 - cyf);
+                                    // The chord LOS validated the LATTICE segment; the pawn
+                                    // walks from its SUBTILE point — clamp the landing to
+                                    // the pathable prefix of the REAL segment, or a hop
+                                    // near a shoreline floors one tile into water (seen
+                                    // live — the user's clip). A fully-blocked direct
+                                    // segment RECENTERS instead: step toward the own
+                                    // tile's lattice anchor (a segment inside one tile is
+                                    // always legal), from which the validated corridor is
+                                    // exact.
+                                    let (mut dxf, mut dyf) = (wx as f64 - cxf, wy as f64 - cyf);
+                                    let clear = resonantdust_content::path_eval::clear_point_fraction(
+                                        (cxf, cyf),
+                                        (wx as f64, wy as f64),
+                                        ctx.pathable,
+                                    );
+                                    if clear <= f64::EPSILON {
+                                        dxf = cur_tile.0 as f64 - cxf;
+                                        dyf = cur_tile.1 as f64 - cyf;
+                                        tracing::debug!(obj = format!("{obj:#010x}"),
+                                            "off-center segment blocked — recentering on the lattice");
+                                    }
                                     let len = dxf.hypot(dyf);
                                     if len > f64::EPSILON {
                                         let stride = hop_stride_tiles((ctx.tics_per_tile)(*obj));
-                                        let f = (stride / len).min(1.0);
+                                        let mut f = (stride / len).min(1.0);
+                                        if clear > f64::EPSILON {
+                                            f = f.min(clear);
+                                        }
                                         p.position_reference =
                                             point_to_position(cxf + dxf * f, cyf + dyf * f);
                                         p.base_tic = ctx.now;
