@@ -36,7 +36,12 @@ pub struct Torches {
     def: u32,
     kind: u16,
     bundle: Option<Bundle>,
-    created: usize,
+    /// Requests in flight — incremented per SPAWN_REQUEST, decremented (saturating) on
+    /// every NEW adoption. The mint gate is `minds + outstanding < count`, which the
+    /// bunnies' `created < count` gate is NOT: a process restart zeroed `created` while
+    /// pre-existing pawns streamed in slowly, and the two counters raced each other
+    /// into an overshoot (found live: 19 mints for a 16 cap — torch-perf I9).
+    outstanding: usize,
     spawn_after: Instant,
     minds: HashMap<u32, Mind>,
     payloads: HashMap<u32, Vec<u32>>,
@@ -65,7 +70,7 @@ impl Torches {
             def: 0,
             kind: 0,
             bundle: None,
-            created: 0,
+            outstanding: 0,
             // Adopt-first (spawn-authority P4's lesson): 10 s for a cold edge's snapshot.
             spawn_after: Instant::now() + Duration::from_secs(10),
             minds: HashMap::new(),
@@ -177,6 +182,9 @@ impl Brain for Torches {
                                 "torch adopted");
                             Mind { at, dest: None, deadline: Instant::now() }
                         });
+                    // An adoption retires one in-flight request (saturating — a
+                    // pre-existing pawn adopting during the window costs nothing).
+                    self.outstanding = self.outstanding.saturating_sub(1);
                 }
             }
             Event::PawnParts { entity_reference, payload, .. } => {
@@ -192,19 +200,15 @@ impl Brain for Torches {
         if self.bundle.is_none() {
             return;
         }
-        // Mint up to `count`, one per tick, after the adopt-first window; adopted
-        // strangers count toward the cap; an unanswered request re-rolls
-        // (spawn-authority I2/I6 — the bunnies' posture verbatim).
-        if self.created > self.minds.len()
-            && Instant::now() > self.spawn_after
-            && self.created > 0
-        {
-            tracing::warn!(created = self.created, adopted = self.minds.len(),
+        // Mint after the adopt-first window; adopted strangers count toward the cap.
+        // The gate is minds + OUTSTANDING < count (I9 — the overshoot fix); a request
+        // still unadopted when its window lapses re-rolls (spawn-authority I2/I6).
+        if self.outstanding > 0 && Instant::now() > self.spawn_after {
+            tracing::warn!(outstanding = self.outstanding, adopted = self.minds.len(),
                 "spawn request(s) unanswered — re-rolling (spawn-authority I2)");
-            self.created = self.minds.len();
+            self.outstanding = 0;
         }
-        if self.minds.len() < self.count
-            && self.created < self.count
+        if self.minds.len() + self.outstanding < self.count
             && self.def != 0
             && Instant::now() > self.spawn_after
         {
@@ -230,9 +234,10 @@ impl Brain for Torches {
                 &[],
             );
             if bot.client.queue(program.to_vec()).is_ok() {
-                self.created += 1;
+                self.outstanding += 1;
                 self.spawn_after = Instant::now() + Duration::from_secs(10);
-                tracing::info!(?spawn, requested = self.created, "torch SPAWN_REQUEST queued");
+                tracing::info!(?spawn, outstanding = self.outstanding,
+                    "torch SPAWN_REQUEST queued");
             }
         }
         // Wander forever: no dest (arrived) or a blown deadline → the next trip.

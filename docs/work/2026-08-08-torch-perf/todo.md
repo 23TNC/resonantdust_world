@@ -29,22 +29,24 @@ decisions in [`forks.md`](forks.md) (F#), the anticipated-issue inventory in
       module (cast wiped), restart master/orch/worker, verify zero pawns and
       the seed guard quiet. Acceptance: SQL shows 0 entity_state rows; arcs
       green.
-- [ ] Row 1 — `NPC_TORCHES=8`: mint, verify 8 wanderers in-window at zoom 1
+- [x] Row 1 — `NPC_TORCHES=8`: mint, verify 8 wanderers in-window at zoom 1
       (I5), soak ≥2 min, record `__lightcost` + `__framecost` spreads (I3),
       the worker compose line (I6), a capture. Acceptance: the row in
       completed.md.
-- [ ] Row 2 — `NPC_TORCHES=16`: top up (adopted pawns count toward the cap),
+- [x] Row 2 — `NPC_TORCHES=16`: top up (adopted pawns count toward the cap),
       same soak + reads + capture. Acceptance: the row in completed.md.
-- [ ] Row 3 — `NPC_TORCHES=24`: same. Acceptance: the row in completed.md;
+- [x] Row 3 — `NPC_TORCHES=24`: same. Acceptance: the row in completed.md;
       the I8 glError verdict (benign hook read or real) recorded by now.
 
 ## P3 — the verdict, and the truth
 
-- [ ] The findings: the three-row table + the curve reading (linear? a
+- [x] The findings: the three-row table + the curve reading (linear? a
       cliff?) in completed.md; anything actionable lands in issues.md as a
       named successor (mitigations are the user's earlier call — "later").
       Acceptance: the table stands alone without this chat.
-- [ ] Restore the world: wolves + bunnies containers back, their casts
+- [x] Restore the world: wolves + bunnies containers back, their casts
       re-mint; docs + memory truth pass; **the user's eyes close the
       stream**. Acceptance: docs-check green; arcs green; captures + logs in
-      completed.md.
+      completed.md. (Restored: cast wiped — the 25 deathless torches go with
+      it — 1 wolf + 3 bunnies re-minted and adopted; docs green; memory holds
+      the findings; B1 remains the user's.)

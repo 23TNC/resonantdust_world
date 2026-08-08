@@ -51,6 +51,20 @@ restarted — that is exactly the contamination I1 stops. Nothing else
 resurrects pawns (lumberjack's seed-guard law: restarts do not re-seed
 occupied zones).
 
+## I9 — FOUND LIVE: the group brains' mint gate can OVERSHOOT across a restart {#i9}
+
+Row 2's top-up (8 → 16) minted 19: the bunnies' `created < count` gate counts
+requests PROCESS-LOCALLY, so a restarted brain re-requests while its
+pre-existing pawns are still streaming in — the two counters race and the
+overshoot mints pawns nobody adopts (and a no-needs debug pawn cannot die, so
+they were permanent). FIXED in torches.rs: `outstanding` in-flight requests,
+decremented saturating on every new adoption, gate
+`minds + outstanding < count`; the re-roll clears `outstanding` on a lapsed
+window. The bunnies brain carries the SAME latent race (masked by its small
+count) — a successor should port the gate. Also observed: the worker's
+"spawn request minted" log line double-counts ledger-deduped replays (34
+lines, 19 rows) — the ROWS are right, the log is per-call; noted, not a bug.
+
 ## I8 — a glError 1282 lives in the debug read path {#i8}
 
 The trait-lights P4 drill saw `glError: 1282` in the `__lightcost` payload
