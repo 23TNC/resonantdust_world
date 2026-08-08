@@ -8,7 +8,7 @@
 
 use crate::loader::{
   AffordanceCheck, AffordanceParams, BiomeBody, BiomeDef, BiomeRules, Bundle, Cmp,
-  ConditionParams, DirFrame, EmotionModifier, EmotionParams, InteractionParams, LightParts,
+  ConditionParams, DirFrame, EmotionModifier, EmotionParams, InteractionParams,
   LoadError, MaterialParams, MoveEffect, NeedBand, NeedModifier, NeedParams, Operand,
   PackedChannel, SatisfyEffect, SpawnEffect, StatModifier, StatParams, Taxonomy, ThingDef,
   TileDef, TraitBind, TraitLevel, TraitLight, TraitParams, VisualPart, VisualParts,
@@ -152,8 +152,6 @@ struct ThingToml {
   #[serde(default)]
   interactions: Vec<InteractionBindToml>,
   #[serde(default)]
-  light: Option<LightToml>,
-  #[serde(default)]
   packed: Vec<PackedToml>,
   #[serde(default)]
   part: Vec<PartToml>,
@@ -161,30 +159,6 @@ struct ThingToml {
   /// the TREE authors false; the composed view (kind-0 suppresses) decides occupancy.
   #[serde(default = "yes")]
   pathable: bool,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct LightToml {
-  #[serde(default = "one")]
-  r: f64,
-  #[serde(default = "one")]
-  g: f64,
-  #[serde(default = "one")]
-  b: f64,
-  #[serde(default = "one")]
-  intensity: f64,
-  reach: f64,
-  #[serde(default = "quarter")]
-  radius: f64,
-  #[serde(default = "half")]
-  height: f64,
-  #[serde(default = "yes")]
-  cast: bool,
-  #[serde(default)]
-  hot: bool,
-  #[serde(default)]
-  flicker: bool,
 }
 
 fn one() -> f64 { 1.0 }
@@ -502,12 +476,22 @@ struct TraitToml {
   emit_light: Vec<TraitLightToml>,
 }
 
+/// A light color: `"#rrggbb"` for authoring comfort, or `[r, g, b]` floats when the
+/// exact channel values matter (the torch conversion held the old block's floats
+/// bit-identically — a hex byte cannot express 0.85).
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum LightColorToml {
+  Hex(String),
+  Rgb([f64; 3]),
+}
+
 /// One authored light level (trait-lights F4). Defaults mirror the old visual light
 /// block's (`radius` 0.25, `elevation` — its `height` — 0.5, `cast` true).
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct TraitLightToml {
-  color: String,
+  color: LightColorToml,
   #[serde(default = "one")]
   intensity: f64,
   reach: f64,
@@ -1136,14 +1120,21 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
         .emit_light
         .iter()
         .map(|l| {
-          let rgb = color(&Some(l.color.clone()), &format!("trait `{}` emit_light", t.name), &mut errors)
-            .unwrap_or(0xFFFFFF);
+          let rgb = match &l.color {
+            LightColorToml::Rgb([r, g, b]) => (*r, *g, *b),
+            LightColorToml::Hex(s) => {
+              let v =
+                color(&Some(s.clone()), &format!("trait `{}` emit_light", t.name), &mut errors)
+                  .unwrap_or(0xFFFFFF);
+              (
+                f64::from((v >> 16) & 0xFF) / 255.0,
+                f64::from((v >> 8) & 0xFF) / 255.0,
+                f64::from(v & 0xFF) / 255.0,
+              )
+            }
+          };
           TraitLight {
-            color: (
-              f64::from((rgb >> 16) & 0xFF) / 255.0,
-              f64::from((rgb >> 8) & 0xFF) / 255.0,
-              f64::from(rgb & 0xFF) / 255.0,
-            ),
+            color: rgb,
             intensity: l.intensity,
             reach: l.reach,
             fall_off: l.fall_off,
@@ -1690,7 +1681,6 @@ fn dir_frames(
 fn visual(
   parts_toml: &[PartToml],
   packed_toml: &[PackedToml],
-  light_toml: &Option<LightToml>,
   material_id: &dyn Fn(&str) -> u16,
   what: &str,
   taxonomy: Option<&Taxonomy>,
@@ -1733,16 +1723,6 @@ fn visual(
     sprite_anchor: p0.sprite_anchor,
     dir_frames: p0.dir_frames,
     packed: packed_channels(packed_toml, material_id, what, errors),
-    light: light_toml.as_ref().map(|l| LightParts {
-      color: (l.r, l.g, l.b),
-      intensity: l.intensity,
-      reach: l.reach,
-      radius: l.radius,
-      height: l.height,
-      cast: l.cast,
-      hot: l.hot,
-      flicker: l.flicker,
-    }),
     parts,
   })
 }
@@ -1777,7 +1757,7 @@ fn tile_def(
   // has to author `texture` to have art.
   let has_visual = t.texture.is_some() || t.tint.is_some() || tax.is_some();
   let visual = has_visual
-    .then(|| visual(&[part], &t.packed, &None, material_id, &t.name, tax.as_ref(), errors))
+    .then(|| visual(&[part], &t.packed, material_id, &t.name, tax.as_ref(), errors))
     .flatten();
   TileDef {
     version: t.version,
@@ -1891,7 +1871,7 @@ fn thing_def(
   errors: &mut Vec<LoadError>,
 ) -> ThingDef {
   let tax = taxonomy(&t.type_name, &t.kind, &t.sub_type, &t.variant, &format!("thing `{}`", t.name), errors);
-  let visual = visual(&t.part, &t.packed, &t.light, material_id, &t.name, tax.as_ref(), errors);
+  let visual = visual(&t.part, &t.packed, material_id, &t.name, tax.as_ref(), errors);
   let mut needs = Vec::new();
   for n in t.needs.iter().take(NEEDS_PER_KIND) {
     if need_exists(n) {
@@ -3072,6 +3052,48 @@ traits = [
     let beacon = b.thing_object_id("beacon").expect("beacon");
     let five = b.object_lights(beacon, &[]);
     assert_eq!(five.len(), 5, "all five attach — nothing drops (F8)");
+  }
+
+  /// trait-lights F7/I3: the legacy stride-8 `thing_light` vector derives from the
+  /// constant trait BIT-IDENTICALLY to what the retired `light = {}` block authored —
+  /// pinned against the torch's exact pre-change values, so every downstream consumer
+  /// (the wasm `thingLight` lane, the client's cold baking) is untouched by the move.
+  #[test]
+  fn thing_light_derives_bit_identically() {
+    let text = r##"
+[[trait]]
+name = "emit_light"
+emit_light = [
+  { color = [1.0, 0.85, 0.55], intensity = 1.0, reach = 16.0, radius = 0.35, elevation = 2.5, flicker = true },
+  { color = [0.55, 0.75, 1.0], intensity = 1.0, reach = 16.0, radius = 0.35, elevation = 2.5, flicker = true },
+]
+
+[[thing]]
+name = "torch"
+type = "biome-thing"
+kind = "torch"
+subType = ["default"]
+variant = ["0"]
+traits = [ { name = "emit_light", level = 1, constant = true } ]
+[[thing.part]]
+tint = "#ffd9a0"
+
+[[thing]]
+name = "torch_blue"
+type = "biome-thing"
+kind = "torch_blue"
+subType = ["default"]
+variant = ["0"]
+traits = [ { name = "emit_light", level = 2, constant = true } ]
+[[thing.part]]
+tint = "#a0c8ff"
+"##;
+    let b = load(&[src("t.toml", text)]).expect("clean load");
+    let v = b.thing_light();
+    // The OLD block's exact vectors: [r,g,b,intensity,reach,radius,height,flags];
+    // flags = cast(1) | flicker(4) = 5.
+    assert_eq!(&v[0..8], &[1.0, 0.85, 0.55, 1.0, 16.0, 0.35, 2.5, 5.0]);
+    assert_eq!(&v[8..16], &[0.55, 0.75, 1.0, 1.0, 16.0, 0.35, 2.5, 5.0]);
   }
 
   /// trait-lights F6: a NON-constant trait bind on a non-pawn thing refuses with a

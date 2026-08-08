@@ -149,6 +149,19 @@ name = "inventory"
 label = "Inventory"
 needs = [ { need = "inventory", max = [6.0] } ]
 
+# trait-lights F4: light is a per-LEVEL trait PARAMETER — nothing hard-codes which
+# traits emit. Level 1 = the warm torch, level 2 = the blue (append-only). Colors are
+# FLOAT triples here to hold the retired `light = {}` block's values bit-identically;
+# `elevation` is its `height` (a torch emits from its flame, not its base). APPENDED
+# per the declaration-order law.
+[[trait]]
+name = "emit_light"
+label = "Emits Light"
+emit_light = [
+  { color = [1.0, 0.85, 0.55], intensity = 1.0, reach = 16.0, radius = 0.35, elevation = 2.5, flicker = true },
+  { color = [0.55, 0.75, 1.0], intensity = 1.0, reach = 16.0, radius = 0.35, elevation = 2.5, flicker = true },
+]
+
 # ── interactions ──────────────────────────────────────────────────────────────
 
 # Input names are the RESERVED pie-menu vocabulary (input-rework F5): `pawn` = the

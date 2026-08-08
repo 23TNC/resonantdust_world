@@ -1,5 +1,31 @@
 # Completed — trait lights
 
+## 2026-08-08 — P3: the torch converts, the light block dies
+
+**content** — the `emit_light` trait def APPENDED (order-is-law; the master
+reseeded 234 → 235 with the guard quiet): two levels — warm `[1.0, 0.85,
+0.55]`, blue `[0.55, 0.75, 1.0]`, both reach 16 / radius 0.35 / elevation 2.5
+/ flicker, colors as FLOAT TRIPLES to hold the retired block's values exactly
+(the loader's color accepts hex or `[r,g,b]`). torch binds level 1 constant,
+torch_blue level 2; every `light = {}` block DELETED — `LightToml`,
+`VisualParts::light` and `LightParts` died with it.
+
+**`thing_light()` derives** — same stride-8 shape, first `object_lights`
+tuple per kind (`elevation` rides the old `height` slot). Verified: unit
+`thing_light_derives_bit_identically` pins BOTH torches' vectors to the old
+block's exact values (`[1.0, 0.85, 0.55, 1.0, 16.0, 0.35, 2.5, 5.0]` /
+`[0.55, 0.75, 1.0, …]`) — every downstream consumer untouched; 68 content
+tests green; golden re-blessed (the appended trait).
+
+**The consumer sweep + live** — wasm/webgl/worker/npc/master rebuilt (a stale
+npc caught live: it refused the float-color corpus — the color enum predated
+its build; I6 doing exactly its job), stack bounced onto the new corpus, seed
+guard quiet, brains re-adopted. Live capture: both torch kinds GLOW from
+their constant binds — warm pool at (99,51), cool pools at the three blue
+torches. Evidence swap recorded on the todo item: the corpus serves live from
+the working tree, so the pixel-diff acceptance became the unit pin + a
+working-glow capture.
+
 ## 2026-08-08 — P2: the ONE merged-traits accessor
 
 **`object_trait_rows` + `object_lights`** on the Bundle (F5/F4/F8): constant

@@ -45,17 +45,20 @@ decisions in [`forks.md`](forks.md) (F#), the anticipated-issue inventory in
 
 ## P3 — the torch converts, the light block dies
 
-- [ ] content: a light trait def authoring emit_light per level (level 1 =
+- [x] content: a light trait def authoring emit_light per level (level 1 =
       warm torch tuple, level 2 = blue; elevation = today's height 2.5,
       reach 16); torch + torch_blue bind it CONSTANT; `light =` blocks DELETED
       (F7). Acceptance: content-check + load green; no `light =` in content/.
-- [ ] `thing_light()` composes its stride-8 output from `object_lights`;
+- [x] `thing_light()` composes its stride-8 output from `object_lights`;
       `LightToml` dies (F7/I3). Acceptance: the pre/post stride-8 vectors for
       both torches are IDENTICAL (unit fixture) — every downstream consumer
       untouched.
-- [ ] Full consumer rebuild (I6): shared → wasm + webgl typecheck/build + npc
+- [x] Full consumer rebuild (I6): shared → wasm + webgl typecheck/build + npc
       + worker + master. Acceptance: builds green; live torch screenshot
-      matches a pre-change capture (the bake drill, I3).
+      matches a pre-change capture (the bake drill, I3). (Evidence swap,
+      recorded: the corpus serves LIVE from the working tree, so no pre-change
+      capture existed once the TOML changed — the bit-identity UNIT pin is the
+      identity proof; the live capture shows both torch kinds glowing.)
 
 ## P4 — pawns glow
 

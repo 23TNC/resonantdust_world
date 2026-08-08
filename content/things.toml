@@ -171,7 +171,9 @@ type = "biome-thing"
 kind = "torch"
 subType = ["default"]
 variant = ["0"]
-light = { r = 1.0, g = 0.85, b = 0.55, intensity = 1.0, reach = 16.0, radius = 0.35, height = 2.5, flicker = true }
+# trait-lights F7: the light is a CONSTANT trait bind now — derived from the corpus
+# by every consumer, never stored, bakes into cold. Level 1 = the warm tuple.
+traits = [ { name = "emit_light", level = 1, constant = true } ]
 # Portable (inventory F6) — picking a torch up takes its LIGHT out of the world
 # through the same tombstone lane; a nice stress of the render path.
 interactions = [ { name = "pick_up" } ]
@@ -190,7 +192,8 @@ type = "biome-thing"
 kind = "torch_blue"
 subType = ["default"]
 variant = ["0"]
-light = { r = 0.55, g = 0.75, b = 1.0, intensity = 1.0, reach = 16.0, radius = 0.35, height = 2.5, flicker = true }
+# trait-lights F7: level 2 = the blue tuple, same constant lane.
+traits = [ { name = "emit_light", level = 2, constant = true } ]
 # Portable (inventory F6).
 interactions = [ { name = "pick_up" } ]
 

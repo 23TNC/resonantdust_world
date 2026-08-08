@@ -117,9 +117,6 @@ pub struct VisualParts {
   /// The prim's up-to-4 packed-map channel material bindings, indexed by packed RGBA
   /// channel. Default (all zero) = no material system in play.
   pub packed: [PackedChannel; 4],
-  /// The LIGHT this kind emits, or `None` when it emits nothing. Authored per KIND,
-  /// not per instance (work `2026-07-25-primitive-graph`).
-  pub light: Option<LightParts>,
   /// EVERY part slot, in slot order — the pawn PARTS list (human-pawns P2).
   /// `parts[0]` mirrors the flat prim-0 fields above (a wolf's whole visual = one
   /// entry); a human carries body + head.
@@ -1187,14 +1184,19 @@ impl Bundle {
   }
 
   /// Every thing's emitted LIGHT in `object_id` order, flattened **stride-8** per def:
-  /// `[r, g, b, intensity, reach, radius, height, flags]` (`flags` bit 0 = cast,
+  /// `[r, g, b, intensity, reach, radius, elevation, flags]` (`flags` bit 0 = cast,
   /// bit 1 = hot, bit 2 = flicker). **`reach == 0` IS the "no light" test.**
+  ///
+  /// DERIVED from the kind's constant trait binds since trait-lights F7 (the
+  /// `visual.light` block is DELETED): the FIRST `object_lights` tuple rides this
+  /// legacy one-light-per-kind lane bit-identically (`elevation` was its `height`);
+  /// the full list — and `fall_off` — is [`Bundle::object_lights`]'s.
   pub fn thing_light(&self) -> Vec<f64> {
     let mut out = Vec::with_capacity(self.things.len() * 8);
-    for d in &self.things {
-      match d.visual.as_ref().and_then(|v| v.light) {
+    for i in 0..self.things.len() {
+      match self.object_lights((i + 1) as u16, &[]).first() {
         Some(l) => out.extend_from_slice(&[
-          l.color.0, l.color.1, l.color.2, l.intensity, l.reach, l.radius, l.height,
+          l.color.0, l.color.1, l.color.2, l.intensity, l.reach, l.radius, l.elevation,
           f64::from(u8::from(l.cast) | (u8::from(l.hot) << 1) | (u8::from(l.flicker) << 2)),
         ]),
         None => out.extend_from_slice(&[0.0; 8]),
@@ -1515,22 +1517,6 @@ pub fn load(sources: &[(String, String)]) -> Result<Bundle, Vec<LoadError>> {
   crate::toml_loader::load_toml(sources)
 }
 
-/// The kind's emitted light — see [`VisualParts::light`].
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct LightParts {
-  pub color: (f64, f64, f64),
-  pub intensity: f64,
-  pub reach: f64,
-  pub radius: f64,
-  pub height: f64,
-  /// Casts shadows (default true). A fill light that lights without occluding costs
-  /// the gather nothing — it is skipped in the shadow walk entirely.
-  pub cast: bool,
-  /// Animates per frame ⇒ the HOT class, re-baked every frame. Default false.
-  pub hot: bool,
-  /// Emits DECAY-LIGHTMAP flicker particles (lighting-feel P2). Orthogonal to `hot`.
-  pub flicker: bool,
-}
 
 #[cfg(test)]
 mod tests {

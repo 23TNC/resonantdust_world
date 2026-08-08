@@ -385,6 +385,7 @@ carnivore
 omnivore
 bite
 inventory
+emit_light
 == interactions ==
 drink
 move_to
@@ -417,6 +418,7 @@ carnivore: Some(TraitParams { label: "Carnivore", levels: [TraitLevel { stats: [
 omnivore: Some(TraitParams { label: "Omnivore", levels: [TraitLevel { stats: [StatModifier { stat: "plant_eating", add: 1.0, min: None, max: None }, StatModifier { stat: "meat_eating", add: 1.0, min: None, max: None }], needs: [], emotions: [] }], tags: [], emit_light: [] })
 bite: Some(TraitParams { label: "Bite", levels: [TraitLevel { stats: [], needs: [], emotions: [] }], tags: ["attack"], emit_light: [] })
 inventory: Some(TraitParams { label: "Inventory", levels: [TraitLevel { stats: [], needs: [NeedModifier { need: "inventory", rate: 1.0, min: None, max: Some(6.0) }], emotions: [] }], tags: [], emit_light: [] })
+emit_light: Some(TraitParams { label: "Emits Light", levels: [TraitLevel { stats: [], needs: [], emotions: [] }, TraitLevel { stats: [], needs: [], emotions: [] }], tags: [], emit_light: [TraitLight { color: (1.0, 0.85, 0.55), intensity: 1.0, reach: 16.0, fall_off: 1.0, elevation: 2.5, radius: 0.35, cast: true, hot: false, flicker: true }, TraitLight { color: (0.55, 0.75, 1.0), intensity: 1.0, reach: 16.0, fall_off: 1.0, elevation: 2.5, radius: 0.35, cast: true, hot: false, flicker: true }] })
 == interaction_params ==
 drink: Some(InteractionParams { label: "Drink", menu_text: "Drink", affordances: ["can_drink"], inputs: ["pawn", "destination", "amount"], satisfy: Some(SatisfyEffect { target: Input(0), need: Name("thirst"), amount: Input(2) }), move_effect: None, grants: ["quenched"], destroy: None, spawn: None, remove: None, store: None, location: "adjacent", duration: 0.0, queue: QueueVisual { hover: Some("Drinking"), size: 1.0, background: Some(3037816), progress: "cw", progress_color: Some(3855951), progress_fill: true, cancelable: true } })
 move_to: Some(InteractionParams { label: "Move To", menu_text: "Move To", affordances: ["can_move_ground"], inputs: ["pawn", "destination"], satisfy: None, move_effect: Some(MoveEffect { target: Input(0), to: Input(1) }), grants: [], destroy: None, spawn: None, remove: None, store: None, location: "target", duration: 0.0, queue: QueueVisual { hover: Some("Moving"), size: 0.6, background: None, progress: "none", progress_color: None, progress_fill: true, cancelable: false } })
@@ -469,6 +471,7 @@ gameplay/trait/carnivore Some("0x80030070")
 gameplay/trait/omnivore Some("0x80030080")
 gameplay/trait/bite Some("0x80030090")
 gameplay/trait/inventory Some("0x800300a0")
+gameplay/trait/emit_light Some("0x800300b0")
 gameplay/interaction/drink Some("0x80040010")
 gameplay/interaction/move_to Some("0x80040020")
 gameplay/interaction/cut_down Some("0x80040030")
@@ -509,8 +512,8 @@ reed traits=[] interactions=[InteractionBind { name: "pick_up", magnitude: 0.0, 
 rock traits=[] interactions=[InteractionBind { name: "pick_up", magnitude: 0.0, yields: None }]
 flora traits=[] interactions=[InteractionBind { name: "forage", magnitude: 0.0, yields: None }]
 wolf traits=[TraitBind { name: "biological_lifeform", level: 1, constant: false }, TraitBind { name: "walks", level: 2, constant: false }, TraitBind { name: "corpus", level: 2, constant: false }, TraitBind { name: "carnivore", level: 1, constant: false }, TraitBind { name: "bite", level: 1, constant: false }] interactions=[InteractionBind { name: "death", magnitude: 0.0, yields: None }]
-torch traits=[] interactions=[InteractionBind { name: "pick_up", magnitude: 0.0, yields: None }]
-torch_blue traits=[] interactions=[InteractionBind { name: "pick_up", magnitude: 0.0, yields: None }]
+torch traits=[TraitBind { name: "emit_light", level: 1, constant: true }] interactions=[InteractionBind { name: "pick_up", magnitude: 0.0, yields: None }]
+torch_blue traits=[TraitBind { name: "emit_light", level: 2, constant: true }] interactions=[InteractionBind { name: "pick_up", magnitude: 0.0, yields: None }]
 human_female traits=[TraitBind { name: "biological_lifeform", level: 1, constant: false }, TraitBind { name: "walks", level: 1, constant: false }, TraitBind { name: "lumberjack", level: 1, constant: false }, TraitBind { name: "corpus", level: 1, constant: false }, TraitBind { name: "inventory", level: 1, constant: false }, TraitBind { name: "forager", level: 1, constant: false }, TraitBind { name: "omnivore", level: 1, constant: false }] interactions=[InteractionBind { name: "death", magnitude: 0.0, yields: None }, InteractionBind { name: "drop", magnitude: 0.0, yields: None }]
 human_male traits=[TraitBind { name: "biological_lifeform", level: 1, constant: false }, TraitBind { name: "walks", level: 1, constant: false }, TraitBind { name: "lumberjack", level: 1, constant: false }, TraitBind { name: "corpus", level: 1, constant: false }, TraitBind { name: "inventory", level: 1, constant: false }, TraitBind { name: "forager", level: 1, constant: false }, TraitBind { name: "omnivore", level: 1, constant: false }] interactions=[InteractionBind { name: "death", magnitude: 0.0, yields: None }, InteractionBind { name: "drop", magnitude: 0.0, yields: None }]
 logs traits=[] interactions=[InteractionBind { name: "pick_up", magnitude: 0.0, yields: None }]
