@@ -975,10 +975,11 @@ fn menu_options(
         let Some(ip) = bundle.interaction_params(&name) else { continue };
         // The location rule (F4 / lumberjack F2): the SHARED range check — the menu must
         // never offer what the worker would refuse. RELAXED for signatures that bind a
-        // `destination` (lumberjack P3): the worker composes [walk, act] through the
-        // intent queue for those, so distance no longer refuses; a destless signature
-        // has nowhere to walk and stays strictly ranged.
-        let can_compose_walk = ip.inputs.iter().any(|n| n == "destination");
+        // `destination` (lumberjack P3) or a `target` PAWN (attack F2 — the worker walks
+        // the actor to the victim's live position): the worker composes [walk, act]
+        // through the intent queue for those, so distance no longer refuses; a signature
+        // with neither has nowhere to walk and stays strictly ranged.
+        let can_compose_walk = ip.inputs.iter().any(|n| n == "destination" || n == "target");
         if !can_compose_walk && !dsl::loader::location_in_range(&ip.location, cheb_distance) {
             continue;
         }

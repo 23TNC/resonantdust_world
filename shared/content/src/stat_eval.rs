@@ -122,6 +122,21 @@ pub fn affordance_passes(
                 None => false,
             }
         }
+        crate::loader::AffordanceCheck::Tag { tag } => {
+            // attack F1: ANY carried trait (a stored row is level ≥ 1) whose def
+            // authors the tag passes — capability by tag, resolved through the
+            // corpus at eval; tags never ride the wire.
+            trait_rows.iter().any(|row| {
+                let tref = resonantdust_codec::object::gameplay_row_reference(
+                    resonantdust_codec::object::GAMEPLAY_TRAIT,
+                    *row,
+                );
+                bundle
+                    .gameplay_lookup(tref)
+                    .and_then(|(_, name)| bundle.trait_params(&name))
+                    .is_some_and(|tp| tp.tags.iter().any(|g| g == tag))
+            })
+        }
     }
 }
 

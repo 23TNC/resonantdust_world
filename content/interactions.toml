@@ -105,15 +105,13 @@ name = "corpus"
 label = "Corpus"
 needs = [ { need = "corpus", max = [1.0, 2.0] } ]
 
-# The CARRYING capacity (inventory F1, the user's shape): ONE leveled trait provides
-# the inventory need and caps it — the need counts FREE slots, so the standing
-# mint-at-effective-max law births every carrier with all slots free. Level 1 = 6
-# (humans); future backpack tiers append per-level values.
-[[trait]]
-name = "inventory"
-label = "Inventory"
-needs = [ { need = "inventory", max = [6.0] } ]
-
+# ORDER IS LAW (attack I1, learned the hard way): gameplay defs are numbered by
+# POSITION at seed, and the registry keeps the id a tuple was FIRST recorded with —
+# so new defs APPEND at the END of their category, never mid-list. A mid-list insert
+# shifts every later def's seed id off its registry row: the mint writes rows one
+# name, registry consumers read another (an omnivore that reads as bite), and the
+# collided newcomer silently never seeds. The trait order below is the registry's
+# recorded history; append after `inventory`.
 [[trait]]
 name = "forager"
 label = "Forager"
@@ -133,6 +131,23 @@ stats = [ { stat = "meat_eating", add = [1] } ]
 name = "omnivore"
 label = "Omnivore"
 stats = [ { stat = "plant_eating", add = [1] }, { stat = "meat_eating", add = [1] } ]
+
+# The BITE (attack F1, the user's generalization): a capability TAG, not a stat —
+# can_attack matches ANY trait tagged "attack", so a clawed bear or a pecking hawk
+# joins the predator club by content alone. Tag-only: presence IS the capability.
+[[trait]]
+name = "bite"
+label = "Bite"
+tags = ["attack"]
+
+# The CARRYING capacity (inventory F1, the user's shape): ONE leveled trait provides
+# the inventory need and caps it — the need counts FREE slots, so the standing
+# mint-at-effective-max law births every carrier with all slots free. Level 1 = 6
+# (humans); future backpack tiers append per-level values.
+[[trait]]
+name = "inventory"
+label = "Inventory"
+needs = [ { need = "inventory", max = [6.0] } ]
 
 # ── interactions ──────────────────────────────────────────────────────────────
 
@@ -278,6 +293,25 @@ spawn = "carried"
 duration = 0
 queue = { hover = "Dropping", size = 0.8 }
 
+# ATTACK (attack F2): carried by the PREY's kind — the bunny OFFERS being attacked,
+# the way water offers drink — gated by can_attack (the tag check) on the ACTOR. The
+# `target` input is the clicked PAWN's entity (the first hot carrier that is not
+# `self`); satisfy targets @target with the binding's NEGATIVE magnitude, so the hit
+# lands on the VICTIM's corpus and the need-write trigger carries the kill to death,
+# meat, and the food chain from there. Walk-then-act composes the chase's first leg;
+# the completion re-validates adjacency against the target's CURRENT position — prey
+# that moved makes the swing a logged no-op (re-issue is the hunter's job).
+[[interaction]]
+name = "attack"
+label = "Attack"
+menu_text = "Attack"
+affordances = ["can_attack"]
+inputs = ["pawn", "target", "amount"]
+satisfy = { target = "@target", need = "corpus", amount = "@amount" }
+location = "adjacent"
+duration = 10
+queue = { hover = "Attacking", background = "#6a2a2a", progress = "cw", progress_color = "#d64a3a", progress_fill = true, cancelable = true }
+
 # ── affordances ───────────────────────────────────────────────────────────────
 
 [[affordance]]
@@ -326,3 +360,9 @@ check = { need = "corpus", lte = 0.0 }
 name = "can_carry"
 label = "Can Carry"
 check = { need = "inventory", gt = 0.0 }
+
+# The attack gate (attack F1): a TAG check — any trait tagged "attack" passes.
+[[affordance]]
+name = "can_attack"
+label = "Can Attack"
+check = { tag = "attack" }

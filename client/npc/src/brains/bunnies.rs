@@ -424,7 +424,21 @@ impl Brain for Bunnies {
             && self.def != 0
             && Instant::now() > self.spawn_after
         {
-            let spawn = self.pick_dest();
+            // The PATHABLE picker (attack I2 — the wolves' lake-mint lesson): eight
+            // rolls against the tile mirror, unknown reads open.
+            let spawn = {
+                let mut s = self.pick_dest();
+                for _ in 0..8 {
+                    let open = bot.tile_kind_at(s).is_none_or(|k| {
+                        self.bundle.as_ref().is_none_or(|b| b.tile_pathable(k))
+                    });
+                    if open {
+                        break;
+                    }
+                    s = self.pick_dest();
+                }
+                s
+            };
             let program =
                 vec![PROMOTE, CREATE, self.def, tile_to_position(spawn.0, spawn.1), 0];
             if bot.client.queue(program).is_ok() {

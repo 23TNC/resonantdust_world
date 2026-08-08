@@ -477,6 +477,49 @@ pub async fn seed_registry(
         bumps_on_record = versions,
         "definition kind-space"
     );
+    // THE APPEND-ONLY GUARD (attack I1, found live): the seed derives ids POSITIONALLY,
+    // the registry keeps the id a tuple was FIRST recorded with — a mid-list corpus
+    // insert shifts every later def off its recorded row, mints rows one name that
+    // registry consumers read as another, and the collided newcomer never seeds (the
+    // reducer's idempotent no-op ate it SILENTLY). Divergence is a corpus-order bug and
+    // must be LOUD: compare every allocation against the live table before sending.
+    {
+        use resonantdust_st_bindings::index::DefinitionsTableAccess as _;
+        use spacetimedb_sdk::Table as _;
+        let mut diverged = 0u32;
+        for a in &allocs {
+            for row in index.db().definitions().iter() {
+                let same_tuple = row.type_name == a.type_name
+                    && row.sub_type == a.sub_type
+                    && row.kind == a.kind
+                    && row.variant == a.variant
+                    && row.version == a.version;
+                if same_tuple && row.id != a.id {
+                    diverged += 1;
+                    tracing::error!(
+                        tuple = format!("{}/{}/{}/{} v{}", a.type_name, a.sub_type, a.kind, a.variant, a.version),
+                        recorded = format!("{:#010x}", row.id),
+                        derived = format!("{:#010x}", a.id),
+                        "SEED/REGISTRY DIVERGENCE — the corpus order shifted off the recorded id; \
+                         RESTORE the append-only order (new defs go at the END of their category)"
+                    );
+                }
+                if !same_tuple && row.id == a.id {
+                    diverged += 1;
+                    tracing::error!(
+                        id = format!("{:#010x}", a.id),
+                        wants = format!("{}/{}/{}", a.type_name, a.sub_type, a.kind),
+                        holds = format!("{}/{}/{}", row.type_name, row.sub_type, row.kind),
+                        "SEED/REGISTRY ID COLLISION — this allocation would silently fail to seed; \
+                         RESTORE the append-only corpus order"
+                    );
+                }
+            }
+        }
+        if diverged > 0 {
+            tracing::error!(diverged, "definition seed diverges from the registry — fix content ORDER before trusting any gameplay rows");
+        }
+    }
     for a in &allocs {
         if let Err(err) = index.reducers().ensure_definition(
             a.id,

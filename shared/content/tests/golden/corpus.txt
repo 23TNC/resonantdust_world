@@ -378,11 +378,12 @@ biological_lifeform
 walks
 lumberjack
 corpus
-inventory
 forager
 herbivore
 carnivore
 omnivore
+bite
+inventory
 == interactions ==
 drink
 move_to
@@ -393,6 +394,7 @@ eat_plant_matter
 eat_meat
 pick_up
 drop
+attack
 == affordances ==
 can_drink
 can_move_ground
@@ -402,16 +404,18 @@ can_eat_plants
 can_eat_meat
 can_die
 can_carry
+can_attack
 == trait_params ==
-biological_lifeform: Some(TraitParams { label: "Biological Lifeform", levels: [TraitLevel { stats: [StatModifier { stat: "metabolism", add: 1.0, min: None, max: None }], needs: [], emotions: [] }] })
-walks: Some(TraitParams { label: "Walks", levels: [TraitLevel { stats: [StatModifier { stat: "ground_speed", add: 24.0, min: None, max: None }], needs: [], emotions: [] }, TraitLevel { stats: [StatModifier { stat: "ground_speed", add: 12.0, min: None, max: None }], needs: [], emotions: [] }, TraitLevel { stats: [StatModifier { stat: "ground_speed", add: 6.0, min: None, max: None }], needs: [], emotions: [] }] })
-lumberjack: Some(TraitParams { label: "Lumberjack", levels: [TraitLevel { stats: [StatModifier { stat: "logging", add: 1.0, min: None, max: None }], needs: [], emotions: [] }] })
-corpus: Some(TraitParams { label: "Corpus", levels: [TraitLevel { stats: [], needs: [NeedModifier { need: "corpus", rate: 1.0, min: None, max: Some(1.0) }], emotions: [] }, TraitLevel { stats: [], needs: [NeedModifier { need: "corpus", rate: 1.0, min: None, max: Some(2.0) }], emotions: [] }] })
-inventory: Some(TraitParams { label: "Inventory", levels: [TraitLevel { stats: [], needs: [NeedModifier { need: "inventory", rate: 1.0, min: None, max: Some(6.0) }], emotions: [] }] })
-forager: Some(TraitParams { label: "Forager", levels: [TraitLevel { stats: [StatModifier { stat: "foraging", add: 1.0, min: None, max: None }], needs: [], emotions: [] }] })
-herbivore: Some(TraitParams { label: "Herbivore", levels: [TraitLevel { stats: [StatModifier { stat: "plant_eating", add: 1.0, min: None, max: None }], needs: [], emotions: [] }] })
-carnivore: Some(TraitParams { label: "Carnivore", levels: [TraitLevel { stats: [StatModifier { stat: "meat_eating", add: 1.0, min: None, max: None }], needs: [], emotions: [] }] })
-omnivore: Some(TraitParams { label: "Omnivore", levels: [TraitLevel { stats: [StatModifier { stat: "plant_eating", add: 1.0, min: None, max: None }, StatModifier { stat: "meat_eating", add: 1.0, min: None, max: None }], needs: [], emotions: [] }] })
+biological_lifeform: Some(TraitParams { label: "Biological Lifeform", levels: [TraitLevel { stats: [StatModifier { stat: "metabolism", add: 1.0, min: None, max: None }], needs: [], emotions: [] }], tags: [] })
+walks: Some(TraitParams { label: "Walks", levels: [TraitLevel { stats: [StatModifier { stat: "ground_speed", add: 24.0, min: None, max: None }], needs: [], emotions: [] }, TraitLevel { stats: [StatModifier { stat: "ground_speed", add: 12.0, min: None, max: None }], needs: [], emotions: [] }, TraitLevel { stats: [StatModifier { stat: "ground_speed", add: 6.0, min: None, max: None }], needs: [], emotions: [] }], tags: [] })
+lumberjack: Some(TraitParams { label: "Lumberjack", levels: [TraitLevel { stats: [StatModifier { stat: "logging", add: 1.0, min: None, max: None }], needs: [], emotions: [] }], tags: [] })
+corpus: Some(TraitParams { label: "Corpus", levels: [TraitLevel { stats: [], needs: [NeedModifier { need: "corpus", rate: 1.0, min: None, max: Some(1.0) }], emotions: [] }, TraitLevel { stats: [], needs: [NeedModifier { need: "corpus", rate: 1.0, min: None, max: Some(2.0) }], emotions: [] }], tags: [] })
+forager: Some(TraitParams { label: "Forager", levels: [TraitLevel { stats: [StatModifier { stat: "foraging", add: 1.0, min: None, max: None }], needs: [], emotions: [] }], tags: [] })
+herbivore: Some(TraitParams { label: "Herbivore", levels: [TraitLevel { stats: [StatModifier { stat: "plant_eating", add: 1.0, min: None, max: None }], needs: [], emotions: [] }], tags: [] })
+carnivore: Some(TraitParams { label: "Carnivore", levels: [TraitLevel { stats: [StatModifier { stat: "meat_eating", add: 1.0, min: None, max: None }], needs: [], emotions: [] }], tags: [] })
+omnivore: Some(TraitParams { label: "Omnivore", levels: [TraitLevel { stats: [StatModifier { stat: "plant_eating", add: 1.0, min: None, max: None }, StatModifier { stat: "meat_eating", add: 1.0, min: None, max: None }], needs: [], emotions: [] }], tags: [] })
+bite: Some(TraitParams { label: "Bite", levels: [TraitLevel { stats: [], needs: [], emotions: [] }], tags: ["attack"] })
+inventory: Some(TraitParams { label: "Inventory", levels: [TraitLevel { stats: [], needs: [NeedModifier { need: "inventory", rate: 1.0, min: None, max: Some(6.0) }], emotions: [] }], tags: [] })
 == interaction_params ==
 drink: Some(InteractionParams { label: "Drink", menu_text: "Drink", affordances: ["can_drink"], inputs: ["pawn", "destination", "amount"], satisfy: Some(SatisfyEffect { target: Input(0), need: Name("thirst"), amount: Input(2) }), move_effect: None, grants: ["quenched"], destroy: None, spawn: None, remove: None, store: None, location: "adjacent", duration: 0.0, queue: QueueVisual { hover: Some("Drinking"), size: 1.0, background: Some(3037816), progress: "cw", progress_color: Some(3855951), progress_fill: true, cancelable: true } })
 move_to: Some(InteractionParams { label: "Move To", menu_text: "Move To", affordances: ["can_move_ground"], inputs: ["pawn", "destination"], satisfy: None, move_effect: Some(MoveEffect { target: Input(0), to: Input(1) }), grants: [], destroy: None, spawn: None, remove: None, store: None, location: "target", duration: 0.0, queue: QueueVisual { hover: Some("Moving"), size: 0.6, background: None, progress: "none", progress_color: None, progress_fill: true, cancelable: false } })
@@ -422,6 +426,7 @@ eat_plant_matter: Some(InteractionParams { label: "Eat Plant Matter", menu_text:
 eat_meat: Some(InteractionParams { label: "Eat Meat", menu_text: "Eat", affordances: ["can_eat_meat"], inputs: ["pawn", "destination", "amount"], satisfy: Some(SatisfyEffect { target: Input(0), need: Name("hunger"), amount: Input(2) }), move_effect: None, grants: [], destroy: Some("carrier"), spawn: None, remove: None, store: None, location: "adjacent", duration: 20.0, queue: QueueVisual { hover: Some("Eating"), size: 1.0, background: Some(6961706), progress: "cw", progress_color: Some(14047802), progress_fill: true, cancelable: true } })
 pick_up: Some(InteractionParams { label: "Pick Up", menu_text: "Pick Up", affordances: ["can_carry"], inputs: ["pawn", "destination"], satisfy: None, move_effect: None, grants: [], destroy: None, spawn: None, remove: None, store: Some("carrier"), location: "adjacent", duration: 10.0, queue: QueueVisual { hover: Some("Picking up"), size: 1.0, background: Some(5921338), progress: "cw", progress_color: Some(14074426), progress_fill: true, cancelable: true } })
 drop: Some(InteractionParams { label: "Drop", menu_text: "Drop", affordances: [], inputs: ["pawn", "slot", "item"], satisfy: None, move_effect: None, grants: [], destroy: None, spawn: Some(Carried), remove: None, store: None, location: "slot", duration: 0.0, queue: QueueVisual { hover: Some("Dropping"), size: 0.8, background: None, progress: "none", progress_color: None, progress_fill: true, cancelable: false } })
+attack: Some(InteractionParams { label: "Attack", menu_text: "Attack", affordances: ["can_attack"], inputs: ["pawn", "target", "amount"], satisfy: Some(SatisfyEffect { target: Input(1), need: Name("corpus"), amount: Input(2) }), move_effect: None, grants: [], destroy: None, spawn: None, remove: None, store: None, location: "adjacent", duration: 10.0, queue: QueueVisual { hover: Some("Attacking"), size: 1.0, background: Some(6957610), progress: "cw", progress_color: Some(14043706), progress_fill: true, cancelable: true } })
 == affordance_params ==
 can_drink: Some(AffordanceParams { label: "Can Drink", check: Stat { stat: "metabolism", above: Some(0.0), below: None } })
 can_move_ground: Some(AffordanceParams { label: "Can Move Ground", check: Stat { stat: "ground_speed", above: Some(0.0), below: None } })
@@ -431,6 +436,7 @@ can_eat_plants: Some(AffordanceParams { label: "Can Eat Plants", check: Stat { s
 can_eat_meat: Some(AffordanceParams { label: "Can Eat Meat", check: Stat { stat: "meat_eating", above: Some(0.0), below: None } })
 can_die: Some(AffordanceParams { label: "Can Die", check: Need { need: "corpus", cmp: Lte, value: 0.0 } })
 can_carry: Some(AffordanceParams { label: "Can Carry", check: Need { need: "inventory", cmp: Gt, value: 0.0 } })
+can_attack: Some(AffordanceParams { label: "Can Attack", check: Tag { tag: "attack" } })
 == stat_params ==
 ground_speed: Some(StatParams { label: "Ground Speed", min: 0.0, max: 240.0, min_wins: true })
 metabolism: Some(StatParams { label: "Metabolism", min: 0.0, max: 10.0, min_wins: true })
@@ -456,11 +462,12 @@ gameplay/trait/biological_lifeform Some("0x80030010")
 gameplay/trait/walks Some("0x80030020")
 gameplay/trait/lumberjack Some("0x80030030")
 gameplay/trait/corpus Some("0x80030040")
-gameplay/trait/inventory Some("0x80030050")
-gameplay/trait/forager Some("0x80030060")
-gameplay/trait/herbivore Some("0x80030070")
-gameplay/trait/carnivore Some("0x80030080")
-gameplay/trait/omnivore Some("0x80030090")
+gameplay/trait/forager Some("0x80030050")
+gameplay/trait/herbivore Some("0x80030060")
+gameplay/trait/carnivore Some("0x80030070")
+gameplay/trait/omnivore Some("0x80030080")
+gameplay/trait/bite Some("0x80030090")
+gameplay/trait/inventory Some("0x800300a0")
 gameplay/interaction/drink Some("0x80040010")
 gameplay/interaction/move_to Some("0x80040020")
 gameplay/interaction/cut_down Some("0x80040030")
@@ -470,6 +477,7 @@ gameplay/interaction/eat_plant_matter Some("0x80040060")
 gameplay/interaction/eat_meat Some("0x80040070")
 gameplay/interaction/pick_up Some("0x80040080")
 gameplay/interaction/drop Some("0x80040090")
+gameplay/interaction/attack Some("0x800400a0")
 gameplay/affordance/can_drink Some("0x80050010")
 gameplay/affordance/can_move_ground Some("0x80050020")
 gameplay/affordance/can_fell_trees Some("0x80050030")
@@ -478,6 +486,7 @@ gameplay/affordance/can_eat_plants Some("0x80050050")
 gameplay/affordance/can_eat_meat Some("0x80050060")
 gameplay/affordance/can_die Some("0x80050070")
 gameplay/affordance/can_carry Some("0x80050080")
+gameplay/affordance/can_attack Some("0x80050090")
 gameplay/stat/ground_speed Some("0x80060010")
 gameplay/stat/metabolism Some("0x80060020")
 gameplay/stat/logging Some("0x80060030")
@@ -498,13 +507,13 @@ cactus traits=[] interactions=[InteractionBind { name: "cut_down", magnitude: 0.
 reed traits=[] interactions=[InteractionBind { name: "pick_up", magnitude: 0.0, yields: None }]
 rock traits=[] interactions=[InteractionBind { name: "pick_up", magnitude: 0.0, yields: None }]
 flora traits=[] interactions=[InteractionBind { name: "forage", magnitude: 0.0, yields: None }]
-wolf traits=[("biological_lifeform", 1), ("walks", 2), ("corpus", 2), ("carnivore", 1)] interactions=[InteractionBind { name: "death", magnitude: 0.0, yields: None }]
+wolf traits=[("biological_lifeform", 1), ("walks", 2), ("corpus", 2), ("carnivore", 1), ("bite", 1)] interactions=[InteractionBind { name: "death", magnitude: 0.0, yields: None }]
 torch traits=[] interactions=[InteractionBind { name: "pick_up", magnitude: 0.0, yields: None }]
 torch_blue traits=[] interactions=[InteractionBind { name: "pick_up", magnitude: 0.0, yields: None }]
 human_female traits=[("biological_lifeform", 1), ("walks", 1), ("lumberjack", 1), ("corpus", 1), ("inventory", 1), ("forager", 1), ("omnivore", 1)] interactions=[InteractionBind { name: "death", magnitude: 0.0, yields: None }, InteractionBind { name: "drop", magnitude: 0.0, yields: None }]
 human_male traits=[("biological_lifeform", 1), ("walks", 1), ("lumberjack", 1), ("corpus", 1), ("inventory", 1), ("forager", 1), ("omnivore", 1)] interactions=[InteractionBind { name: "death", magnitude: 0.0, yields: None }, InteractionBind { name: "drop", magnitude: 0.0, yields: None }]
 logs traits=[] interactions=[InteractionBind { name: "pick_up", magnitude: 0.0, yields: None }]
-bunny traits=[("biological_lifeform", 1), ("walks", 1), ("corpus", 1), ("herbivore", 1)] interactions=[InteractionBind { name: "death", magnitude: 0.0, yields: None }]
+bunny traits=[("biological_lifeform", 1), ("walks", 1), ("corpus", 1), ("herbivore", 1)] interactions=[InteractionBind { name: "death", magnitude: 0.0, yields: None }, InteractionBind { name: "attack", magnitude: -1.0, yields: None }]
 meat traits=[] interactions=[InteractionBind { name: "eat_meat", magnitude: 30.0, yields: None }, InteractionBind { name: "pick_up", magnitude: 0.0, yields: None }]
 plant_matter traits=[] interactions=[InteractionBind { name: "eat_plant_matter", magnitude: 30.0, yields: None }, InteractionBind { name: "pick_up", magnitude: 0.0, yields: None }]
 == thing visual parts ==

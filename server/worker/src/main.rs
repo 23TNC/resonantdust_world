@@ -1380,20 +1380,23 @@ async fn main() {
                     }
                     use resonantdust_content::loader::Operand;
                     use resonantdust_codec::object::{gameplay_row_data, pack_gameplay_row};
-                    // The acting PAWN: whichever effect binds it, else the reserved `pawn`
-                    // input (input-rework F5) — a destroy-only interaction (cut_down) has
-                    // no satisfy/move to name it (lumberjack).
+                    // The acting PAWN: the reserved `pawn` input FIRST (input-rework F5) —
+                    // an effect's target can name ANOTHER pawn now (attack F2: satisfy
+                    // hits `@target`, the VICTIM), so binding the actor from the effect
+                    // evaluated the AFFORDANCES on the prey (the bunny failed can_attack —
+                    // seen live). The effect-target fallback covers a signature without a
+                    // `pawn` input, none of which exist today.
                     let target_op = params
                         .satisfy
                         .as_ref()
                         .map(|s| &s.target)
                         .or(params.move_effect.as_ref().map(|m| &m.target));
-                    let target = match target_op {
-                        Some(&Operand::Input(ti)) => inputs[ti],
-                        _ => match params.inputs.iter().position(|n| n == "pawn") {
-                            Some(i) => inputs[i],
-                            None => {
-                                reject("no effect or `pawn` input names the acting pawn");
+                    let target = match params.inputs.iter().position(|n| n == "pawn") {
+                        Some(i) => inputs[i],
+                        None => match target_op {
+                            Some(&Operand::Input(ti)) => inputs[ti],
+                            _ => {
+                                reject("no `pawn` input or effect target names the acting pawn");
                                 continue;
                             }
                         },
@@ -1464,6 +1467,31 @@ async fn main() {
                         .or_else(|| {
                             params.inputs.iter().position(|n| n == "destination").map(|i| inputs[i])
                         });
+                    // attack F2: a `target` input names a PAWN carrier — the first hot
+                    // carrier that is not the actor itself. Resolve its LIVE row NOW
+                    // (and again at every completion): the position feeds adjacency +
+                    // the walk's dest, the kind feeds the offer. Dead prey = a logged
+                    // no-op — a raced double-kill never swings at a ghost.
+                    let mut victim: Option<(u32, u16)> = None;
+                    if let Some(i) = params.inputs.iter().position(|n| n == "target") {
+                        let vref = inputs[i];
+                        let Some(vrow) =
+                            pawn.db().entity_state().iter().find(|r| r.entity_reference == vref)
+                        else {
+                            reject("the target pawn is not alive (attack F2)");
+                            continue;
+                        };
+                        victim = Some((
+                            pack_position_reference(
+                                vrow.macro_position_reference,
+                                vrow.micro_position_reference,
+                            ),
+                            resonantdust_codec::object::def_kind_reference(
+                                vrow.definition_reference,
+                            ),
+                        ));
+                    }
+                    let dest = dest.or(victim.map(|(p, _)| p));
                     // The target must be a live pawn — its composed row anchors the location.
                     let Some(prow) =
                         pawn.db().entity_state().iter().find(|r| r.entity_reference == target)
@@ -1585,6 +1613,15 @@ async fn main() {
                         );
                         if bundle.thing_interactions(kr >> 4).iter().any(|b| b.name == iname) {
                             carrier = Some((pawn_pos, true, 0, kr));
+                        }
+                    }
+                    if let Some((vpos, vkr)) = victim {
+                        // attack F2: the VICTIM's kind must OFFER this interaction (the
+                        // bunny carries `attack` the way water carries drink); the
+                        // carrier tuple hands its kind to the binding lookup below
+                        // (magnitude) exactly like a cold carrier's.
+                        if bundle.thing_interactions(vkr >> 4).iter().any(|b| b.name == iname) {
+                            carrier = Some((vpos, true, 0, vkr));
                         }
                     }
                     if params.location == "slot" {
@@ -1833,7 +1870,42 @@ async fn main() {
                     // read-modify-write on a lazy value — benign while this relay is the
                     // single writer) through the PIECEWISE eval, then the SIGNED amount
                     // clamped to the EFFECTIVE domain and quantized ONCE (F4).
+                    // attack F2: `satisfy.target` may name ANOTHER pawn (`@target` — the
+                    // victim): the eval then reads THAT pawn's rows and the SET_NEED
+                    // lands on it, so the need-write trigger sweeps the VICTIM (a fatal
+                    // bite fires the bunny's death, not the wolf's).
                     if let Some(satisfy) = &params.satisfy {
+                        let sat_target = match &satisfy.target {
+                            Operand::Input(i) => inputs[*i],
+                            _ => target,
+                        };
+                        let (s_traits, s_conds, s_needs);
+                        let (eval_traits, eval_conds, eval_needs) = if sat_target == target {
+                            (&trait_rows, &cond_rows, &need_rows)
+                        } else {
+                            let (tr, cr) = pawn
+                                .db()
+                                .payload()
+                                .iter()
+                                .find(|r| r.entity_reference == sat_target)
+                                .map(|r| {
+                                    (
+                                        resonantdust_codec::payload::payload_traits(&r.payload),
+                                        resonantdust_codec::payload::payload_conditions(&r.payload),
+                                    )
+                                })
+                                .unwrap_or_default();
+                            s_traits = tr;
+                            s_conds = cr;
+                            s_needs = pawn
+                                .db()
+                                .needs()
+                                .iter()
+                                .filter(|r| r.entity_reference == sat_target)
+                                .map(|r| (r.need, r.set_tic))
+                                .collect::<Vec<_>>();
+                            (&s_traits, &s_conds, &s_needs)
+                        };
                         let need_ref = match &satisfy.need {
                             Operand::Input(i) => inputs[*i],
                             Operand::Name(n) => match bundle.gameplay_reference("need", n) {
@@ -1866,7 +1938,7 @@ async fn main() {
                         };
                         let need_key = need_ref & 0xFFFF;
                         let Some(&(nrow, set_tic)) =
-                            need_rows.iter().find(|(r, _)| r & 0xFFFF == need_key)
+                            eval_needs.iter().find(|(r, _)| r & 0xFFFF == need_key)
                         else {
                             reject("target carries no row for the need");
                             continue;
@@ -1879,13 +1951,13 @@ async fn main() {
                             np.max as f32,
                         ));
                         let windows = resonantdust_content::needs_eval::rate_windows(
-                            &bundle, &need_name, &trait_rows, &cond_rows, set_tic,
+                            &bundle, &need_name, eval_traits, eval_conds, set_tic,
                         );
                         let now_sat = resonantdust_content::needs_eval::satisfaction_at(
                             value, set_tic, &np, effect_tic, &windows,
                         );
                         let (lo, hi) = resonantdust_content::needs_eval::need_bounds(
-                            &bundle, &need_name, &np, &trait_rows, &cond_rows, effect_tic,
+                            &bundle, &need_name, &np, eval_traits, eval_conds, effect_tic,
                         );
                         let new_sat = (now_sat + f64::from(amount)).clamp(lo, hi);
                         let q = resonantdust_codec::value::quantize(
@@ -1896,7 +1968,7 @@ async fn main() {
                         program.extend_from_slice(&[
                             PROMOTE,
                             SET_NEED,
-                            target,
+                            sat_target,
                             pack_gameplay_row(need_ref, q),
                         ]);
                         satisfied_need = Some(need_name);

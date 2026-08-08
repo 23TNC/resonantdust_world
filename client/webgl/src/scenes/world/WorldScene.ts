@@ -731,7 +731,29 @@ export class WorldScene extends Scene {
     const info = this.moverLayer.pawnInfo(actor);
     if (!info) return;
     const w = this.clientToWorld(cx, cy);
-    if (this.moverLayer.pawnAt(w.x, w.y)) return;
+    // attack F2: a click on ANOTHER pawn opens ITS kind's menu — the prey OFFERS
+    // being attacked the way water offers drink; the availability filter runs on the
+    // ACTOR's rows (can_attack = the tag check). The fired option binds `target` =
+    // the clicked pawn's entity, so the worker chases its LIVE position.
+    const clickedPawn = this.moverLayer.pawnAt(w.x, w.y);
+    if (clickedPawn) {
+      if (clickedPawn.entity === actor) return;
+      const victim = this.moverLayer.pawnInfo(clickedPawn.entity);
+      if (!victim) return;
+      const d2 = this.ctx.client.ticDelta(0);
+      if (d2 === null) return;
+      const now2 = ((Math.floor(d2) % 0x10000) + 0x10000) % 0x10000;
+      const payload2 = this.moverLayer.pawnPayload(actor) ?? new Uint32Array(0);
+      const needs2 = this.moverLayer.pawnNeeds(actor);
+      const cheb2 = Math.max(Math.abs(info.tileX - victim.tileX), Math.abs(info.tileY - victim.tileY));
+      const options = (getContent().thingMenuOptions(victim.kind, payload2, needs2, now2, cheb2) as unknown as PieMenuOption[])
+        // Slot-vocabulary interactions (drop) bind from the INVENTORY panel, not a
+        // world click — offering them here would only refuse at the composer.
+        .filter((o) => !o.inputs.some((n) => n === "slot" || n === "item"));
+      this.pieMenu.open(cx, cy, options, (o) =>
+        this.fireOption(o, actor, victim.tileX, victim.tileY, clickedPawn.entity));
+      return;
+    }
     const d = this.ctx.client.ticDelta(0);
     if (d === null) return;
     const now = ((Math.floor(d) % 0x10000) + 0x10000) % 0x10000;
@@ -797,13 +819,17 @@ export class WorldScene extends Scene {
 
   /** input-rework F5: bind an option's input SIGNATURE by the reserved vocabulary and
    *  queue the `EXECUTE_INTERACTION` event. An unbindable name refuses loudly — the wasm
-   *  filter should never have offered it. */
-  private fireOption(o: PieMenuOption, actor: number, tileX: number, tileY: number): void {
+   *  filter should never have offered it. `targetEntity` (attack F2) binds the `target`
+   *  input when the click landed on a PAWN. */
+  private fireOption(
+    o: PieMenuOption, actor: number, tileX: number, tileY: number, targetEntity?: number,
+  ): void {
     const inputs = new Uint32Array(o.inputs.length);
     for (let i = 0; i < o.inputs.length; i++) {
       const name = o.inputs[i];
       if (name === "pawn") inputs[i] = actor;
       else if (name === "destination") inputs[i] = tileToPosition(tileX, tileY);
+      else if (name === "target" && targetEntity !== undefined) inputs[i] = targetEntity;
       else if (name === "amount") {
         const f = new Float32Array(1);
         f[0] = o.magnitude;

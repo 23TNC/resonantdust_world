@@ -709,6 +709,12 @@ order**:
 
 - **Ids come from the registry, not corpus position**, so file order cannot renumber anything in a
   running world. Sorting exists for determinism across machines, not for identity.
+- **BUT the SEED FALLBACK is positional, so declaration order is APPEND-ONLY** (attack I1, found
+  live): sim consumers resolve gameplay ids through the corpus-position seed, and the registry
+  keeps the id a tuple was FIRST recorded with — a def inserted MID-LIST shifts every later def's
+  seed id off its registry row (an omnivore that reads as bite) and the collided newcomer silently
+  never seeds. New defs go at the END of their category's declaration sequence, and the master's
+  seed guard now screams `SEED/REGISTRY DIVERGENCE` on any drift.
 - **A collision is a LOAD ERROR by construction.** Two packages claiming one
   `(type, subType, kind, variant, version)` fails the load — never a silent last-writer-wins.
 - **Server-only content is filtered by what the DATA IS, not what the file is called** (F2). The
@@ -947,6 +953,12 @@ label = "Walks"
 stats = [ { stat = "ground_speed", add = [24, 12, 6] } ]   # tics/tile at level 1/2/3
 # needs = [ { need = "thirst", rate = [1.0, 0.9] } ]       # need modifiers take levels too
 # emotions = [ { emotion = "playful", magnitude = [1, 2] } ]  # emotions take levels too
+# tags = ["attack"]         # capability TAGS (attack F1): free-form strings a TAG-check
+#                           # affordance matches — `bite` authors ["attack"], and
+#                           # can_attack passes for ANY tag bearer (claw, peck — pure
+#                           # content). Not leveled: presence IS the capability; tags
+#                           # never ride the wire (corpus-resolved at eval). A modifier-
+#                           # less tag-only trait is legal (one empty level).
 
 [[interaction]]             # something a pawn can DO (interactions F5)
 name = "drink"
@@ -1035,6 +1047,25 @@ remove = "target"           # floor cell (the yield lane), then REMOVE the pawn 
 # spawn = { thing = "plant_matter", at = "adjacent" } — the first EMPTY pathable cell
 # of the carrier's 3×3 in fixed (dy, dx) scan order; all full = a logged no-yield.
 
+[[interaction]]             # a PAWN-target interaction (attack F2) — predation
+name = "attack"
+label = "Attack"
+menu_text = "Attack"
+affordances = ["can_attack"]  # the TAG check on the ACTOR (attack F1)
+# `target` joins the RESERVED input vocabulary: the clicked PAWN's entity_reference —
+# the first hot carrier that is not `self`. The worker resolves the target's LIVE row
+# at EVERY execution (position → adjacency + the walk's dest; kind → the offer; dead
+# prey = a logged no-op), so walk-then-act CHASES and a moved-away victim no-ops the
+# completion (re-issue is the hunter's job). The interaction is CARRIED BY THE PREY's
+# kind (the water-offers-drink pattern) with a NEGATIVE magnitude — and satisfy's
+# `@target` means the SET_NEED (and hence the need-write TRIGGER) lands on the
+# VICTIM: a fatal bite fires the bunny's death, meat, and the chain from there.
+inputs = ["pawn", "target", "amount"]
+satisfy = { target = "@target", need = "corpus", amount = "@amount" }
+location = "adjacent"
+duration = 10
+# the prey binds it: interactions = [ { name = "attack", magnitude = -1 } ]
+
 [[interaction]]             # the STORE effect (inventory F4) — pick a thing up
 name = "pick_up"
 label = "Pick Up"
@@ -1076,6 +1107,9 @@ check = { stat = "metabolism", above = 0.0 }   # above|below, EXCLUSIVE; stat mu
 # write sweeps the target's carried interactions for affordances checking THAT need
 # and queues the passers — the mutation is the trigger; no polling, no brains.
 # check = { need = "corpus", lte = 0.0 }       # gte|gt|lt|lte, need must exist
+# …or a TAG (attack F1): passes iff ANY carried trait authors the tag — a tag no
+# trait authors refuses at load (a typo, like every other name).
+# check = { tag = "attack" }
 # carriers bind the INTERACTIONS they offer where they are defined (tile/thing blocks
 # above): interactions = [{ name = "drink", magnitude = 3 }]
 # worked example: drinking at the water tile executes drink with amount = +3.0 —

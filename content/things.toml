@@ -147,7 +147,8 @@ needs = ["thirst", "hunger", "corpus"]
 # string = level 1. walks level 2 = 12 tics/tile into ground_speed — the wolf's pace
 # (the `speed` field is GONE, input-rework F8: the derived stat IS the speed).
 # food-chain: corpus level 2 = the tanky tier (health cap 2); carnivore eats meat.
-traits = ["biological_lifeform", { name = "walks", level = 2 }, { name = "corpus", level = 2 }, "carnivore"]
+# attack F1: bite = the "attack" capability tag — wolves pass can_attack.
+traits = ["biological_lifeform", { name = "walks", level = 2 }, { name = "corpus", level = 2 }, "carnivore", "bite"]
 # The pawn's OWN kind carries death (food-chain F5/I9) — the need-write trigger fires it.
 interactions = [ { name = "death" } ]
 
@@ -313,7 +314,9 @@ subType = ["animal"]
 variant = ["0"]
 needs = ["thirst", "hunger", "corpus"]
 traits = ["biological_lifeform", { name = "walks", level = 1 }, { name = "corpus", level = 1 }, "herbivore"]
-interactions = [ { name = "death" } ]
+# attack F2: the PREY offers being attacked (the water-offers-drink pattern); the
+# NEGATIVE magnitude is the hit — corpus 1, one bite kills (the trigger does the rest).
+interactions = [ { name = "death" }, { name = "attack", magnitude = -1 } ]
 
   [[thing.part]]
   texture = "white"

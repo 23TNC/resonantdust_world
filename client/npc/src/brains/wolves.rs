@@ -65,6 +65,25 @@ pub struct Wolves {
     busy_until: Option<std::time::Instant>,
     /// The meat cell an eat trip is heading to, if hunger drove it there.
     eat_target: Option<(i32, i32)>,
+    // ── the HUNT (attack F3) ──
+    /// The prey kind's def (the bunny), resolved from the corpus; 0 = no hunting.
+    prey_def: u32,
+    /// The attack interaction's gameplay ref; 0 = the corpus authors none.
+    attack_ref: u32,
+    /// The hit (the PREY binding's signed magnitude — the corpus is the authority).
+    attack_magnitude: f64,
+    /// Live prey positions from the zone fan — the hunt's scan (removed = dropped).
+    prey: HashMap<u32, (i32, i32)>,
+    /// The bunny a hunt order is chasing, if hunger drove one.
+    hunt_target: Option<u32>,
+    /// Consecutive re-fires at the SAME prey (attack I3): a LATE frame can re-insert a
+    /// dead bunny after its removal, and the worker then rejects every swing ("not
+    /// alive") invisibly to us — three fruitless strikes forget the ghost (a LIVE
+    /// bunny refreshes its mirror entry with its next fanned frame anyway).
+    hunt_strikes: u8,
+    /// Re-issue wall time: the worker's walk-then-act chases the LIVE position, but
+    /// moved-away prey no-ops the swing — past this, a still-hungry wolf re-fires.
+    hunt_until: std::time::Instant,
     /// Latest RAW payload per entity — buffered pre-adoption too (the zone snapshot may
     /// fan `Payload` before the `StateObject` this brain adopts on; either order is legal).
     /// TRAIT + CONDITION rows decode from here (stat-model F1) — runtime truth, not the def.
@@ -142,6 +161,13 @@ impl Wolves {
             eat_issued: false,
             busy_until: None,
             eat_target: None,
+            prey_def: 0,
+            attack_ref: 0,
+            attack_magnitude: 0.0,
+            prey: HashMap::new(),
+            hunt_target: None,
+            hunt_strikes: 0,
+            hunt_until: std::time::Instant::now(),
             payloads: HashMap::new(),
             need_rows: HashMap::new(),
             init_after: std::time::Instant::now(),
@@ -331,9 +357,10 @@ impl Wolves {
             tracing::info!(tic = now, conditions = ?names, emotion = self.emotion, next_crossing = ?next,
                            "condition band change");
             self.active = refs;
-            // A band change re-arms the drink AND eat latches (once per crossing).
+            // A band change re-arms the drink, eat AND hunt latches (once per crossing).
             self.drink_issued = false;
             self.eat_issued = false;
+            self.hunt_target = None;
         }
         self.active_set = active;
     }
@@ -402,6 +429,68 @@ impl Wolves {
                 tracing::debug!("hungry but no known edible thing in the streamed zones");
             }
         }
+    }
+
+    /// The HUNT (attack F3): a hungry wolf with NO known food kills its own — fire the
+    /// attack at the nearest live bunny and let the WORKER compose the chase
+    /// (walk-then-act to the victim's LIVE position). Moved-away prey no-ops the
+    /// completion, so a still-hungry wolf re-fires past `hunt_until`. The kill's meat
+    /// enters the thing mirror and mind_eat (which runs FIRST) takes over.
+    fn mind_hunt(&mut self, bot: &Bot) {
+        if self.attack_ref == 0 || self.hunger == 0 || !self.is_hungry() {
+            self.hunt_target = None;
+            return;
+        }
+        // Food known or an eat in flight → the table wins over the chase.
+        if self.eat_target.is_some() || self.eat_issued {
+            return;
+        }
+        let Some(wolf) = self.wolf else { return };
+        if self.hunt_target.is_some() && std::time::Instant::now() < self.hunt_until {
+            return; // the chase is in flight
+        }
+        let Some((&victim, &vat)) = self
+            .prey
+            .iter()
+            .min_by_key(|(_, p)| (p.0 - self.at.0).abs().max((p.1 - self.at.1).abs()))
+        else {
+            tracing::debug!("hungry but no known prey in the streamed zones");
+            return;
+        };
+        // The ghost-prey cap (attack I3): three fruitless strikes at the same target
+        // forget it — the worker's "not alive" rejects are invisible here.
+        if self.hunt_target == Some(victim) {
+            self.hunt_strikes += 1;
+            if self.hunt_strikes >= 3 {
+                tracing::info!(prey = format!("{victim:#010x}"),
+                    "three fruitless strikes — forgetting the ghost");
+                self.prey.remove(&victim);
+                self.hunt_target = None;
+                self.hunt_strikes = 0;
+                return;
+            }
+        } else {
+            self.hunt_strikes = 0;
+        }
+        let mut program = vec![EXECUTE_INTERACTION, self.attack_ref, 0, 3];
+        program.push(wolf);
+        program.push(victim);
+        program.push((self.attack_magnitude as f32).to_bits());
+        if bot.client.queue(program).is_err() {
+            tracing::error!("engine gone during hunt");
+            return;
+        }
+        // Hold the wander off for the chase + the swing: cheb tiles at the wolf's
+        // pace (nominal 6 Hz) + the act + queue margin. Coarse is fine — a blown
+        // window just re-fires.
+        let cheb = (vat.0 - self.at.0).abs().max((vat.1 - self.at.1).abs()) as f64;
+        let trip_s = cheb * 12.0 / 6.0 + 10.0 / 6.0 + 5.0;
+        self.hunt_target = Some(victim);
+        self.hunt_until = std::time::Instant::now() + Duration::from_secs_f64(trip_s);
+        self.dest = Some(vat);
+        self.deadline = self.hunt_until;
+        tracing::info!(prey = format!("{victim:#010x}"), at = ?vat, from = ?self.at,
+            "hungry — the hunt begins");
     }
 
     /// The first hunger-SATISFYING interaction thing kind `kind` offers that this wolf
@@ -661,6 +750,25 @@ impl Brain for Wolves {
                         self.thirst = bundle.thing_needs(kind).first().copied().unwrap_or(0);
                         self.hunger =
                             bundle.gameplay_reference("need", "hunger").unwrap_or(0);
+                        // The HUNT (attack F3): prey = the bunny kind; the attack ref +
+                        // the hit magnitude come from the PREY's own binding (the
+                        // water-offers-drink pattern — the corpus is the authority).
+                        self.prey_def = bundle
+                            .definition_reference(false, "bunny")
+                            .or_else(|| {
+                                bundle.thing_object_id("bunny").map(|k| {
+                                    u32::from(resonantdust_codec::object::pack_kind_reference(k, 0))
+                                })
+                            })
+                            .unwrap_or(0);
+                        self.attack_ref =
+                            bundle.gameplay_reference("interaction", "attack").unwrap_or(0);
+                        self.attack_magnitude = bundle
+                            .thing_object_id("bunny")
+                            .map(|k| bundle.thing_interactions(k))
+                            .and_then(|bs| bs.into_iter().find(|b| b.name == "attack"))
+                            .map(|b| b.magnitude)
+                            .unwrap_or(0.0);
                         tracing::info!(def = format!("{def:#010x}"),
                                        thirst_need = format!("{:#010x}", self.thirst),
                                        def_traits = ?bundle.thing_traits(kind),
@@ -709,6 +817,20 @@ impl Brain for Wolves {
         else {
             return;
         };
+        // The prey mirror (attack F3): every live bunny's position, dropped on removal —
+        // a killed bunny leaves the scan (its meat enters the THING mirror for mind_eat).
+        if self.prey_def != 0
+            && def_sans_variant(*definition_reference) == def_sans_variant(self.prey_def)
+        {
+            if *removed {
+                self.prey.remove(entity_reference);
+                if self.hunt_target == Some(*entity_reference) {
+                    self.hunt_target = None; // the kill landed — mind_eat takes the meat
+                }
+            } else {
+                self.prey.insert(*entity_reference, (*tile_x, *tile_y));
+            }
+        }
         if *removed {
             // `StateGone` is TRUSTWORTHY now — the edge swallows zone-migration deletes
             // (movement-hardening P2, closing first-pawns I4), so a removal that reaches us
@@ -759,7 +881,9 @@ impl Brain for Wolves {
             // No wolf adopted: mint ONE, once, after the adopt-first window (ACTIONS.md
             // §CREATE — the minted id comes back through the zone's state fan-out, F3).
             if !self.created && self.def != 0 && std::time::Instant::now() > self.spawn_after {
-                let spawn = self.pick_dest();
+                // The PATHABLE picker (attack I2, found live): an unchecked random spawn
+                // minted a wolf mid-lake — stranded, every trip unreachable (F5).
+                let spawn = self.pick_pathable_dest(bot);
                 // CREATE is variable-arity (human-pawns F2): def, position, count, payload×count.
                 // The wolf carries no payload (its variant rides the def) — count 0.
                 let program = vec![PROMOTE, CREATE, self.def, tile_to_position(spawn.0, spawn.1), 0];
@@ -786,6 +910,7 @@ impl Brain for Wolves {
         }
         self.mind_drink(bot);
         self.mind_eat(bot);
+        self.mind_hunt(bot);
         match self.dest {
             None => {
                 // A drink or eat trip owns the destination slot — the wander yields

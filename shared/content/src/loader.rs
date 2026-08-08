@@ -309,6 +309,11 @@ pub struct TraitParams {
   /// The per-level modifier tables, index = level − 1. Never empty (a marker trait with
   /// no modifiers still has one empty level).
   pub levels: Vec<TraitLevel>,
+  /// Free-form capability TAGS (attack F1 — the user's generalization): `bite` authors
+  /// `tags = ["attack"]`, and a TAG-check affordance passes for ANY carried trait
+  /// bearing the tag — new attack forms (claw, peck) are pure content, no new
+  /// affordances. Tags never ride the wire; they resolve through the corpus at eval.
+  pub tags: Vec<String>,
 }
 
 /// One operand of an interaction effect (interactions F5): an `"@name"` reference into the
@@ -492,6 +497,9 @@ pub enum AffordanceCheck {
   Stat { stat: String, above: Option<f64>, below: Option<f64> },
   /// `satisfaction_at(now) <cmp> value` on the need's effective domain.
   Need { need: String, cmp: Cmp, value: f64 },
+  /// Passes iff ANY carried trait authors this TAG (attack F1 — capability by tag:
+  /// `can_attack = { tag = "attack" }` matches bite, claw, peck… pure content).
+  Tag { tag: String },
 }
 
 impl AffordanceParams {
@@ -499,7 +507,7 @@ impl AffordanceParams {
   pub fn trigger_need(&self) -> Option<&str> {
     match &self.check {
       AffordanceCheck::Need { need, .. } => Some(need),
-      AffordanceCheck::Stat { .. } => None,
+      AffordanceCheck::Stat { .. } | AffordanceCheck::Tag { .. } => None,
     }
   }
 }

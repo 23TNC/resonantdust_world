@@ -492,6 +492,10 @@ struct TraitToml {
   /// Per-level emotion contributions (emotions F2) — `magnitude = [1, 2, …]`.
   #[serde(default)]
   emotions: Vec<ModEmotionToml>,
+  /// Capability TAGS (attack F1): free-form strings a TAG-check affordance matches
+  /// (`bite` authors `["attack"]`). Not leveled — presence is the capability.
+  #[serde(default)]
+  tags: Vec<String>,
 }
 
 /// One effect operand: `"@name"` = a reference into the interaction's `inputs`; a bare
@@ -625,6 +629,9 @@ struct CheckToml {
   lt: Option<f64>,
   #[serde(default)]
   lte: Option<f64>,
+  /// The TAG form (attack F1): passes iff ANY carried trait authors this tag.
+  #[serde(default)]
+  tag: Option<String>,
 }
 
 /// The spawn effect's TOML shape — a `{ thing, at }` table (food-chain F5/F6) or the
@@ -1087,6 +1094,7 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
       (t.name.clone(), TraitParams {
         label: t.label.clone().unwrap_or_else(|| t.name.clone()),
         levels,
+        tags: t.tags.clone(),
       })
     })
     .collect();
@@ -1345,8 +1353,8 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
     .affordance
     .iter()
     .map(|a| {
-      let check = match (&a.check.stat, &a.check.need) {
-        (Some(stat), None) => {
+      let check = match (&a.check.stat, &a.check.need, &a.check.tag) {
+        (Some(stat), None, None) => {
           if !stat_exists(stat) {
             errors.push(LoadError {
               file: String::new(),
@@ -1368,7 +1376,7 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
             below: a.check.below,
           }
         }
-        (None, Some(need)) => {
+        (None, Some(need), None) => {
           if !need_exists(need) {
             errors.push(LoadError {
               file: String::new(),
@@ -1399,11 +1407,26 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
           };
           AffordanceCheck::Need { need: need.clone(), cmp, value }
         }
+        (None, None, Some(tag)) => {
+          // The TAG form (attack F1): the tag must be authored by at least one trait —
+          // a tag nothing carries is a typo, refused at load like every other name.
+          if !all.trait_.iter().any(|t| t.tags.iter().any(|g| g == tag)) {
+            errors.push(LoadError {
+              file: String::new(),
+              message: format!(
+                "affordance `{}`: check names tag `{tag}` that no trait authors (attack F1)",
+                a.name
+              ),
+            });
+          }
+          AffordanceCheck::Tag { tag: tag.clone() }
+        }
         _ => {
           errors.push(LoadError {
             file: String::new(),
             message: format!(
-              "affordance `{}`: check names exactly ONE of `stat`/`need` (food-chain F4)",
+              "affordance `{}`: check names exactly ONE of `stat`/`need`/`tag` \
+               (food-chain F4 / attack F1)",
               a.name
             ),
           });
@@ -2208,6 +2231,68 @@ spawn = "carried"
     let e = load(&[src("t.toml", "[[interaction]]\nname = \"i\"\ninputs = [\"pawn\"]\nlocation = \"pocket\"\nstore = \"carrier\"\n")])
       .unwrap_err();
     assert!(e.iter().any(|e| e.message.contains("`slot`")), "{e:?}");
+  }
+
+  #[test]
+  fn trait_tags_gate_by_capability() {
+    // attack F1: bite authors the tag; can_attack passes for ANY tag bearer —
+    // a clawed bear joins by content alone. Round-trip + eval + refusal.
+    let text = r##"
+[[trait]]
+name = "bite"
+tags = ["attack"]
+
+[[trait]]
+name = "walks"
+stats = [ { stat = "ground_speed", add = [24] } ]
+
+[[stat]]
+name = "ground_speed"
+min = 0
+max = 240
+
+[[affordance]]
+name = "can_attack"
+check = { tag = "attack" }
+
+[[interaction]]
+name = "attack"
+affordances = ["can_attack"]
+inputs = ["pawn", "target", "amount"]
+location = "adjacent"
+satisfy = { target = "@target", need = "corpus", amount = "@amount" }
+
+[[need]]
+name = "corpus"
+min = 0
+max = 2
+"##;
+    let b = load(&[src("t.toml", text)]).expect("clean load");
+    assert_eq!(b.trait_params("bite").unwrap().tags, vec!["attack".to_string()]);
+    assert_eq!(
+      b.affordance_params("can_attack").unwrap().check,
+      AffordanceCheck::Tag { tag: "attack".into() }
+    );
+    // Eval: a pawn CARRYING bite passes; one carrying only walks does not.
+    let bite_ref = b.gameplay_reference("trait", "bite").unwrap();
+    let walks_ref = b.gameplay_reference("trait", "walks").unwrap();
+    let row = |r: u32| resonantdust_codec::object::pack_gameplay_row(r, 1);
+    let pass = |rows: &[u32]| {
+      crate::stat_eval::affordance_passes(&b, "can_attack", rows, &[], &[], &[], 0)
+    };
+    assert!(pass(&[row(bite_ref)]), "the biter attacks");
+    assert!(!pass(&[row(walks_ref)]), "the mere walker does not");
+    assert!(!pass(&[]), "the traitless do not");
+    // Refusals: a tag nothing authors; a check naming two forms.
+    let e = load(&[src("t.toml", "[[affordance]]\nname = \"a\"\ncheck = { tag = \"ghost\" }\n")])
+      .unwrap_err();
+    assert!(e.iter().any(|e| e.message.contains("no trait authors")), "{e:?}");
+    let e = load(&[src(
+      "t.toml",
+      "[[trait]]\nname = \"t\"\ntags = [\"x\"]\n[[stat]]\nname = \"s\"\nmin = 0\nmax = 1\n[[affordance]]\nname = \"a\"\ncheck = { stat = \"s\", above = 0.0, tag = \"x\" }\n",
+    )])
+    .unwrap_err();
+    assert!(e.iter().any(|e| e.message.contains("exactly ONE of `stat`/`need`/`tag`")), "{e:?}");
   }
 
   #[test]
