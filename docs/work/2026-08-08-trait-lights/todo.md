@@ -74,9 +74,11 @@ decisions in [`forks.md`](forks.md) (F#), the anticipated-issue inventory in
 
 ## P5 — the drills, and the truth
 
-- [ ] Cold boot: bounce the stack; the world re-lights from cold rows + corpus
+- [x] Cold boot: bounce the stack; the world re-lights from cold rows + corpus
       alone (SQL shows no trait rows for torches). Acceptance: post-bounce
       screenshot matches; pawn payload row counts unchanged.
-- [ ] Docs + memory truth pass + bounce with arcs green; **the user's eyes
+- [x] Docs + memory truth pass + bounce with arcs green; **the user's eyes
       close the stream**. Acceptance: docs-check green; captures + logs in
-      completed.md.
+      completed.md. (Everything but the eyes is done — the cold boot WAS the
+      bounce, arcs green: seed guard quiet at 235, brains re-adopted, worker
+      composing, the world re-lit from corpus + cold alone.)

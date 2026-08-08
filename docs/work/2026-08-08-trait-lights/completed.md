@@ -1,5 +1,19 @@
 # Completed — trait lights
 
+## 2026-08-08 — P5: the cold boot, and the truth
+
+**Cold boot** — full stack bounced: the seed guard quiet (235 definitions —
+the appended emit_light, nothing shifted), brains re-adopted, worker
+composing, and the world RE-LIT from cold rows + corpus alone: the warm torch
+at (100,50), the blue torches, and the glowing human — all derived, zero
+spacetime light rows (the human's payload holds its 7 pre-existing trait rows
+and NO emit_light, before and after: 20 words both sides of the boot).
+
+**Truth pass** — VARIABLES.md carries the constant law + the emit_light
+schema (P0); memory gained `trait-lights-delivered`; docs-check green. The
+male's drill bind (the warm glow) is marked in TOML for the user's call. The
+user's eyes close the stream.
+
 ## 2026-08-08 — P4: pawns glow
 
 **Mover lights** — `MoverLayer.moverLights` shapes the wasm `objectLights`
