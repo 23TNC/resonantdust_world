@@ -622,6 +622,14 @@ write), never a stored countdown and never a forecast. A re-grant refreshes the 
                emotions never ride the wire)
 [[thing]]      needs = ["thirst", …] · traits = ["biological_lifeform", { name = "walks", level = 2 }]
 ```
+
+**Inventory rides the same four families** (inventory F1/F2): the `inventory` NEED counts FREE
+slots (worker-written; the leveled `inventory` trait is the capacity — humans 6), the held items
+are rows in the pawn shard's `inventory` sub-table (`slot`, `item` = the thing's
+`definition_reference`, `state` RESERVED for the item-as-entity successor), fanned as
+`PawnInventory` frames and moved ONLY by the worker's `INV_ADD`/`INV_REMOVE` beside the
+free-count `SET_NEED` in one program. FREE (the need) vs FILLED (the rows) never conflate: the
+panel grid renders ROWS, affordances read the NEED (I2).
 (TOML spellings — § TOML content schema. Ids are REGISTRY-allocated from the derived
 `gameplay/<category>/<name>/default` taxonomy — interactions F1/F9; event inputs carry full u32
 `definition_reference`s, stored rows the packed low-16 form above.)
@@ -905,6 +913,13 @@ band = [                    # exclusive ranges in the need's OWN units; ≤1 act
 #     which intersect; a second authoring source can never silently shrink a cap);
 #   - needs MINT at the EFFECTIVE max (the kind's traits are in hand at mint), so a
 #     bunny mints corpus 1 and a wolf 2 on the ONE 0..2 encoding.
+# inventory — FREE SLOTS (inventory F1, the user's inversion: "at 0 we have 0 free
+# slots") — encoding domain 0..16, deplete 0, no bands; VALUE = free slots, so the
+# standing mint-at-effective-max law births pawns with ALL slots free. The leveled
+# `inventory` trait (`needs = [{ need = "inventory", max = [6] }]`) is the capacity —
+# humans level 1 = 6. pick_up DECREMENTS (uses a slot), drop INCREMENTS; the held
+# ITEMS are rows in the pawn shard's `inventory` sub-table (TABLES.md), and rows vs
+# need must never conflate (I2: the panel grid renders ROWS, affordances read the NEED).
 
 [[emotion]]                 # SIXTEEN, declaration-ordered — the u4 INDEX is the identity
 name = "fine"               # (emotions F1); `fine` REQUIRED first: index 0 = the "alters
@@ -1019,6 +1034,38 @@ remove = "target"           # floor cell (the yield lane), then REMOVE the pawn 
 # forage's shape: location "adjacent" on the FLORA carrier,
 # spawn = { thing = "plant_matter", at = "adjacent" } — the first EMPTY pathable cell
 # of the carrier's 3×3 in fixed (dy, dx) scan order; all full = a logged no-yield.
+
+[[interaction]]             # the STORE effect (inventory F4) — pick a thing up
+name = "pick_up"
+label = "Pick Up"
+menu_text = "Pick Up"
+affordances = ["can_carry"] # { need = "inventory", gt = 0 } — has the need AND a free slot
+inputs = ["pawn", "destination"]
+# The `store` effect (fifth effect kind): the validated CARRIER leaves the world via
+# the destroy tombstone lane, its kind def lands in the acting pawn's first free
+# inventory slot (INV_ADD), and the free-slot count decrements (SET_NEED) — ONE
+# program, so rows and count cannot diverge (F3/I3). The completion re-validates
+# carrier presence + a free slot (two pawns racing one log: the loser no-ops, I7).
+store = "carrier"
+location = "adjacent"
+duration = 10
+queue = { hover = "Picking up", progress = "cw", progress_color = "#3ad64f", progress_fill = true, cancelable = true }
+
+[[interaction]]             # the SLOT location + spawn = "carried" (inventory F5) — generic drop
+name = "drop"
+label = "Drop"
+menu_text = "Drop"
+inputs = ["pawn", "slot"]   # `slot` = the clicked inventory slot index (+ the expected
+                            #  item def rides the event for fire-time re-validation, I5)
+# location "slot": the carrier is an INVENTORY SLOT of the ACTING pawn — authored on
+# the inventory-bearing PAWN kinds (the death `self` precedent), surfaced by the slot
+# pie menu, generic over every item because the effect names the CARRIED def:
+location = "slot"
+# spawn = "carried" reuses forage's adjacent scan but REFUSES when no empty pathable
+# cell exists (the item stays held — never forage's all-full-swallows rule, I10);
+# then INV_REMOVE + the free-count SET_NEED increments.
+spawn = "carried"
+duration = 0
 
 [[affordance]]              # a named PREDICATE over pawn stats (stat-model F5/F10)
 name = "can_drink"

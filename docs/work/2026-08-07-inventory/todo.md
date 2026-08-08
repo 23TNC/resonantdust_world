@@ -6,13 +6,16 @@ in [`forks.md`](forks.md) (F#), the anticipated-issue inventory in
 
 ## P0 — the paper
 
-- [ ] VARIABLES.md: the inventory need (0..16 encoding, FREE-SLOTS-as-value —
+- [x] VARIABLES.md: the inventory need (0..16 encoding, FREE-SLOTS-as-value —
       F1/I2; standing mint law correct as-is), the leveled trait, the `inventory`
       sub-table shape + PawnInventory frame (F2), INV_ADD/INV_REMOVE (F3),
       `slot`/`spawn = "carried"`/`store` vocabulary (F4/F5). Acceptance: docs-check
-      green.
-- [ ] TABLES.md: the pawn-shard `inventory` table row (uid, entity, macro, slot,
-      item, state — F2, state RESERVED). Acceptance: docs-check green.
+      green. → the need comment, the four-families paragraph, and full pick_up/drop
+      schema examples; green.
+- [x] TABLES.md: the pawn-shard `inventory` table row (uid, entity, macro, slot,
+      item, state — F2, state RESERVED). Acceptance: docs-check green. → the
+      sub-table section beside `needs` (uid = entity:32|slot:8, slaved zone key,
+      the never-conflate law); green.
 
 ## P1 — the shard and the wire
 

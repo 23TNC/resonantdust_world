@@ -447,6 +447,28 @@ with the ONE quantization at write; every modifier-set mutation re-stamps `(valu
 (F7). No log twin, deliberately: the need's history is reconstructible from `payload_log`'s
 grants + the event stream, and the churn is exactly what was evicted from `payload_log`.
 
+### `inventory` — the per-(pawn, slot) item table (public)
+
+Inventory F2 (user: "an inventory is populated with u32 items"). One row per HELD item; the
+count of a pawn's rows is its filled slots — the `inventory` NEED counts FREE slots (F1, the
+user's inversion: "at 0 we have 0 free slots"), and the two must never be conflated (I2:
+the grid renders from ROWS, affordances read the NEED).
+
+| column | type | key | notes |
+|---|---|---|---|
+| `uid` | `u64` | PK | `entity_reference:32 \| slot:8` |
+| `entity_reference` | `u32` | idx | the holding pawn |
+| `macro_position_reference` | `u16` | idx | the zone-subscription key — SLAVED to the entity's zone exactly like `payload`/`needs` (the state_hook drags it) |
+| `slot` | `u8` | | 0-based; `INV_ADD` fills the first free slot |
+| `item` | `u32` | | the held thing's `definition_reference` |
+| `state` | `u32` | | RESERVED, 0 today — the item-as-entity successor parks the minted item's entity id here (its world row suppressed while held; drop restores it). Never repurpose. |
+
+Rows move ONLY through the worker's `INV_ADD(entity, item)` / `INV_REMOVE(entity, slot)`
+verbs, and every mutating program carries the free-count `SET_NEED` beside the verb (F3 —
+one author, one atomic program). `remove` deletes a dead pawn's rows with its needs. Fanned
+to clients as per-row `PawnInventory` frames (the `PawnNeed` pattern). No log twin — same
+rationale as `needs`.
+
 ### Not shaped yet
 
 | | |
