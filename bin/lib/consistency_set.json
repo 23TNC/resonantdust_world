@@ -1,0 +1,86 @@
+{
+  "_doc": [
+    "Pinned evaluation set for work/2026-08-08-direction-consistency.",
+    "Every change to the pipeline is measured on THESE cells so two runs are comparable.",
+    "Mirrors bin/lib/eval_set.json, which does the same job for the LoRA harness.",
+    "",
+    "WHY THESE SUBJECTS. Each answers a different question, so a change that helps one and",
+    "breaks another is visible rather than averaged away:",
+    "  wolf     - the incumbent. Every prior sheet in this project is a wolf, and it is the only",
+    "             subject with a measured baseline (spread 24.9 on 2026-08-08).",
+    "  bear     - a quadruped whose corpus value sits at the DARK end. Our failure is being too",
+    "             pale, so a dark subject is where the absolute-value gap should hurt most.",
+    "  fox      - the corpus's most SATURATED animal (Fox_Red sat 70.2 against a grey wolf's",
+    "             10.6-17.5). Saturation collapse is defect three; this is the cell that shows it.",
+    "  anteater - NO corpus analogue. Carried forward from the predecessor's generalisation test.",
+    "             A pipeline that only holds identity on animals the LoRA has seen is not a",
+    "             pipeline, and this is the honest check.",
+    "",
+    "WHY THESE SEEDS. Three, fixed. The predecessor measured two identical training runs differing",
+    "by 17.31/255 mean, and the six-seed sweeps showed seed dominates north/south outcomes - so a",
+    "one-seed verdict is noise. Three is the smallest number that shows a spread is not a fluke.",
+    "",
+    "WHY cn/cn_end/strength ARE HERE and not CLI defaults. forks.md F3 floors cn at 0.5: lowering",
+    "it closes the metric by destroying the silhouette (the cn 0.2 featureless-slab result). Pinning",
+    "it in the file makes a change to it a visible diff rather than a forgotten flag.",
+    "",
+    "The CEILING is measured off the real corpus, not chosen - three views of one animal sit within",
+    "9.0 luminance. See README.md."
+  ],
+
+  "lora": "rd_diremph_anima_r20_g07.safetensors",
+  "lora_strength": 0.7,
+  "cn": 0.5,
+  "cn_end": 0.9,
+  "dirs": ["e", "s", "n"],
+  "seeds": [9101, 9102, 9103],
+  "size": 512,
+
+  "lum_spread_ceiling": 9.0,
+  "lum_band": [62.0, 121.0],
+
+  "subjects": [
+    {
+      "id": "wolf",
+      "from": "pawn/animal/wolf",
+      "positive": "grey timber wolf",
+      "body_plan": "rd_quadruped",
+      "ref": "Wolf_Timber",
+      "why": "the incumbent; the only subject with a measured baseline"
+    },
+    {
+      "id": "bear",
+      "from": "pawn/animal/wolf",
+      "positive": "brown bear",
+      "body_plan": "rd_quadruped",
+      "ref": "Direwolf",
+      "why": "dark-end corpus value; where the too-pale gap should hurt most"
+    },
+    {
+      "id": "fox",
+      "from": "pawn/animal/wolf",
+      "positive": "red fox",
+      "body_plan": "rd_quadruped",
+      "ref": "Fox_Red",
+      "why": "the corpus's most saturated animal; shows saturation collapse"
+    },
+    {
+      "id": "anteater",
+      "from": "pawn/animal/wolf",
+      "positive": "giant anteater",
+      "body_plan": "rd_quadruped",
+      "ref": null,
+      "why": "no corpus analogue; the honest generalisation check"
+    }
+  ],
+
+  "_template_note": [
+    "Every subject reads the WOLF template triple. That is deliberate and it is a LIMIT, recorded",
+    "rather than hidden: the pipeline is template-driven (I4), only quadruped templates exist",
+    "today, and swapping templates per subject would change the silhouette between cells and make",
+    "the interior numbers incomparable. So this set measures CONSISTENCY, not species fidelity -",
+    "the bear and the anteater come out wolf-shaped, and that is fine for the question being asked.",
+    "A per-body-plan template library is the sprite-gen plan's reference library and is not this",
+    "stream's work."
+  ]
+}

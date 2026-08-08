@@ -7,9 +7,9 @@ varies is the pipeline.** `cn` must not go below 0.5 ([README](README.md) future
 
 ## P0 — A ruler before a change
 
-- [ ] Add a `--metrics` flag to `generate.py` printing per-direction luminance, saturation and coverage over opaque pixels. Acceptance: one line per direction on every run, so no sheet is ever judged by eye alone.
-- [ ] Emit the cross-direction luminance spread as a single number beside the sheet. Acceptance: the run prints `spread=NN.N` against the corpus ceiling 9.0.
-- [ ] Pin a consistency eval set — species, seeds, directions — in a file the harness reads. Acceptance: a file; two invocations produce the same cells, as `eval_set.json` does for the LoRA harness.
+- [x] Add a `--metrics` flag to `generate.py` printing per-direction luminance, saturation and coverage over opaque pixels. Acceptance: one line per direction on every run, so no sheet is ever judged by eye alone.
+- [x] Emit the cross-direction luminance spread as a single number beside the sheet. Acceptance: the run prints `spread=NN.N` against the corpus ceiling 9.0.
+- [x] Pin a consistency eval set — species, seeds, directions — in a file the harness reads. Acceptance: a file; two invocations produce the same cells, as `eval_set.json` does for the LoRA harness.
 - [ ] Record the baseline for r20g07 on the pinned set. Acceptance: a table in `issues.md`; today's single measurement (24.9 on wolf) is confirmed across species or corrected.
 
 ## P1 — The prompt form (cheapest lever, already evidenced)

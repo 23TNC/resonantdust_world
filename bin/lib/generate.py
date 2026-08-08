@@ -301,6 +301,59 @@ def score_sprite(sprite, ref_spec, d):
     m["d_aspect"] = round(d_aspect, 1) if d_aspect is not None else ""
     return m, ok
 
+# ------------------------------------------------------------------ interior metrics
+# Cross-direction CONSISTENCY, measured on the sprite INTERIOR only.
+#
+# work/2026-08-08-direction-consistency: at cn >= 0.5 the silhouette comes from the authored
+# ControlNet template, so any consistency measured on SHAPE is measuring the templates and says
+# nothing about the pipeline (I4 there). Only the interior — value, saturation, palette — is
+# evidence. Hence: opaque pixels only, and no shape term.
+#
+# The ceiling is measured off the real corpus, not chosen: three views of one animal sit within
+# 9.0 luminance (AEXP_Coyote 3.0, Wolf_Timber 7.7, Direwolf 7.7, Fox_Red 9.0).
+LUM_SPREAD_CEILING = 9.0
+# Corpus animals measure 62-121 mean luminance over their non-plate pixels. A set that is
+# internally consistent AND uniformly too pale scores perfectly on spread while being wrong, so
+# the absolute band is reported beside it (F4 there).
+LUM_BAND = (62.0, 121.0)
+
+def interior_metrics(sprite):
+    """Luminance / saturation / coverage over a sprite's OPAQUE pixels.
+
+    Returns None for a fully transparent sprite rather than a zero row — an empty result must not
+    average into a spread as if it were a measurement."""
+    a = np.array(sprite.convert("RGBA"))
+    op = a[..., 3] > 128
+    if not op.any(): return None
+    px = a[..., :3][op].astype(np.float64)
+    lum = 0.2126 * px[:, 0] + 0.7152 * px[:, 1] + 0.0722 * px[:, 2]
+    return dict(lum=round(float(lum.mean()), 1),
+                sat=round(float((px.max(1) - px.min(1)).mean()), 1),
+                cov=round(100.0 * float(op.sum()) / op.size, 1))
+
+def report_consistency(rows):
+    """Print per-direction interior metrics and the cross-direction luminance SPREAD.
+
+    The spread is per CANDIDATE SEED — a leaf is the unit that ships as a set, so mixing seeds
+    would report a number no single sprite set actually has. Needs >= 2 directions to mean
+    anything; with one direction there is nothing to be consistent with, and that is said rather
+    than printed as 0.0."""
+    have = [r for r in rows if r.get("lum") is not None]
+    if not have: return
+    print("  interior metrics (opaque pixels only — silhouette comes from the template, F3/I4):")
+    for seed in sorted({r["seed"] for r in have}):
+        sr = [r for r in have if r["seed"] == seed]
+        for r in sorted(sr, key=lambda r: "esn".index(r["dir"]) if r["dir"] in "esn" else 9):
+            band = "" if LUM_BAND[0] <= r["lum"] <= LUM_BAND[1] else "  <- outside corpus band 62-121"
+            print(f"    seed {seed}  {r['dir']}: lum={r['lum']:6.1f} sat={r['sat']:5.1f} cov={r['cov']:5.1f}%{band}")
+        if len(sr) < 2:
+            print(f"    seed {seed}  spread: n/a (one direction — nothing to be consistent with)")
+            continue
+        lums = [r["lum"] for r in sr]
+        spread = max(lums) - min(lums)
+        verdict = "OK" if spread <= LUM_SPREAD_CEILING else f"{spread / LUM_SPREAD_CEILING:.1f}x over"
+        print(f"    seed {seed}  spread={spread:.1f}  (corpus ceiling {LUM_SPREAD_CEILING:.1f} — {verdict})")
+
 def report_candidates(rows, out_dir, out_path, dirs, args):
     """Write scores.csv, quarantine rejected variant leaves, and name the best seed per direction.
 
@@ -515,6 +568,10 @@ def main():
     ap.add_argument("--lora", default=None, help="style LoRA to apply, as ComfyUI sees it under models/loras (e.g. rd_quadruped_e07.safetensors); applied to BOTH the model and the text encoders")
     ap.add_argument("--lora-strength", type=float, default=1.0, help="LoRA strength for model+clip (default 1.0; try 0.6-0.9 if it overpowers the template)")
     ap.add_argument("--style", default=None, help="override the style boilerplate appended to --positive (use the LoRA's trained tags, e.g. 'rd_style, rd_animal, rd_quadruped, {face}')")
+    ap.add_argument("--metrics", dest="metrics", action="store_true", default=True,
+                    help="report per-direction interior luminance/saturation/coverage and the cross-direction luminance SPREAD (default on — no sheet should be judged by eye alone)")
+    ap.add_argument("--no-metrics", dest="metrics", action="store_false",
+                    help="suppress the interior-metrics report")
     args = ap.parse_args()
 
     d0 = {"dn": DN, "cn": CN, "cn-end": CN_END}   # module defaults, for the --control none notice
@@ -624,9 +681,12 @@ def main():
             os.makedirs(os.path.dirname(out), exist_ok=True)                # ensure the variant leaf
             sprite.save(out)
             m, ok = score_sprite(sprite, args.ref, d)
+            im = interior_metrics(sprite) or dict(lum=None, sat=None, cov=None)
             rows.append(dict(seed=cseed, dir=d, path=os.path.relpath(out, REPO), valid=int(ok),
-                             **{k2: round(v, 3) if isinstance(v, float) else v for k2, v in m.items()}))
+                             **{k2: round(v, 3) if isinstance(v, float) else v for k2, v in m.items()},
+                             **im))
             print(f"  wrote {os.path.relpath(out, REPO)}" + (f"   [{'ok' if ok else 'REJECT'}]" if args.ref or args.candidates > 1 else ""))
+    if args.metrics: report_consistency(rows)
     report_candidates(rows, out_dir, out_path, dirs, args)
 
 if __name__ == "__main__":
