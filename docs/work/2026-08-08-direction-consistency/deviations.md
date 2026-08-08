@@ -41,3 +41,30 @@ incumbent only because it was the only SDXL checkpoint on the box").
 **Correction:** [F5](forks.md#f5) records the full option survey with licences, and P6 carries the
 work. P0–P4 are **not** abandoned — the ruler is architecture-independent and the SDXL path stays
 the production default per the design doc's own mechanism (2).
+
+## D2 — I edited `generate.py` while a labelled run was in flight, and discarded 22 sprites
+_2026-08-08 · caught mid-P2.1 · **process error, no lasting damage**_
+
+The `east-anchor` label was generating when I started wiring P2.2's IP-Adapter knobs into the same
+file. `consistency_eval` invokes `generate.py` as a **subprocess per direction**, so every cell
+after the edit would have used a different graph from the cells before it — a label that is half
+one pipeline and half another, reported as one number.
+
+**Killed the run and deleted its 22 sprites** rather than keep a set whose provenance I could not
+state. The cost is ~15 minutes of GPU time; the alternative was a number nobody could trust, which
+is the more expensive of the two.
+
+**Then verified the change was behaviour-preserving before restarting**, rather than assuming it.
+Swapping `IPAdapter` → `IPAdapterAdvanced` (needed because the composition-carrying weight types
+live only on the advanced node) with `weight_type="style transfer"`, `combine_embeds="concat"`,
+`embeds_scaling="V only"` reproduces the old node **bit-identically** — same md5 on wolf/9101 south
+against the stored baseline sprite, with the anchor, seed, prompt and knobs held fixed. So
+`east-anchor` remains a single-variable comparison against `baseline`.
+
+The first attempt at that check was itself invalid — I ran it in an empty leaf, so there was no east
+sprite, so it took `graph_hero` and never touched the adapter at all. The hashes differed for a
+reason that had nothing to do with the node. Staged the baseline east into the leaf and re-ran.
+
+**The rule this earns:** a labelled run owns the code it started with. Edit the harness or the
+generator only between labels, or branch the file. The pipeline being deterministic ([I8](issues.md#i8))
+is what makes both the contamination *and* the equivalence check exact.

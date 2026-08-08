@@ -48,6 +48,11 @@ STEPS, CFG, SAMPLER, SCHED = 26, 6.0, "dpmpp_2m", "karras"
 # too loose — pass --dn/--cn/--cn-end to restore the tighter legacy recipe.
 DN, CN, CN_END = 1.00, 0.20, 0.30
 IP_WEIGHT = 0.6
+# How the IP-Adapter blends the hero into south/north. `style transfer` was the original and it is
+# the wrong lever for our purpose (work/2026-08-08-direction-consistency I3): it exists to carry
+# STYLE while discarding composition and content, and "this is the same animal, same markings, same
+# value" is content. Selectable so P2.2 can sweep it rather than argue about it.
+IP_WEIGHT_TYPE = "style transfer"
 AUTO_MIN_MATCH = 0.65        # --control auto declines below this (see resolve_auto)
 DIRS = ["e", "s", "n"]                       # e generated first = the IP hero
 FACE = {
@@ -576,12 +581,16 @@ def graph_ip(pos, neg, ref_name, edge_name, hero_name, seed):
     g.update({
      "40":{"class_type":"IPAdapterUnifiedLoader","inputs":{"model":base_model,"preset":"PLUS (high strength)"}},
      "41":{"class_type":"LoadImage","inputs":{"image":hero_name}},
-     "42":{"class_type":"IPAdapter","inputs":{"model":["40",0],"ipadapter":["40",1],"image":["41",0],"weight":IP_WEIGHT,"weight_type":"style transfer","start_at":0.0,"end_at":1.0}}})
+     # IPAdapterAdvanced, not IPAdapter: the simple node hardcodes a short weight_type list, and the
+     # composition-carrying types this stream needs (I3) live on the advanced one.
+     "42":{"class_type":"IPAdapterAdvanced","inputs":{"model":["40",0],"ipadapter":["40",1],"image":["41",0],
+           "weight":IP_WEIGHT,"weight_type":IP_WEIGHT_TYPE,"combine_embeds":"concat",
+           "start_at":0.0,"end_at":1.0,"embeds_scaling":"V only"}}})
     g.update(_tail(pos, neg, ref_name, edge_name, ["42",0], seed, clip_ref)); return g
 
 # ---------------------------------------------------------------- main
 def main():
-    global DN, CN, CN_END, CFG, LORA, LORA_STRENGTH, STYLE_FORM, STYLE_OVERRIDE   # CLI overrides of the module defaults
+    global DN, CN, CN_END, CFG, LORA, LORA_STRENGTH, STYLE_FORM, STYLE_OVERRIDE, IP_WEIGHT, IP_WEIGHT_TYPE   # CLI overrides of the module defaults
     ap = argparse.ArgumentParser(prog="art generate", description="Generate directional creature sprites from a template set.")
     ap.add_argument("--from", dest="from_path", required=True, help="kind path under textures/ holding the kind-level template (type/subtype/kind, e.g. pawn/animal/wolf)")
     ap.add_argument("--to", dest="to_path", default=None, help="output kind path under textures/ (default: same as --from)")
@@ -614,6 +623,10 @@ def main():
     ap.add_argument("--lora", default=None, help="style LoRA to apply, as ComfyUI sees it under models/loras (e.g. rd_quadruped_e07.safetensors); applied to BOTH the model and the text encoders")
     ap.add_argument("--lora-strength", type=float, default=1.0, help="LoRA strength for model+clip (default 1.0; try 0.6-0.9 if it overpowers the template)")
     ap.add_argument("--style", default=None, help="override the style boilerplate appended to --positive (use the LoRA's trained tags, e.g. 'rd_style, rd_animal, rd_quadruped, {face}')")
+    ap.add_argument("--ip-weight", type=float, default=IP_WEIGHT,
+                    help=f"IP-Adapter weight for the south/north hero anchor (default {IP_WEIGHT})")
+    ap.add_argument("--ip-weight-type", default=IP_WEIGHT_TYPE,
+                    help=f"how the adapter blends the hero (default '{IP_WEIGHT_TYPE}'). 'style transfer' carries style and DISCARDS content by design, which is the wrong lever for cross-view identity (I3); composition-carrying types are the point of the sweep.")
     ap.add_argument("--east-self-anchor", action="store_true",
                     help="re-render east through the IP-Adapter graph anchored on its own first pass, so all three directions come off the SAME graph (I6: east is the outlier in 11/12 sets precisely because it alone skips the adapter). Costs one extra generation per set.")
     ap.add_argument("--style-form", choices=["tags", "prose"], default=STYLE_FORM,
@@ -631,6 +644,8 @@ def main():
     LORA, LORA_STRENGTH = args.lora, args.lora_strength
     STYLE_FORM = args.style_form
     STYLE_OVERRIDE = args.style
+    IP_WEIGHT, IP_WEIGHT_TYPE = args.ip_weight, args.ip_weight_type
+    print(f"  ip-adapter -> weight={IP_WEIGHT} type='{IP_WEIGHT_TYPE}'")
     # A wrong style form is INVISIBLE in the output — it shows up as artifacts nobody attributes to
     # the prompt (I1). So the form is always echoed, and an obvious mismatch is called out.
     if STYLE_OVERRIDE:
