@@ -1,25 +1,22 @@
 # Issues — trait lights (anticipated; logged before they bite)
 
-## I1 — the trait-level reader sweep must be EXHAUSTIVE {#i1}
+## I1 — the trait readers move to the merged accessor, exhaustively {#i1}
 
-Every `gameplay_row_data` call on a TRAIT row changes meaning under the split
-(the u16 now carries `data:8 | level:8` — a reader that keeps the u16 sees
-level + 256×data). Known readers to move to the new accessors: stat_eval's
+Every "what traits does this object carry" read must go through the ONE
+accessor (F5) or constant binds are invisible to it. Known readers: stat_eval's
 trait levels, the emotions per-level lookup, inventory capacity (= trait
-level), the food-chain HIGHEST-wins caps, `mint_sidecars` + `payload_traits`,
-npc brain trait reads, and the webgl panels/tooltips that print levels. The
-ONE-eval law concentrates most of these in shared/content — the sweep is
-grep-driven and the acceptance is "no raw `gameplay_row_data` on a trait row
-anywhere".
+level), the food-chain HIGHEST-wins caps, affordance Tag checks,
+`mint_sidecars` + `payload_traits`, npc brain trait reads, and the webgl
+panels/tooltips. The row FORMAT does not change (F3 — the split was
+withdrawn), so this is a call-site sweep, not a decode migration.
 
-## I2 — the presentation residue moves to the trait DEF {#i2}
+## I2 — presentation lives on the DEF's per-level table, never the bind {#i2}
 
-Today's light block carries r/g/b + intensity, reach, radius, height, flicker,
-cast/hot flags. The trait bind carries only color-level + reach-data; the REST
-is authored ONCE on the `emit_light` def (per level where it varies — both
-torches share radius/height/flicker today). A kind that one day needs a
-different flicker is a NEW LEVEL (append-only), not a per-bind override — the
-bind stays two bytes. Stated now so nobody grows bind-side override syntax.
+A bind is `(name, level, constant)` — two words of intent. Color, intensity,
+reach, fall_off, elevation, radius, flicker all ride the def's `emit_light`
+level entries. A kind that needs a different flicker is a NEW LEVEL
+(append-only), not a per-bind override — stated now so nobody grows bind-side
+override syntax.
 
 ## I3 — cold baking is FREE — do not build a cold field for it {#i3}
 
@@ -44,38 +41,49 @@ forgotten when that verb arrives.
 Inventory F6's comment on the torch stands: picking a torch up takes its light
 out of the world. Lights derive from RENDERED things — an inventory item has
 no world prim, so the light vanishes naturally. But the pawn now CAN glow via
-its own emit_light — verify a torch-carrying pawn without the trait stays
-dark (no accidental "carried items contribute traits" merge).
+its own trait — verify a torch-carrying pawn without a light trait stays dark
+(no accidental "carried items contribute traits" merge).
 
 ## I6 — content schema changes ride the FULL consumer sweep {#i6}
 
 shared/content is consumed by wasm + npc + worker (+ master's seed path).
-TraitBindToml gaining `data`/`constant` and ThingDef's traits changing shape =
-rebuild wasm bundle, webgl typecheck, npc, worker, master; the golden fixture
-guards the tables (BLESS_GOLDEN to re-bless, deliberately). Miss one and the
-failure is a silent stale-binary drift (the sim guard screams only on hash
-mismatch).
+TraitBindToml gaining `constant`, trait defs gaining `emit_light` tables, and
+ThingDef's binds changing shape = rebuild wasm bundle, webgl typecheck, npc,
+worker, master; the golden fixture guards the tables (BLESS_GOLDEN to
+re-bless, deliberately). Miss one and the failure is a silent stale-binary
+drift.
 
-## I7 — the emotions per-level arrays must survive the split untouched {#i7}
+## I7 — the emotions per-level arrays must survive untouched {#i7}
 
-Emotions read trait LEVEL to index their 1..15 contribution arrays. Post-split
-the level is the LOW byte — the accessor keeps their indexing identical, and
-the emotions goldens (argmax, tie-break) are the regression net. A drift here
+Emotions read trait LEVEL to index their 1..15 contribution arrays. The level
+encoding is unchanged (F3), but the READ moves to the merged accessor — the
+emotions goldens (argmax, tie-break) are the regression net. A drift here
 shows as wrong emotion cards, not a crash — check them explicitly.
 
 ## I8 — pawn hot lights are a NEW warm-class light source {#i8}
 
 A glowing pawn attaches a light to a MOVER (hot light, follows the render
-position) — the primitive graph carries light pieces and pawn-render's
-warm/hot classing exists, but no mover-attached light has shipped. Watch: the
-light must ride the CHASE position (rx/ry, not auth), zoom reprojection uses
-the TEXTILE_SLOT rules, and per-light lod law ("coarsest-since-cast") applies
-to a light that never stops moving. Budget one drill purely for this.
+position at its authored ELEVATION) — the primitive graph carries light
+pieces and pawn-render's warm/hot classing exists, but no mover-attached light
+has shipped. Watch: the light must ride the CHASE position (rx/ry, not auth),
+zoom reprojection uses the TEXTILE_SLOT rules, and the per-light lod law
+("coarsest-since-cast") applies to a light that never stops moving. Budget one
+drill purely for this.
 
-## I9 — trait binds on pawn kinds must not silently become constant {#i9}
+## I9 — no existing bind becomes constant in the migration {#i9}
 
 Pawn kinds author starting traits today (walks, corpus, bite…) that mint
 PAYLOAD rows — runtime-modifiable by design intent (leveling). The constant
 flag is OPT-IN per bind; the migration marks NOTHING constant except the
-torches' emit_light. A later pass may promote species invariants
+torches' light trait. A later pass may promote species invariants
 (biological_lifeform) to constant for payload savings — successor, not now.
+
+## I10 — `fall_off` is authored now, consumed by a successor {#i10}
+
+The user names fall_off (and future direction) among the light variables. The
+schema accepts and carries it from day one; the LIGHTING RENDER currently has
+no falloff parameter per light (the fine lightmap bakes N·L; attenuation shape
+is the shader's). Wiring fall_off into the bake/blit is a lighting-stream
+change, deliberately out of scope here — the value rides the corpus and the
+stride vector so the successor only touches the shader. Stated so an authored
+fall_off silently doing nothing is a KNOWN state, not a bug report.
