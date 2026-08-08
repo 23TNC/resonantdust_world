@@ -26,7 +26,7 @@ import { PanelManager } from "../../ui/panels/PanelManager";
 import { SQUARE } from "../../game/viewport/squareMath";
 import { SelectionModel, type Selection } from "../../game/world/SelectionModel";
 import { PieMenu, type PieMenuOption } from "../../game/panels/PieMenu";
-import { tileToPosition, composeInteraction } from "../../client/WasmClient";
+import { tileToPosition, composeInteraction, packSpawnRequest } from "../../client/WasmClient";
 import type { OutlineItem, OutlinePart } from "../../game/viewport/outlineOverlay";
 import { onContentReloaded, getContent } from "../../game/definitions/contentBoot";
 import { definitionRegistry } from "../../game/definitions/definitionRegistry";
@@ -487,19 +487,15 @@ export class WorldScene extends Scene {
         else if (args[i] === "head") head = v;
         else return usage;
       }
-      // Two-part kinds mint their PART entries (payload opcode 1: header `1<<16 | 2`,
-      // slot, def-with-chosen-variant); single-part kinds mint bare like the wolf.
+      // spawn-authority F1/F3: the client REQUESTS — the worker validates, composes the
+      // PART payload from ITS corpus, and mints. The chat's opcode packing is GONE; the
+      // variant nibbles map to the kind's declared parts (single-part kinds wear nibble 0
+      // on their own def — a wolf coat is `/spawn wolf body 3`).
       const slots = (c.moverParts(objectId) as unknown[]).length;
-      const words: number[] = [];
-      if (slots >= 2) {
-        const variantDef = (v: number) => ((def & ~0xf) | v) >>> 0;
-        words.push((1 << 16) | 2, 0, variantDef(body));
-        words.push((1 << 16) | 2, 1, variantDef(head));
-      }
-      // PROMOTE(1) CREATE(3) def pos count payload… — the npc's own mint shape.
-      const program = new Uint32Array([1, 3, def, tileToPosition(x, y), words.length, ...words]);
-      this.ctx.client.queue(program);
-      return `Spawning ${name} at (${x}, ${y})${slots >= 2 ? ` body ${body} head ${head}` : ""} — [${[...program].join(", ")}]`;
+      const variants = slots >= 2 ? [body, head] : [body];
+      const program = packSpawnRequest(x, y, 0, def >>> 0, new Uint8Array(variants));
+      this.ctx.client.queue(new Uint32Array(program));
+      return `Spawn requested: ${name} at (${x}, ${y})${slots >= 2 ? ` body ${body} head ${head}` : body ? ` variant ${body}` : ""} — the server decides (a refusal lands in the worker log).`;
     });
 
     // No server-side pause verb in the rebuild yet.

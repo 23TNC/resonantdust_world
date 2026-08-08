@@ -71,6 +71,15 @@ pub fn compose_interaction_js(reference: u32, inputs: Vec<u32>) -> Vec<u32> {
     p
 }
 
+/// Compose a `SPAWN_REQUEST` program (spawn-authority F1) — the ONE packer, shared
+/// through the codec so the webgl chat and the npc cannot drift. `def`'s variant
+/// nibble is ignored; `variants[i]` = part i's u4 (≤4 by the parts law).
+#[cfg(feature = "js")]
+#[wasm_bindgen(js_name = packSpawnRequest)]
+pub fn pack_spawn_request_js(x: u16, y: u16, rotation: u8, def: u32, variants: Vec<u8>) -> Vec<u32> {
+    resonantdust_codec::action::pack_spawn_request(x, y, rotation, def, &variants).to_vec()
+}
+
 /// A taxonomy flattened for the JS boundary: `[type, subType, kind, variant]`, taking the FIRST
 /// entry of each applicability array. Sufficient to key the registry — a def's `kind_id` is shared
 /// across every tuple it covers, so any one of them resolves to the same kind.

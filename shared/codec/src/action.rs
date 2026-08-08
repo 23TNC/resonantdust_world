@@ -117,6 +117,52 @@ pub const INV_ADD: u32 = 15;
 /// `SET_NEED` rides the same program.
 pub const INV_REMOVE: u32 = 16;
 
+/// THE SPAWN AUTHORITY DOOR (spawn-authority F1/F6, the user's layout) — the only
+/// CLIENT-OPEN spawn lane; writes nothing itself. Operands (all imm):
+/// `xy` = `x:16 | y:16` RAW tile coordinates; `rot_def` = `rotation:4 | type:4 |
+/// subtype:12 | kind:12` (the def minus its variant nibble, shifted down four —
+/// `def = (rot_def & 0x0FFF_FFFF) << 4 | variant`; rotation = the pawn's initial
+/// facing, or the SET data lane for cold types); `variants` = `v0:4 | … | v7:4`,
+/// part i's variant at nibble i (the corpus part declarations are the contract —
+/// the ≤4-parts law keeps this ONE word so the verb frames corpus-free). The
+/// worker validates (registered def, in-world + pathable/empty cell, rotation ≤3,
+/// no stray nibbles — REFUSE never nudge) and routes by the TYPE nibble: pawns →
+/// the worker-only [`CREATE`] (the spawn ledger stays the one mint gate); things/
+/// tiles → the validated [`SET`].
+pub const SPAWN_REQUEST: u32 = 17;
+
+/// Compose a [`SPAWN_REQUEST`] program (spawn-authority F1) — ONE packer shared by every
+/// client so the words cannot drift. `def` is a full `definition_reference` whose variant
+/// nibble is IGNORED (variants ride the nibble vec); `variants[i]` = part i's u4.
+pub fn pack_spawn_request(x: u16, y: u16, rotation: u8, def: u32, variants: &[u8]) -> [u32; 4] {
+    let mut v = 0u32;
+    for (i, &n) in variants.iter().take(8).enumerate() {
+        v |= u32::from(n & 0xF) << (i * 4);
+    }
+    [
+        SPAWN_REQUEST,
+        (u32::from(x) << 16) | u32::from(y),
+        (u32::from(rotation & 0xF) << 28) | ((def >> 4) & 0x0FFF_FFFF),
+        v,
+    ]
+}
+
+/// Decode a [`SPAWN_REQUEST`]'s three operand words: `(x, y, rotation, def_with_variant0,
+/// nibbles)` — the def reconstructs with variant 0 (the caller substitutes per part).
+pub fn unpack_spawn_request(xy: u32, rot_def: u32, variants: u32) -> (u16, u16, u8, u32, [u8; 8]) {
+    let mut n = [0u8; 8];
+    for (i, slot) in n.iter_mut().enumerate() {
+        *slot = ((variants >> (i * 4)) & 0xF) as u8;
+    }
+    (
+        (xy >> 16) as u16,
+        (xy & 0xFFFF) as u16,
+        (rot_def >> 28) as u8,
+        (rot_def & 0x0FFF_FFFF) << 4,
+        n,
+    )
+}
+
 /// What an operand is, for deriving the write/read sets. Only `entity_reference` operands matter to
 /// the sets; `Imm` operands (numbers, positions, definitions) are neither.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -166,6 +212,7 @@ pub fn signature(action: u32) -> Option<&'static [OperandKind]> {
         CANCEL_INTENT => &[Imm, Imm], // pawn, order_event_reference — worker-memory resolution
         INV_ADD => &[Write, Imm],    // obj, item definition_reference (inventory F3)
         INV_REMOVE => &[Write, Imm], // obj, slot index (inventory F3)
+        SPAWN_REQUEST => &[Imm, Imm, Imm], // xy, rot_def, variants — a pure request, no write set
         _ => return None,
     })
 }
@@ -556,5 +603,24 @@ mod tests {
     fn empty_program_is_valid_and_empty() {
         assert_eq!(program(&[]).count(), 0);
         assert_eq!(write_targets(&[]).unwrap(), Vec::<u32>::new());
+    }
+
+    #[test]
+    fn spawn_request_frames_and_round_trips() {
+        // spawn-authority F1: fixed arity 3, no write set, and pack ↔ unpack agree —
+        // the user's layout ([x:16|y:16] [rot:4|type:4|sub:12|kind:12] [nibbles]).
+        let def = 0x3005_0057u32; // type 3, subtype 5, kind 5, variant 7 (variant ignored)
+        let p = pack_spawn_request(110, 68, 2, def, &[5, 12]);
+        assert_eq!(p[0], SPAWN_REQUEST);
+        let mut it = program(&p);
+        let inst = it.next().unwrap().expect("frames");
+        assert_eq!(inst.action, SPAWN_REQUEST);
+        assert_eq!(inst.operands.len(), 3);
+        assert!(it.next().is_none());
+        assert_eq!(write_targets(&p).unwrap(), Vec::<u32>::new(), "a pure request");
+        let (x, y, rot, d, n) = unpack_spawn_request(p[1], p[2], p[3]);
+        assert_eq!((x, y, rot), (110, 68, 2));
+        assert_eq!(d, def & !0xF, "the def reconstructs with variant 0");
+        assert_eq!(&n[..3], &[5, 12, 0], "part nibbles in order, tail zero");
     }
 }

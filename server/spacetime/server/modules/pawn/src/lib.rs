@@ -391,6 +391,10 @@ pub fn spawn(
     position_reference: u32,
     payload: Vec<u32>,
     needs: Vec<u32>,
+    // `data` (spawn-authority I9): the minted row's byte — `facing | trip_serial`
+    // packed by the WORKER (`pack_pawn_data(rotation, 0)`; the serial lane stays 0,
+    // no chain exists yet). The request's rotation nibble seeds the RESTING pose.
+    data: u8,
     promote: bool,
 ) -> Result<(), String> {
     let spawn_uid = ((event_reference as u64) << 16) | index as u64;
@@ -407,7 +411,7 @@ pub fn spawn(
         definition_reference,
         macro_position_reference: position_macro(position_reference),
         micro_position_reference: position_micro(position_reference),
-        data: 0,
+        data,
         promote,
     };
     ctx.db.entity_state_log().insert(EntityStateLog {
@@ -420,7 +424,7 @@ pub fn spawn(
         definition_reference,
         macro_position_reference: r.macro_position_reference,
         micro_position_reference: r.micro_position_reference,
-        data: 0,
+        data,
         status: pack_status(status_flags, phase),
     });
     // The payload sidecar — SLAVED: written here, inside the spawn's state-write transaction

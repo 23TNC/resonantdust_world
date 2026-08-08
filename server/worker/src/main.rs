@@ -28,7 +28,7 @@ use spacetimedb_sdk::{DbContext, Table as _};
 use resonantdust_codec::action::{
     self, Route, BUILD_WALL, CANCEL_INTENT, CREATE, EXECUTE_INTERACTION, GRANT_CONDITION,
     INIT_ZONE, INV_ADD, INV_REMOVE, MOVE_STEP, MOVE_TO, PLACE, PROMOTE, PROMOTE_EVENT,
-    QUEUE_STATE, SET, SET_NEED,
+    QUEUE_STATE, SET, SET_NEED, SPAWN_REQUEST,
 };
 use resonantdust_codec::object::{
     cold_row_layer_id, cold_row_macro_position, cold_row_subtype, data_rotation, def_kind_id,
@@ -90,6 +90,25 @@ fn load_corpus(root: &str) -> Result<resonantdust_content::loader::Bundle, Strin
     }
     resonantdust_content::loader::load(&sources)
         .map_err(|errs| format!("corpus load: {} error(s), first: {:?}", errs.len(), errs.first()))
+}
+
+/// The PART payload a spawn request implies (spawn-authority F3): for a kind whose corpus
+/// declares ≥2 parts, one PART entry per slot with the def's variant nibble substituted
+/// from the request's nibble vec — EXACTLY the words the webgl chat used to pack
+/// client-side (opcode header `1<<16 | 2`, slot, def-with-variant). Single-part kinds
+/// return empty (their variant rides the def itself — the wolf's coat).
+fn mint_parts(def_sans_variant: u32, nibbles: &[u8; 8], part_count: usize) -> Vec<u32> {
+    let mut words = Vec::new();
+    if part_count >= 2 {
+        for (slot, &v) in nibbles.iter().enumerate().take(part_count) {
+            words.extend_from_slice(&[
+                (1 << 16) | 2,
+                slot as u32,
+                def_sans_variant | u32::from(v),
+            ]);
+        }
+    }
+    words
 }
 
 /// The CREATE sidecars a def implies (stat-model F11): TRAIT payload entries + full-value
@@ -171,6 +190,21 @@ packed = [ { tint = "#5f6b3c" } ]
         };
         assert!((value_of("bunny") - 1.0).abs() < 0.01, "the bunny mints 1");
         assert!((value_of("wolf") - 2.0).abs() < 0.01, "the wolf mints 2");
+    }
+
+    /// spawn-authority F3: the server's PART composition matches the words the webgl
+    /// chat used to pack client-side, bit for bit — and single-part kinds compose none.
+    #[test]
+    fn mint_parts_matches_the_chat_words() {
+        let def0 = 0x3005_0050u32; // a two-part human def, variant nibble 0
+        let words = super::mint_parts(def0, &[5, 12, 0, 0, 0, 0, 0, 0], 2);
+        assert_eq!(
+            words,
+            vec![(1 << 16) | 2, 0, def0 | 5, (1 << 16) | 2, 1, def0 | 12],
+            "opcode header, slot, def-with-variant — the chat's exact shape"
+        );
+        assert!(super::mint_parts(def0, &[7, 0, 0, 0, 0, 0, 0, 0], 1).is_empty(),
+            "a single-part kind mints bare (its variant rides the def)");
     }
 
     /// inventory F1/I2: the need counts FREE slots, so the SAME mint-at-effective-max
@@ -967,6 +1001,12 @@ async fn main() {
             // else this tic can reference it. A failed call defers the whole tic (like a write).
             let mut create_zones: HashMap<u32, Vec<u16>> = HashMap::new();
             let mut spawn_failed = false;
+            // spawn-authority I4: is a def (variant nibble 0) REGISTERED? Matches any
+            // registry row differing only in the variant nibble — captured HERE because
+            // the ledger counter below shadows the `index` connection's name.
+            let def_registered = |def0: u32| -> bool {
+                index.db().definitions().iter().any(|d| d.id & !0xF == def0)
+            };
             for (event_reference, actions) in &events {
                 let mut pending_promote = false;
                 let mut index: u16 = 0;
@@ -1010,12 +1050,117 @@ async fn main() {
                                         *pos,
                                         words,
                                         need_rows,
+                                        0, // a bare CREATE seeds no facing (spawn-authority I9)
                                         pending_promote,
                                     ) {
                                         tracing::warn!(%err, tic = t, "spawn failed — will retry next pass");
                                         spawn_failed = true;
                                     }
                                     create_zones.entry(*event_reference).or_default().push(position_macro(*pos));
+                                }
+                                index += 1;
+                            }
+                        }
+                        // ── SPAWN_REQUEST (xy rot_def variants) ── THE AUTHORITY DOOR
+                        // (spawn-authority F1/F2/F3/F6): validate, then ROUTE by the TYPE
+                        // nibble — pawns mint HERE through the SAME ledger (keyed by the
+                        // REQUEST event, so replays dedupe — I5 dissolves); things/tiles
+                        // queue the validated SET. REFUSE, never nudge (F2).
+                        SPAWN_REQUEST => {
+                            if let [xy, rot_def, variants] = inst.operands {
+                                let (x, y, rot, def0, nib) =
+                                    action::unpack_spawn_request(*xy, *rot_def, *variants);
+                                let refuse = |why: &str| {
+                                    tracing::warn!(
+                                        event = format!("{event_reference:#010x}"),
+                                        x, y, rot, def = format!("{def0:#010x}"),
+                                        why, tic = t,
+                                        "spawn request refused (spawn-authority F2)"
+                                    );
+                                };
+                                // The world addresses 12 bits per axis today.
+                                if x >= 4096 || y >= 4096 {
+                                    refuse("position out of world");
+                                } else if rot > 3 {
+                                    refuse("rotation out of range (0..3)");
+                                } else if !def_registered(def0) {
+                                    refuse("def not in the registry (I4)");
+                                } else {
+                                    let type_id = def_type_id(def0);
+                                    let kind = def_kind_id(def0);
+                                    let (xi, yi) = (i32::from(x), i32::from(y));
+                                    let pos = tile_to_position(xi, yi);
+                                    let zone = position_macro(pos);
+                                    let cell = (position_micro(pos) >> 8) as u8;
+                                    match type_id {
+                                        TYPE_PAWN => 'pawn_req: {
+                                            if !cell_pathable(xi, yi) {
+                                                refuse("cell impathable (the lake-mint law)");
+                                                break 'pawn_req;
+                                            }
+                                            // The corpus part declarations are the tail's
+                                            // CONTRACT (F3): stray nonzero nibbles refuse.
+                                            let part_count = bundle
+                                                .visual_for_object(kind)
+                                                .map(|v| v.parts.len())
+                                                .unwrap_or(1)
+                                                .max(1);
+                                            if nib.iter().skip(part_count).any(|&v| v != 0) {
+                                                refuse("variant nibbles beyond the declared parts (F3)");
+                                                break 'pawn_req;
+                                            }
+                                            // A single-part kind wears nibble 0 on its OWN def.
+                                            let def = if part_count == 1 {
+                                                def0 | u32::from(nib[0])
+                                            } else {
+                                                def0
+                                            };
+                                            let mut words = mint_parts(def0, &nib, part_count);
+                                            let (trait_words, need_rows) =
+                                                mint_sidecars(&bundle, def);
+                                            words.extend_from_slice(&trait_words);
+                                            let data = resonantdust_codec::object::pack_pawn_data(rot, 0);
+                                            if let Err(err) = pawn.reducers().spawn(
+                                                self_ref, t, *event_reference, index, def, pos,
+                                                words, need_rows, data,
+                                                true, // a spawn you can't see is useless — always promote
+                                            ) {
+                                                tracing::warn!(%err, tic = t, "requested spawn failed — will retry next pass");
+                                                spawn_failed = true;
+                                            } else {
+                                                tracing::info!(tic = t, x, y, rot,
+                                                    def = format!("{def:#010x}"),
+                                                    parts = part_count,
+                                                    "spawn request minted (spawn-authority)");
+                                            }
+                                            create_zones.entry(*event_reference).or_default().push(zone);
+                                        }
+                                        TYPE_BIOME_THING | TYPE_BIOME_TILE => 'cold_req: {
+                                            if type_id == TYPE_BIOME_THING
+                                                && thing_kind_at(zone, cell).is_some()
+                                            {
+                                                refuse("cell occupied on the thing layer (F6)");
+                                                break 'cold_req;
+                                            }
+                                            let kr = u32::from(pack_kind_reference(kind, nib[0]));
+                                            let cold_row = pack_cold_row_reference(zone, 0, 0);
+                                            let prog = vec![
+                                                PROMOTE, SET, cold_row, u32::from(type_id),
+                                                u32::from(cell), kr, u32::from(rot),
+                                            ];
+                                            if let Err(err) =
+                                                event.reducers().queue_at(prog, tic_add(master, 4))
+                                            {
+                                                tracing::warn!(%err, tic = t, "requested cold spawn queue failed — dropped");
+                                            } else {
+                                                tracing::info!(tic = t, x, y,
+                                                    kind_reference = format!("{kr:#06x}"),
+                                                    layer = type_id,
+                                                    "spawn request queued a cold SET (spawn-authority F6)");
+                                            }
+                                        }
+                                        _ => refuse("no spawn arm for this def type"),
+                                    }
                                 }
                                 index += 1;
                             }

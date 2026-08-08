@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use client::world::tile_to_position;
-use resonantdust_codec::action::{CREATE, EXECUTE_INTERACTION, PROMOTE};
+use resonantdust_codec::action::{EXECUTE_INTERACTION, PROMOTE};
 use resonantdust_codec::object::{def_kind_id, position_macro};
 use resonantdust_codec::payload::{payload_conditions, payload_traits};
 use resonantdust_codec::speed::DEFAULT_TICS_PER_TILE;
@@ -417,15 +417,24 @@ impl Brain for Bunnies {
             return;
         }
         // Mint up to `count`, one per tick, after the adopt-first window. Adopted
-        // strangers count toward the cap; each CREATE reliably mints one, so the
-        // mint counter alone bounds our own contribution.
+        // strangers count toward the cap. spawn-authority I2/I6: a REQUEST can be
+        // refused invisibly — an unanswered window hands the counter back so the
+        // warren re-rolls instead of wedging short.
+        if self.created > self.minds.len()
+            && Instant::now() > self.spawn_after
+            && self.created > 0
+        {
+            tracing::warn!(created = self.created, adopted = self.minds.len(),
+                "spawn request(s) unanswered — re-rolling (spawn-authority I2)");
+            self.created = self.minds.len();
+        }
         if self.minds.len() < self.count
             && self.created < self.count
             && self.def != 0
             && Instant::now() > self.spawn_after
         {
-            // The PATHABLE picker (attack I2 — the wolves' lake-mint lesson): eight
-            // rolls against the tile mirror, unknown reads open.
+            // The PATHABLE picker (attack I2) stays as POLITENESS — the server's gate
+            // is the protection now (spawn-authority F2).
             let spawn = {
                 let mut s = self.pick_dest();
                 for _ in 0..8 {
@@ -439,11 +448,17 @@ impl Brain for Bunnies {
                 }
                 s
             };
-            let program =
-                vec![PROMOTE, CREATE, self.def, tile_to_position(spawn.0, spawn.1), 0];
-            if bot.client.queue(program).is_ok() {
+            let program = resonantdust_codec::action::pack_spawn_request(
+                spawn.0 as u16,
+                spawn.1 as u16,
+                0,
+                self.def,
+                &[],
+            );
+            if bot.client.queue(program.to_vec()).is_ok() {
                 self.created += 1;
-                tracing::info!(?spawn, minted = self.created, "bunny CREATE queued");
+                self.spawn_after = Instant::now() + Duration::from_secs(10);
+                tracing::info!(?spawn, requested = self.created, "bunny SPAWN_REQUEST queued");
             }
         }
         let ids: Vec<u32> = self.minds.keys().copied().collect();

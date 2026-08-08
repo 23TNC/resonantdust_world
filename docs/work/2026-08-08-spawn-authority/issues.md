@@ -85,3 +85,16 @@ spawn currently writes `data: 0`; seeding the requested facing must leave the
 serial lane 0 (no chain exists yet) and the movement rewrite path untouched —
 the MOVE_TO stamp overwrites facing on the first order, which is correct (the
 spawn facing is the RESTING pose).
+
+## I11 — FOUND LIVE: an unimported const in a match arm is a catch-all binding {#i11}
+
+The worker's `SPAWN_REQUEST => {…}` arm compiled with the const NOT in the
+`use` list — Rust silently made it a BINDING pattern that captured EVERY verb
+reaching the spawn pre-pass. Every 3-operand instruction (MOVE_STEP hops,
+QUEUE_STATE fans — their pawn word misread as `x:16|y:16`, hence a wall of
+`x=12416 … position out of world` refusals) fell into the arm; real spawn
+requests still worked, so the drills passed WHILE the log screamed. Diagnosed
+by decoding a refused event's program from the event shard. The lesson joins
+I1's checklist: after adding a verb arm, grep the build for the
+`unreachable pattern` / unused-variable warnings a shadowing binding emits —
+the compiler DID warn, the warning was skimmed past among pre-existing ones.

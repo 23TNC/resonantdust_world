@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use client::world::tile_to_position;
 use client::Event;
-use resonantdust_codec::action::{CREATE, EXECUTE_INTERACTION, GRANT_CONDITION, PROMOTE, SET_NEED};
+use resonantdust_codec::action::{EXECUTE_INTERACTION, GRANT_CONDITION, PROMOTE, SET_NEED};
 use resonantdust_codec::object::{
     def_sans_variant, gameplay_row_key, pack_gameplay_row, position_macro, TYPE_PAWN,
 };
@@ -878,21 +878,34 @@ impl Brain for Wolves {
 
     fn tick(&mut self, bot: &Bot) {
         if self.wolf.is_none() {
-            // No wolf adopted: mint ONE, once, after the adopt-first window (ACTIONS.md
-            // §CREATE — the minted id comes back through the zone's state fan-out, F3).
+            // spawn-authority I2/I6: a REQUEST can be refused (the refusal is a worker
+            // log we never see) — the once-latch would wedge forever, so a request with
+            // no adoption inside the retry window re-rolls a fresh pick.
+            if self.created && std::time::Instant::now() > self.spawn_after {
+                tracing::warn!("spawn request unanswered — re-rolling (spawn-authority I2)");
+                self.created = false;
+            }
+            // No wolf adopted: REQUEST one after the adopt-first window (spawn-authority
+            // F1: the server validates, composes, and mints — the id comes back through
+            // the zone's state fan-out exactly as before).
             if !self.created && self.def != 0 && std::time::Instant::now() > self.spawn_after {
-                // The PATHABLE picker (attack I2, found live): an unchecked random spawn
-                // minted a wolf mid-lake — stranded, every trip unreachable (F5).
+                // The PATHABLE picker (attack I2) stays as POLITENESS — the server's
+                // gate is the protection now (spawn-authority F2).
                 let spawn = self.pick_pathable_dest(bot);
-                // CREATE is variable-arity (human-pawns F2): def, position, count, payload×count.
-                // The wolf carries no payload (its variant rides the def) — count 0.
-                let program = vec![PROMOTE, CREATE, self.def, tile_to_position(spawn.0, spawn.1), 0];
-                if bot.client.queue(program).is_err() {
-                    tracing::error!("engine gone during spawn");
+                let program = resonantdust_codec::action::pack_spawn_request(
+                    spawn.0 as u16,
+                    spawn.1 as u16,
+                    0,
+                    self.def,
+                    &[],
+                );
+                if bot.client.queue(program.to_vec()).is_err() {
+                    tracing::error!("engine gone during spawn request");
                     return;
                 }
                 self.created = true;
-                tracing::info!(?spawn, def = self.def, "wolf CREATE queued; awaiting the minted id");
+                self.spawn_after = std::time::Instant::now() + Duration::from_secs(10);
+                tracing::info!(?spawn, def = self.def, "wolf SPAWN_REQUEST queued; awaiting the minted id");
             }
             return;
         }

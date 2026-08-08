@@ -622,7 +622,9 @@ fn need_frame(row: &bindings::pawn::Needs) -> ServerMsg {
 const CLIENT_VERBS: &[u32] = &[
     resonantdust_codec::action::PROMOTE,
     resonantdust_codec::action::PROMOTE_EVENT,
-    resonantdust_codec::action::CREATE,
+    // CREATE left this list (spawn-authority F4): clients REQUEST spawns; the
+    // worker's SPAWN_REQUEST arm is CREATE's only composer now.
+    resonantdust_codec::action::SPAWN_REQUEST,
     resonantdust_codec::action::PLACE,
     resonantdust_codec::action::SET,
     resonantdust_codec::action::BUILD_WALL, // build-walls D5: the client-issued build order
