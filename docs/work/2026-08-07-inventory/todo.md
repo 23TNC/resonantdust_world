@@ -19,15 +19,20 @@ in [`forks.md`](forks.md) (F#), the anticipated-issue inventory in
 
 ## P1 — the shard and the wire
 
-- [ ] Pawn module: the `inventory` table + `remove` deletes its rows; redeploy
+- [x] Pawn module: the `inventory` table + `remove` deletes its rows; redeploy
       sequenced (I1); bindings regenerated (edge + st-bindings). Acceptance: live SQL
-      shows the empty table; a CLI remove on a seeded row clears it.
-- [ ] Codec: INV_ADD/INV_REMOVE verbs + arities; the edge verb allowlist grows;
+      shows the empty table; a CLI remove on a seeded row clears it. → drilled both:
+      inv_add seeded slot 0 (uid = entity<<8), remove wiped it; cast re-minted.
+- [x] Codec: INV_ADD/INV_REMOVE verbs + arities; the edge verb allowlist grows;
       event-shard module redeployed (I4). Acceptance: a drill INV_ADD from the worker
-      lands a row live (not async-rejected).
-- [ ] Worker subscription: `SELECT * FROM inventory` (build-gates: verify LIVE);
+      lands a row live (not async-rejected). → verbs 15/16 ([Write, Imm]); WORKER-ONLY
+      by allowlist omission (commented); a queued INV_ADD program framed + accepted
+      into event_log post-redeploy.
+- [x] Worker subscription: `SELECT * FROM inventory` (build-gates: verify LIVE);
       edge fans PawnInventory frames per row mutation (the PawnNeed pattern).
-      Acceptance: a drill row reaches a browser client's console.
+      Acceptance: a drill row reaches a browser client's console. → both directions
+      in the browser: insert → {slot:0, item:805372112}, delete → {item:0} (the
+      slot-emptied relay); zone-snapshot replay wired beside needs.
 
 ## P2 — the corpus and the loader
 

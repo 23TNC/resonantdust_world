@@ -190,6 +190,18 @@ export interface PawnNeed {
 }
 export type PawnNeedHandler = (n: PawnNeed) => void;
 
+/** One `inventory` sub-table row (inventory F2): a held item in `slot` — `item` is the
+ *  thing's `definition_reference`, `0` = the slot emptied (drop/removal); `state` is
+ *  RESERVED (the item-as-entity successor). Joined by `entityReference`. */
+export interface PawnInventory {
+  macroPosition: number;
+  entityReference: number;
+  slot: number;
+  item: number;
+  state: number;
+}
+export type PawnInventoryHandler = (i: PawnInventory) => void;
+
 /** A promoted movement INTENT (`ACTIONS.md` §Movement): `entityReference` is heading to global
  *  tile `(tileX, tileY)`, its first hop composed at `eventTic`. Clients SPECULATE position from
  *  this — per-hop state never fans out. */
@@ -272,6 +284,14 @@ type WorldEvent =
       entityReference: number;
       need: number;
       setTic: number;
+    }
+  | {
+      kind: "pawnInventory";
+      macroPosition: number;
+      entityReference: number;
+      slot: number;
+      item: number;
+      state: number;
     }
   | { kind: "zoneClosed"; macroPosition: number }
   | { kind: "paused"; paused: boolean }
@@ -360,6 +380,7 @@ export class WasmClient {
   private readonly stateObjectCbs = new Set<StateObjectHandler>();
   private readonly pawnPartsCbs = new Set<PawnPartsHandler>();
   private readonly pawnNeedCbs = new Set<PawnNeedHandler>();
+  private readonly pawnInventoryCbs = new Set<PawnInventoryHandler>();
   private readonly pausedCbs = new Set<(paused: boolean) => void>();
   private readonly callStatCbs = new Set<(stats: CallStat[]) => void>();
   private readonly subStatCbs = new Set<(snap: SubStatsSnapshot) => void>();
@@ -625,6 +646,12 @@ export class WasmClient {
     return () => this.pawnNeedCbs.delete(cb);
   }
 
+  /** Subscribe to `inventory` sub-table rows (inventory F2). Returns an unsubscribe. */
+  onPawnInventory(cb: PawnInventoryHandler): () => void {
+    this.pawnInventoryCbs.add(cb);
+    return () => this.pawnInventoryCbs.delete(cb);
+  }
+
   /** Subscribe to promoted movement INTENTS (`ACTIONS.md` §Movement — the channel speculation
    *  walks on; per-hop state never fans out). Returns an unsubscribe. */
   onMoveIntent(cb: MoveIntentHandler): () => void {
@@ -820,6 +847,17 @@ export class WasmClient {
             entityReference: ev.entityReference,
             need: ev.need,
             setTic: ev.setTic,
+          });
+        }
+        break;
+      case "pawnInventory":
+        for (const cb of this.pawnInventoryCbs) {
+          cb({
+            macroPosition: ev.macroPosition,
+            entityReference: ev.entityReference,
+            slot: ev.slot,
+            item: ev.item,
+            state: ev.state,
           });
         }
         break;

@@ -604,6 +604,16 @@ impl Engine {
                     set_tic,
                 });
             }
+            // One inventory row (inventory F2) — a pick_up/drop lands as exactly this frame.
+            ServerMsg::Inventory { entity_reference, zone, slot, item, state } => {
+                self.emit(Event::PawnInventory {
+                    macro_position: zone,
+                    entity_reference,
+                    slot,
+                    item,
+                    state,
+                });
+            }
             // A settled, promoted event — the INTENT channel. Anchor the tic estimate and
             // surface any movement intents for the host to speculate from.
             ServerMsg::Event { zone, tic, actions, .. } => {

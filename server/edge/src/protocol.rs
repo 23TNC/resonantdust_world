@@ -82,6 +82,10 @@ pub enum ServerMsg {
     /// `value:16 | kind:12 | variant:4` (u16 fixed-point on the need's authored domain);
     /// `set_tic` anchors the lazy eval. Joined by `entity_reference`.
     Need { entity_reference: u32, zone: u16, need: u32, set_tic: u16 },
+    /// One `inventory` sub-table row (inventory F2) — a held item in a pawn's slot.
+    /// `item = 0` = the slot is now EMPTY (the drop/removal relay — kind-0 suppression's
+    /// precedent); `state` is the RESERVED word, echoed for the item-as-entity successor.
+    Inventory { entity_reference: u32, zone: u16, slot: u8, item: u32, state: u32 },
     /// A composed entity in a subscribed zone — sent on insert and update. The client interpolates by
     /// `tic`. `zone` is the row's `macro_position_reference`, echoed so a client tracking several
     /// zones can bucket it.

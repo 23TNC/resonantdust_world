@@ -29,6 +29,7 @@ use tokio::sync::{mpsc, oneshot};
 use crate::bindings;
 use crate::bindings::data_shard::entity_state_table::EntityStateTableAccess as _;
 use crate::bindings::pawn::entity_state_table::EntityStateTableAccess as _;
+use crate::bindings::pawn::inventory_table::InventoryTableAccess as _;
 use crate::bindings::pawn::needs_table::NeedsTableAccess as _;
 use crate::bindings::pawn::payload_table::PayloadTableAccess as _;
 use crate::bindings::event_shard::event_table::EventTableAccess as _;
@@ -372,6 +373,27 @@ async fn build_world(pool: &Arc<Pool>, out_tx: &mpsc::UnboundedSender<String>) -
         p.db().needs().on_insert(move |_ctx, row| send(&o, need_frame(row)));
         let o = out_tx.clone();
         p.db().needs().on_update(move |_ctx, _old, row| send(&o, need_frame(row)));
+        // The inventory sub-table (inventory F2): pick_up inserts, drop deletes — a
+        // deleted row relays as `item = 0` (slot emptied) because the pawn LIVES on;
+        // there is no StateGone to drop the join (unlike needs, which only die with
+        // their pawn).
+        let o = out_tx.clone();
+        p.db().inventory().on_insert(move |_ctx, row| send(&o, inventory_frame(row)));
+        let o = out_tx.clone();
+        p.db().inventory().on_update(move |_ctx, _old, row| send(&o, inventory_frame(row)));
+        let o = out_tx.clone();
+        p.db().inventory().on_delete(move |_ctx, row| {
+            send(
+                &o,
+                ServerMsg::Inventory {
+                    entity_reference: row.entity_reference,
+                    zone: row.macro_position_reference,
+                    slot: row.slot,
+                    item: 0,
+                    state: 0,
+                },
+            )
+        });
     }
 
     if let Some(e) = &event {
@@ -570,6 +592,17 @@ fn payload_frame(row: &bindings::pawn::Payload) -> ServerMsg {
     }
 }
 
+/// One `inventory` sub-table row → the `Inventory` wire frame (inventory F2).
+fn inventory_frame(row: &bindings::pawn::Inventory) -> ServerMsg {
+    ServerMsg::Inventory {
+        entity_reference: row.entity_reference,
+        zone: row.macro_position_reference,
+        slot: row.slot,
+        item: row.item,
+        state: row.state,
+    }
+}
+
 /// One `needs` sub-table row → the `Need` wire frame (stat-model F2).
 fn need_frame(row: &bindings::pawn::Needs) -> ServerMsg {
     ServerMsg::Need {
@@ -604,6 +637,9 @@ const CLIENT_VERBS: &[u32] = &[
     // intent-queue-ui F3: a strip-circle click cancels by entry_id; resolves against
     // worker memory, writes nothing. QUEUE_STATE stays WORKER-ONLY (not listed).
     resonantdust_codec::action::CANCEL_INTENT,
+    // inventory F3: INV_ADD / INV_REMOVE stay WORKER-ONLY (not listed) — items move
+    // only through the worker's store/drop composers, which pair every mutation with
+    // the free-count SET_NEED in one program.
 ];
 
 /// Validate + relay a client intent to `event_shard.queue`. The door enforces "logged in",
@@ -690,11 +726,16 @@ fn handle_subscribe(
                 for row in ctx.db.needs().iter().filter(|r| r.macro_position_reference == zone) {
                     send(&o, need_frame(&row));
                 }
+                // …and the inventory rows (inventory F2), same delivery guarantee.
+                for row in ctx.db.inventory().iter().filter(|r| r.macro_position_reference == zone) {
+                    send(&o, inventory_frame(&row));
+                }
             })
             .subscribe([
                 format!("SELECT * FROM entity_state WHERE macro_position_reference = {zone}"),
                 format!("SELECT * FROM payload WHERE macro_position_reference = {zone}"),
                 format!("SELECT * FROM needs WHERE macro_position_reference = {zone}"),
+                format!("SELECT * FROM inventory WHERE macro_position_reference = {zone}"),
             ])
     });
     // Settled events (the movement INTENT channel). Same delivery guarantee as the cold

@@ -508,6 +508,9 @@ pub fn log_event(event: &Event) {
         Event::PawnNeed { macro_position: zone, entity_reference, need, set_tic } => {
             tracing::debug!(zone, entity_reference, need, set_tic, "pawn need row")
         }
+        Event::PawnInventory { macro_position: zone, entity_reference, slot, item, .. } => {
+            tracing::debug!(zone, entity_reference, slot, item, "pawn inventory row")
+        }
         Event::ColdTiles { macro_position: zone, .. } => tracing::debug!(zone, "cold tiles"),
         Event::ColdThings { macro_position: zone, .. } => tracing::debug!(zone, "cold things"),
         Event::ZoneClosed { macro_position: zone } => tracing::debug!(zone, "zone closed"),

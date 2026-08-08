@@ -76,6 +76,8 @@ pub enum ServerMsg {
     /// `need` is the packed gameplay row `value:16 | kind:12 | variant:4`; `set_tic`
     /// anchors the lazy eval. Joined by `entity_reference`.
     Need { entity_reference: u32, zone: u16, need: u32, set_tic: u16 },
+    /// One `inventory` sub-table row (inventory F2); `item = 0` = the slot emptied.
+    Inventory { entity_reference: u32, zone: u16, slot: u8, item: u32, state: u32 },
     /// A settled, promoted event touching a subscribed zone.
     Event {
         event_reference: u32,

@@ -404,7 +404,7 @@ async fn main() {
     // only, so "all rows" is small by construction.
     let pawn_up = resonantdust_uplink::subbed_uplink!(pawn, "pawn", uri, pawn_db,
         vec![hot_sql(()), "SELECT * FROM entity_state".to_string(), "SELECT * FROM payload".to_string(),
-             "SELECT * FROM needs".to_string()]);
+             "SELECT * FROM needs".to_string(), "SELECT * FROM inventory".to_string()]);
     let cold_sql: Vec<String> = ["entity_state_log", "overlay_log"]
         .iter()
         .map(|t| format!("SELECT * FROM {t} WHERE worker_reference = {self_ref} OR observer_reference = {self_ref}"))

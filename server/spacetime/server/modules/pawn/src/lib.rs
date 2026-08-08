@@ -80,6 +80,17 @@ fn payload_follow_state(ctx: &ReducerContext, r: &TargetState, _tic: u16) {
         n.macro_position_reference = r.macro_position_reference;
         ctx.db.needs().uid().update(n);
     }
+    let stale_inv: Vec<Inventory> = ctx
+        .db
+        .inventory()
+        .entity_reference()
+        .filter(r.entity_reference)
+        .filter(|i| i.macro_position_reference != r.macro_position_reference)
+        .collect();
+    for mut i in stale_inv {
+        i.macro_position_reference = r.macro_position_reference;
+        ctx.db.inventory().uid().update(i);
+    }
 }
 
 // ── needs — the per-(pawn, need) row table (stat-model F2) ──────────────────────────────
@@ -132,6 +143,82 @@ fn entity_zone(ctx: &ReducerContext, entity: u32) -> u16 {
             ctx.db.payload().entity_reference().find(entity).map(|p| p.macro_position_reference)
         })
         .unwrap_or(0)
+}
+
+// ── inventory — the per-(pawn, slot) item table (inventory F2) ────────────────────────
+//
+// One row per HELD item; the row count is the pawn's FILLED slots, while the `inventory`
+// NEED counts FREE slots (F1, the user's inversion) — never conflate the two (I2). Items
+// are u32 definition_references; `state` is RESERVED for the item-as-entity successor
+// (the minted item's entity id — its world row suppressed while held). Rows move ONLY
+// through `inv_add`/`inv_remove`, and the worker writes the free-count SET_NEED in the
+// same program (F3). No log twin, deliberately (TABLES.md).
+
+/// One held item: `uid = entity_reference:32 | slot:8`.
+#[spacetimedb::table(accessor = inventory, public)]
+pub struct Inventory {
+    #[primary_key]
+    pub uid: u64,
+    #[index(btree)]
+    pub entity_reference: u32,
+    /// The zone-subscription key — slaved to the entity's zone (the state hook).
+    #[index(btree)]
+    pub macro_position_reference: u16,
+    /// 0-based; `inv_add` fills the first free slot.
+    pub slot: u8,
+    /// The held thing's `definition_reference`.
+    pub item: u32,
+    /// RESERVED (0 today) — the item-as-entity successor parks the entity id here.
+    pub state: u32,
+}
+
+/// The encoding-domain slot bound (VARIABLES.md: the need's 0..16 domain). The worker's
+/// capacity gate is the NEED (`can_carry`); this is only the structural sanity limit.
+const INVENTORY_SLOT_BOUND: u8 = 16;
+
+/// `INV_ADD` — insert the item at the FIRST FREE slot. Err (no write) when every slot in
+/// the structural bound is taken — the worker refuses via the need before it gets here,
+/// so hitting this means the free-count and the rows diverged (I2/I3): loud, not silent.
+#[spacetimedb::reducer]
+pub fn inv_add(
+    ctx: &ReducerContext,
+    _worker: u8,
+    _tic: u16,
+    entity_reference: u32,
+    item: u32,
+) -> Result<(), String> {
+    let taken: Vec<u8> =
+        ctx.db.inventory().entity_reference().filter(entity_reference).map(|r| r.slot).collect();
+    let Some(slot) = (0..INVENTORY_SLOT_BOUND).find(|s| !taken.contains(s)) else {
+        return Err(format!("inv_add: no free slot on {entity_reference:#010x}"));
+    };
+    let zone = entity_zone(ctx, entity_reference);
+    ctx.db.inventory().insert(Inventory {
+        uid: ((entity_reference as u64) << 8) | slot as u64,
+        entity_reference,
+        macro_position_reference: zone,
+        slot,
+        item,
+        state: 0,
+    });
+    Ok(())
+}
+
+/// `INV_REMOVE` — delete one slot's row. Silent on absence (a raced double-drop's second
+/// completion already no-ops at the worker's re-validation; this is the last line).
+#[spacetimedb::reducer]
+pub fn inv_remove(
+    ctx: &ReducerContext,
+    _worker: u8,
+    _tic: u16,
+    entity_reference: u32,
+    slot: u8,
+) -> Result<(), String> {
+    let uid = ((entity_reference as u64) << 8) | slot as u64;
+    if ctx.db.inventory().uid().find(uid).is_some() {
+        ctx.db.inventory().uid().delete(uid);
+    }
+    Ok(())
 }
 
 // ── needs & conditions — payload-entry verbs (needs-moodlets F7) ──────────────────────
@@ -211,7 +298,7 @@ pub fn grant_condition(
 
 /// `remove` — DEATH's second half (food-chain F5): delete the entity's CURRENT rows —
 /// `entity_state` (the subscription leave fans StateGone; clients drop the mover),
-/// `payload`, and every `needs` row. The LOGS stay (history; the mint counter never
+/// `payload`, every `needs` row, and every `inventory` row. The LOGS stay (history; the mint counter never
 /// reuses ids, so a stale log can never resurrect anyone). Idempotent: removing an
 /// absent entity is a silent success (a raced double-death no-ops — I3).
 #[spacetimedb::reducer]
@@ -231,6 +318,19 @@ pub fn remove(ctx: &ReducerContext, _worker: u8, _tic: u16, entity_reference: u3
         .collect();
     for uid in uids {
         ctx.db.needs().uid().delete(uid);
+    }
+    // The dead drop everything (inventory F2): held items are NOT spilled — the death
+    // spawn already yields meat; item-spill is a design decision for the item-as-entity
+    // successor, not a default.
+    let inv_uids: Vec<u64> = ctx
+        .db
+        .inventory()
+        .entity_reference()
+        .filter(entity_reference)
+        .map(|i| i.uid)
+        .collect();
+    for uid in inv_uids {
+        ctx.db.inventory().uid().delete(uid);
     }
     Ok(())
 }

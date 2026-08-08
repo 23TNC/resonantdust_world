@@ -174,6 +174,10 @@ pub enum Event {
     /// One `needs` sub-table row (stat-model F2): the packed gameplay row
     /// (`value:16 | kind:12 | variant:4`) + its `set_tic`. Joined by `entity_reference`.
     PawnNeed { macro_position: u16, entity_reference: u32, need: u32, set_tic: u16 },
+    /// One `inventory` sub-table row (inventory F2): a held item in `slot` — `item` is the
+    /// thing's `definition_reference`, `0` = the slot emptied (drop/removal); `state` is
+    /// RESERVED (the item-as-entity successor). Joined by `entity_reference`.
+    PawnInventory { macro_position: u16, entity_reference: u32, slot: u8, item: u32, state: u32 },
     /// A subscribed zone's cold **ground** — the dense 256 `kind_reference`s of one biome-row,
     /// indexed by `tile_reference` (0..256). The host paints them as the terrain floor.
     /// `macro_position` (`region:8 | zone:8`) is the wire zone address (the host expands prims via

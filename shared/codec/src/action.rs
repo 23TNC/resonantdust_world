@@ -105,6 +105,18 @@ pub const QUEUE_STATE: u32 = 13;
 /// (imm) · `order_event_reference` (imm). Unknown reference = a logged no-op.
 pub const CANCEL_INTENT: u32 = 14;
 
+/// Add an item to a pawn's inventory at the FIRST FREE slot (inventory F3) —
+/// WORKER-only. Operands: `obj` (write — the holding pawn) · `item` (imm, the held
+/// thing's `definition_reference`). The composing program MUST carry the free-count
+/// `SET_NEED` beside it (one author, one atomic program — rows and count never
+/// diverge).
+pub const INV_ADD: u32 = 15;
+
+/// Remove one inventory slot's row (inventory F3) — WORKER-only. Operands: `obj`
+/// (write) · `slot` (imm, 0-based). Same law as [`INV_ADD`]: the free-count
+/// `SET_NEED` rides the same program.
+pub const INV_REMOVE: u32 = 16;
+
 /// What an operand is, for deriving the write/read sets. Only `entity_reference` operands matter to
 /// the sets; `Imm` operands (numbers, positions, definitions) are neither.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -152,6 +164,8 @@ pub fn signature(action: u32) -> Option<&'static [OperandKind]> {
         // QUEUE_STATE is variable-arity too (pawn, _reserved, count, entry-words×count —
         // all Imm; a display fan, no write set).
         CANCEL_INTENT => &[Imm, Imm], // pawn, order_event_reference — worker-memory resolution
+        INV_ADD => &[Write, Imm],    // obj, item definition_reference (inventory F3)
+        INV_REMOVE => &[Write, Imm], // obj, slot index (inventory F3)
         _ => return None,
     })
 }

@@ -1217,6 +1217,16 @@ fn event_to_js(event: &client::Event) -> JsValue {
             set("need", &JsValue::from_f64(*need as f64));
             set("setTic", &JsValue::from_f64(*set_tic as f64));
         }
+        Event::PawnInventory { macro_position, entity_reference, slot, item, state } => {
+            set("kind", &JsValue::from_str("pawnInventory"));
+            set("macroPosition", &JsValue::from_f64(*macro_position as f64));
+            set("entityReference", &JsValue::from_f64(*entity_reference as f64));
+            // One held-item slot (inventory F2): `item` = the thing's definition_reference,
+            // 0 = the slot emptied (drop/removal); `state` RESERVED (item-as-entity).
+            set("slot", &JsValue::from_f64(*slot as f64));
+            set("item", &JsValue::from_f64(*item as f64));
+            set("state", &JsValue::from_f64(*state as f64));
+        }
         Event::ColdTiles { macro_position, subtype_id, layer_id, tic, tiles } => {
             set("kind", &JsValue::from_str("coldTiles"));
             set("macroPosition", &JsValue::from_f64(*macro_position as f64));
