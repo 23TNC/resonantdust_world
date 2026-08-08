@@ -14,7 +14,7 @@ settled. A labelled run owns the code it started with ([predecessor D2](../2026-
 
 ## P1 — The stage ladder, measured {#p1}
 
-- [ ] S1 — generate each species against its OWN corpus silhouette (`--control corpus:<Species>`). Acceptance: `iou_ref` against S0; the cheapest candidate fix gets measured before any pipeline is built.
+- [x] S1 — generate each species against its OWN corpus silhouette (`--control corpus:<Species>`). Acceptance: `iou_ref` against S0; the cheapest candidate fix gets measured before any pipeline is built.
 - [ ] S3 — run `--control auto` (probe → nearest bank body plan). Acceptance: `iou_ref`, plus which species it picked for each — a wrong pick is the interesting failure, not the score.
 - [ ] S4 — add a low-denoise refine pass over the S1 winner. Acceptance: `iou_ref` and the eye on outline cleanliness; it earns its stage or it is dropped.
 - [ ] S5 — generate N candidates per species and keep the best by `iou_ref`. Acceptance: best-of-N against best-of-1 at the same total GPU cost, so the comparison is fair.

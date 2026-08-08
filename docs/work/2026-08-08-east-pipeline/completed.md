@@ -76,3 +76,41 @@ _Dated entries: what landed and **how it was verified**. Newest last._
   This is the floor. Every method below must beat 0.731, and must fix `d_aspect` on bear and
   elephant specifically — a method that raises mean `iou_ref` while leaving those two squashed has
   not addressed the defect that opened the stream.
+
+## P1 — The stage ladder, measured
+
+- **2026-08-08 · P1/S1 · One flag takes `iou_ref` from 0.731 to 0.852 and halves the proportion
+  error. The multi-stage work is not needed to fix trained species.** `--control corpus:<Species>`,
+  everything else identical to S0 — same LoRA, seeds, knobs, prompt. 18 generations.
+
+  | species | S0 | S1 | Δ | S0 mean\|aspect\| | S1 mean\|aspect\| |
+  |---|---|---|---|---|---|
+  | **wolf** | 0.785 | 0.785 | **±0.000** | 16.0 | 11.7 |
+  | bear | 0.699 | 0.868 | **+0.169** | 34.9 | 14.4 |
+  | fox | 0.735 | 0.931 | **+0.196** | 15.0 | 1.7 |
+  | deer | 0.700 | 0.709 | +0.009 | 21.9 | 17.2 |
+  | elephant | 0.657 | 0.860 | **+0.203** | 28.8 | 15.6 |
+  | tiger | 0.808 | 0.958 | **+0.150** | 6.9 | 1.0 |
+  | **all** | **0.731** | **0.852** | **+0.121** | **20.6** | **10.3** |
+
+  Cells below 0.70: **8/18 → 4/18**. Gate failures: **3/18 → 1/18**.
+
+  **The wolf row is the internal control and it is exactly ±0.000.** The one species whose template
+  was already correct gains nothing, and every species whose template was wrong gains in proportion
+  to how wrong it was — bear and elephant, the two bulkiest animals, gain most. That is not a
+  coincidence to note in passing; it is the prediction of [I1](issues.md#i1) coming back as a
+  measurement, with a built-in null result to prove the harness is not simply rewarding change.
+
+  **Verified by eye, and the eye is emphatic** (`.staging/p1-s0-vs-s1.png`, seed 4101): S0's bear,
+  fox, deer and elephant are all recognisably the same lithe canid silhouette wearing different
+  colours. S1's bear is bulky with short legs, the fox has its brush tail, the elephant has a trunk
+  and ear, the tiger is striped, and the deer has antlers and thin separated legs.
+
+  **The one disagreement is deer, and the metric is wrong there** ([I5](issues.md#i5)): the real
+  `Deer` sprite is an antler-less spotted doe, so the generated buck's antlers score as pure union
+  and drag IoU down while being *more* correct. Deer's number must not be optimised away.
+
+  **What this means for the plan ([F1](forks.md#f1) holding as written):** the cheapest possible fix
+  wins on trained species, and that was the point of measuring it first. It **cannot** generalise to
+  untrained species — there is no corpus silhouette to read — so [P2](todo.md)'s silhouette-generation
+  stage keeps its full justification and now has a hard bar to clear: 0.852.

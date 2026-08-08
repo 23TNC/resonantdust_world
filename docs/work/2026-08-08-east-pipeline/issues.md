@@ -92,3 +92,31 @@ Harmless here because the loss was visible in the same turn and nothing had been
 because the failure is silent by design: a docs-green hook that *writes* content will overwrite an
 in-flight file without a conflict, and a session that did not happen to re-read the file would have
 committed the stub over its own findings.
+
+## I5 — `iou_ref` penalises CORRECT species features the reference individual lacks {#i5}
+_2026-08-08 · found at P1's S1, where the metric and the eye disagreed_
+
+Deer is the only species S1 barely moved: `iou_ref` 0.700 → 0.709, and at seed 4101 it scored
+**0.693** — the worst cell in the run. The sheet says the opposite. S1's deer has **antlers, thin
+separated legs and a dappled coat**; S0's deer is a tan wolf shape with a deer's head stuck on.
+
+The cause is in the reference, not the sprite. **The real `Deer` corpus sprite is a spotted doe with
+no antlers.** The generated buck's antlers fall entirely outside the reference silhouette, so they
+count as union-without-intersection and drag IoU down — while being *more* correct as "a deer", not
+less.
+
+**So `iou_ref` measures agreement with one specific individual, not with the species.** It is still
+the right primary metric — it is the only one that catches a wolf-shaped bear ([I3](#i3)) — but it
+has a known blind spot in the *opposite* direction from the one it was chosen for, and deer is the
+cell where that shows.
+
+**Consequences, recorded so no later phase treats deer's number as a shape failure:**
+
+- Deer's low score must **not** be optimised away. A method that raises it by removing antlers is
+  worse, not better.
+- The same trap applies to any species whose corpus sprite is one individual of a dimorphic or
+  variable species. Deer is the one in this set; there will be others in [P4](todo.md).
+- `d_aspect` is the safer read for deer, and it agrees with the eye: mean |aspect error| 21.9 → 17.2.
+
+**This is the sixth time in this project that the images have overturned a number**, and the first
+where the number was wrong for a reason worth keeping rather than a defect to fix.

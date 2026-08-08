@@ -242,11 +242,42 @@ def _outline_mask(opaque, lum, core_v, rim_v):
         out = cur
     return out
 
+def _outer_outline(outline, opaque):
+    """The OUTER rim of `outline` — its connected components that touch the sprite's exterior.
+
+    surface-channels F4. The line the art carries is one mask, but it holds two different things:
+    the RIM around the silhouette (which the renderer is going to draw procedurally, so the texture
+    should not also bake it) and the INTERIOR detail lines (the conifer's tier seams, the trunk
+    edges) which ARE the art and stay. The two are not distinguishable by darkness or by width —
+    only by whether you can reach them from outside. So: seed at the outline pixels adjacent to a
+    non-opaque pixel, then grow THROUGH the outline mask. Anything the flood cannot reach is
+    interior detail.
+
+    A full-bleed master (an opaque grid tile) has no exterior to seed from, so this returns an
+    empty mask by construction — no guard needed, and no frame-edge band (surface-channels I8)."""
+    if not outline.any():
+        return outline
+    exterior = ~opaque
+    seed = np.zeros_like(outline)
+    for ax, sh in _NBRS:
+        seed |= outline & _shift(exterior, ax, sh, False)
+    out = seed
+    for _ in range(outline.shape[0] + outline.shape[1]):
+        cur = out.copy()
+        for ax, sh in _NBRS:
+            cur |= outline & _shift(out, ax, sh, False)
+        if np.array_equal(cur, out):
+            break
+        out = cur
+    return out
+
+
 def split_albedo(im, channels=4, section_tol=0.15, group_tol=0.10, edge_thr=42.0, outline_v=0.18, outline_rim=0.35, min_region=25, blend_radius=10, normalize=False, black_thr=0.05):
     arr = np.asarray(im.convert("RGBA")).astype(np.float32); rgb = arr[..., :3]; A = arr[..., 3]
     opaque = A > 128
     lum = (0.299*rgb[...,0] + 0.587*rgb[...,1] + 0.114*rgb[...,2]) / 255.0
     outline = _outline_mask(opaque, lum, outline_v, outline_rim)   # dark line + its AA halo: excluded
+    outer = _outer_outline(outline, opaque)                        # F4: the rim half, for surface.R
     cand = opaque & ~outline
     H, W = lum.shape
     packed = np.zeros((H, W, 4), np.float32); info = []
@@ -365,7 +396,10 @@ def split_albedo(im, channels=4, section_tol=0.15, group_tol=0.10, edge_thr=42.0
     residual = Image.fromarray(rgb.astype(np.uint8), "RGB")
     prgb = (np.clip(packed[..., :3], 0, 1) * 255).astype(np.uint8)   # 3 tint layers in RGB
     layers_img = Image.fromarray(prgb, "RGB")
-    return residual, layers_img, info
+    # The OUTER rim as its own L map — `_surface_kind` lifts it into surface.R, where the
+    # renderer reads it to draw the line procedurally (surface-channels P3).
+    outer_img = Image.fromarray(np.where(outer, np.uint8(255), np.uint8(0)), "L")
+    return residual, layers_img, info, outer_img
 
 def main():
     ap = argparse.ArgumentParser(prog="art split_layers",
@@ -395,16 +429,18 @@ def main():
         # (marigold present) skip unless --force, which re-derives from the preserved de-lit.
         marigold_path = texpath.sibling(alb, "albedo_marigold")
         layers_path = texpath.sibling(alb, "layers")
+        outer_path = texpath.sibling(alb, "outer_outline")
         # `albedo.png` holds the DE-LIT until we split it, then the RESIDUAL — so a standalone
         # re-run must SKIP an already-split leaf (marigold present), or it would re-split the
         # residual. `--force` is for the remaster path, where `cmd_maps` has just written a FRESH
         # de-lit to albedo.png, so we always read (and re-preserve) THAT, never the stale marigold.
         if os.path.exists(marigold_path) and not args.force:
             skipped += 1; continue
-        res, layers, info = split_albedo(Image.open(alb).convert("RGBA"), min(args.channels, 3), args.section_tol, args.group_tol, args.edge_thr, args.outline_v, args.outline_rim, args.min_region, args.blend_radius, args.normalize, args.black_thr)
+        res, layers, info, outer = split_albedo(Image.open(alb).convert("RGBA"), min(args.channels, 3), args.section_tol, args.group_tol, args.edge_thr, args.outline_v, args.outline_rim, args.min_region, args.blend_radius, args.normalize, args.black_thr)
         shutil.copy2(alb, marigold_path)   # preserve this de-lit (the reconstruction/re-split source)
         res.save(alb)               # residual -> albedo.png (the render base)
         layers.save(layers_path)    # co-located weight map
+        outer.save(outer_path)      # the outer rim -> surface.R, drawn procedurally in-game
         # The packed channels' base colours → meta.json, so the client can reconstruct
         # `albedo + Σ layersᵢ·tintᵢ` and re-tint per DSL. `info[i][2]` is channel i's Bcol·255.
         meta.update(alb, channel_tints=[tint for (_, _, tint) in info])
