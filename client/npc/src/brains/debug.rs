@@ -1,11 +1,10 @@
-//! torches — the torch-perf measurement brain (torch-perf F2): mint/adopt
-//! `NPC_TORCHES` debug_torch pawns around a home and WANDER THEM FOREVER — a fresh
-//! `move_to` on every authoritative arrival (deadline-superseded, the group law).
-//! Deliberately NOTHING else: no needs, no drives, no payload eval beyond pace — the
-//! brain exists to keep N moving hot lights moving while the client is measured
-//! ([I2](../../../../docs/work/2026-08-08-torch-perf/issues.md#i2): an idle hot light
-//! still re-bakes, but the user asked for the MOVING case). The mint/adopt/retry
-//! posture is the bunnies' verbatim (spawn-authority I2/I6).
+//! debug — THE parameterized measurement brain (mover-perf F2, converting torch-perf's
+//! `torches`): mint/adopt `NPC_COUNT` pawns of the `NPC_KIND` kind (default
+//! `debug_mover`; `debug_torch` for the lit twin) around a home and WANDER THEM
+//! FOREVER — a fresh `move_to` on every authoritative arrival (deadline-superseded,
+//! the group law). Deliberately NOTHING else: no needs, no drives, no payload eval
+//! beyond pace — the brain exists to keep N movers moving while something is measured.
+//! The mint/adopt/retry posture is the bunnies' + the torch-perf I9 outstanding gate.
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -21,18 +20,20 @@ use resonantdust_content::{path_eval, stat_eval};
 
 use crate::{Bot, Brain, Event, Rng};
 
-/// One torch pawn's ephemeral trip state — everything durable lives in the shards.
+/// One pawn's ephemeral trip state — everything durable lives in the shards.
 struct Mind {
     at: (i32, i32),
     dest: Option<(i32, i32)>,
     deadline: Instant,
 }
 
-pub struct Torches {
+pub struct Debug {
     rng: Rng,
     home: (i32, i32),
     radius: i32,
     count: usize,
+    /// The pawn KIND this procession drives (`NPC_KIND`) — any corpus pawn name.
+    kind_name: String,
     def: u32,
     kind: u16,
     bundle: Option<Bundle>,
@@ -47,7 +48,7 @@ pub struct Torches {
     payloads: HashMap<u32, Vec<u32>>,
 }
 
-impl Torches {
+impl Debug {
     pub fn new(rng: Rng) -> Self {
         let home = std::env::var("NPC_HOME")
             .ok()
@@ -61,12 +62,15 @@ impl Torches {
         let radius =
             std::env::var("NPC_RADIUS").ok().and_then(|s| s.parse().ok()).unwrap_or(12);
         let count =
-            std::env::var("NPC_TORCHES").ok().and_then(|s| s.parse().ok()).unwrap_or(8);
+            std::env::var("NPC_COUNT").ok().and_then(|s| s.parse().ok()).unwrap_or(8);
+        let kind_name =
+            std::env::var("NPC_KIND").unwrap_or_else(|_| "debug_mover".to_string());
         Self {
             rng,
             home,
             radius,
             count,
+            kind_name,
             def: 0,
             kind: 0,
             bundle: None,
@@ -123,11 +127,11 @@ impl Torches {
     }
 }
 
-impl Brain for Torches {
+impl Brain for Debug {
     async fn on_start(&mut self, bot: &mut Bot) {
         let home_macro = position_macro(tile_to_position(self.home.0, self.home.1));
         bot.anchor_and_wait(
-            "torches",
+            "debug",
             self.home.0,
             self.home.1,
             self.radius as u16 + 2,
@@ -140,16 +144,17 @@ impl Brain for Torches {
             return;
         };
         match crate::fetch_corpus(&url).await {
-            Ok(bundle) => match crate::resolve_thing_in(&bundle, "debug_torch") {
+            Ok(bundle) => match crate::resolve_thing_in(&bundle, &self.kind_name) {
                 Ok(def) => {
                     self.def = def;
-                    self.kind = bundle.thing_object_id("debug_torch").unwrap_or(0);
-                    tracing::info!(def = format!("{def:#010x}"), count = self.count,
-                        home = ?self.home, radius = self.radius,
-                        "debug_torch def resolved — the procession lights");
+                    self.kind = bundle.thing_object_id(&self.kind_name).unwrap_or(0);
+                    tracing::info!(def = format!("{def:#010x}"), kind = %self.kind_name,
+                        count = self.count, home = ?self.home, radius = self.radius,
+                        "debug kind resolved — the procession starts");
                     self.bundle = Some(bundle);
                 }
-                Err(err) => tracing::error!(%err, "debug_torch def resolution failed"),
+                Err(err) => tracing::error!(%err, kind = %self.kind_name,
+                    "debug kind resolution failed"),
             },
             Err(err) => tracing::error!(%err, "corpus fetch failed"),
         }
@@ -162,8 +167,8 @@ impl Brain for Torches {
             } => {
                 if *removed {
                     if self.minds.remove(entity_reference).is_some() {
-                        tracing::info!(torch = format!("{entity_reference:#010x}"),
-                            left = self.minds.len(), "a torch went out");
+                        tracing::info!(pawn = format!("{entity_reference:#010x}"),
+                            left = self.minds.len(), "a debug pawn left");
                     }
                     return;
                 }
@@ -178,8 +183,8 @@ impl Brain for Torches {
                             m.at = at;
                         })
                         .or_insert_with(|| {
-                            tracing::info!(torch = format!("{entity_reference:#010x}"), ?at,
-                                "torch adopted");
+                            tracing::info!(pawn = format!("{entity_reference:#010x}"), ?at,
+                                "debug pawn adopted");
                             Mind { at, dest: None, deadline: Instant::now() }
                         });
                     // An adoption retires one in-flight request (saturating — a
@@ -237,7 +242,7 @@ impl Brain for Torches {
                 self.outstanding += 1;
                 self.spawn_after = Instant::now() + Duration::from_secs(10);
                 tracing::info!(?spawn, outstanding = self.outstanding,
-                    "torch SPAWN_REQUEST queued");
+                    "debug SPAWN_REQUEST queued");
             }
         }
         // Wander forever: no dest (arrived) or a blown deadline → the next trip.

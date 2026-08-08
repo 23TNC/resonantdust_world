@@ -6,10 +6,10 @@ decisions in [`forks.md`](forks.md) (F#), the anticipated-issue inventory in
 
 ## P0 — the kind and the harness
 
-- [ ] content: the `debug_mover` pawn kind (F1 — walks 2, no needs, no light,
+- [x] content: the `debug_mover` pawn kind (F1 — walks 2, no needs, no light,
       plain gray part). Acceptance: load + content-check green; golden
       re-blessed.
-- [ ] npc: `brains/torches.rs` → `brains/debug.rs` (F2 — `NPC_KIND` default
+- [x] npc: `brains/torches.rs` → `brains/debug.rs` (F2 — `NPC_KIND` default
       debug_mover, `NPC_COUNT`; the `torches` arm and `NPC_TORCHES` DIE);
       main.rs registers `debug`. Acceptance: npc builds clean; grep shows no
       `torches` arm; the harness line recorded in completed.md (I8).

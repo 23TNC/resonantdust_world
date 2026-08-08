@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use client::ClientConfig;
 use npc::brains::bunnies::Bunnies;
-use npc::brains::torches::Torches;
+use npc::brains::debug::Debug;
 use npc::brains::wolves::Wolves;
 use npc::{run_brain, Bot, Rng};
 
@@ -49,8 +49,9 @@ async fn main() {
     match brain.as_str() {
         "wolves" => run_brain(bot, Wolves::new(rng), tick_ms).await,
         "bunnies" => run_brain(bot, Bunnies::new(rng), tick_ms).await,
-        // torch-perf F2: the measurement procession — N debug_torch pawns wandering.
-        "torches" => run_brain(bot, Torches::new(rng), tick_ms).await,
-        other => tracing::error!(%other, "unknown brain (have: wolves, bunnies, torches)"),
+        // mover-perf F2: THE parameterized measurement procession — N pawns of
+        // NPC_KIND (debug_mover default; debug_torch for the lit twin) wandering.
+        "debug" => run_brain(bot, Debug::new(rng), tick_ms).await,
+        other => tracing::error!(%other, "unknown brain (have: wolves, bunnies, debug)"),
     }
 }
