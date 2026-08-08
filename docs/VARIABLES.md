@@ -565,6 +565,18 @@ are exactly the low 16 of the def's `definition_reference` (kind/variant in plac
 `remaining_at_write`, need `value`. Reconstruct the full reference as
 `TYPE_GAMEPLAY<<28 | subtype<<16 | (row & 0xFFFF)`.
 
+**The CONSTANT assignment law** (work [`2026-08-08-trait-lights`](work/2026-08-08-trait-lights/README.md)
+F2/F5/F6, user): a trait BIND may be marked `constant = true` **at the assignment site** in TOML.
+A constant bind is TOML-only — it cannot be assigned at runtime, cannot be modified at runtime,
+and **never rides spacetime**: its level is statically known from the def, so readers DERIVE it
+(zero storage; this is how lights bake into cold). Non-constant binds ride the pawn payload
+exactly as before. THINGS take traits now, but accept **constant binds only** — a thing carrying
+non-constant traits could not be saved to cold (extra data we do not compress), so the loader
+REFUSES a non-constant bind on a non-pawn thing. Every reader sees traits through the ONE merged
+accessor (`object_traits`: the def's constant binds + the payload's runtime rows; on a name
+collision the CONSTANT bind wins and the payload row is ignored). Any future trait-writing verb
+must check the def's constant binds and refuse — the law in print (trait-lights I4).
+
 **The need value is u16 FIXED-POINT on the AUTHORED domain** (F4): `0..65535` maps linearly onto
 the need's authored `min..max` — `q = round((v − min) / (max − min) · 65535)` clamped, exact
 inverse `v = min + q/65535 · (max − min)` (round = half away from zero; defined ONCE in codec).
@@ -616,11 +628,14 @@ write), never a stored countdown and never a forecast. A re-grant refreshes the 
                band = [{ condition, lo, hi }]  in the need's OWN units — exclusive, ≤1 active
 [[condition]]  name/label · duration (TICS a TIMED grant lives; 0 = DERIVED) ·
                priority · stats/needs/emotions modifier lists (§ TOML content schema)
-[[trait]]      name/label · per-LEVEL stats/needs/emotions modifier lists (§ TOML content schema)
+[[trait]]      name/label · per-LEVEL stats/needs/emotions modifier lists · per-LEVEL
+               emit_light tuples (trait-lights F4 — ANY trait may emit) (§ TOML content schema)
 [[emotion]]    name/label · color — SIXTEEN, declaration-ordered; the u4 INDEX is the
                whole identity (`fine` REQUIRED first — emotions F1; not registry-numbered:
                emotions never ride the wire)
-[[thing]]      needs = ["thirst", …] · traits = ["biological_lifeform", { name = "walks", level = 2 }]
+[[thing]]      needs = ["thirst", …] · traits = ["biological_lifeform", { name = "walks", level = 2 },
+               { name = "emit_light", level = 1, constant = true }] — constant binds are
+               TOML-only/immutable/zero-storage; non-pawn things take constant ONLY (trait-lights)
 ```
 
 **Inventory rides the same four families** (inventory F1/F2): the `inventory` NEED counts FREE
@@ -841,13 +856,17 @@ name = "wolf"
                             #  cell with no extra write. A cell is pathable iff tile AND
                             #  occupant agree — ACTIONS.md §Movement, the pathing law.)
 needs = ["thirst"]          # the needs this kind carries (optional)
-traits = [                  # starting trait bindings, minted at CREATE (stat-model F11);
-  "biological_lifeform",    #   a bare string = level 1
+traits = [                  # trait bindings (stat-model F11 + trait-lights F2/F6):
+  "biological_lifeform",    #   a bare string = level 1, non-constant
   { name = "walks", level = 2 },
+  # { name = "emit_light", level = 1, constant = true },
+  #                         #   constant = TOML-only, immutable, ZERO-storage (derived,
+  #                         #   never minted, never fanned — bakes into cold). Pawn kinds
+  #                         #   may bind either flavor; NON-pawn things take constant
+  #                         #   binds ONLY (the loader refuses the rest). A kind's LIGHT
+  #                         #   is a constant bind on a trait authoring `emit_light` —
+  #                         #   the old `light = {}` visual block is DELETED.
 ]
-light = {                   # the kind's emitted light (optional; reach>0 = lit)
-  r = 1.0, g = 0.8, b = 0.5, intensity = 1.0, reach = 16, radius = 0.25,
-  height = 0.5, cast = true, hot = false, flicker = false }
 packed = [ { tint = "#5f6b3c" }, { tint = "#6e4a2e" } ]   # material optional per channel
 
   # EVERY def's visual is a parts ARRAY; a single-sprite thing has one entry.
@@ -973,6 +992,19 @@ stats = [ { stat = "ground_speed", add = [24, 12, 6] } ]   # tics/tile at level 
 #                           # content). Not leveled: presence IS the capability; tags
 #                           # never ride the wire (corpus-resolved at eval). A modifier-
 #                           # less tag-only trait is legal (one empty level).
+# emit_light = [            # per-LEVEL emitted light (trait-lights F4) — ANY trait may
+#   { color = "#ffd98c",    #   author it; array index = level − 1, entry count must not
+#     intensity = 1.0,      #   exceed the def's authored level count. The bound LEVEL
+#     reach = 16,           #   selects the WHOLE tuple; binds carry no light fields (I2).
+#     fall_off = 1.0,       #   fall_off is authored-not-yet-consumed (I10: the render
+#     elevation = 2.5,      #   gains it in a lighting successor). elevation = world
+#     radius = 0.35,        #   tiles ABOVE the base the light sits (a torch emits from
+#     flicker = true,       #   its flame, not its base — the old light block's height).
+#     cast = true, hot = false },
+# ]                         # the object-light derivation: has traits? → a bound trait
+#                           # authors emit_light at that level? → the object EMITS it.
+#                           # Multiple light traits ALL attach (F8: overflow spills into
+#                           # sibling light-only prims; nothing drops).
 
 [[interaction]]             # something a pawn can DO (interactions F5)
 name = "drink"

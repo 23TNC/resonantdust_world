@@ -6,21 +6,21 @@ decisions in [`forks.md`](forks.md) (F#), the anticipated-issue inventory in
 
 ## P0 — the paper
 
-- [ ] VARIABLES.md: the `constant` assignment law (F2/F5/F6: TOML-only,
+- [x] VARIABLES.md: the `constant` assignment law (F2/F5/F6: TOML-only,
       immutable, zero-storage, thing-binds must be constant) + trait defs' new
       per-level `emit_light` parameter table (F4; row layout UNCHANGED — F3).
       Acceptance: docs-check green.
 
 ## P1 — the loader: constant binds, emit_light tables
 
-- [ ] TraitBindToml: `constant` (bool, default false) on binds; the resolved
+- [x] TraitBindToml: `constant` (bool, default false) on binds; the resolved
       bind carries (name, level, constant). Acceptance: unit — a full bind
       parses; a bare string still means level 1, non-constant.
-- [ ] Trait defs: the per-level `emit_light` table (color, intensity, reach,
+- [x] Trait defs: the per-level `emit_light` table (color, intensity, reach,
       fall_off, elevation, radius, flicker, cast/hot — F4/I2/I10), validated
       against the def's authored level count. Acceptance: unit — a def with 2
       light levels loads; a bind above the count refuses as today.
-- [ ] Load validation (F6): a NON-constant trait bind on a non-pawn thing
+- [x] Load validation (F6): a NON-constant trait bind on a non-pawn thing
       refuses with a named error. Acceptance: a fixture thing with a
       non-constant bind fails load; a constant bind passes; goldens re-blessed
       deliberately (I6).

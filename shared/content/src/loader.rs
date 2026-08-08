@@ -314,6 +314,42 @@ pub struct TraitParams {
   /// bearing the tag — new attack forms (claw, peck) are pure content, no new
   /// affordances. Tags never ride the wire; they resolve through the corpus at eval.
   pub tags: Vec<String>,
+  /// Per-LEVEL emitted light (trait-lights F4) — ANY trait may author it; index =
+  /// level − 1 under the same array-agreement law as every per-level table. Empty =
+  /// the trait never emits. The bound LEVEL selects the whole tuple; binds carry no
+  /// light fields (I2).
+  pub emit_light: Vec<TraitLight>,
+}
+
+/// One authored light tuple on a trait level (trait-lights F4). `elevation` is world
+/// tiles ABOVE the base the light sits — a torch emits from its flame, not its base
+/// (the old visual light block's `height` lane). `fall_off` is authored-not-yet-
+/// consumed (I10: the render gains it in a lighting successor).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TraitLight {
+  pub color: (f64, f64, f64),
+  pub intensity: f64,
+  pub reach: f64,
+  pub fall_off: f64,
+  pub elevation: f64,
+  pub radius: f64,
+  /// Casts shadows (default true) — same semantics as [`LightParts::cast`].
+  pub cast: bool,
+  /// The HOT class, re-baked every frame. Default false.
+  pub hot: bool,
+  /// Decay-lightmap flicker particles. Orthogonal to `hot`.
+  pub flicker: bool,
+}
+
+/// One resolved trait BINDING on a thing def (trait-lights F2): `constant = true` is
+/// TOML-only, immutable, ZERO-storage — readers derive it from the def; it never mints
+/// a payload row and never rides spacetime. Non-pawn things accept ONLY constant binds
+/// (F6, refused at load).
+#[derive(Debug, Clone, PartialEq)]
+pub struct TraitBind {
+  pub name: String,
+  pub level: u16,
+  pub constant: bool,
 }
 
 /// One operand of an interaction effect (interactions F5): an `"@name"` reference into the
@@ -663,9 +699,10 @@ pub(crate) struct ThingDef {
   /// The need NAMES this kind carries (`needs = [...]`), load-validated; consumers read
   /// gameplay refs through [`Bundle::thing_needs`] (interactions F1).
   pub needs: Vec<String>,
-  /// The STARTING trait bindings — `(trait name, level ≥ 1)` — minted at CREATE
-  /// (stat-model F11). A bare-string binding authors level 1.
-  pub traits: Vec<(String, u16)>,
+  /// The trait bindings (stat-model F11 + trait-lights F2): non-constant binds mint
+  /// payload rows at CREATE; CONSTANT binds are derived by readers and never stored.
+  /// A bare-string binding authors level 1, non-constant.
+  pub traits: Vec<TraitBind>,
   /// Interaction bindings (stat-model F5/F9; the yield lane — logs-drop F1).
   pub interactions: Vec<InteractionBind>,
   /// May a pawn ENTER a cell this thing occupies? (pathfinding F1 — absence authors
@@ -969,9 +1006,10 @@ impl Bundle {
     for n in &d.needs {
       fnv_str(&mut h, n);
     }
-    for (t, level) in &d.traits {
-      fnv_str(&mut h, t);
-      fnv_bytes(&mut h, &level.to_le_bytes());
+    for t in &d.traits {
+      fnv_str(&mut h, &t.name);
+      fnv_bytes(&mut h, &t.level.to_le_bytes());
+      fnv_bytes(&mut h, &[u8::from(t.constant)]);
     }
     for b in &d.interactions {
       fnv_str(&mut h, &b.name);
@@ -1202,10 +1240,11 @@ impl Bundle {
     out
   }
 
-  /// The STARTING trait bindings a thing kind authors — `(trait name, level ≥ 1)`
-  /// (stat-model F11): what CREATE mints as the pawn's trait rows. Runtime truth is the
-  /// pawn's payload rows, not this.
-  pub fn thing_traits(&self, object_id: u16) -> Vec<(String, u16)> {
+  /// The trait bindings a thing kind authors (stat-model F11 + trait-lights F2):
+  /// CREATE mints payload rows for the NON-constant binds; constant binds are derived
+  /// by every reader through [`Bundle::object_trait_rows`] and never stored. Runtime
+  /// truth for the non-constant flavor is the pawn's payload rows, not this.
+  pub fn thing_traits(&self, object_id: u16) -> Vec<TraitBind> {
     self
       .things
       .get(object_id.checked_sub(1).map(usize::from).unwrap_or(usize::MAX))

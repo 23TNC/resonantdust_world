@@ -117,9 +117,9 @@ fn mint_sidecars(bundle: &resonantdust_content::loader::Bundle, def: u32) -> (Ve
     let kind = def_kind_id(def);
     let mut trait_rows = Vec::new();
     let mut trait_words = Vec::new();
-    for (name, level) in bundle.thing_traits(kind) {
-        if let Some(r) = bundle.gameplay_reference("trait", &name) {
-            let row = resonantdust_codec::object::pack_gameplay_row(r, level);
+    for b in bundle.thing_traits(kind) {
+        if let Some(r) = bundle.gameplay_reference("trait", &b.name) {
+            let row = resonantdust_codec::object::pack_gameplay_row(r, b.level);
             trait_rows.push(row);
             trait_words.extend_from_slice(&resonantdust_codec::payload::trait_entry(row));
         }

@@ -11,8 +11,8 @@ use crate::loader::{
   ConditionParams, DirFrame, EmotionModifier, EmotionParams, InteractionParams, LightParts,
   LoadError, MaterialParams, MoveEffect, NeedBand, NeedModifier, NeedParams, Operand,
   PackedChannel, SatisfyEffect, SpawnEffect, StatModifier, StatParams, Taxonomy, ThingDef,
-  TileDef, TraitLevel, TraitParams, VisualPart, VisualParts, NEEDS_PER_KIND,
-  ROTATIONS_PER_DEF, VARIANTS_PER_DEF,
+  TileDef, TraitBind, TraitLevel, TraitLight, TraitParams, VisualPart, VisualParts,
+  NEEDS_PER_KIND, ROTATIONS_PER_DEF, VARIANTS_PER_DEF,
 };
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -496,6 +496,34 @@ struct TraitToml {
   /// (`bite` authors `["attack"]`). Not leveled — presence is the capability.
   #[serde(default)]
   tags: Vec<String>,
+  /// Per-LEVEL emitted light (trait-lights F4) — one entry per level, under the same
+  /// array-agreement law as every per-level table. Empty = the trait never emits.
+  #[serde(default)]
+  emit_light: Vec<TraitLightToml>,
+}
+
+/// One authored light level (trait-lights F4). Defaults mirror the old visual light
+/// block's (`radius` 0.25, `elevation` — its `height` — 0.5, `cast` true).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TraitLightToml {
+  color: String,
+  #[serde(default = "one")]
+  intensity: f64,
+  reach: f64,
+  /// Authored-not-yet-consumed (trait-lights I10) — carried to the render's successor.
+  #[serde(default = "one")]
+  fall_off: f64,
+  #[serde(default = "half")]
+  elevation: f64,
+  #[serde(default = "quarter")]
+  radius: f64,
+  #[serde(default = "yes")]
+  cast: bool,
+  #[serde(default)]
+  hot: bool,
+  #[serde(default)]
+  flicker: bool,
 }
 
 /// One effect operand: `"@name"` = a reference into the interaction's `inputs`; a bare
@@ -673,6 +701,11 @@ enum TraitBindToml {
     name: String,
     #[serde(default = "one_u16")]
     level: u16,
+    /// trait-lights F2: a CONSTANT bind is TOML-only, immutable, ZERO-storage —
+    /// derived from the def by every reader, never minted, never fanned. Non-pawn
+    /// things accept ONLY constant binds (F6, validated at load).
+    #[serde(default)]
+    constant: bool,
   },
 }
 
@@ -682,9 +715,16 @@ fn one_u16() -> u16 {
 
 impl TraitBindToml {
   fn pair(&self) -> (String, u16) {
+    let (n, l, _) = self.bind();
+    (n, l)
+  }
+
+  /// The full resolved bind: `(name, level, constant)` — a bare string is
+  /// level 1, non-constant.
+  fn bind(&self) -> (String, u16, bool) {
     match self {
-      TraitBindToml::Name(n) => (n.clone(), 1),
-      TraitBindToml::Full { name, level } => (name.clone(), *level),
+      TraitBindToml::Name(n) => (n.clone(), 1, false),
+      TraitBindToml::Full { name, level, constant } => (name.clone(), *level, *constant),
     }
   }
 }
@@ -1028,6 +1068,12 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
           }
         }
       }
+      // emit_light is per-LEVEL like every other authored array (trait-lights F4) —
+      // it participates in the agreement law and can be the level-count source for a
+      // pure light trait.
+      if !t.emit_light.is_empty() {
+        lens.push(t.emit_light.len());
+      }
       let count = lens.iter().copied().max().unwrap_or(1);
       if lens.iter().any(|&l| l != count) {
         errors.push(LoadError {
@@ -1091,10 +1137,34 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
             .collect(),
         })
         .collect();
+      let emit_light = t
+        .emit_light
+        .iter()
+        .map(|l| {
+          let rgb = color(&Some(l.color.clone()), &format!("trait `{}` emit_light", t.name), &mut errors)
+            .unwrap_or(0xFFFFFF);
+          TraitLight {
+            color: (
+              f64::from((rgb >> 16) & 0xFF) / 255.0,
+              f64::from((rgb >> 8) & 0xFF) / 255.0,
+              f64::from(rgb & 0xFF) / 255.0,
+            ),
+            intensity: l.intensity,
+            reach: l.reach,
+            fall_off: l.fall_off,
+            elevation: l.elevation,
+            radius: l.radius,
+            cast: l.cast,
+            hot: l.hot,
+            flicker: l.flicker,
+          }
+        })
+        .collect();
       (t.name.clone(), TraitParams {
         label: t.label.clone().unwrap_or_else(|| t.name.clone()),
         levels,
         tags: t.tags.clone(),
+        emit_light,
       })
     })
     .collect();
@@ -1839,8 +1909,12 @@ fn thing_def(
     }
   }
   let mut traits = Vec::new();
+  // trait-lights F6: non-pawn things take CONSTANT binds ONLY — a runtime (payload)
+  // trait on a cold thing could never be saved back to cold, so the loader refuses
+  // the bind rather than letting a save lose it. Pawn kinds keep both flavors.
+  let is_pawn = tax.as_ref().is_some_and(|x| x.type_name == "pawn");
   for tb in &t.traits {
-    let (name, level) = tb.pair();
+    let (name, level, constant) = tb.bind();
     match trait_level_counts.get(&name) {
       None => errors.push(LoadError {
         file: String::new(),
@@ -1854,7 +1928,16 @@ fn thing_def(
           t.name
         ),
       }),
-      Some(_) => traits.push((name, level)),
+      Some(_) if !is_pawn && !constant => errors.push(LoadError {
+        file: String::new(),
+        message: format!(
+          "thing `{}`: trait `{name}` must be `constant = true` — a non-pawn thing has \
+           no runtime trait storage, so a non-constant bind could not survive a cold \
+           save (trait-lights F6)",
+          t.name
+        ),
+      }),
+      Some(_) => traits.push(TraitBind { name, level, constant }),
     }
   }
   ThingDef {
@@ -1909,7 +1992,9 @@ fn biome_def(biome: &BiomeToml) -> Result<BiomeDef, LoadError> {
 
 #[cfg(test)]
 mod tests {
-  use crate::loader::{load, pack_emotion_modifier, unpack_emotion_modifier, AffordanceCheck};
+  use crate::loader::{
+    load, pack_emotion_modifier, unpack_emotion_modifier, AffordanceCheck, TraitBind,
+  };
 
   fn src(name: &str, text: &str) -> (String, String) {
     (name.to_string(), text.to_string())
@@ -2396,6 +2481,10 @@ interactions = [ { name = "drink", magnitude = 3 } ]
 
 [[thing]]
 name = "wolf"
+type = "pawn"
+kind = "wolf"
+subType = ["animal"]
+variant = ["0"]
 traits = ["biological_lifeform"]
 [[thing.part]]
 tint = "#ffffff"
@@ -2430,7 +2519,14 @@ tint = "#ffffff"
       b.tile_interactions(1),
       vec![crate::loader::InteractionBind { name: "drink".into(), magnitude: 3.0, yields: None }]
     );
-    assert_eq!(b.thing_traits(1), vec![("biological_lifeform".to_string(), 1)]);
+    assert_eq!(
+      b.thing_traits(1),
+      vec![crate::loader::TraitBind {
+        name: "biological_lifeform".to_string(),
+        level: 1,
+        constant: false,
+      }]
+    );
 
     // Refs pack under the derived taxonomy, and the reverse lookup agrees — `stat` too.
     let a = b.gameplay_reference("affordance", "can_drink").expect("ref");
@@ -2654,7 +2750,9 @@ interactions = [ { name = "move_to" } ]
     // A trait-binding change (the pace input) is simulation-visible too.
     let leveled = "[[stat]]\nname = \"ground_speed\"\nmax = 240\n\
                    [[trait]]\nname = \"walks\"\nstats = [ { stat = \"ground_speed\", add = [24, 12] } ]\n\
-                   [[thing]]\nname = \"wolf\"\ntraits = [ { name = \"walks\", level = 2 } ]\n\
+                   [[thing]]\nname = \"wolf\"\ntype = \"pawn\"\nkind = \"wolf\"\n\
+                   subType = [\"animal\"]\nvariant = [\"0\"]\n\
+                   traits = [ { name = \"walks\", level = 2 } ]\n\
                    [[thing.part]]\ntint = \"#ffffff\"\n";
     assert_ne!(v(base), v(leveled), "a trait binding MUST bump a version");
   }
@@ -2841,5 +2939,96 @@ kind = "grass"
     // answer to the DSL's silently-dropped writes.
     let e = load(&[src("t.toml", "[[tile]]\nname = \"grass\"\ntnit = \"#fff\"\n")]).unwrap_err();
     assert!(e[0].message.contains("tnit"), "{}", e[0].message);
+  }
+
+  /// trait-lights P1: the full bind parses (name, level, constant); a bare string
+  /// still means level 1, non-constant; the emit_light per-level table loads with the
+  /// bound level selecting the tuple; and a bind above the authored count refuses.
+  #[test]
+  fn constant_binds_and_emit_light_tables_load() {
+    let text = r##"
+[[trait]]
+name = "emit_light"
+label = "Emits Light"
+emit_light = [
+  { color = "#ffd98c", reach = 16, elevation = 2.5, radius = 0.35, flicker = true },
+  { color = "#8cbfff", reach = 12, intensity = 0.8, fall_off = 2.0 },
+]
+
+[[trait]]
+name = "marker"
+
+[[thing]]
+name = "torch"
+type = "biome-thing"
+kind = "torch"
+subType = ["default"]
+variant = ["0"]
+traits = [ { name = "emit_light", level = 2, constant = true } ]
+[[thing.part]]
+tint = "#ffffff"
+
+[[thing]]
+name = "wolf"
+type = "pawn"
+kind = "wolf"
+subType = ["animal"]
+variant = ["0"]
+traits = ["marker"]
+[[thing.part]]
+tint = "#ffffff"
+"##;
+    let b = load(&[src("t.toml", text)]).expect("clean load");
+    // The def's per-level table: two authored light levels.
+    let p = b.trait_params("emit_light").expect("def");
+    assert_eq!(p.emit_light.len(), 2);
+    assert_eq!(p.levels.len(), 2, "emit_light is per-LEVEL — it sets the level count");
+    let warm = &p.emit_light[0];
+    assert!((warm.color.0 - 1.0).abs() < 2.0 / 255.0 && warm.reach == 16.0);
+    assert_eq!((warm.elevation, warm.radius, warm.flicker), (2.5, 0.35, true));
+    assert_eq!((warm.intensity, warm.fall_off, warm.cast, warm.hot), (1.0, 1.0, true, false));
+    let blue = &p.emit_light[1];
+    assert_eq!((blue.reach, blue.intensity, blue.fall_off), (12.0, 0.8, 2.0));
+    // The torch's constant bind resolved whole; the wolf's bare string is level 1,
+    // non-constant.
+    let torch = b.thing_object_id("torch").expect("torch");
+    assert_eq!(
+      b.thing_traits(torch),
+      vec![TraitBind { name: "emit_light".into(), level: 2, constant: true }]
+    );
+    let wolf = b.thing_object_id("wolf").expect("wolf");
+    assert_eq!(
+      b.thing_traits(wolf),
+      vec![TraitBind { name: "marker".into(), level: 1, constant: false }]
+    );
+    // A bind above the authored level count refuses exactly like before.
+    let over = text.replace("level = 2, constant = true", "level = 3, constant = true");
+    let e = load(&[src("t.toml", &over)]).unwrap_err();
+    assert!(e.iter().any(|e| e.message.contains("out of range")), "{e:?}");
+  }
+
+  /// trait-lights F6: a NON-constant trait bind on a non-pawn thing refuses with a
+  /// named error — a cold thing has no runtime trait storage to save it to.
+  #[test]
+  fn a_non_constant_bind_on_a_cold_thing_refuses() {
+    let text = r##"
+[[trait]]
+name = "marker"
+
+[[thing]]
+name = "crate"
+type = "biome-thing"
+kind = "crate"
+subType = ["default"]
+variant = ["0"]
+traits = ["marker"]
+[[thing.part]]
+tint = "#ffffff"
+"##;
+    let e = load(&[src("t.toml", text)]).unwrap_err();
+    assert!(
+      e.iter().any(|e| e.message.contains("constant = true")),
+      "the refusal must name the fix: {e:?}"
+    );
   }
 }

@@ -589,10 +589,10 @@ mod def_fixture {
         let rows: Vec<u32> = bundle
             .thing_traits(kind)
             .iter()
-            .map(|(name, level)| {
+            .map(|b| {
                 resonantdust_codec::object::pack_gameplay_row(
-                    bundle.gameplay_reference("trait", name).expect("trait ref"),
-                    *level,
+                    bundle.gameplay_reference("trait", &b.name).expect("trait ref"),
+                    b.level,
                 )
             })
             .collect();
