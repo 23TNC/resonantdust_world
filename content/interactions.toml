@@ -262,16 +262,17 @@ duration = 10
 queue = { hover = "Picking up", background = "#5a5a3a", progress = "cw", progress_color = "#d6c23a", progress_fill = true, cancelable = true }
 
 # DROP (inventory F5, the generic shape): ONE interaction on the inventory-bearing
-# PAWN kinds — location "slot" makes the carrier an inventory slot of the ACTING pawn
-# (the slot index + expected item ride the inputs; the completion re-validates the
-# slot still holds that item). spawn = "carried" places the SLOT's kind on the first
-# EMPTY pathable adjacent cell — and REFUSES when none exists (the item stays held;
-# never forage's all-full-swallows rule). Then INV_REMOVE + the free-count SET_NEED.
+# PAWN kinds — location "slot" makes the carrier an inventory slot of the ACTING pawn.
+# `slot` + `item` (the def the clicker SAW there) ride the inputs, and the execution
+# re-validates the slot still holds that item — a mismatch is a logged no-op (I5).
+# spawn = "carried" places the SLOT's kind on the first EMPTY pathable adjacent cell —
+# and REFUSES when none exists (the item stays held; never forage's
+# all-full-swallows rule). Then INV_REMOVE + the free-count SET_NEED.
 [[interaction]]
 name = "drop"
 label = "Drop"
 menu_text = "Drop"
-inputs = ["pawn", "slot"]
+inputs = ["pawn", "slot", "item"]
 location = "slot"
 spawn = "carried"
 duration = 0

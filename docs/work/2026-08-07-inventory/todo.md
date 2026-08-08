@@ -54,20 +54,29 @@ in [`forks.md`](forks.md) (F#), the anticipated-issue inventory in
 
 ## P3 — the worker executes
 
-- [ ] Worker: `store = "carrier"` — tombstone SET + INV_ADD(first free slot) +
+- [x] Worker: `store = "carrier"` — tombstone SET + INV_ADD(first free slot) +
       `SET_NEED free − 1`, ONE program (F3/I3); completion re-validates carrier +
       free slot (I7). Acceptance: drill — walk-then-pick-up a log; 1 row, need 5;
-      the log gone from the world.
-- [ ] Worker: full-capacity refusal — can_carry (`gt 0`) gates at queue AND
+      the log gone from the world. → pie-menu drill on MEAT: walk-then-act, slot 0
+      = the meat's registry def, free 6→5 same-program, the cell composed to 0.
+      FOUND: the worker's bundle has no registry — item defs come from the index's
+      `definitions` table; and the STALE ORCHESTRATOR rejected verb 15 (I4 bit —
+      unframable program) until rebuilt.
+- [x] Worker: full-capacity refusal — can_carry (`gt 0`) gates at queue AND
       completion; the 6th item fills, the 7th refuses. Acceptance: drill — a full
-      human's pick_up logs the refusal; 6 rows, need 0.
-- [ ] Worker: `drop` — slot carrier resolve (inputs slot + expected item, mismatch
+      human's pick_up logs the refusal; 6 rows, need 0. → the 6th (a rock) filled
+      the freed slot 5 and wrote free=0; the forced 7th logged `an affordance
+      predicate fails` — rows stayed 6.
+- [x] Worker: `drop` — slot carrier resolve (inputs slot + expected item, mismatch
       no-op — I5), spawn carried at the adjacent scan, REFUSE when no cell (I10),
       INV_REMOVE + `SET_NEED free + 1`. Acceptance: drill — drop slot 0; the thing
-      reappears beside the pawn; rows 0, need 6.
-- [ ] Worker: death/remove clears inventory rows (the remove reducer already
+      reappears beside the pawn; rows 0, need 6. → drop slot 0: meat REAPPEARED at
+      (108,66) (the first-empty scan), row deleted, free 0→1, the item-0 frame
+      relayed; a re-drop of the empty slot logged the I5 no-op.
+- [x] Worker: death/remove clears inventory rows (the remove reducer already
       deletes them — verify the composed path). Acceptance: kill a carrying pawn;
-      no orphan inventory rows in SQL.
+      no orphan inventory rows in SQL. → corpus→0 on the 5-item human: trigger →
+      death → removed; the inventory table shows ZERO rows for it.
 
 ## P4 — the client
 

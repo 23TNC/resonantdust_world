@@ -27,7 +27,8 @@ use spacetimedb_sdk::{DbContext, Table as _};
 
 use resonantdust_codec::action::{
     self, Route, BUILD_WALL, CANCEL_INTENT, CREATE, EXECUTE_INTERACTION, GRANT_CONDITION,
-    INIT_ZONE, MOVE_STEP, MOVE_TO, PLACE, PROMOTE, PROMOTE_EVENT, QUEUE_STATE, SET, SET_NEED,
+    INIT_ZONE, INV_ADD, INV_REMOVE, MOVE_STEP, MOVE_TO, PLACE, PROMOTE, PROMOTE_EVENT,
+    QUEUE_STATE, SET, SET_NEED,
 };
 use resonantdust_codec::object::{
     cold_row_layer_id, cold_row_macro_position, cold_row_subtype, data_rotation, def_kind_id,
@@ -43,14 +44,14 @@ use resonantdust_codec::tic::{tic_add, tic_after, tic_before};
 use resonantdust_st_bindings::{data_shard, event_shard, index, pawn, thing, tile};
 use resonantdust_uplink::acquire;
 use data_shard::{write as _, EntityStateLogTableAccess as _};
-use pawn::{grant_condition as _, remove as _, set_need as _, spawn as _, write as _, EntityStateLogTableAccess as _};
+use pawn::{grant_condition as _, inv_add as _, inv_remove as _, remove as _, set_need as _, spawn as _, write as _, EntityStateLogTableAccess as _};
 // interactions P3 / stat-model P3: the execute arm reads the pawn shard's COMPOSED rows
 // (position + payload traits/conditions + the `needs` sub-table) and the tile shard's
 // baseline ⊕ overlay for the F8 on-tile check.
-use pawn::{EntityStateTableAccess as _, NeedsTableAccess as _, PayloadTableAccess as _};
+use pawn::{EntityStateTableAccess as _, InventoryTableAccess as _, NeedsTableAccess as _, PayloadTableAccess as _};
 use tile::{EntityStateTableAccess as _, OverlayTableAccess as _};
 use event_shard::{complete as _, queue_at as _, EventLogTableAccess as _};
-use index::MasterClockTableAccess as _;
+use index::{DefinitionsTableAccess as _, MasterClockTableAccess as _};
 // P4: the worker also composes cold rows — the **baseline** (`INIT_ZONE` → `write`) and the **overlay**
 // (`SET` → `write_overlay`, reading the `overlay_log` base).
 use tile::{write as _, write_overlay as _, OverlayLogTableAccess as _};
@@ -420,8 +421,12 @@ async fn main() {
     // ── uplinks (sim-self-heal P3): every upstream is lazy + self-healing. The subscribed
     // ones gate `get()` on their cache applying, so the pass never reads an un-applied mirror;
     // startup and mid-run recovery are the same code path. ────────────────────────────────────
+    // inventory F4: `definitions` rides along — the store effect writes the REGISTRY's
+    // definition_reference for the picked-up thing (the corpus alone cannot number a
+    // full def; only kinds — the npc/browser fetch /definitions for the same reason).
     let index_up = resonantdust_uplink::subbed_uplink!(index, "index", uri, index_db,
-        vec![format!("SELECT * FROM master_clock WHERE realm = {realm}")]);
+        vec![format!("SELECT * FROM master_clock WHERE realm = {realm}"),
+             "SELECT * FROM definitions".to_string()]);
     // chord-movement F3: `worker_reference = 0` (queued, not yet assigned) rides along so
     // the mid-chord resolve can see the OLD chain's PENDING hop — the durable proof a pawn
     // is mid-walk. Dev-scale acceptable, the same every-row posture the tile mirror takes.
@@ -1025,6 +1030,12 @@ async fn main() {
                         // stat-model: both verbs carry ONE packed gameplay row beside the obj.
                         (SET_NEED, [obj, row]) => pawn.reducers().set_need(self_ref, t, *obj, *row),
                         (GRANT_CONDITION, [obj, row]) => pawn.reducers().grant_condition(self_ref, t, *obj, *row),
+                        // inventory F3: the item verbs relay the same way — the module owns
+                        // the slot scan; the free-count SET_NEED rides the same program.
+                        (INV_ADD, [obj, item]) => pawn.reducers().inv_add(self_ref, t, *obj, *item),
+                        (INV_REMOVE, [obj, slot]) => {
+                            pawn.reducers().inv_remove(self_ref, t, *obj, (*slot & 0xFF) as u8)
+                        }
                         _ => continue,
                     };
                     if let Err(err) = r {
@@ -1255,6 +1266,9 @@ async fn main() {
             // `PROMOTE GRANT_CONDITION`) — the BUILD_WALL pattern (interactions F4): this verb
             // writes nothing itself, so the typed queued verbs carry the write set. A validation
             // failure LOGS AND DROPS THE EVENT WHOLE (I6) — never half-executes.
+            // Pass-local inventory adds (inventory I2): two SAME-TIC pick_up completions
+            // read the same table snapshot — this count keeps the second from overfilling.
+            let mut inv_adds_this_pass: HashMap<u32, usize> = HashMap::new();
             for (event_reference, actions) in &events {
                 for inst in action::program(actions) {
                     let Ok(inst) = inst else { break };
@@ -1531,6 +1545,9 @@ async fn main() {
                         },
                         // food-chain I9: `self` — the carrier is the pawn; no cells to scan.
                         "self" => Vec::new(),
+                        // inventory F5: `slot` — the carrier is an inventory slot of the
+                        // acting pawn; resolved below, no cells to scan.
+                        "slot" => Vec::new(),
                         _ => {
                             reject("unknown location rule");
                             continue;
@@ -1546,6 +1563,9 @@ async fn main() {
                     // (position, is_thing, owning cold_row — 0 for tiles, kind_reference —
                     // the destroy composer resolves the BINDING's yield through it).
                     let mut carrier: Option<(u32, bool, u32, u16)> = None;
+                    // Drop's slot context (inventory F5/I5): the validated (slot, item def)
+                    // pair — set only under `location = "slot"`, read by spawn "carried".
+                    let mut slot_ctx: Option<(u8, u32)> = None;
                     if params.location == "self" {
                         // food-chain I9: the ONE hot-carrier rule — the carrier IS the
                         // target pawn (death rides its own kind); no cold probe.
@@ -1554,6 +1574,42 @@ async fn main() {
                         );
                         if bundle.thing_interactions(kr >> 4).iter().any(|b| b.name == iname) {
                             carrier = Some((pawn_pos, true, 0, kr));
+                        }
+                    }
+                    if params.location == "slot" {
+                        // inventory F5: the carrier is an inventory SLOT of the acting pawn.
+                        // The clicked slot + the item the clicker SAW ride the inputs; a
+                        // mismatch with the CURRENT row is a logged no-op (I5) — never
+                        // "drop whatever is there now". The pawn's OWN kind must bind the
+                        // interaction (the death `self` rule); the carrier KIND is the
+                        // ITEM's, so spawn "carried" reads it off the carrier tuple.
+                        let slot_in = params.inputs.iter().position(|n| n == "slot").map(|i| inputs[i]);
+                        let item_in = params.inputs.iter().position(|n| n == "item").map(|i| inputs[i]);
+                        let (Some(slot_in), Some(item_in)) = (slot_in, item_in) else {
+                            reject("location `slot` needs slot + item inputs (inventory F5)");
+                            continue;
+                        };
+                        let row = pawn
+                            .db()
+                            .inventory()
+                            .iter()
+                            .find(|r| r.entity_reference == target && u32::from(r.slot) == slot_in);
+                        let Some(row) = row else {
+                            reject("slot re-validation: the slot is empty (inventory I5)");
+                            continue;
+                        };
+                        if row.item != item_in {
+                            reject("slot re-validation: the slot no longer holds that item (inventory I5)");
+                            continue;
+                        }
+                        let pawn_kr = resonantdust_codec::object::def_kind_reference(
+                            prow.definition_reference,
+                        );
+                        if bundle.thing_interactions(pawn_kr >> 4).iter().any(|b| b.name == iname) {
+                            let item_kr =
+                                resonantdust_codec::object::def_kind_reference(row.item);
+                            slot_ctx = Some((row.slot, row.item));
+                            carrier = Some((pawn_pos, true, 0, item_kr));
                         }
                     }
                     for &c in &candidates {
@@ -1899,68 +1955,188 @@ async fn main() {
                             0,
                         ]);
                     }
-                    // The SPAWN effect (food-chain F5/F6): write a thing's kind into a
-                    // cell — `on` = the target pawn's floor cell (death's meat);
-                    // `adjacent` = the CARRIER's 3×3 first EMPTY pathable cell, fixed
-                    // (dy, dx) scan (forage; all full = a logged no-yield, never an
-                    // overwrite). The emptiness/pathability probes are the SAME
-                    // pass-level ones movement uses (I5).
-                    if let Some(resonantdust_content::loader::SpawnEffect::Thing {
-                        thing: sp_thing,
-                        at: sp_at,
-                    }) = &params.spawn
-                    {
-                        let spawn_kind: u32 = bundle
-                            .thing_object_id(sp_thing)
-                            .map(|id| u32::from(pack_kind_reference(id, 0)))
-                            .unwrap_or(0);
-                        let cell_pos: Option<u32> = if spawn_kind == 0 {
-                            tracing::warn!(thing = %sp_thing,
-                                "spawn names a thing the bundle cannot number — skipped");
-                            None
-                        } else if sp_at == "on" {
-                            Some(tile_to_position(px, py))
-                        } else {
-                            let (cx0, cy0) = position_to_tile(carrier.0);
-                            let mut found = None;
-                            'scan: for oy in -1i32..=1 {
-                                for ox in -1i32..=1 {
-                                    if ox == 0 && oy == 0 {
-                                        continue;
-                                    }
-                                    let (cx, cy) = (cx0 + ox, cy0 + oy);
-                                    let p2 = tile_to_position(cx, cy);
-                                    let zone = position_macro(p2);
-                                    let cell = (position_micro(p2) >> 8) as u8;
-                                    if thing_kind_at(zone, cell).is_some() {
-                                        continue; // occupied
-                                    }
-                                    if !cell_pathable(cx, cy) {
-                                        continue; // water is not a shelf
-                                    }
-                                    found = Some(p2);
-                                    break 'scan;
+                    // The free-count row builder (inventory F1/F3): the need counts FREE
+                    // slots, so a mutation writes `effective max − filled-after`. Computed
+                    // from the ROWS (the structural truth) so any drift self-heals at the
+                    // next mutation (I2/I3).
+                    let inv_free_row = |filled_after: usize| -> Option<u32> {
+                        let nref = bundle.gameplay_reference("need", "inventory")?;
+                        let np = bundle.need_params_by_ref(nref)?;
+                        let (_, hi) = resonantdust_content::needs_eval::need_bounds(
+                            &bundle, "inventory", &np, &trait_rows, &cond_rows, effect_tic,
+                        );
+                        let free = (hi - filled_after as f64).max(0.0);
+                        let q = resonantdust_codec::value::quantize(
+                            free as f32,
+                            np.min as f32,
+                            np.max as f32,
+                        );
+                        Some(pack_gameplay_row(nref, q))
+                    };
+                    // The STORE effect (inventory F4): the carrier leaves the world through
+                    // the destroy tombstone lane, its kind def lands in the acting pawn's
+                    // first free slot (INV_ADD), and the free-count SET_NEED rides the SAME
+                    // program (F3/I3 — one author, one atomic program). The carrier probe
+                    // above already re-validated presence, so a raced pick_up's second
+                    // completion never reaches here (I7).
+                    let mut stored: Option<String> = None;
+                    if params.store.as_deref() == Some("carrier") {
+                        let (cpos, is_thing, cold_row, ckind) = carrier;
+                        if !is_thing {
+                            reject("store names a TILE carrier — only things are portable (inventory F4)");
+                            continue;
+                        }
+                        // The REGISTRY's def for the carrier's kind (newest version,
+                        // variant 0 — the name lookup rule the npc/browser use). The
+                        // worker's bundle has no registry; the `definitions` table does.
+                        let item_def = bundle.thing_name(ckind >> 4).and_then(|n| {
+                            index
+                                .db()
+                                .definitions()
+                                .iter()
+                                .filter(|d| {
+                                    d.kind == n && d.type_name != "gameplay" && d.variant == "0"
+                                })
+                                .max_by_key(|d| d.version)
+                                .map(|d| d.id)
+                        });
+                        let Some(item_def) = item_def else {
+                            reject("store: the carrier's kind has no registry def");
+                            continue;
+                        };
+                        // The structural room check beside the affordance (I2): the need
+                        // gated at queue AND at this re-validation, but two SAME-TIC
+                        // completions read the same table snapshot — the pass-local adds
+                        // count closes that window.
+                        let filled = pawn
+                            .db()
+                            .inventory()
+                            .iter()
+                            .filter(|r| r.entity_reference == target)
+                            .count()
+                            + inv_adds_this_pass.get(&target).copied().unwrap_or(0);
+                        let Some(free_row) = inv_free_row(filled + 1) else {
+                            reject("store: the pawn carries no inventory need");
+                            continue;
+                        };
+                        let (_, hi) = {
+                            let nref = bundle.gameplay_reference("need", "inventory").unwrap();
+                            let np = bundle.need_params_by_ref(nref).unwrap();
+                            resonantdust_content::needs_eval::need_bounds(
+                                &bundle, "inventory", &np, &trait_rows, &cond_rows, effect_tic,
+                            )
+                        };
+                        if (filled as f64) >= hi {
+                            reject("store: no free slot (inventory I2 — the rows are full)");
+                            continue;
+                        }
+                        *inv_adds_this_pass.entry(target).or_insert(0) += 1;
+                        let cell = u32::from((position_micro(cpos) >> 8) as u8);
+                        program.extend_from_slice(&[
+                            PROMOTE,
+                            SET,
+                            cold_row,
+                            u32::from(TYPE_BIOME_THING),
+                            cell,
+                            0,
+                            0,
+                        ]);
+                        program.extend_from_slice(&[INV_ADD, target, item_def]);
+                        program.extend_from_slice(&[PROMOTE, SET_NEED, target, free_row]);
+                        stored = bundle.thing_name(ckind >> 4).map(|s| s.to_string());
+                    }
+                    // The SPAWN effect: a NAMED thing (food-chain F5/F6 — `on` = the target
+                    // pawn's floor cell, `adjacent` = the CARRIER's 3×3 first EMPTY pathable
+                    // cell, all full = a logged no-yield) or CARRIED (inventory F5 — the
+                    // validated SLOT's kind beside the pawn, REFUSING when no cell exists:
+                    // the item stays held, I10). The emptiness/pathability probes are the
+                    // SAME pass-level ones movement uses (I5).
+                    let adjacent_empty = |around: u32| -> Option<u32> {
+                        let (cx0, cy0) = position_to_tile(around);
+                        for oy in -1i32..=1 {
+                            for ox in -1i32..=1 {
+                                if ox == 0 && oy == 0 {
+                                    continue;
                                 }
+                                let (cx, cy) = (cx0 + ox, cy0 + oy);
+                                let p2 = tile_to_position(cx, cy);
+                                let zone = position_macro(p2);
+                                let cell = (position_micro(p2) >> 8) as u8;
+                                if thing_kind_at(zone, cell).is_some() {
+                                    continue; // occupied
+                                }
+                                if !cell_pathable(cx, cy) {
+                                    continue; // water is not a shelf
+                                }
+                                return Some(p2);
                             }
-                            if found.is_none() {
+                        }
+                        None
+                    };
+                    let mut spawn_write: Option<(u32, u32)> = None; // (position, kind_reference)
+                    match &params.spawn {
+                        Some(resonantdust_content::loader::SpawnEffect::Thing {
+                            thing: sp_thing,
+                            at: sp_at,
+                        }) => {
+                            let spawn_kind: u32 = bundle
+                                .thing_object_id(sp_thing)
+                                .map(|id| u32::from(pack_kind_reference(id, 0)))
+                                .unwrap_or(0);
+                            if spawn_kind == 0 {
+                                tracing::warn!(thing = %sp_thing,
+                                    "spawn names a thing the bundle cannot number — skipped");
+                            } else if sp_at == "on" {
+                                spawn_write = Some((tile_to_position(px, py), spawn_kind));
+                            } else if let Some(p2) = adjacent_empty(carrier.0) {
+                                spawn_write = Some((p2, spawn_kind));
+                            } else {
                                 tracing::info!(tic = t, interaction = %iname,
                                     "no-yield — every adjacent cell is full or unpathable (F6)");
                             }
-                            found
-                        };
-                        if let Some(p2) = cell_pos {
-                            let cold_row = pack_cold_row_reference(position_macro(p2), 0, 0);
-                            let cellw = u32::from((position_micro(p2) >> 8) as u8);
-                            program.extend_from_slice(&[
-                                PROMOTE,
-                                SET,
-                                cold_row,
-                                u32::from(TYPE_BIOME_THING),
-                                cellw,
-                                spawn_kind,
-                                0,
-                            ]);
                         }
+                        Some(resonantdust_content::loader::SpawnEffect::Carried) => {
+                            let Some((slot, item_def)) = slot_ctx else {
+                                reject("spawn = \"carried\" outside a slot location (inventory F5)");
+                                continue;
+                            };
+                            // REFUSE-not-swallow (I10): no empty pathable neighbor → the
+                            // whole order no-ops and the item STAYS in the slot.
+                            let Some(p2) = adjacent_empty(pawn_pos) else {
+                                reject("drop refused: no empty pathable cell beside the pawn (inventory I10)");
+                                continue;
+                            };
+                            let kr = u32::from(
+                                resonantdust_codec::object::def_kind_reference(item_def),
+                            );
+                            spawn_write = Some((p2, kr));
+                            let filled = pawn
+                                .db()
+                                .inventory()
+                                .iter()
+                                .filter(|r| r.entity_reference == target)
+                                .count();
+                            let Some(free_row) = inv_free_row(filled.saturating_sub(1)) else {
+                                reject("drop: the pawn carries no inventory need");
+                                continue;
+                            };
+                            program.extend_from_slice(&[INV_REMOVE, target, u32::from(slot)]);
+                            program.extend_from_slice(&[PROMOTE, SET_NEED, target, free_row]);
+                        }
+                        None => {}
+                    }
+                    if let Some((p2, kind_ref)) = spawn_write {
+                        let cold_row = pack_cold_row_reference(position_macro(p2), 0, 0);
+                        let cellw = u32::from((position_micro(p2) >> 8) as u8);
+                        program.extend_from_slice(&[
+                            PROMOTE,
+                            SET,
+                            cold_row,
+                            u32::from(TYPE_BIOME_THING),
+                            cellw,
+                            kind_ref,
+                            0,
+                        ]);
                     }
                     // Grants carry remaining-at-write = the condition's authored duration
                     // (F3). The RE-STAMP duty is THIS composer's (F7/I12): any need a granted
@@ -2054,6 +2230,8 @@ async fn main() {
                             moved = params.move_effect.is_some(),
                             destroyed = params.destroy.is_some(),
                             yielded = ?yielded,
+                            stored = ?stored,
+                            slot = ?slot_ctx.map(|(s, _)| s),
                             dest = dest.map(|d| format!("{:?}", position_to_tile(d))),
                             grants = params.grants.len(), version,
                             "interaction executed");

@@ -55,3 +55,26 @@
   `the_inventory_need_mints_all_slots_free` proves a human mints 6.0 on the
   0..16 encoding. Master seeds 231 defs (+5); worker loads 9 interactions (+2);
   wasm/webgl/edge/npc rebuilt; both npc brains re-adopted on the new corpus.
+
+## 2026-08-08 — P3: the worker executes
+
+- The `slot` location (carrier = a validated inventory slot of the acting pawn;
+  slot + expected-item inputs, I5 mismatch/empty no-ops), the `store = "carrier"`
+  effect (tombstone SET + INV_ADD + free-count SET_NEED in ONE program), the
+  `spawn = "carried"` arm (the shared adjacent-empty scan; REFUSE-not-swallow,
+  I10), INV verb relays beside SET_NEED, and a pass-local adds count so same-tic
+  completions cannot overfill (I2).
+- Two integration finds, both fixed:
+  - the worker's bundle has NO registry, so `store` could not number the item's
+    full def — the index uplink now subscribes `definitions` and the store site
+    resolves newest-version variant-0 by kind name (the npc/browser pairing rule);
+  - the STALE ORCHESTRATOR could not frame verb 15 (`unframable program —
+    UnknownAction(15)`) and silently never assigned the effect event — the I4
+    checklist now includes the orchestrator.
+- Drills, all live through the REAL pie menu where possible: pick_up on meat
+  (walk-then-act; slot 0 = the meat's registry def 0x20000BE0; free 6→5 in the
+  same program; the world cell composed to 0; the PawnInventory frame reached the
+  browser); the 6th item (a rock) filled freed slot 5 and wrote free=0; the forced
+  7th logged the affordance refusal; drop slot 0 put the meat back at (108,66)
+  and wrote free=1 with the item-0 frame relayed; a re-drop of the empty slot
+  logged the I5 no-op; corpus→0 on the 5-item human left ZERO orphan rows.
