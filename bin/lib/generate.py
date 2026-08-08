@@ -614,6 +614,8 @@ def main():
     ap.add_argument("--lora", default=None, help="style LoRA to apply, as ComfyUI sees it under models/loras (e.g. rd_quadruped_e07.safetensors); applied to BOTH the model and the text encoders")
     ap.add_argument("--lora-strength", type=float, default=1.0, help="LoRA strength for model+clip (default 1.0; try 0.6-0.9 if it overpowers the template)")
     ap.add_argument("--style", default=None, help="override the style boilerplate appended to --positive (use the LoRA's trained tags, e.g. 'rd_style, rd_animal, rd_quadruped, {face}')")
+    ap.add_argument("--east-self-anchor", action="store_true",
+                    help="re-render east through the IP-Adapter graph anchored on its own first pass, so all three directions come off the SAME graph (I6: east is the outlier in 11/12 sets precisely because it alone skips the adapter). Costs one extra generation per set.")
     ap.add_argument("--style-form", choices=["tags", "prose"], default=STYLE_FORM,
                     help=f"which style boilerplate to append (default {STYLE_FORM}). 'tags' = the caption form the rd_style LoRA family was trained on; 'prose' = the English boilerplate correct for e07 and other natural-language-captioned models. Ignored when --style is given.")
     ap.add_argument("--body-plan", default=STYLE_TAG_BODY_PLAN,
@@ -737,6 +739,18 @@ def main():
             img = Image.open(io.BytesIO(raw)).convert("RGB")
             if d == "e":
                 hero_name = _upload(img, f"artgen_{cseed}_hero.png")   # east (on white) becomes the IP anchor
+                if args.east_self_anchor:
+                    # I6: east is the extreme in 11/12 sets because it is the ONE direction that
+                    # skips the IP-Adapter — graph_hero for east, graph_ip for south and north. The
+                    # pipeline was comparing two graphs and calling the gap inconsistency. Re-render
+                    # east through graph_ip anchored on its own first pass, so all three views come
+                    # off the same graph. Costs one extra generation per set.
+                    raw = _run(graph_ip(full_pos, neg, ref_name, edge_name, hero_name, cseed))
+                    img = Image.open(io.BytesIO(raw)).convert("RGB")
+                    # The SHIPPED east must also be what s/n anchor on; re-anchoring on the
+                    # discarded first pass would put the mismatch straight back.
+                    hero_name = _upload(img, f"artgen_{cseed}_hero.png")
+                    print(f"  east: second pass through graph_ip (self-anchored)")
             sprite = img if args.keep_bg else remove_bg_floodfill(img, thresh=args.bg_thresh, choke=args.choke)
             if d in hsym: sprite = make_symmetric(sprite, "h")             # force symmetry after the cut
             if d in vsym: sprite = make_symmetric(sprite, "v")

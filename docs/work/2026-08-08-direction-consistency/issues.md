@@ -154,3 +154,30 @@ re-measure a label's sprites from disk without regenerating; re-running it recov
 east (lum 146.0) and completed all 12 sets. The aggregate did not move (mean 23.4 either way,
 because that cell's east happened to fall between its own south and north) — but it would have on a
 different draw, and the next label to be measured is the one it would have silently biased.
+
+## I8 — the harness could only express ONE of the two forms it was built to compare {#i8}
+_2026-08-08 · P1.3 · caught because 36 of 36 cells came back bit-identical_
+
+`consistency_eval.run_cell` built the tag caption itself and passed it as `--style` when the form
+was `tags`, and passed **nothing** when the form was `prose` — relying on `generate.py`'s default,
+which P1.1 had just changed *to* `tags`. So `--label prose --style-form prose` silently ran as tags.
+
+| | mean | worst | clears 9.0 | lum mean | in band |
+|---|---|---|---|---|---|
+| baseline | 23.4 | 61.0 | 2/12 | 143.3 | 4/36 |
+| "prose" | 23.4 | 61.0 | 2/12 | 143.3 | 4/36 |
+
+Every one of the 12 cells matched to the decimal. That is not a finding about prompts, it is the
+signature of having run the same configuration twice.
+
+**Fixed** by passing `--style-form` and `--body-plan` through to `generate.py` and **deleting** the
+harness's duplicate caption builder — two places to construct one caption is exactly how the two
+forms drifted apart. Verified the deletion is safe: the old `trained_tag_style()` and the new
+`style_for(d, "tags", …)` produce identical strings for all three directions, so **the recorded
+baseline remains comparable** and did not need regenerating.
+
+**The useful thing it accidentally proved: this pipeline is deterministic.** Same seed, same prompt,
+same knobs → bit-identical output, 36 for 36. Unlike the training runs (two identical runs differed
+by 17.31/255 mean, 0/75 cells identical), an A/B here is *exact* — any difference between two labels
+is caused by the change, not by sampling noise. That makes single-seed comparisons legitimate for
+diagnosis, and it is why the identical table was diagnosable at all.

@@ -22,19 +22,9 @@ from PIL import Image
 
 SET = os.environ.get("RD_CONSISTENCY_SET", os.path.join(HERE, "consistency_set.json"))
 
-# The direction phrases the style-only corpus was captioned with (style-not-species F1 addendum).
-# Kept here rather than in generate.py because this harness must be able to reproduce a caption
-# form even after generate.py's default changes underneath it.
-PHRASES = {"e": "side profile, side view, facing right",
-           "s": "front view, facing the viewer, facing forward",
-           "n": "back view, facing away, seen from behind"}
-TAG = {"e": "rd_east", "s": "rd_south", "n": "rd_north"}
-
-
-def trained_tag_style(d, body_plan):
-    """The caption form run-20 was trained on: direction tripled at the head, then the plan."""
-    t = TAG[d]
-    return f"{t}, {t}, {t}, rd_style, rd_animal, {body_plan}, {PHRASES[d]}, single creature, full body"
+# Style forms are generate.py's business now (`--style-form`); this harness only selects one.
+# The duplicate caption builder that used to live here is deleted rather than deprecated - two
+# places to change one caption is how the forms drifted apart in the first place.
 
 
 def load_set():
@@ -78,8 +68,12 @@ def run_cell(cfg, subj, seed, style_form, out_root, extra):
                "--lora", cfg["lora"], "--lora-strength", str(cfg["lora_strength"]),
                "--cn", str(cfg["cn"]), "--cn-end", str(cfg["cn_end"]),
                "--size", str(cfg["size"]), "--no-metrics"]
-        if style_form == "tags":
-            cmd += ["--style", trained_tag_style(d, subj["body_plan"])]
+        # Pass the form THROUGH rather than building the caption here. Until 2026-08-08 this
+        # constructed --style itself for 'tags' and passed NOTHING for 'prose' — and generate.py's
+        # default is 'tags', so the `prose` label silently ran as tags and produced results
+        # bit-identical to `baseline` on all 36 cells. A harness that can only express one of the
+        # two things it is meant to compare is worse than no harness.
+        cmd += ["--style-form", style_form, "--body-plan", subj["body_plan"]]
         cmd += extra
         r = subprocess.run(cmd, cwd=REPO, capture_output=True, text=True,
                            env={**os.environ, "RD_REPO_ROOT": REPO})
