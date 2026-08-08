@@ -59,3 +59,46 @@ _Dated entries: what landed and **how it was verified**. Newest last._
   9101/sprite.e.0.png`. Had that fallen back silently, the whole baseline would have measured a
   pipeline with no identity anchoring at all, and read as a much worse number for the wrong reason.
   Smoke run on wolf/9101 returned `e=158 s=139 n=126 spread=31.2 OVER`.
+
+- **2026-08-08 · P0.4 · Baseline recorded. The single wolf measurement was representative, and it
+  turned up a mechanism I had diagnosed backwards.** 36 generations, 4 subjects × 3 seeds × 3
+  directions, `r20g07` at `cn 0.5 / cn-end 0.9 / strength 0.7`, trained-tag prompt form.
+
+  | subject | mean spread | worst | clears 9.0 |
+  |---|---|---|---|
+  | wolf | 20.1 | 31.2 | 1/3 |
+  | bear | 33.7 | 61.0 | 0/3 |
+  | fox | 22.3 | 37.8 | 1/3 |
+  | anteater | 17.6 | 28.9 | 0/3 |
+  | **all** | **23.4** | **61.0** | **2/12** |
+
+  Today's single wolf figure of 24.9 is **confirmed, not corrected** — the population mean is 23.4.
+  The bear is the worst subject at 33.7, exactly as predicted when it was chosen for sitting at the
+  dark end of the corpus, so that subject earned its place rather than padding the set.
+
+  **Absolute value is the larger defect and it is systemic:** only **4 of 36** sprites land inside
+  the corpus band of 62–121, mean 143. A pipeline whose views agreed perfectly would still be
+  uniformly too pale, which is why [F4](forks.md#f4) tracks the two separately.
+
+  **Saturation does NOT collapse universally — my earlier claim was wolf-only.** Across the set,
+  saturation runs 3–79, mean 30. The grey wolf measures 4–10 (genuinely flat), but bear and fox run
+  20–79, which is in the corpus's own range. "Saturation collapsed to 4–6" was measured on one grey
+  animal and does not generalise; the defect is species-dependent.
+
+  **The finding that redirects the stream ([I6](issues.md#i6)): east is the outlier, not south and
+  north.** Decomposing each set's spread — east is the extreme in **11 of 12** sets, mean
+  `|east − mean(south,north)|` is **19.3** against mean `|south − north|` of **7.7**, a 2.51×
+  ratio, and south-versus-north already clears the 9.0 ceiling in **8 of 12** sets. East is the one
+  direction rendered by a different graph (`graph_hero`, no IP-Adapter) while south and north both
+  go through `graph_ip`. So the IP-Adapter is carrying value *well* between the views that have it,
+  and the gap is between two graphs rather than among three drifting siblings. [I2](issues.md#i2)
+  said the opposite; it was written from one wolf set and a code read, and three views cannot
+  separate "s and n drift apart" from "e stands apart". [P2](todo.md) reordered accordingly.
+
+  **A harness defect found by the acceptance count ([I7](issues.md#i7)).** The baseline returned 35
+  sprites for 36 cells: `report_candidates` quarantines a gate-rejected leaf into `_rejected/`
+  *after* printing its path, so the harness measured `wolf/9103` as a two-direction set. Left
+  unfixed it would bias every future label toward sets that happened to generate cleanly. Fixed
+  with `resolve_written()` plus a `--measure-only` mode; re-measuring from disk recovered the cell
+  (east lum 146.0) and completed all 12 sets. The aggregate did not move — that cell's east
+  happened to fall between its own south and north — but the next draw would not have been so kind.

@@ -42,6 +42,31 @@ def load_set():
         return json.load(f)
 
 
+def resolve_written(p):
+    """Where a reported sprite path actually ENDED UP.
+
+    `report_candidates` quarantines a whole variant leaf into `_rejected/<leaf>/` when any one of
+    its directions fails the structural gate — and it does so AFTER printing the write path. So the
+    path `generate.py` reports can be stale by the time we measure it, which silently drops the cell
+    to two directions and biases the baseline toward sets that happened to pass the gate. Look in
+    the quarantine before giving up, and tell the caller which it was."""
+    if os.path.exists(p): return p, False
+    leaf = os.path.dirname(p)
+    q = os.path.join(os.path.dirname(leaf), "_rejected", os.path.basename(leaf), os.path.basename(p))
+    if os.path.exists(q): return q, True
+    return None, False
+
+
+def cell_paths(cfg, subj, seed, out_root):
+    """Sprite paths for one cell, read off DISK — used by --measure-only."""
+    leaf = os.path.join(REPO, "textures", "_consistency", out_root, subj["id"], str(seed))
+    out = {}
+    for d in cfg["dirs"]:
+        p, _ = resolve_written(os.path.join(leaf, f"sprite.{d}.0.png"))
+        if p: out[d] = p
+    return out
+
+
 def run_cell(cfg, subj, seed, style_form, out_root, extra):
     """Generate one subject at one seed, all directions. Returns {dir: sprite_path}."""
     to = f"_consistency/{out_root}/{subj['id']}"
@@ -63,7 +88,14 @@ def run_cell(cfg, subj, seed, style_form, out_root, extra):
             continue
         for line in r.stdout.splitlines():
             if line.strip().startswith("wrote ") and f"sprite.{d}." in line:
-                paths[d] = os.path.join(REPO, line.split("wrote ", 1)[1].split()[0])
+                raw = os.path.join(REPO, line.split("wrote ", 1)[1].split()[0])
+                p, quarantined = resolve_written(raw)
+                if p is None:
+                    print(f"    {subj['id']} seed {seed} {d}: reported {raw} but it is not on disk", file=sys.stderr)
+                    continue
+                if quarantined:
+                    print(f"    {subj['id']} seed {seed} {d}: gate-rejected (measured from _rejected/)")
+                paths[d] = p
     return paths
 
 
@@ -84,6 +116,8 @@ def main():
     ap.add_argument("--subjects", default=None, help="comma-separated subject ids (default: all in the set)")
     ap.add_argument("--seeds", default=None, help="comma-separated seeds (default: the set's)")
     ap.add_argument("--out", default=".staging/consistency", help="output root for results.json")
+    ap.add_argument("--measure-only", action="store_true",
+                    help="do not generate; re-measure the sprites already on disk for this label (includes gate-quarantined leaves)")
     ap.add_argument("rest", nargs=argparse.REMAINDER, help="extra flags passed through to generate.py after --")
     a = ap.parse_args()
 
@@ -106,7 +140,8 @@ def main():
     results, spreads = [], []
     for subj in subs:
         for seed in seeds:
-            paths = run_cell(cfg, subj, seed, a.style_form, a.label, extra)
+            paths = (cell_paths(cfg, subj, seed, a.label) if a.measure_only
+                     else run_cell(cfg, subj, seed, a.style_form, a.label, extra))
             m = measure_cell(paths)
             if len(m) < 2:
                 print(f"  {subj['id']:9s} seed {seed}: only {len(m)} direction(s) — no spread", file=sys.stderr)

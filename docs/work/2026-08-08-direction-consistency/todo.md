@@ -10,7 +10,7 @@ varies is the pipeline.** `cn` must not go below 0.5 ([README](README.md) future
 - [x] Add a `--metrics` flag to `generate.py` printing per-direction luminance, saturation and coverage over opaque pixels. Acceptance: one line per direction on every run, so no sheet is ever judged by eye alone.
 - [x] Emit the cross-direction luminance spread as a single number beside the sheet. Acceptance: the run prints `spread=NN.N` against the corpus ceiling 9.0.
 - [x] Pin a consistency eval set — species, seeds, directions — in a file the harness reads. Acceptance: a file; two invocations produce the same cells, as `eval_set.json` does for the LoRA harness.
-- [ ] Record the baseline for r20g07 on the pinned set. Acceptance: a table in `issues.md`; today's single measurement (24.9 on wolf) is confirmed across species or corrected.
+- [x] Record the baseline for r20g07 on the pinned set. Acceptance: a table in `issues.md`; today's single measurement (24.9 on wolf) is confirmed across species or corrected.
 
 ## P1 — The prompt form (cheapest lever, already evidenced)
 
@@ -20,8 +20,9 @@ varies is the pipeline.** `cn` must not go below 0.5 ([README](README.md) future
 
 ## P2 — Anchor every view on every other view
 
+- [ ] Put EAST through the same graph as south and north ([I6](issues.md#i6) — east is the outlier in 11/12 sets because it alone skips the IP-Adapter). Acceptance: the spread after east is self-anchored, against the 23.4 baseline.
 - [ ] Replace `weight_type: "style transfer"` with a composition-carrying type in `graph_ip`. Acceptance: a sweep over the available types; the one that best holds markings is recorded with its sheet.
-- [ ] Anchor south and north on EACH OTHER as well as on east, via `IPAdapterBatch`. Acceptance: south and north no longer diverge independently — the e→s→n monotonic ramp breaks or it does not.
+- [ ] Anchor south and north on EACH OTHER via `IPAdapterBatch`. DEPRIORITISED by [I6](issues.md#i6): they already agree at 7.7 mean against a 9.0 ceiling. Acceptance: it improves |s-n| or is dropped as unnecessary.
 - [ ] Try `IPAdapterStyleComposition` with the hero as style and the template as composition. Acceptance: one sheet; this is the node that matches the actual division of labour, so it gets its own trial.
 - [ ] Sweep `IP_WEIGHT` at the winning weight type. Acceptance: three values; the point where identity holds without the template being overpowered is recorded.
 
