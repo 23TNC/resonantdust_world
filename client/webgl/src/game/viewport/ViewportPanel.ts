@@ -5,7 +5,7 @@
 //! `worldViewport` entry in `content/panels/defaults.json` (title bar hidden, full-height,
 //! masked), so it fills the screen.
 
-import { DomPanel } from "../../ui/dom/DomPanel";
+import { DomPanel, Z_TIER_GAMEVIEW } from "../../ui/dom/DomPanel";
 import type { GameContext } from "../../GameContext";
 import { panelTitle } from "../panels/panelStrings";
 import { Viewport } from "./Viewport";
@@ -21,6 +21,8 @@ export class ViewportPanel extends DomPanel {
     super({
       title: panelTitle("gameViewPanel"),
       storageKey: "worldViewport",
+      // bug-sweep F1: the game view is the z FLOOR — every other tier draws over it.
+      zOrder: Z_TIER_GAMEVIEW,
       minWidth: 240,
       minHeight: 200,
       taskbar: ctx.taskbar,

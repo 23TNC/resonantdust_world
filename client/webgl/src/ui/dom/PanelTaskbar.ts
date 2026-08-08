@@ -24,12 +24,9 @@ const BAR_CSS: Partial<CSSStyleDeclaration> = {
   color: "#ecd6aa",
   fontFamily: "sans-serif",
   fontSize: "12px",
-  // Above every panel z-band (see `DomPanel`'s `Z_BAND_BASE` —
-  // bands run 10000-49999 per "gameview"/"inventory"/"overlay"/
-  // "dom"). 50001 keeps the bar visible above the highest band's
-  // top of range; a panel-z that climbed into that territory
-  // already overflowed its band, so we don't owe it cover.
-  zIndex: "50001",
+  // Above every panel TIER (bug-sweep F1: tiers 32-56 × the 10k stride top out
+  // below 64 × 10k) — the taskbar is CHROME, outside the panel ordering.
+  zIndex: String(64 * 10000 + 1),
   userSelect: "none",
   boxSizing: "border-box",
 };

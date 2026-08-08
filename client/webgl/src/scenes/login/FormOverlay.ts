@@ -1,4 +1,4 @@
-import { DomPanel } from "../../ui/dom/DomPanel";
+import { DomPanel, Z_TIER_CHROME } from "../../ui/dom/DomPanel";
 import type { UiEditMode } from "../../ui/dom/UiEditMode";
 
 /**
@@ -75,6 +75,7 @@ export class FormOverlay {
       // entirely. Keeping it non-empty avoids any DOM-tools display
       // glitches if a debug surface ever reflects panel titles.
       title: "Login",
+      zOrder: Z_TIER_CHROME, // bug-sweep F1: the login form is chrome — above every tier
       showTitleBar: false,
       minimizable: false,
       closable: false,

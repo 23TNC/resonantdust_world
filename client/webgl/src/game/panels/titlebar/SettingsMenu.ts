@@ -1,5 +1,5 @@
 import { debug } from "../../../debug";
-import { DomPanel } from "../../../ui/dom/DomPanel";
+import { DomPanel, Z_TIER_SYSTEM } from "../../../ui/dom/DomPanel";
 import type { PanelTaskbar } from "../../../ui/dom/PanelTaskbar";
 import type { UiEditMode } from "../../../ui/dom/UiEditMode";
 import { panelTitle, panelText } from "../panelStrings";
@@ -52,6 +52,7 @@ export class SettingsMenu {
     this.panel = new DomPanel({
       title: panelTitle("settingsMenu"),
       storageKey: "settingsMenu",
+      zOrder: Z_TIER_SYSTEM, // bug-sweep F1: settings at 56
       defaultRect: { right: "0", top: "32px", width: "200px" },
       resizable: false,
       minimizable: false,

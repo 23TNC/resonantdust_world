@@ -1,5 +1,5 @@
 import { debug } from "../../../debug";
-import { DomPanel } from "../../../ui/dom/DomPanel";
+import { DomPanel, Z_TIER_SYSTEM } from "../../../ui/dom/DomPanel";
 import type { PanelTaskbar } from "../../../ui/dom/PanelTaskbar";
 import type { UiEditMode } from "../../../ui/dom/UiEditMode";
 import { panelTitle, panelText } from "../panelStrings";
@@ -461,6 +461,7 @@ export class DebugPanel {
     this.panel = new DomPanel({
       title: panelTitle("debugPanel"),
       storageKey: "debugPanel",
+      zOrder: Z_TIER_SYSTEM, // bug-sweep F1: debug at 56
       defaultRect: { right: "36px", top: "32px", width: "260px" },
       taskbar,
       pinned: true,

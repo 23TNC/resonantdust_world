@@ -5,7 +5,7 @@
 //! Hidden entirely while the active object has no inventory need. A slot click
 //! reports up — the scene opens the slot pie menu (drop) on it.
 
-import { DomPanel } from "../../ui/dom/DomPanel";
+import { DomPanel, Z_TIER_INFO } from "../../ui/dom/DomPanel";
 import { panelTitle, panelText } from "./panelStrings";
 import type { GameContext } from "../../GameContext";
 
@@ -36,6 +36,7 @@ export class InventoryPanel extends DomPanel {
     super({
       title: panelTitle(PANEL_KEY),
       storageKey: "inventory",
+      zOrder: Z_TIER_INFO, // bug-sweep F1: beside details at 40 (a sibling info panel)
       minWidth: 3 * (CELL + GAP) + 24,
       minHeight: 2 * (CELL + GAP) + 48,
       taskbar: ctx.taskbar,

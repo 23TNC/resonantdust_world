@@ -84,8 +84,7 @@
     "half": "Half",
     "quarter": "Quarter",
     "player": "Player",
-    "soul": "Soul",
-    "onTop": "On Top"
+    "soul": "Soul"
   },
   "debugPanel": {
     "label": "Debug",

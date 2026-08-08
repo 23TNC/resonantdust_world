@@ -22,44 +22,31 @@ import { attachDrag, attachResize, type SnapGrid } from "./pointerInteractions";
 
 const HOST_ID = "app";
 
-/** Per-panel category for DOM z-index banding. Panels in lower
- *  bands ("gameview") can never visually cover panels in higher
- *  bands ("inventory", "overlay", "dom"), regardless of which
- *  panel was focused last. Inside a band the usual
- *  most-recently-focused-on-top rule applies. The mapping
- *  mirrors the Pixi-side layer order in `MainLayout` —
- *  PixiPanels derive their band from their parent layer
- *  (see `PixiPanel`); pure DomPanels default to `"dom"`. */
-export type DomZBand = "gameview" | "inventory" | "overlay" | "dom" | "ontop";
+/** Panel Z-ORDER tiers (bug-sweep F1, the user's table — the named bands and the
+ *  On Top escape hatch are GONE). A panel declares its tier at construction; its
+ *  CSS z-index = `zOrder × Z_STRIDE + tier recency`, and `bringToFront` advances
+ *  only its OWN tier's counter — a click reorders panels WITHIN a tier (last
+ *  active wins ties) and a lower tier can never climb over a higher one. */
+export const Z_TIER_GAMEVIEW = 32;
+export const Z_TIER_INFO = 40;     // details, inventory
+export const Z_TIER_TOOLS = 48;    // chat, build
+export const Z_TIER_SYSTEM = 56;   // settings, debug HUD
+/** Transient chrome (the settings POPUP, login overlays) — above every panel tier.
+ *  Chrome is not a panel and takes no part in the ordering. */
+export const Z_TIER_CHROME = 64;
 
-/** Lowest z-index inside each band. Each band reserves
- *  `Z_BAND_SIZE` z-indices above its base — pick a stride
- *  large enough that ordinary focus traffic can't bleed one
- *  band into the next (10k = ~10k focus bumps before wrap;
- *  realistic sessions hit dozens). */
-const Z_BAND_BASE: Record<DomZBand, number> = {
-  gameview:  10000,
-  inventory: 20000,
-  overlay:   30000,
-  dom:       40000,
-  // ui-select P2 (D6): the REMAIN-ON-TOP band — panels flagged on-top float above every
-  // normal band regardless of focus order; within the band, focus order still applies.
-  ontop:     50000,
-};
-const Z_BAND_SIZE = 10000;
+/** Per-tier z stride — large enough that ordinary focus traffic can't bleed one
+ *  tier into the next (10k = ~10k focus bumps before overlap; sessions hit dozens). */
+const Z_STRIDE = 10000;
 
-/** Next z-index to assign per band on focus. Module-level so
- *  every panel in the same band shares one counter and the
- *  most-recently-focused naturally sits on top within its band.
- *  Each entry seeds at its band's base; `bringToFront`
- *  increments before assigning. */
-const nextZByBand: Record<DomZBand, number> = {
-  gameview:  Z_BAND_BASE.gameview,
-  inventory: Z_BAND_BASE.inventory,
-  overlay:   Z_BAND_BASE.overlay,
-  dom:       Z_BAND_BASE.dom,
-  ontop:     Z_BAND_BASE.ontop,
-};
+/** Next z-index per tier on focus. Module-level so every panel in a tier shares
+ *  one counter and the most-recently-focused naturally sits on top within it. */
+const nextZByTier = new Map<number, number>();
+function nextTierZ(tier: number): number {
+  const next = (nextZByTier.get(tier) ?? tier * Z_STRIDE) + 1;
+  nextZByTier.set(tier, next);
+  return next;
+}
 
 /** Module-level registry of every live `DomPanel` instance. Used by
  *  `DomPanel.resetAllToDefaults()` so a global "I lost a panel
@@ -342,13 +329,12 @@ export interface DomPanelOptions {
    *  starts the panel with the minimize button hidden; the
    *  exclude list only governs popup visibility. */
   excludeSettings?: readonly PanelSettingKey[];
-  /** DOM z-index band — panels in lower bands can't visually
-   *  cover panels in higher bands regardless of focus order
-   *  ("gameview" < "inventory" < "overlay" < "dom"). Defaults
-   *  to `"dom"` for pure DOM panels (settings popup, debug HUD,
-   *  login form). `PixiPanel` auto-derives this from its parent
-   *  Pixi layer when the caller doesn't override. */
-  domZBand?: DomZBand;
+  /** The panel's Z-ORDER tier (bug-sweep F1): a lower tier can never visually
+   *  cover a higher one; ties within a tier draw the last-active panel on top.
+   *  The user's table: game view 32, details/inventory 40, chat/build 48,
+   *  settings/debug 56; `Z_TIER_CHROME` for transient chrome. Defaults to the
+   *  tools tier (48). */
+  zOrder?: number;
   /** Whether this panel is a candidate for the "panel being edited" when UI
    *  edit mode opens the settings popup (tracked as last-focused). Default
    *  `true`; the settings popup itself sets `false` so it never binds to
@@ -368,7 +354,6 @@ export type PanelSettingKey =
   | "height"
   | "pin"
   | "pinned"
-  | "onTop"
   | "taskbarIcon"
   | "titleSuffix"
   | "minimize"
@@ -621,13 +606,8 @@ export class DomPanel {
    *  *location*). */
   private _pinned: boolean;
   get pinned(): boolean { return this._pinned; }
-  /** ui-select P2 (D6): REMAIN ON TOP — promotes the panel's EFFECTIVE z band to `"ontop"`
-   *  (above every normal band) so flagged panels (chat/options/debug/details) always float
-   *  over viewport-like panels; within the band, focus order still applies. Persisted under
-   *  `<storageKey>.onTop`; toggled by the settings popup's On Top row. */
-  private _onTop = false;
-  get onTop(): boolean { return this._onTop; }
-  private readonly onTopChangeListeners = new Set<(v: boolean) => void>();
+  // On Top is GONE (bug-sweep F1): the numeric z-order tiers below are the whole
+  // ordering law. The old `<storageKey>.onTop` row is IGNORED on load (I1).
   /** Constructor-seed icon — the value first written into
    *  `_taskbarIcon`. Stashed so `resetToDefaults` can revert the
    *  user's runtime override (set via the Taskbar Icon row in the
@@ -656,10 +636,9 @@ export class DomPanel {
    *  Mutable + protected so subclasses can opt back into a default-
    *  hidden row in their constructor body. */
   protected readonly _hiddenSettings: Set<PanelSettingKey>;
-  /** DOM z-index band — see `DomZBand`. Frozen at construction
-   *  time; gates which counter `bringToFront` advances and the
-   *  clamp range used by `layerUp` / `layerDown`. */
-  private readonly _zBand: DomZBand;
+  /** The panel's Z-ORDER tier (bug-sweep F1). Frozen at construction time; gates
+   *  which recency counter `bringToFront` advances. */
+  private readonly _zOrder: number;
   /** Whether this panel can be the auto-bound target when UI edit mode opens
    *  the settings popup (and is tracked as last-focused). The popup sets this
    *  `false` so it never binds to itself. */
@@ -859,7 +838,7 @@ export class DomPanel {
     // re-enables the row in its constructor body.
     this._hiddenSettings = new Set<PanelSettingKey>(opts.excludeSettings ?? []);
     this._hiddenSettings.add("mask");
-    this._zBand = opts.domZBand ?? "dom";
+    this._zOrder = opts.zOrder ?? Z_TIER_TOOLS;
     this._editTarget = opts.editTarget ?? true;
     this.initialMinimizable = opts.minimizable ?? true;
     this.initialResizable   = opts.resizable   ?? true;
@@ -912,7 +891,8 @@ export class DomPanel {
     this._pin            = readPin(this.storageGet("pin"))
       ?? (contentDefaults.pin ?? this.initialPin);
     this._pinned         = this.defaultedBool("pinned", contentDefaults.pinned ?? this.initialPinned);
-    this._onTop          = this.defaultedBool("onTop", false);
+    // `<storageKey>.onTop` is deliberately NOT read (bug-sweep I1): a stale stored
+    // flag must not resurrect the deleted escape hatch.
     this._heightMode     = readHeight(
       this.storageGet("heightMode"),
       contentDefaults.heightMode ?? opts.heightMode ?? "off",
@@ -1346,7 +1326,10 @@ export class DomPanel {
     // for THIS panel — which is what makes the taskbar's promise ("a click can never leave a panel
     // hidden") true rather than aspirational. The ordinary raise above handles the common case, so
     // the ontop band is touched only when a band-locked peer genuinely covers us.
-    if (!this.titleBarIsHittable()) this.bringToFront(true);
+    // Same-tier burial resolves by an ordinary raise (the tier's recency counter);
+    // cross-tier burial cannot happen by construction (bug-sweep F1), so the old
+    // ontop-band escalation is gone.
+    if (!this.titleBarIsHittable()) this.bringToFront();
     // Notify subscribers (PixiPanel visibility, taskbar entry styling,
     // external observers) — but only on the edges that actually
     // changed so we don't double-fire on an already-visible panel.
@@ -1833,20 +1816,13 @@ export class DomPanel {
     this.fireRectChange();
   }
 
-  /** Raise within this panel's band (D6). `escalate` lifts it into the HIGHEST band instead —
-   *  reserved for an explicit user surface action (a taskbar click), never for incidental focus.
-   *
-   *  The band rule exists so *focus order* can't let a viewport-like panel bury chrome. It was
-   *  never meant to make a panel unreachable: build (band `dom`, z 40004) sits under details
-   *  (band `ontop`, z 50001) at the same origin, so no amount of clicking its taskbar entry could
-   *  ever show it. Deliberately asking for a specific panel is not incidental focus, so honouring
-   *  it here does not weaken D6 — within `ontop`, focus order still applies, and clicking details
-   *  afterwards puts details back on top. */
-  private bringToFront(escalate = false): void {
-    // ui-select P2 (D6): an on-top panel focuses within the "ontop" band instead of its own.
-    const band = escalate || this._onTop ? "ontop" : this._zBand;
-    nextZByBand[band] += 1;
-    this.panel.style.zIndex = String(nextZByBand[band]);
+  /** Raise within this panel's TIER (bug-sweep F1): the tier's recency counter
+   *  advances, so ties draw the last-active panel on top — and a lower tier can
+   *  never climb over a higher one. Cross-tier burial is impossible by
+   *  construction (same-tier burial resolves right here), so the old On Top
+   *  escalation is gone with the flag. */
+  private bringToFront(): void {
+    this.panel.style.zIndex = String(nextTierZ(this._zOrder));
     if (this._editTarget) lastEditTarget = this;
     for (const cb of this.focusListeners) cb();
   }
@@ -2518,24 +2494,6 @@ export class DomPanel {
   /** Flip the pinned flag. Convenience for the popup's Pin toggle row. */
   togglePinned(): void { this.setPinned(!this._pinned); }
 
-  /** ui-select P2 (D6): set REMAIN ON TOP. Persists under `<storageKey>.onTop`, re-seats the
-   *  panel's z in the new effective band immediately, and fires `onOnTopChange` (the popup's
-   *  toggle glyph syncs through it). */
-  setOnTop(v: boolean): void {
-    if (this._onTop === v) return;
-    this._onTop = v;
-    this.storageSet("onTop", v ? "1" : "0");
-    this.bringToFront();
-    for (const cb of this.onTopChangeListeners) cb(v);
-  }
-
-  toggleOnTop(): void { this.setOnTop(!this._onTop); }
-
-  onOnTopChange(cb: (v: boolean) => void): () => void {
-    this.onTopChangeListeners.add(cb);
-    return () => this.onTopChangeListeners.delete(cb);
-  }
-
   /** Set the taskbar icon. `null` (or empty string) flips the
    *  entry to text mode (uses the panel title). Persists under
    *  `<storageKey>.taskbarIcon` — empty-string is the on-disk
@@ -2724,30 +2682,30 @@ export class DomPanel {
   /** Bump the panel one step up the stacking order. Useful when
    *  click-to-front isn't doing what you want (e.g. nudging a
    *  panel above a sibling without re-focusing). Clamped to the
-   *  panel's band ceiling so a frantic clicker can't push a
-   *  lower-band panel into a higher band's range. */
+   *  panel's TIER ceiling so a frantic clicker can't push a
+   *  lower-tier panel into a higher tier's range (bug-sweep F1). */
   layerUp(): void {
     const current = this.readZIndex();
-    const max = Z_BAND_BASE[this._zBand] + Z_BAND_SIZE - 1;
+    const max = (this._zOrder + 1) * Z_STRIDE - 1;
     this.panel.style.zIndex = String(Math.min(max, current + 1));
   }
 
   /** Drop the panel one step down the stacking order. Floor at
-   *  the band's base so the panel can't tuck behind a higher
-   *  band's lowest z-index (or behind zero-z DOM). */
+   *  the tier's base so the panel can't tuck behind a lower
+   *  tier's range (or behind zero-z DOM). */
   layerDown(): void {
     const current = this.readZIndex();
-    const min = Z_BAND_BASE[this._zBand];
+    const min = this._zOrder * Z_STRIDE;
     this.panel.style.zIndex = String(Math.max(min, current - 1));
   }
 
   /** Read the panel's current inline z-index as an integer, or
-   *  fall back to the band's base when no inline value has been
+   *  fall back to the tier's base when no inline value has been
    *  set yet — happens on the very first `layerUp`/`layerDown`
    *  call before `bringToFront` has assigned one. */
   private readZIndex(): number {
     const raw = parseInt(this.panel.style.zIndex, 10);
-    return Number.isFinite(raw) ? raw : Z_BAND_BASE[this._zBand];
+    return Number.isFinite(raw) ? raw : this._zOrder * Z_STRIDE;
   }
 
   /** Re-evaluate every chrome surface that depends on edit-mode /

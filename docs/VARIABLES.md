@@ -682,6 +682,20 @@ computed fresh each frame (never incremented — a hidden tab must snap to truth
 re-show). Clicking a circle sends `CANCEL_INTENT` with the entry's order
 `event_reference` (`ACTIONS.md` § The intent queue).
 
+**Panel Z-ORDER** (bug-sweep F1, the user's table — On Top is REMOVED): every `DomPanel`
+declares a numeric TIER; CSS z-index = `zOrder × stride + tier-recency`, and `bringToFront`
+advances only its OWN tier's recency counter — so a click reorders panels WITHIN a tier
+(last active wins ties) and a lower tier can never climb over a higher one. Transient
+chrome (the pie menu, tooltips, the settings popup, drag previews) sits in a fixed band
+above every tier — chrome is not a panel and takes no part in the ordering.
+
+| tier | panels |
+|---|---|
+| 32 | the game view |
+| 40 | details, inventory |
+| 48 | chat, build |
+| 56 | settings, debug HUD |
+
 **A condition's effects are an OPEN set** (conditions F6), and the stat-model realizes it:
 the `emotions` modifiers (emotions F2 — what the condition makes the pawn FEEL) sit beside the
 `stats`/`needs` modifier lists — a condition caps a stat, floors a need, or scales a rate through

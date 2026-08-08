@@ -1,5 +1,5 @@
 import type { App } from "../../../app/App";
-import { DomPanel } from "../../../ui/dom/DomPanel";
+import { DomPanel, Z_TIER_SYSTEM } from "../../../ui/dom/DomPanel";
 import { CyclingSelect } from "../../../ui/dom/CyclingSelect";
 import type { PanelTaskbar } from "../../../ui/dom/PanelTaskbar";
 import type { UiEditMode } from "../../../ui/dom/UiEditMode";
@@ -97,6 +97,7 @@ export class VideoPanel {
     this.panel = new DomPanel({
       title: panelTitle("videoPanel"),
       storageKey: "videoPanel",
+      zOrder: Z_TIER_SYSTEM, // bug-sweep F1: a settings sub-panel — the system tier
       defaultRect: { right: "72px", top: "32px", width: "260px" },
       resizable: false,
       taskbar,

@@ -6,23 +6,30 @@ in [`forks.md`](forks.md) (F#), the anticipated-issue inventory in
 
 ## P0 — the paper
 
-- [ ] VARIABLES.md: the panel Z-ORDER table (F1 — tiers 32/40/48/56, tier-recency
+- [x] VARIABLES.md: the panel Z-ORDER table (F1 — tiers 32/40/48/56, tier-recency
       tie-break, chrome above all, On Top REMOVED) beside the details-panel layout
-      notes. Acceptance: docs-check green.
+      notes. Acceptance: docs-check green. → the table + the ordering law; green.
 
 ## P1 — panel z-order
 
-- [ ] DomPanel: numeric `zOrder` replaces the named bands — z = zOrder × stride +
+- [x] DomPanel: numeric `zOrder` replaces the named bands — z = zOrder × stride +
       tier recency; `bringToFront` advances its TIER's counter only (F1).
       Acceptance: unit-ish probe — two tiers, four panels: clicks reorder within a
-      tier, never across.
-- [ ] DELETE On Top: the settings-popup row, `_onTop`, the `ontop` band, the
+      tier, never across. → live probe: Game 320001 < Details 400001 < Build/Chat
+      48xxxx; layerUp/Down clamp to the tier's stride.
+- [x] DELETE On Top: the settings-popup row, `_onTop`, the `ontop` band, the
       storage key (ignored on load — I1). Acceptance: a browser with a stored
-      onTop=true loads with the panel in its tier; no On Top row in settings.
-- [ ] Assign the user's tiers at every constructor (I8): game view 32, details 40,
+      onTop=true loads with the panel in its tier; no On Top row in settings. →
+      this browser HAD ontop-band panels (details at 50001 pre-change); it loads
+      at 400001 in its tier — the key is never read; the row, listeners, locale
+      string all deleted.
+- [x] Assign the user's tiers at every constructor (I8): game view 32, details 40,
       inventory 40, chat 48, build 48, settings 56, debug 56. Acceptance: captures —
       details over game, chat over details, settings over chat; chat vs build ties
-      flip by last click.
+      flip by last click. → all ten sites (incl. video-settings 56, popup + login
+      form as CHROME 64); the tie-flip probed live: Build click → 480003 over
+      Chat 480002; Chat click → 480004 back on top. FOUND: the taskbar's
+      hardcoded 50001 sank below the new tiers — moved to the chrome band.
 
 ## P2 — the geo flash
 

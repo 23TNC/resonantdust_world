@@ -7,7 +7,7 @@
 //! icon highlights; right-click in the world exits (the scene clears us via
 //! {@link setActive}).
 
-import { DomPanel } from "../../../ui/dom/DomPanel";
+import { DomPanel, Z_TIER_TOOLS } from "../../../ui/dom/DomPanel";
 import { panelTitle } from "../panelStrings";
 import type { GameContext } from "../../../GameContext";
 import type { TextureResolver } from "../../../textures";
@@ -30,6 +30,7 @@ export class BuildPanel extends DomPanel {
     super({
       title: panelTitle("buildPanel"),
       storageKey: "build",
+      zOrder: Z_TIER_TOOLS, // bug-sweep F1: build at 48 — ties with chat flip by last click
       minWidth: 180,
       minHeight: 120,
       taskbar: ctx.taskbar,

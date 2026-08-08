@@ -6,7 +6,7 @@
 //! selected kind carries the inventory need. Consumes the model's change event only
 //! (D1) — it never touches input, so drag-box multi-select lands as "N selected".
 
-import { DomPanel } from "../../../ui/dom/DomPanel";
+import { DomPanel, Z_TIER_INFO } from "../../../ui/dom/DomPanel";
 import { ConditionCards, CARD_H, PAD_BOTTOM } from "./ConditionCards";
 import type { ConditionCard } from "./ConditionCards";
 import { IntentStrip } from "./IntentStrip";
@@ -76,6 +76,7 @@ export class DetailsPanel extends DomPanel {
     super({
       title: panelTitle(PANEL_KEY),
       storageKey: "details",
+      zOrder: Z_TIER_INFO, // bug-sweep F1: the user's table — details at 40
       minWidth: 220,
       minHeight: 150,
       taskbar: ctx.taskbar,

@@ -1,7 +1,7 @@
 import type { GameContext } from "../../../GameContext";
 import type { ChatMessage } from "../../../client/WasmClient";
 import { debug } from "../../../debug";
-import { DomPanel } from "../../../ui/dom/DomPanel";
+import { DomPanel, Z_TIER_TOOLS } from "../../../ui/dom/DomPanel";
 import { panelTitle, panelText } from "../panelStrings";
 
 /** How close to the bottom the scroll has to be (in px) before we
@@ -140,6 +140,7 @@ export class ChatPanel {
     this.panel = new DomPanel({
       title: panelTitle("chatPanel"),
       storageKey: "chatPanel",
+      zOrder: Z_TIER_TOOLS, // bug-sweep F1: chat at 48
       // Bottom-left above the taskbar strip. Content defaults
       // (`view/src/content/panels/defaults.json` → `chatPanel`) snap + pin it
       // there; this rect is just the pre-defaults fallback.
