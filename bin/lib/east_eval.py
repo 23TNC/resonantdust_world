@@ -67,9 +67,12 @@ def generate(cfg, method, subj, seed):
     if r.returncode != 0:
         print(f"    {subj['id']} {seed}: FAILED\n{r.stderr.strip()[-500:]}", file=sys.stderr)
         return None
+    # Record the CONTROL DECISION, not just the sprite. `--control auto` can DECLINE and fall back
+    # to no control at all, which silently turns a two-stage method into bare txt2img — and the
+    # scores then describe a pipeline nobody chose (I6).
     picked = None
     for line in r.stdout.splitlines():
-        if "auto ->" in line or "control ->" in line: picked = line.strip()
+        if "control ->" in line: picked = line.split("control ->", 1)[1].strip()
     return picked
 
 
@@ -114,13 +117,15 @@ def run(cfg, method, subjects, seeds, measure_only):
                 rows.append(dict(subject=subj["id"], seed=None, **(s or {})))
                 break                                   # one row; the real sprite has no seed
             p = os.path.join(leaf_dir(method, subj["id"]), str(seed), f"sprite.e.0.png")
+            picked = None
             if not measure_only:
-                generate(cfg, method, subj, seed)
+                picked = generate(cfg, method, subj, seed)
             p = resolve_written(p)
             if p is None:
                 print(f"    {subj['id']} {seed}: no sprite on disk", file=sys.stderr)
-                rows.append(dict(subject=subj["id"], seed=seed)); continue
-            rows.append(dict(subject=subj["id"], seed=seed, **(score(Image.open(p), subj) or {})))
+                rows.append(dict(subject=subj["id"], seed=seed, control=picked)); continue
+            rows.append(dict(subject=subj["id"], seed=seed, control=picked,
+                             **(score(Image.open(p), subj) or {})))
     return rows
 
 

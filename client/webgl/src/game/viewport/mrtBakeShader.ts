@@ -36,7 +36,7 @@ precision highp float;
 in vec2 vUV;
 uniform sampler2D uResidual;               // albedo residual base (RGB)
 uniform sampler2D uLayers;                 // per-material weight map (RGB coefficients)
-uniform sampler2D uSurface;                // surface: R=height, G=ao, B=coverage (also the silhouette)
+uniform sampler2D uSurface;                // surface: R=outer outline, G=ao, B=coverage (also the silhouette)
 uniform sampler2D uNoise;                  // tiling noise atlas
 uniform sampler2D uNormalTex;              // normal map (RGB; flat-up bg)
 uniform vec4 uResidualRect;

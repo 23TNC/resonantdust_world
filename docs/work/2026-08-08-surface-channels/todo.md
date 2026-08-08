@@ -10,7 +10,7 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
       A-is-a-blend-factor laws. Acceptance: `rd docs-check` green.
 - [ ] Name each lane's readers in that section, so an unread lane is visible as unread.
       Acceptance: R, G and B each list their consumers or say "none".
-- [ ] Delete the three lying comment blocks ([I5](issues.md#i5)) in `_surface_kind`,
+- [x] Delete the three lying comment blocks ([I5](issues.md#i5)) in `_surface_kind`,
       `bin/art`'s header/echoes, and `albedoBlitShader`. Acceptance: `grep -rn "R=height\|R
       = height"` over the repo returns nothing.
 
@@ -22,7 +22,7 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 - [x] `_surface_kind`: force G to the diffuse's geometry and catch a `-N` split
       ([I12](issues.md#i12)). Acceptance: the conifer reassembles as one map; the 27 orphan
       `surface.*-[0-9].png` files are gone from the tree.
-- [ ] Re-remaster the tree under the fixed span reader — user-run, since remaster rewrites
+- [x] Re-remaster the tree under the fixed span reader — user-run, since remaster rewrites
       masters from the source sheets. Acceptance: conifer masters are 256 again and every
       derived map agrees.
 - [x] `depth_ao.py`: teach discovery the FOLDED leaf name ([I1](issues.md#i1)), matching
@@ -34,6 +34,12 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 - [x] Delete `depth_ao.py`'s `--surface` writer, flag and help — the contradictory second
       layout ([F2](forks.md#f2)). Acceptance: `art maps` still assembles surface via
       `_surface_kind`; nothing else writes one.
+- [x] `remaster`/`maps`: `ao` defaults to 1, matching its own help text — the AO step was OFF,
+      so no remaster ever refreshed a stale occlusion ([I13](issues.md#i13)). Acceptance: a bare
+      remaster prints the AO step and rewrites every leaf's occlusion.
+- [x] Repair the broken line-continuation in `cmd_maps`' `local` block
+      ([I14](issues.md#i14)). Acceptance: `sharpen_normal`/`ao_strength`/`sharpen_ao`/
+      `pitch_normal` are declared local again; `bash -n` clean.
 - [ ] Add the AO GEOMETRY guard to `_surface_kind` ([F3](forks.md#f3)): warn when G's opaque
       bbox differs from B's past `max(4 px, 6%)` per axis. Acceptance: fires on today's stale
       conifer AO, silent on the wolf's.
@@ -49,7 +55,7 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P2 — free the R lane
 
-- [ ] `_surface_kind`: stop writing the emissive mask into R; R is 0 until P3
+- [x] `_surface_kind`: stop writing the emissive mask into R; R is 0 until P3
       ([F1](forks.md#f1)). Acceptance: every regenerated map has `R min == R max == 0` and no
       leaf reads `emissive.png`.
 - [ ] Verify nothing reads `zdepth.R` or the composite presence bit BEFORE deleting either
@@ -61,16 +67,16 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P3 — extract the OUTER outline into R
 
-- [ ] `split_layers.py`: split `_outline_mask()` into OUTER (components adjacent to a
+- [x] `split_layers.py`: split `_outline_mask()` into OUTER (components adjacent to a
       non-covered pixel) and INNER ([F4](forks.md#f4)). Acceptance: on conifer/1 the outer
       mask is the rim only — tier lines and trunk seams excluded.
-- [ ] Emit the outer mask co-located as `outer_outline.<dir>.<part>.png`, like `occlusion`.
+- [x] Emit the outer mask co-located as `outer_outline.<dir>.<part>.png`, like `occlusion`.
       Acceptance: one file per leaf that has a layer split; a leaf without one falls through
       to no file.
-- [ ] Guard full-bleed masters ([I8](issues.md#i8)): coverage at (near-)the whole frame gives
+- [x] Guard full-bleed masters ([I8](issues.md#i8)): coverage at (near-)the whole frame gives
       an EMPTY outer mask. Acceptance: every `biome-tile/**` leaf yields an all-zero mask and
       an untouched albedo.
-- [ ] `_surface_kind`: write the outer mask into R, keeping the map RGB with no alpha.
+- [x] `_surface_kind`: write the outer mask into R, keeping the map RGB with no alpha.
       Acceptance: conifer/1's R is the rim, `biome-tile` R is black, G and B byte-identical
       to the P1 output.
 - [ ] Measure and record the band: distance transform inside the outer mask → median

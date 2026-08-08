@@ -17,7 +17,7 @@ export function texturesRoot(serverBase: string): string {
  *  (colour) is mandatory and the default; `normal` (tangent-space normal) and `depth`
  *  (height) are optional — a stem lacking one stays on that channel's flat fallback.
  *  `albedo` is the residual reconstruction BASE (RGB); `layers` (per-material weight, RGB)
- *  adds the material tints on top; `surface` (R=height, G=ao, B=coverage) is the one silhouette
+ *  adds the material tints on top; `surface` (R=outer outline, G=ao, B=coverage) is the one silhouette
  *  source. `split_layers` emits albedo(residual)+layers; a stem lacking `layers` renders its
  *  albedo unchanged. Mirrors the server's `textures::MAPS` allowlist. */
 export type TexMap = "albedo" | "normal" | "depth" | "emissive" | "layers" | "surface";
