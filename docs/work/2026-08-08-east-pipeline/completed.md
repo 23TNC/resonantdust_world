@@ -114,3 +114,29 @@ _Dated entries: what landed and **how it was verified**. Newest last._
   wins on trained species, and that was the point of measuring it first. It **cannot** generalise to
   untrained species — there is no corpus silhouette to read — so [P2](todo.md)'s silhouette-generation
   stage keeps its full justification and now has a hard bar to clear: 0.852.
+
+- **2026-08-08 · P1/S3 · `--control auto` scores 0.556 — below the incumbent — because it declined
+  on every cell and fell back to no ControlNet at all ([I6](issues.md#i6)).**
+
+  | | mean `iou_ref` | mean `d_aspect` | gate failures |
+  |---|---|---|---|
+  | S0 template | 0.731 | −20.6 (abs) | 3/18 |
+  | S1 corpus | **0.852** | 10.3 (abs) | 1/18 |
+  | S3 auto | 0.556 | ≈ −52 | **11/18** |
+
+  The item's acceptance asked *which species it picked* — the answer is **none, 18 times**, with the
+  nearest bank match a **Gorilla or Orangutan** for every one of wolf, bear, fox, deer, elephant and
+  tiger. Best match peaked at 0.61 against a 0.65 threshold.
+
+  **Verified rather than inferred.** The first S3 run discarded `generate.py`'s stdout, so the
+  decision was invisible and the uniform −52 aspect was unexplained. Re-ran with the control
+  decision captured per cell — the harness now records it in `results.json` — which turned a
+  puzzling table into a diagnosis. The extra 18 generations were the cost of the acceptance
+  criterion being written as "which species it picked" rather than "the score".
+
+  **This is the single most useful result of the phase**, because it is the naive form of the user's
+  own proposal, measured: generating the silhouette from an unconstrained pass **does not work**.
+  The probe comes out upright and compact — matching primates, and half as long as a side profile
+  should be — because the model will not produce our convention without something already holding
+  the pose. [P2](todo.md)'s stage 1 cannot be "txt2img and see"; it needs its own constraint, and
+  finding that is the phase's real question rather than an implementation detail.

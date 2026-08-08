@@ -120,3 +120,43 @@ cell where that shows.
 
 **This is the sixth time in this project that the images have overturned a number**, and the first
 where the number was wrong for a reason worth keeping rather than a defect to fix.
+
+## I6 — `--control auto` declined 18/18, and its fallback is NO CONTROL {#i6}
+_2026-08-08 · P1's S3 · **the probe stage is the broken part, and this is the finding P2 needed**_
+
+S3 scored `iou_ref` **0.556** — worse than the incumbent wolf template's 0.731 — with `d_aspect`
+near **−52 on almost every cell** and gate failures on **11 of 18** (blobs up to 40). Uniform
+numbers across six very different species meant something structural, so the control decision was
+recorded per cell rather than inferred:
+
+```
+10x  auto DECLINED (best match Gorilla    0.57 < 0.65)
+ 4x  auto DECLINED (best match Gorilla    0.58 < 0.65)
+ 2x  auto DECLINED (best match Orangutan  0.61 < 0.65)
+ 1x  auto DECLINED (best match Gorilla    0.52 < 0.65)
+ 1x  auto DECLINED (best match Orangutan  0.60 < 0.65)
+```
+
+**Eighteen of eighteen declined, and the nearest bank match was a primate every single time** — for
+wolf, bear, fox, deer, elephant and tiger alike.
+
+**So S3 never measured what its name says.** `resolve_auto` declines below `AUTO_MIN_MATCH = 0.65`
+and `generate.py` then proceeds *with no ControlNet at all*. Every S3 number describes **bare
+txt2img**, not probe-then-match. The scores are real; the label was wrong.
+
+**Two separate defects, and they should not be conflated:**
+
+1. **The probe stage does not produce a side-profile quadruped.** Template-free txt2img with this
+   LoRA yields something upright and compact — which is why it matches *Gorilla* and why
+   `d_aspect ≈ −52` says the result is half as long as it should be. The matcher is behaving
+   correctly: it is reporting that the probe looks like nothing in the bank, because it does.
+2. **The decline fallback makes things worse, not safer.** Falling back to *no control* removes the
+   only thing holding the composition together, which is how 11 of 18 cells fragmented. Falling back
+   to `family:<plan>` or the template would degrade gracefully instead.
+
+**Why this is the most useful result of the phase.** It is the direct measurement of the naive form
+of the user's proposal — *generate the silhouette first, then texture it*
+([P2](todo.md)). Generating the silhouette from an unconstrained pass **does not work**, and now the
+reason is measured rather than suspected: the model will not produce our side-profile convention
+without something already holding the pose. P2's stage 1 therefore cannot be "txt2img and see"; it
+needs its own constraint, and identifying that is the phase's real question.
