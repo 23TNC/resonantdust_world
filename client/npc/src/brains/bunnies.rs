@@ -78,8 +78,10 @@ impl Bunnies {
             hunger: 0,
             bundle: None,
             created: 0,
-            // Adopt-first: existing minted bunnies stream in before we mint more.
-            spawn_after: Instant::now() + Duration::from_secs(3),
+            // Adopt-first: existing minted bunnies stream in before we mint more. 10 s,
+            // not 3 — a cold edge's late snapshot minted a 4th bunny through the 3 s
+            // window (spawn-authority P4's cold-boot drill, same race as the wolves').
+            spawn_after: Instant::now() + Duration::from_secs(10),
             minds: HashMap::new(),
             payloads: HashMap::new(),
             need_rows: HashMap::new(),

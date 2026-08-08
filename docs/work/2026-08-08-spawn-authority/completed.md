@@ -56,6 +56,46 @@ forced-refusal re-roll is exercised in the P4 cold-boot drill (worker-down
 window), not by a water pick — the politeness picker makes a natural water
 request unreachable.
 
+## 2026-08-08 — P4: the unified drill + cold boot
+
+**The unified drill** ran across one session (all in the log record above +
+this): the DrillBot WS client's CREATE refused at the door and its requests
+minted/refused correctly; `/spawn human_male 100 48 body 5 head 12` landed
+both variants in SQL; `/spawn wolf 84 100` (a lake cell found by decoding the
+tile shard) refused `cell impathable`; the warren filled by requests
+("bunny SPAWN_REQUEST queued … bunny adopted").
+
+**Cold boot** (full stack: master, orchestrator, worker, edge, npc, bunnies):
+first bounce EXPOSED a race — the 3 s adopt-first windows lost to the cold
+edge's late zone snapshot, and BOTH brains minted a duplicate (a 2nd wolf, a
+4th bunny). Widened to 10 s (wolves + bunnies); the second bounce re-adopted
+the whole cast with ZERO new mints (pawn count stable at 8), and a post-bounce
+rotation-7 request drilled the full path end-to-end ("rotation out of range"
+in the worker log). The duplicates were left alive — more traffic for P5.
+
+## 2026-08-08 — P5: the teleport hunt — REPRODUCED, two causes fixed, one named
+
+**Probes** (I7's AUTH/RENDER split): client-side `__teleportProbe` in
+MoverLayer — AUTH events (consecutive authoritative rows striding beyond
+0.15 tiles/tic × the tic gap + slack) and RENDER events (the chase snapping
+past 3 tiles), ring-buffered + console-mirrored; server-side a polling watcher
+over `entity_state_log` (scratchpad `auth_probe.py`). First lesson: the flat
+2.5-tile threshold flagged ordinary walking — rows only arrive every ~32 tics
+(the re-anchor cadence) — so the client probe scales by the row tic gap now.
+
+**Reproduction**: a long cross-zone trip + a mid-trip interrupt teleported the
+human INSIDE FIVE MINUTES of arming the probes — AUTH strides of 7.69, 9.19,
+8.81 tiles per ~32 tics with paired RENDER snaps. Three causes, correlated to
+their writes ([I12](issues.md#i12)/[I13](issues.md#i13)/[I14](issues.md#i14)):
+zone re-subscribes replaying history into freshly-recreated movers (client —
+FIXED, the rejection lines fire live), cross-zone orders executing once per
+work-group producing twin leapfrogging chains (server — FIXED by the worker's
+executed-interactions dedup; the orchestrator's split assignment named as the
+structural successor), and orders executing ~1000 tics late when their zones
+sit outside every active work-group (server — NAMED, structural). Post-fix
+drills: the same cross-zone trip + interrupt executes each order exactly once
+and the replay rejections land on every crossing.
+
 **Found live during the sweep** — the worker's SPAWN_REQUEST match arm compiled
 as a BINDING pattern (the const wasn't imported), swallowing every verb in the
 spawn pre-pass and logging every 3-operand instruction (MOVE_STEP hops,

@@ -522,6 +522,13 @@ async fn main() {
     // The per-pawn intent queues (lumberjack F1) — worker MEMORY, deliberately: the
     // in-flight order is a durable queued event; this map is only the tail behind it.
     let mut intent_queues: HashMap<u32, PawnQueue> = HashMap::new();
+    // spawn-authority P5 (the teleport verdict, found live): a CROSS-ZONE order's event
+    // lands in TWO work-groups (the orchestrator assigns by zone footprint, and the
+    // pawn's zone and the dest's zone can split), so the EXECUTE_INTERACTION arm ran
+    // once PER GROUP — two walk chains one tic apart, leapfrogging authoritative rows,
+    // the user-visible teleport. Each (event, instruction) executes ONCE per session;
+    // a worker bounce forgets the set and the in-band-behind replay posture is unchanged.
+    let mut executed_interactions: HashSet<(u32, u32)> = HashSet::new();
     // The DISPLAY identity mint (intent-queue-ui) — never 0, ephemeral like the queue.
     let mut intent_entry_seq: u32 = 0;
     // Cancelled EXECUTING intents (intent-queue-ui F3): `(pawn, fire_tic)` — consumed
@@ -1425,8 +1432,13 @@ async fn main() {
             // Pass-local inventory adds (inventory I2): two SAME-TIC pick_up completions
             // read the same table snapshot — this count keeps the second from overfilling.
             let mut inv_adds_this_pass: HashMap<u32, usize> = HashMap::new();
+            // Bound the dedup set (a u32-pair per interaction ever executed — clear far
+            // before it matters; a cleared dup window is narrower than a worker bounce).
+            if executed_interactions.len() > 100_000 {
+                executed_interactions.clear();
+            }
             for (event_reference, actions) in &events {
-                for inst in action::program(actions) {
+                for (inst_index, inst) in action::program(actions).enumerate() {
                     let Ok(inst) = inst else { break };
                     // ── CANCEL_INTENT pawn entry_id (intent-queue-ui F3/F4) ── resolves
                     // against worker MEMORY by phase; every path refans; unknown = no-op.
@@ -1499,6 +1511,12 @@ async fn main() {
                         (EXECUTE_INTERACTION, [i, v, _count, inputs @ ..]) => (*i, *v, inputs),
                         _ => continue,
                     };
+                    // The cross-zone double-assignment guard (see `executed_interactions`).
+                    if !executed_interactions.insert((*event_reference, inst_index as u32)) {
+                        tracing::warn!(event = format!("{event_reference:#010x}"), tic = t,
+                            "duplicate work-group assignment — interaction already executed, SKIPPED (teleport verdict)");
+                        continue;
+                    }
                     // The version word discriminates the intent-queue flows (lumberjack):
                     // FRESH replaces the pawn's queue, ADVANCED continues it, COMPLETION
                     // executes a scheduled `duration` intent's effects (re-validating).

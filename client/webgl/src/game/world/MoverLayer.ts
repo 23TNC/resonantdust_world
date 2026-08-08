@@ -224,6 +224,12 @@ interface Mover {
   /** The freshest intent tic ever armed — dedups replayed/duplicate `event` deliveries even
    *  after the spec cleared (zone re-subscribes replay history — first-pawns I2). */
   lastIntentTic: number | null;
+  /** The freshest AUTHORITATIVE row tic seen for this pawn. Guards two things
+   *  (spawn-authority P5, the teleport verdict): an intent serially older than the last
+   *  auth row is HISTORY replayed by a zone re-subscribe — rejected even on a freshly
+   *  recreated mover whose `lastIntentTic` is null (the hole the teleport hid in); and
+   *  the AUTH probe scales its stride threshold by the tic gap between rows. */
+  authTic: number | null;
 }
 
 /** Render-chase cap: the render may move at most this multiple of the pawn's true speed
@@ -254,6 +260,43 @@ function ticNewer(a: number, b: number): boolean {
   return ((((a - b) & 0xffff) << 16) >> 16) > 0;
 }
 
+/** spawn-authority P5 (F5/I7): one recorded teleport-probe event. `kind` separates the
+ *  two failures the word "teleport" conflates — an AUTH event is the authoritative row
+ *  itself jumping beyond a hop stride (a server bug); a RENDER event is the chase
+ *  snapping past {@link CHASE_SNAP_TILES} (a presentation bug). */
+interface TeleportEvent {
+  kind: "AUTH" | "RENDER";
+  wallMs: number;
+  entity: number;
+  tic: number;
+  fromX: number;
+  fromY: number;
+  toX: number;
+  toY: number;
+  dist: number;
+  specActive: boolean;
+}
+
+/** The probe's ring buffer + counters, exposed as `__teleportProbe`. */
+interface TeleportProbe {
+  auth: number;
+  render: number;
+  events: TeleportEvent[];
+}
+
+/** The fastest legal authoritative pace the probe allows (tiles/tic) — comfortably above
+ *  any authored ground_speed (the fastest pawns run ~8 tics/tile = 0.125). */
+const AUTH_JUMP_TILES_PER_TIC = 0.15;
+/** Flat slack on top of the paced allowance (subtile rounding, the first row, resolves). */
+const AUTH_JUMP_SLACK_TILES = 1.5;
+/** An intent this many tics older than the pawn's freshest authoritative row is a zone
+ *  re-subscribe replaying history, not a live order (the teleport verdict — spawn-authority
+ *  P5). A LIVE intent's event tic trails the newest row by only the queue barrier (~4-5
+ *  tics); replays trail by hundreds. */
+const INTENT_STALE_BEHIND_AUTH_TICS = 16;
+/** Ring cap so a pathological burst can't grow the probe without bound. */
+const PROBE_RING_CAP = 200;
+
 export class MoverLayer {
   private readonly movers = new Map<number, Mover>();
   /** Intents that arrived before their pawn's first `State` or before the tic clock anchored
@@ -262,6 +305,8 @@ export class MoverLayer {
    *  hold; the stale/dedup guards then arm or discard. Freshest per entity wins. */
   private readonly pendingIntents = new Map<number, MoveIntent>();
   private readonly unsubs: Array<() => void> = [];
+  /** The teleport probe (spawn-authority P5) — see {@link TeleportProbe}. */
+  private readonly teleportProbe: TeleportProbe = { auth: 0, render: 0, events: [] };
   /** Per-kind texture-stem / size / packed-channel tables from the content bundle, indexed by
    *  `objKind - 1` (same tables + indexing WorldBridge uses for cold things). Refreshed on
    *  hot-swap. */
@@ -294,6 +339,11 @@ export class MoverLayer {
     // in a hidden tab (no rAF) without a build.
     (globalThis as unknown as { __movers: Map<number, Mover> }).__movers = this.movers;
     (globalThis as unknown as { __moverLayer: MoverLayer }).__moverLayer = this;
+    // spawn-authority P5 (F5/I7): the TELEPORT probe — AUTH events (the row itself
+    // jumped) vs RENDER events (the chase snapped), timestamped, ring-buffered. Read
+    // `__teleportProbe` in the console; the drill script polls it.
+    (globalThis as unknown as { __teleportProbe: TeleportProbe }).__teleportProbe =
+      this.teleportProbe;
     this.refreshTables();
     this.unsubs.push(client.onStateObject((obj) => this.onStateObject(obj)));
     this.unsubs.push(client.onPawnParts((p) => this.onPawnParts(p)));
@@ -327,6 +377,20 @@ export class MoverLayer {
 
   /** Wall-clock of the previous {@link tick} — the chase integrates real dt. */
   private lastTickMs = 0;
+
+  /** Record a teleport-probe event (ring-capped) and mirror it to the console so a
+   *  soak's timeline reads straight out of devtools (spawn-authority P5). */
+  private recordTeleport(e: TeleportEvent) {
+    const p = this.teleportProbe;
+    if (e.kind === "AUTH") p.auth += 1; else p.render += 1;
+    p.events.push(e);
+    if (p.events.length > PROBE_RING_CAP) p.events.shift();
+    console.warn(
+      `[teleport] ${e.kind} entity=${e.entity.toString(16)} ` +
+      `(${e.fromX.toFixed(2)},${e.fromY.toFixed(2)})->(${e.toX.toFixed(2)},${e.toY.toFixed(2)}) ` +
+      `dist=${e.dist.toFixed(2)} spec=${e.specActive} tic=${e.tic}`,
+    );
+  }
 
   /** Per-frame: re-evaluate held intents whose preconditions now hold, then advance every
    *  live speculation along its greedy line at the tic estimate, and CHASE it with the
@@ -377,6 +441,16 @@ export class MoverLayer {
       const gap = Math.max(Math.abs(gx), Math.abs(gy));
       if (gap > 0) {
         const tilesPerSec = this.client.ticsPerSec() / this.speedFor(key);
+        if (gap > CHASE_SNAP_TILES) {
+          // The RENDER probe (spawn-authority P5): the visible teleport — the chase gave
+          // up and snapped. Recorded with the belief→target pair so it correlates (or
+          // fails to) with an AUTH event at the same wall time.
+          this.recordTeleport({
+            kind: "RENDER", wallMs: now, entity: key, tic: 0,
+            fromX: m.rx, fromY: m.ry, toX: tx, toY: ty,
+            dist: gap, specActive: m.spec !== null,
+          });
+        }
         const step = gap > CHASE_SNAP_TILES
           ? gap // hopeless — snap
           : tilesPerSec * Math.min(CHASE_CAP, 1 + gap * CHASE_GAIN) * dtSec;
@@ -640,6 +714,20 @@ export class MoverLayer {
     if (m.lastIntentTic !== null && ((((intent.eventTic - m.lastIntentTic) & 0xffff) << 16) >> 16) <= 0) {
       return; // a duplicate delivery or a serially older intent — superseded
     }
+    // The teleport verdict (spawn-authority P5, found live): a zone crossing re-subscribes
+    // the event stream, HISTORY replays (first-pawns I2), and the mover — freshly recreated
+    // by the crossing, `lastIntentTic` null — re-armed a minutes-old intent. The spec then
+    // walked the OLD dest while the server walked the new one; the divergence grew until
+    // the chase snapped: the user-visible teleport. Authoritative rows outrank history: an
+    // intent serially behind the freshest row by more than the queue barrier is a replay.
+    if (m.authTic !== null
+      && ((((m.authTic - intent.eventTic) & 0xffff) << 16) >> 16) > INTENT_STALE_BEHIND_AUTH_TICS) {
+      console.debug(
+        `[mover] intent REJECTED as replayed history entity=${intent.entityReference.toString(16)} ` +
+        `eventTic=${intent.eventTic} authTic=${m.authTic}`,
+      );
+      return;
+    }
     m.lastIntentTic = intent.eventTic;
     console.debug(
       `[mover] intent armed entity=${intent.entityReference.toString(16)} dest=(${intent.tileX},${intent.tileY}) tic=${intent.eventTic} d=${d.toFixed(1)}`,
@@ -698,6 +786,14 @@ export class MoverLayer {
 
     const m = this.movers.get(key);
 
+    // The teleport verdict (spawn-authority P5): zone re-subscribes replay STATE history
+    // too — a strictly-older row re-applied after a newer one drags authX/authY (and the
+    // spec reseed) BACKWARDS, the twin of the replayed-intent bug. Rows apply in serial
+    // order only; equal tics (multiple mutations per tic) still apply.
+    if (m && m.authTic !== null && ticNewer(m.authTic, obj.tic)) {
+      return;
+    }
+
     // F8 — the authoritative row corrects speculation: log the observed error (the data the
     // re-anchor cadence is tuned on), then snap. The final tile clears the spec; an interim
     // authoritative resolve (another event touched the pawn) reseeds it.
@@ -734,8 +830,26 @@ export class MoverLayer {
       // Existing mover: the authoritative row STEERS (auth point, zone, kind); the render
       // keeps chasing from wherever it is (F6 — no direct snap; `tick` closes the gap at
       // the capped rate, or snaps itself past the hopeless threshold).
+      // The AUTH probe (spawn-authority P5): consecutive authoritative points for one
+      // pawn further apart than the pawn could legally WALK in the tic gap = the ROW
+      // jumped, whatever the render does. Scaled by the tic delta — rows only arrive
+      // every ~32 tics mid-chord (the re-anchor cadence), so a flat threshold flags
+      // ordinary walking (the probe's own first false positive, found live).
+      const authJump = Math.max(Math.abs(ax - m.authX), Math.abs(ay - m.authY));
+      const authDt = m.authTic === null ? 0 : (obj.tic - m.authTic) & 0xffff;
+      const allowed = authDt > 0 && authDt < 0x8000
+        ? AUTH_JUMP_TILES_PER_TIC * authDt + AUTH_JUMP_SLACK_TILES
+        : AUTH_JUMP_SLACK_TILES;
+      if (authJump > allowed) {
+        this.recordTeleport({
+          kind: "AUTH", wallMs: Date.now(), entity: key, tic: obj.tic,
+          fromX: m.authX, fromY: m.authY, toX: ax, toY: ay,
+          dist: authJump, specActive: m.spec !== null,
+        });
+      }
       m.authX = ax;
       m.authY = ay;
+      if (m.authTic === null || ticNewer(obj.tic, m.authTic)) m.authTic = obj.tic;
       m.kind = kind;
       m.def = obj.definitionReference;
       m.macroPosition = obj.macroPosition;
@@ -919,6 +1033,7 @@ export class MoverLayer {
           rx: tileX, ry: tileY, arx: tileX, ary: tileY, facing, // the chase starts AT the first authoritative tile
           lastFaceMs: 0,
           lastIntentTic: null,
+          authTic: null,
         });
       }
       return;

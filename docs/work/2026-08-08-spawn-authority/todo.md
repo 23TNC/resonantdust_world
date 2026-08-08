@@ -55,21 +55,21 @@ in [`forks.md`](forks.md) (F#), the anticipated-issue inventory in
 
 ## P4 — the drills
 
-- [ ] The unified drill: /spawn (variants land), the npc warren fills, a client
+- [x] The unified drill: /spawn (variants land), the npc warren fills, a client
       CREATE refused at the edge, a water /spawn refused at the worker — one
       session, logs + SQL for each. Acceptance: captures + log lines in
       completed.md.
-- [ ] Cold boot: bounce the stack; brains re-adopt (no duplicate mints), /spawn
+- [x] Cold boot: bounce the stack; brains re-adopt (no duplicate mints), /spawn
       still works, the request path survives the event-shard's clean queue.
       Acceptance: arcs green post-bounce.
 
 ## P5 — the teleport hunt, and the verdict
 
-- [ ] The probes (F5/I7): AUTH — consecutive entity_state_log positions per pawn
+- [x] The probes (F5/I7): AUTH — consecutive entity_state_log positions per pawn
       jumping beyond one hop stride; RENDER — belief-vs-auth divergence beyond
       the chase envelope; both timestamped and tagged. Acceptance: the probes
       run against live traffic and log indexable events.
-- [ ] Reproduce + correlate: npc wander + long trips + mid-trip interrupts +
+- [x] Reproduce + correlate: npc wander + long trips + mid-trip interrupts +
       zone crossings; every jump correlated to its writes (row dumps).
       Conditions land in issues.md; cheap causes fixed, structural ones named.
       Acceptance: issues.md holds identified conditions + evidence, or the

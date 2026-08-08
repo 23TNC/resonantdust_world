@@ -792,9 +792,11 @@ impl Brain for Wolves {
         }
 
         // Adopt-first: give the zone snapshot a moment to replay an EXISTING minted wolf
-        // (a restart re-uses its wolf); `tick` CREATEs one only if nothing shows.
-        self.spawn_after = std::time::Instant::now() + Duration::from_secs(3);
-        tracing::info!("awaiting an existing minted wolf (CREATE if none appears)");
+        // (a restart re-uses its wolf); `tick` REQUESTS one only if nothing shows. 10 s,
+        // not 3 — a full-stack bounce's cold edge delivered the snapshot late and the 3 s
+        // window minted a DUPLICATE wolf (spawn-authority P4's cold-boot drill, found live).
+        self.spawn_after = std::time::Instant::now() + Duration::from_secs(10);
+        tracing::info!("awaiting an existing minted wolf (SPAWN_REQUEST if none appears)");
     }
 
     fn on_event(&mut self, _bot: &Bot, event: &Event) {

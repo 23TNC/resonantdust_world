@@ -86,6 +86,52 @@ serial lane 0 (no chain exists yet) and the movement rewrite path untouched —
 the MOVE_TO stamp overwrites facing on the first order, which is correct (the
 spawn facing is the RESTING pose).
 
+## I12 — THE TELEPORT VERDICT, part 1 (client, FIXED): zone re-subscribes replay history into fresh movers {#i12}
+
+Reproduced in minutes with the P5 probes: a long cross-zone trip + a mid-trip
+interrupt. A zone crossing re-subscribes the event stream; the `event` table
+replays HISTORY (no retention — first-pawns I2), and the crossing also
+RECREATES the client's mover, whose `lastIntentTic` is null — so a minutes-old
+MOVE intent passed both staleness guards and RE-ARMED speculation at the old
+destination (the same `tic=399` intent armed three times, minutes apart, in the
+console record). The spec walked the old dest while the server walked the new
+one; reseed errors grew 0.27 → 6.34 tiles until the chase snapped — the
+user-visible teleport. STATE rows replay the same way and dragged `authX`
+backwards. FIX (MoverLayer): the mover tracks `authTic`; an intent more than 16
+tics behind the freshest authoritative row is rejected as replayed history
+(verified live — "intent REJECTED as replayed history" fires on every crossing
+now), and a strictly-older state row is skipped.
+
+## I13 — THE TELEPORT VERDICT, part 2 (server, FIXED): a cross-zone order executes once PER work-group {#i13}
+
+The worker log showed every cross-zone `move_to` executed TWICE (effect_tic n
+and n+1 — e.g. 4143/4144), and the orchestrator log showed WHY: two work-groups
+assigned for the SAME tic (`assigned work-group tic=4138 … entities=1` and
+`… entities=0`), each carrying the event — the orchestrator assigns by zone
+footprint, a cross-zone order's footprint splits, and the arm ran once per
+group. Two overlapping chains one tic apart leapfrog the authoritative rows:
+7–9-tile strides per 32-tic re-anchor against a ~10-tics/tile pawn — the AUTH
+jumps the probe caught. FIX (worker): a session-scoped
+`executed_interactions: HashSet<(event, instruction)>` — each
+EXECUTE_INTERACTION executes once; a duplicate assignment logs
+"duplicate work-group assignment — SKIPPED". Post-fix orders execute exactly
+once (the pre-fix double is on record; the skip-warn itself hasn't been caught
+live yet since the group split depends on runtime zone activity — stated
+honestly). The GROUPING itself still duplicates the event; the worker guard is
+the cheap fix, the orchestrator-side single-owner assignment is the structural
+successor.
+
+## I14 — THE TELEPORT VERDICT, part 3 (server, NAMED): orders can execute MINUTES late {#i14}
+
+The first soak's orders (queued ≈ tic 2830) executed at tics 3889 and 4138 —
+~1000 tics (nearly 3 minutes) after queueing, then the pawn set off for a
+destination the player had long forgotten: the "pawn walks off on its own"
+class of teleport report. The delay correlates with the event's zones being
+OUTSIDE any active work-group until other traffic (a wandering wolf, a bunny)
+activated them. Structural — assignment/activity gating is the orchestrator's
+design seam, not a worker patch. Named for a successor stream; the probes
+(`__teleportProbe`, the AUTH watcher) make it observable when it recurs.
+
 ## I11 — FOUND LIVE: an unimported const in a match arm is a catch-all binding {#i11}
 
 The worker's `SPAWN_REQUEST => {…}` arm compiled with the const NOT in the
