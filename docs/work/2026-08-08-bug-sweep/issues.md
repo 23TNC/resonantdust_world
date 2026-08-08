@@ -63,6 +63,43 @@ The pie menu (z 60000, reported invisible by the user mid-stream), both tooltips
 pie menu +10, tooltips +11. Any FUTURE fixed-position chrome must use the constant
 — a literal is exactly how these four broke.
 
+## I11 — the vanishing wolf: the evidence file (2026-08-08) {#i11}
+
+**No structural vanish reproduced this session**, and the probe makes that a
+statement, not a shrug. The harness: a 100 ms probe over EVERY mover logging
+(a) warm prims missing from the viewport, (b) zero-area prims, (c) lost
+texNames, (d) movers dropped from the layer — run through 4 minutes of long
+cross-seam trips ((98,60) ↔ (120,75), zone seams x=112/96 y=64) and 2 minutes
+of hard camera panning across 9 world spots (zone churn). ZERO events — which
+ELIMINATES: prim loss, zero-size resolves, texName loss, and zone-close mover
+drops (movers survived every pan; the release/LRU pressure hypothesis found
+no release at these budgets).
+
+**The strong candidate is the P2 root cause itself**: before this stream, the
+subframe re-registration cycle EVICTED the wolf's pack on every facing change
+— and with two same-kind pawns at different facings (I9) the eviction churn
+was CONTINUOUS. During each repack window the resolve answered geo; depending
+on which maps were mid-cycle, a mover could draw wrong or effectively not at
+all — during movement, intermittently: the report's shape. The P2 fix (never
+geo between resident packs) removes that whole class. Verdict: PLAUSIBLY
+CURED BY P2; re-observe before hunting further.
+
+**Remaining suspects if it recurs** (none catchable by this probe): correct-
+but-surprising warm-over-cold occlusion behind tall sprites (walking north
+through forest), and the render-chase snap on interrupts. The probe is
+re-armable from the console — paste:
+
+    window.__vanishLog=[];window.__vanishSeen=new Map();setInterval(()=>{const
+    t=Date.now(),s=window.__vanishSeen,l=window.__vanishLog,v=new Set();for(const
+    [id,m]of window.__movers){v.add(id);const P=m.parts.map(p=>window.__viewport
+    .warmGetPrim(p.id));const st=`${P.filter(p=>!p).length}m${P.filter(p=>p&&(p
+    .width<0.5)).length}z${m.parts.filter(p=>!p.texName).length}t`;const pr=s.get(id);
+    if(pr&&pr.state!==st)l.push({t,id:id.toString(16),was:pr.state,now:st});
+    s.set(id,{state:st,t});}for(const[id,pr]of s)if(!v.has(id)){l.push({t,id:
+    id.toString(16),was:pr.state,now:"GONE"});s.delete(id);}},100)
+
+then read `window.__vanishLog` the moment a vanish is SEEN.
+
 ## I7 — the wall flag is a CONTENT change: the six-consumer law {#i7}
 
 `pathable = false` on wall_smooth → golden re-blessed, worker/npc/wasm/webgl/

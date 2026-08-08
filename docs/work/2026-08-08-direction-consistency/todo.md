@@ -43,3 +43,14 @@ varies is the pipeline.** `cn` must not go below 0.5 ([README](README.md) future
 - [ ] Generate a full three-view set for a species with NO authored template analogue. Acceptance: the honest generalisation test, same as the anteater check in the predecessor.
 - [ ] State the final spread and whether it clears the corpus ceiling. Acceptance: `completed.md` carries the number; missing the ceiling is a result, not a reason to retry by reflex.
 - [ ] Run `bin/rd docs-check` and close the stream. Acceptance: tree green, index row updated.
+
+## P6 — The edit-model track (F5/D1) — the design doc's first choice, finally tried
+
+Runs beside P0–P4, not instead of them. Judged on the SAME ruler, which is architecture-independent.
+
+- [ ] Download the Qwen-Image-Edit transformer onto the box, to `models/diffusion_models`. Acceptance: a weight file present; the VAE and Qwen text encoder are already staged so nothing else is needed.
+- [ ] Generate the east hero, then ask the edit model for the south view of THAT wolf. Acceptance: one image; the question is identity preservation, not sprite quality.
+- [ ] Run the pinned consistency set through the edit-model path. Acceptance: `results.json` under a `qwen` label, directly comparable to `baseline`.
+- [ ] Compare edit-model spread against the best SDXL+IP-Adapter spread. Acceptance: two numbers on the same subjects and seeds, plus the sheet; the eye ratifies.
+- [ ] Record which mechanism becomes the S/N default. Acceptance: a fork entry; if the edit model wins, say plainly that P2's anchoring work is superseded.
+

@@ -83,14 +83,24 @@ in [`forks.md`](forks.md) (F#), the anticipated-issue inventory in
 
 ## P5 — the vanishing wolf, and the verdict
 
-- [ ] The reproduction harness (F5/I6): scripted long cross-seam trips + the gif
+- [x] The reproduction harness (F5/I6): scripted long cross-seam trips + the gif
       recorder + a per-frame probe logging skip-bake / zero-area subframe / prim
       drop / cull for every mover. Acceptance: the harness runs and the probe log
-      indexes by frame.
-- [ ] Hunt the vanish: correlate every observed disappearance against the probe;
+      indexes by frame. → the 100 ms probe (missing prims / zero-area / lost
+      texName / mover GONE) over every mover + 45s alternating cross-seam trips
+      + a 9-spot camera-churn pan loop; timestamped log on
+      `window.__vanishLog` (the gif recorder proved unnecessary — the probe is
+      the sharper instrument).
+- [x] Hunt the vanish: correlate every observed disappearance against the probe;
       record the CONDITIONS in issues.md with captures; fix if the cause is cheap,
       else name the successor. Acceptance: issues.md holds either the identified
       conditions + evidence, or the honest no-repro record with what was tried.
+      → I11: ZERO events across 6+ minutes — prim loss / zero-size / texName
+      loss / zone-close drops ELIMINATED; the STRONG candidate is P2's root
+      cause itself (the continuous pre-fix subframe eviction churn, I9 —
+      intermittent geo/misdraw DURING movement is the report's exact shape),
+      plausibly cured by the P2 fix; the re-armable probe snippet is in the
+      issue for re-observation.
 - [ ] Docs + memory truth pass + a stack bounce with arcs green; **the user's eyes
       close the stream**. Acceptance: docs-check green; captures + logs in
       completed.md.

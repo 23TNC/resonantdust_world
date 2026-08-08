@@ -77,3 +77,48 @@ decomposition explicitly rather than assuming it survives.
 **Why absolute value is tracked separately from spread.** Three views that agree with each other at
 150 and disagree with the corpus at 87 would score perfectly on the primary metric while being
 uniformly wrong. Consistency and correctness are different properties and the plan measures both.
+
+## F5 — The option survey the plan should have opened with {#f5}
+_2026-08-08 · raised by the user, resolved after surveying the box · **Qwen-Image-Edit is the one
+worth the download; SDXL+IP-Adapter stays the production default**_
+
+Prompted by [D1](deviations.md#d1). Every node class below is **already exposed by ComfyUI on the
+box** — verified against `/object_info`, not assumed. Only the *weights* are missing, so the cost
+of each option is a download, not an integration.
+
+| option | ComfyUI nodes present | licence | fit |
+|---|---|---|---|
+| **Qwen-Image-Edit** | `ModelMergeQwenImage`, `QwenImageDiffsynthControlnet`, `EmptyQwenImageLayeredLatentImage` | **Apache 2.0** | purpose-built view-change with identity preservation; VAE + a Qwen text encoder already staged |
+| **Hunyuan3D v2** | `EmptyLatentHunyuan3Dv2`, `Hunyuan3Dv2ConditioningMultiView` | Tencent community (restricted) | image→mesh, then render 3 cameras — consistency *by construction* |
+| **Stable Zero123** | `StableZero123_Conditioning_Batched`, `StableZero123_BatchSchedule` | non-commercial research | multi-view from one view; exactly our problem shape |
+| **SV3D** | `SV3D_Conditioning`, `SV3D_BatchSchedule` | Stability non-commercial | orbit around an object |
+| **FLUX.1 Kontext** | `FluxKontextImageScale`, `FluxKontextMultiReferenceLatentMethod` | **non-commercial** | strong editor; `vae/ae.safetensors` already staged |
+
+**Chosen — add Qwen-Image-Edit as a parallel track (P6); keep P0–P4 as the production path.**
+
+**Why Qwen over the rest.** It is the only option that is simultaneously (a) the design doc's own
+first choice, (b) **Apache 2.0**, and (c) already half-staged. Licence is the sharp filter here and
+it eliminates most of the field: this is a game we intend to ship, and FLUX Kontext dev, SV3D and
+Stable Zero123 are all non-commercial. Their being technically excellent does not make them usable,
+and the licensing question the user raised on 2026-07-28 is still unresolved
+([beat-e07 F4](../2026-08-02-lora-beat-e07/forks.md#f4)) — this fork does not resolve it, it routes
+around it.
+
+**Why the 3D route is genuinely interesting and still not first.** Rendering three cameras from one
+mesh makes the views consistent *by construction* rather than by coaxing, and it would also
+generate the template triple — attacking the "hard locked to our control net" dependency the user
+named ([I4](issues.md#i4)) rather than working inside it. Held back because Hunyuan3D's licence is
+restricted, the MIT alternative (TRELLIS) has no native node and needs a custom-node install, and a
+mesh→render path produces *shaded 3D renders*, which is the opposite of the flat unshaded
+convention ([art-style.md](../../components/dev/textures/design/art-style.md)). It is a bigger bet
+than this stream should make on its own; recorded as future intent, not scheduled.
+
+**Why P0–P4 are not abandoned.** The ruler ([P0](todo.md)) measures interior luminance spread and
+is **architecture-independent** — it scores a Qwen output exactly as well as an SDXL one, which is
+the property that makes the comparison in P6 possible at all. And the design doc names
+IP-Adapter + ControlNet as *"the robust production default"* even while leaning on the edit model;
+building the default is not wasted work if the edit model wins.
+
+**What would overturn this.** If P6 shows Qwen-Image-Edit holds identity across e/s/n at a spread
+inside the corpus ceiling while SDXL+IP-Adapter cannot, the edit model becomes the S/N mechanism
+and P2's anchoring work is superseded. That is an acceptable outcome and the reason P6 runs at all.
