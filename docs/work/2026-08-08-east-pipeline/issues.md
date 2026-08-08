@@ -160,3 +160,36 @@ of the user's proposal — *generate the silhouette first, then texture it*
 reason is measured rather than suspected: the model will not produce our side-profile convention
 without something already holding the pose. P2's stage 1 therefore cannot be "txt2img and see"; it
 needs its own constraint, and identifying that is the phase's real question.
+
+## I7 — for untrained species, colour transfers and SHAPE does not {#i7}
+_2026-08-08 · P4 · the failure trained species could not show_
+
+Four species absent from both the corpus and the bank, generated from their family representative's
+silhouette (`S2a`, the only method that can serve an unknown animal). All 12 cells passed the
+structural gate — `blobs = 1`, `bg_uni ≈ 1.000` — so nothing *broke*. They are simply the wrong
+animals.
+
+| species | family rep | result |
+|---|---|---|
+| **okapi** | Horse | **works** — brown body, white leg stripes, dark legs, recognisably an okapi in all three seeds |
+| anteater | Bear | a pale bear-shaped blob with a slightly pointed nose. **No long snout, no bushy tail.** |
+| armadillo | Pig | a pale pig. **No armour bands, no plates.** |
+| warthog | Pig | a pale pig. **No tusks, no heavy head.** |
+
+**The rule that explains all four:** at `cn 0.5` the control *dictates* the silhouette, so **the
+prompt can only repaint the interior**. Okapi succeeds because an okapi genuinely is a horse-shaped
+animal with stripes — its identity is **colour**, and colour is the one thing the prompt still
+governs. Anteater, armadillo and warthog fail because their identity is **shape** — a snout, a
+banded shell, tusks — and the borrowed silhouette forbids exactly that.
+
+Trained species could never expose this, because each had *its own* silhouette available. It is the
+first defect in the stream that only appears where the product actually lives.
+
+**Two lesser findings from the same run:**
+
+- **The pose convention is inherited too, not just the outline.** Okapi at seeds 4102/4103 comes out
+  **standing upright** rather than in the corpus's crouching side profile — because the `equine`
+  representative (Horse) stands. Borrowing a silhouette borrows its posture.
+- **Too-pale is much worse here.** Untrained luminance runs **143–194** against the corpus band of
+  62–121; only okapi (69–94) lands inside it. The predecessor's pale-output defect is amplified when
+  the model has no learned example of the species to anchor value.

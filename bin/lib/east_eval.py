@@ -26,7 +26,12 @@ import lora_eval as L
 from PIL import Image
 
 SET = os.environ.get("RD_EAST_SET", os.path.join(HERE, "eval_east.json"))
-OUT_ROOT = os.path.join(REPO, ".staging", "east")
+# Results are namespaced by the SET, not just the method. Both sets declare an "S2a" and without
+# this a P4 run silently overwrites P1's measured trained-species results — which it did once,
+# 2026-08-08 (D1). The sprite tree is safe because subject ids differ, so a --measure-only rebuild
+# recovers, but the json is not.
+SET_TAG = os.path.splitext(os.path.basename(SET))[0].replace("eval_east", "").strip("_") or "trained"
+OUT_ROOT = os.path.join(REPO, ".staging", "east", SET_TAG)
 
 
 def load_set():

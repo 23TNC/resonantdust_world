@@ -122,3 +122,32 @@ SDXL ControlNet fed `edge_map` output, not a lineart-specific model. The
 **only on shape**. That is the correct division for a stage named "silhouette", and it is what makes
 [P2.2](todo.md)'s acceptance — "a silhouette whose `iou_ref` beats the wolf template's, judged as a
 silhouette alone" — meaningful rather than a proxy.
+
+## F7 — What untrained species need is a silhouette that can CHANGE, and only one candidate is left {#f7}
+_2026-08-08 · resolved at P4.4 · **the recommendation is Qwen-Image-Edit; building it is the next stream**_
+
+[I7](issues.md#i7) narrows the problem precisely: an untrained animal can borrow a family
+silhouette and be repainted, which fixes *colour identity* and leaves *shape identity* impossible.
+So the missing capability is **modifying a silhouette** — adding a snout, a shell, tusks — while
+keeping the convention.
+
+**Three ways to get one, and two are already eliminated by measurement:**
+
+| approach | status |
+|---|---|
+| **re-render the silhouette** (P2's `--stage1-cn`) | **measured and rejected.** Loses at every stage-1 strength and improves monotonically as stage 1 is given *less* freedom ([P2](todo.md)); the alpha→fill→`edge_map` round trip erodes exactly the thin features that carry species identity. |
+| **hand-author a template per body plan** | works by construction and is **art labour**, not a pipeline. Honest fallback; a different kind of project, and `family:<f>` already approximates it free. |
+| **edit-model shape change** — "make this bear an anteater" | **the remaining candidate.** Qwen-Image-Edit finished downloading (19.0 GB transformer + 8.7 GB Qwen2.5-VL encoder, `QWEN_FETCH_OK`), is **Apache 2.0**, and is purpose-built for altering an image while preserving its character. |
+
+**Chosen: recommend the edit model, and do not build it in this stream.** This stream's question was
+*how many stages does a good east sprite take*, and it has an answer for trained species (one) and a
+measured boundary for untrained ones. Bolting a second architecture on now would restart the
+measurement rather than finish it, and [F5](#f5) already routes Qwen through the
+[direction-consistency P6](../2026-08-08-direction-consistency/todo.md) evaluation, which is where
+its first honest test belongs.
+
+**What the next stream inherits, so it does not re-derive it:** the ruler (`east_eval` + `iou_ref`
+against ground truth), the bar (**S1 0.852** trained, **S2a 0.832** on genuine generalisation cells),
+the failure taxonomy above, and the knowledge that `iou_ref` is undefined for exactly the animals
+that matter — so an edit-model result will have to be judged the way [P4](todo.md) was, by the gate,
+the interior metrics and the eye.

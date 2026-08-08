@@ -241,3 +241,39 @@ _Dated entries: what landed and **how it was verified**. Newest last._
   **white** when the prompt said *black bear*, and it scores **0.925 — higher than S1's correctly
   black 0.910**. `iou_ref` is a silhouette statistic and rewards a well-shaped wrong-coloured animal.
   The colour columns and the eye are not optional here.
+
+## P3/P4 — the sheet, and the animals that are the actual product
+
+- **2026-08-08 · P3.1 · One sheet, all methods × 6 species, same seed.**
+  `.staging/p3-all-methods.png` (REAL / S0 / S1 / S2a / S2b at seed 4102), plus
+  `.staging/p1-s0-vs-s1.png` and `.staging/p2-silhouette-stage.png` for the two comparisons that
+  decided phases. [P3.2](todo.md) — the choice itself — is the user's and is recorded in
+  [`blockers.md`](blockers.md).
+
+- **2026-08-08 · P4.1–P4.4 · Untrained species: colour transfers, shape does not
+  ([I7](issues.md#i7)).** Four species verified absent from both the corpus and the bank —
+  **anteater** and **armadillo** with no close body plan, **okapi** and **warthog** with one — run
+  through `S2a` (family silhouette), the only measured method that can serve an animal with no
+  corpus sprite. Three seeds each.
+
+  **All 12 cells passed the structural gate** (`blobs = 1`, `bg_uni ≈ 1.000`). Nothing broke; they
+  are simply the wrong animals. **Okapi works** — brown body, white leg stripes, dark legs, in all
+  three seeds. **Anteater, armadillo and warthog come out as their family representative in the
+  wrong colour**: no snout, no armour bands, no tusks.
+
+  The rule is clean and it is the one thing trained species could never have shown: at `cn 0.5` the
+  control dictates the silhouette, so **the prompt only repaints the interior**. Okapi succeeds
+  because an okapi *is* a horse-shaped animal whose identity is colour; the other three fail because
+  theirs is shape.
+
+  Two further findings: **posture is inherited along with the outline** — okapi stands upright at
+  two of three seeds because the `equine` representative stands, breaking the crouching convention
+  even while the species is right — and **too-pale is amplified**, luminance 143–194 against the
+  corpus band of 62–121, with only okapi inside it.
+
+  **P4.4's proposal is recorded as [F7](forks.md#f7):** the missing capability is a silhouette that
+  can *change*, and of the three ways to get one, re-rendering is already measured and rejected
+  (P2), hand-authoring is art labour rather than a pipeline, and the remaining candidate is an
+  **edit model**. Qwen-Image-Edit finished downloading during this phase — 19.0 GB transformer plus
+  the 8.7 GB Qwen2.5-VL encoder, Apache 2.0 — but building on it is deliberately **not** in this
+  stream; it would restart the measurement instead of finishing it.

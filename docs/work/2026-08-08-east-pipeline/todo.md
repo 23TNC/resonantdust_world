@@ -29,16 +29,16 @@ settled. A labelled run owns the code it started with ([predecessor D2](../2026-
 
 ## P3 — Choose the method {#p3}
 
-- [ ] Build one sheet: all methods × 6 species, east, same seeds. Acceptance: the user can compare in a single image.
+- [x] Build one sheet: all methods × 6 species, east, same seeds. Acceptance: the user can compare in a single image.
 - [ ] Have the user pick the method, or state none is good enough. Acceptance: a choice recorded with their reasoning.
 - [ ] Wire the winner into `bin/art generate` as the documented default for east. Acceptance: the default path produces it without flags; the old behaviour stays reachable.
 
 ## P4 — Animals with NO training data {#p4}
 
-- [ ] Choose 4 untrained species, at least one with no close corpus body plan. Acceptance: named with the nearest bank species and how far off it is — the anteater precedent.
-- [ ] Run the P3 winner unchanged on them. Acceptance: sprites plus the honest read; `iou_ref` is undefined here, so the eye and the convention are the judges.
-- [ ] Identify what breaks that trained species did not show. Acceptance: a list in `issues.md` — the user expects extra or different steps, and naming them is the deliverable.
-- [ ] Propose the extra stages untrained species need. Acceptance: a fork entry with the reasoning; building them is the next stream if it is more than a knob change.
+- [x] Choose 4 untrained species, at least one with no close corpus body plan. Acceptance: named with the nearest bank species and how far off it is — the anteater precedent.
+- [x] Run the P3 winner unchanged on them. Acceptance: sprites plus the honest read; `iou_ref` is undefined here, so the eye and the convention are the judges.
+- [x] Identify what breaks that trained species did not show. Acceptance: a list in `issues.md` — the user expects extra or different steps, and naming them is the deliverable.
+- [x] Propose the extra stages untrained species need. Acceptance: a fork entry with the reasoning; building them is the next stream if it is more than a knob change.
 
 ## P5 — Close out
 
