@@ -50,7 +50,7 @@ def resolve_written(p):
 
 def control_arg(method, cfg, subj):
     m = cfg["methods"][method]["control"]
-    return m.replace("<species>", subj["corpus"]) if "<species>" in m else m
+    return m.replace("<species>", subj["corpus"]).replace("<family>", subj.get("family", ""))
 
 
 def generate(cfg, method, subj, seed):
@@ -64,6 +64,8 @@ def generate(cfg, method, subj, seed):
            "--control", control_arg(method, cfg, subj), "--no-metrics"]
     if cfg["methods"][method].get("refine"):
         cmd += ["--refine", str(cfg["methods"][method]["refine"])]
+    if cfg["methods"][method].get("stage1_cn"):
+        cmd += ["--stage1-cn", str(cfg["methods"][method]["stage1_cn"])]
     r = subprocess.run(cmd, cwd=REPO, capture_output=True, text=True,
                        env={**os.environ, "RD_REPO_ROOT": REPO})
     if r.returncode != 0:

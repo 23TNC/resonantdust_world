@@ -179,3 +179,65 @@ _Dated entries: what landed and **how it was verified**. Newest last._
   prefer `blobs == 1`, then the most uniform plate — uses nothing but the generated image, works for
   any species, and still recovers **+0.040 of the +0.097** available. That is the number [P4](todo.md)
   inherits; the 0.949 is not.
+
+## P2 — Silhouette then texture: built, measured, and it loses
+
+- **2026-08-08 · P2.2–P2.5 · Two stages do NOT beat one, and the trend shows it is a design
+  problem rather than a knob problem.** Built `--stage1-cn`: pass 1 runs the same prompt against the
+  resolved control at a *weaker* cn so the shape can adapt to the species, then its filled
+  silhouette ([F6](forks.md#f6)) becomes the control for pass 2 at full cn. `silhouette_of()`
+  flattens alpha to one closed contour and returns `None` rather than handing ControlNet a blank
+  plate.
+
+  Stage 1 is **constrained on purpose** — [I6](issues.md#i6) had already measured the unconstrained
+  version failing, so "txt2img and see" was never a candidate.
+
+  | method | control | stages | `iou_ref` (all 6) | `iou_ref` (bear + fox) |
+  |---|---|---|---|---|
+  | S0 | wolf template | 1 | 0.731 | 0.735 |
+  | **S1** | species silhouette | 1 | **0.852** | **0.899** |
+  | S2a | family silhouette | 1 | 0.829 | 0.832 |
+  | S2b | + silhouette stage @ cn 0.20 | 2 | 0.725 | 0.731 |
+  | S2c | + silhouette stage @ cn 0.35 | 2 | — | 0.736 |
+  | S2d | + silhouette stage @ cn 0.50 | 2 | — | 0.777 |
+
+  **S2b loses to its own one-stage baseline by −0.104 and is worse in 13 of 18 cells.** At 0.725 it
+  is barely above the wolf-template incumbent it was meant to replace.
+
+  **The knob sweep is the part that settles it.** Stage-1 strength 0.20 → 0.35 → 0.50 gives
+  0.731 → 0.736 → **0.777**: the two-stage improves *monotonically as stage 1 is given less freedom*,
+  and even at cn 0.50 — where stage 1 is identical to stage 2 and cannot drift at all — it still
+  loses to simply not doing it (0.777 against 0.832). **The best version of the silhouette stage is
+  the one that does the least**, which is the signature of a stage that only subtracts.
+
+  **Two mechanisms, both visible in `.staging/p2-silhouette-stage.png`:**
+
+  1. **Drift amplification.** At weak cn, stage 1 slides toward the model's upright-and-compact
+     prior — the same pull [I6](issues.md#i6) measured on the unconstrained probe — and stage 2 then
+     *faithfully locks in* the drifted shape. The S2b row is visibly chunkier and more upright than
+     S1 or S2a: the deer stands on straight legs instead of crouching, the tiger is a stubby cub,
+     the elephant loses its trunk into a grey mass. Two stages amplify the error rather than
+     correcting it, because nothing in stage 2 can know stage 1 was wrong.
+  2. **Round-trip loss, which is why even the no-drift case loses.** alpha → filled silhouette →
+     `edge_map` is lossy: the flood-fill cut plus the 2px choke erode thin features, so legs, tail
+     tips and trunks come back thicker or gone. The regenerated silhouette is a **degraded copy** of
+     the control it was derived from, so at best the stage reproduces its input imperfectly.
+
+  **P2.3's acceptance is therefore met in the negative** — an end-to-end sprite exists and its
+  `iou_ref` is *worse* than S1's, and [P2.5](todo.md) is answered plainly: **no.**
+
+- **2026-08-08 · P2 · The genuinely encouraging result is S2a, which was only the control.**
+  Family-representative silhouettes score **0.829 against exact-species 0.852** — and four of the six
+  subjects are not real tests, because `FAMILY_REP` for deer/pachyderm/feline/canine *is* Deer,
+  Elephant, Tiger and Wolf_Timber. On the two cells where the family representative is genuinely a
+  **different species** — bear (`Bear` vs `AEXP_BlackBear`) and fox (`canine` → a wolf) — the honest
+  numbers are **S1 0.899 vs S2a 0.832**.
+
+  So naming an animal's *family* costs about **−0.067** against owning its exact sprite, out of the
+  **+0.121** that S1 bought over the incumbent. For [P4](todo.md) that matters more than any of the
+  above: you cannot have an untrained animal's sprite, but you can almost always name its family.
+
+  **A caution the metric alone would hide** ([F4](forks.md#f4) predicted exactly this): S2a's bear is
+  **white** when the prompt said *black bear*, and it scores **0.925 — higher than S1's correctly
+  black 0.910**. `iou_ref` is a silhouette statistic and rewards a well-shaped wrong-coloured animal.
+  The colour columns and the eye are not optional here.

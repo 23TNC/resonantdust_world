@@ -94,3 +94,31 @@ stays a decision.
 | **regional colour** — segment the silhouette, paint per region | the layer-map decomposition downstream already does material separation; doing it twice risks fighting it. Revisit if flat-region count is the failure. |
 | **edit-model restyle** ("make this wolf a bear") with Qwen-Image-Edit | the weights are still downloading; and it belongs to the [direction-consistency P6](../2026-08-08-direction-consistency/todo.md) evaluation rather than being duplicated here. |
 | **per-body-plan authored templates** | the honest alternative to generating silhouettes, and it is *hand-authoring work*, which is a different kind of project. `family:<f>` already approximates it from the corpus at zero cost. |
+
+## F6 — The silhouette stage emits a FILLED SILHOUETTE, and `edge_map()` still derives the edges {#f6}
+_2026-08-08 · resolved at P2.1_
+
+**Chosen.** Stage 1 emits the generated sprite's **alpha, flattened to a solid dark shape on white**.
+Stage 2 receives that image and `edge_map()` derives its control exactly as it does for a bank
+silhouette or a hand-authored template.
+
+**Why not pass the stage-1 sprite itself.** `edge_map()` is `FIND_EDGES` + threshold over the whole
+image, so a full sprite contributes **every interior line** — muzzle, eye, fur breaks, colour
+boundaries — not just the outline. Feeding that to stage 2 at `cn 0.5` would lock in stage 1's
+interior *drawing decisions*, which is precisely the thing stage 2 exists to redo. A filled shape
+contributes one closed contour: the silhouette, and nothing else.
+
+**Why not emit a pre-baked edge map.** `silhouette_bank`'s docstring already settled this for the
+bank and the same reason applies here: *"Emitting the sprite on white rather than a pre-baked edge
+map is deliberate, so the pipeline's own `edge_map(rgb, thresh)` must stay the single place edges
+are derived… and `--edge-thresh` keeps working."* Two edge derivations would drift, and a stage-1
+output that bypassed `--edge-thresh` would silently ignore a knob every other control respects.
+
+**Why not lineart.** It is a third representation with no consumer — `CN_MODEL` here is a generic
+SDXL ControlNet fed `edge_map` output, not a lineart-specific model. The
+[`lineart-lora`](../2026-07-27-lineart-lora/README.md) stream is where a real lineart path belongs.
+
+**Consequence, stated:** the filled shape discards stage 1's interior entirely, so stage 1 is judged
+**only on shape**. That is the correct division for a stage named "silhouette", and it is what makes
+[P2.2](todo.md)'s acceptance — "a silhouette whose `iou_ref` beats the wolf template's, judged as a
+silhouette alone" — meaningful rather than a proxy.

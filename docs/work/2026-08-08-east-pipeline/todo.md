@@ -21,11 +21,11 @@ settled. A labelled run owns the code it started with ([predecessor D2](../2026-
 
 ## P2 — Silhouette then texture, the user's proposal, done properly {#p2}
 
-- [ ] Define what "the silhouette stage" emits — filled mask, lineart, or sprite-on-white. Acceptance: a fork entry; `edge_map()` stays the single place edges are derived, per `silhouette_bank`'s own rule.
-- [ ] Build stage 1: produce a species-correct east silhouette without a hand-authored template. Acceptance: a silhouette whose `iou_ref` beats the wolf template's, judged as a silhouette alone.
-- [ ] Build stage 2: paint the interior with the silhouette as control. Acceptance: an end-to-end sprite; `iou_ref` and interior metrics against S1.
-- [ ] Split the knobs per stage. Acceptance: `cn`/`dn`/LoRA strength chosen separately for shape and for paint, with the measured reason each differs.
-- [ ] State whether two stages beat one. Acceptance: a plain yes or no with the table; more stages cost wall-clock and failure modes, so a tie means one stage wins.
+- [x] Define what "the silhouette stage" emits — filled mask, lineart, or sprite-on-white. Acceptance: a fork entry; `edge_map()` stays the single place edges are derived, per `silhouette_bank`'s own rule.
+- [x] Build stage 1: produce a species-correct east silhouette without a hand-authored template. Acceptance: a silhouette whose `iou_ref` beats the wolf template's, judged as a silhouette alone.
+- [x] Build stage 2: paint the interior with the silhouette as control. Acceptance: an end-to-end sprite; `iou_ref` and interior metrics against S1.
+- [x] Split the knobs per stage. Acceptance: `cn`/`dn`/LoRA strength chosen separately for shape and for paint, with the measured reason each differs.
+- [x] State whether two stages beat one. Acceptance: a plain yes or no with the table; more stages cost wall-clock and failure modes, so a tie means one stage wins.
 
 ## P3 — Choose the method {#p3}
 

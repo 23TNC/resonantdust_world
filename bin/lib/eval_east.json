@@ -53,42 +53,48 @@
       "corpus": "Wolf_Timber",
       "positive": "grey timber wolf",
       "body_plan": "rd_quadruped",
-      "why": "incumbent; the shape every other species is forced into"
+      "why": "incumbent; the shape every other species is forced into",
+      "family": "canine"
     },
     {
       "id": "bear",
       "corpus": "AEXP_BlackBear",
       "positive": "black bear",
       "body_plan": "rd_quadruped",
-      "why": "darkest in corpus; the species that broke visibly"
+      "why": "darkest in corpus; the species that broke visibly",
+      "family": "bear"
     },
     {
       "id": "fox",
       "corpus": "Fox_Red",
       "positive": "red fox",
       "body_plan": "rd_quadruped",
-      "why": "most saturated and longest"
+      "why": "most saturated and longest",
+      "family": "canine"
     },
     {
       "id": "deer",
       "corpus": "Deer",
       "positive": "deer",
       "body_plan": "rd_quadruped",
-      "why": "most compact, thin legs; a canid template cannot fake it"
+      "why": "most compact, thin legs; a canid template cannot fake it",
+      "family": "deer"
     },
     {
       "id": "elephant",
       "corpus": "Elephant",
       "positive": "elephant",
       "body_plan": "rd_quadruped",
-      "why": "brightest and achromatic; where too-pale is correct"
+      "why": "brightest and achromatic; where too-pale is correct",
+      "family": "pachyderm"
     },
     {
       "id": "tiger",
       "corpus": "Tiger",
       "positive": "tiger",
       "body_plan": "rd_quadruped",
-      "why": "high-frequency interior markings; iou_ref is blind to stripes"
+      "why": "high-frequency interior markings; iou_ref is blind to stripes",
+      "family": "feline"
     }
   ],
   "methods": {
@@ -112,6 +118,29 @@
       "stages": 2,
       "refine": 0.35,
       "why": "S1 plus a low-denoise second pass (i2i from pass 1, same ControlNet edge) to tidy outline and flats"
+    },
+    "S2a": {
+      "control": "family:<family>",
+      "stages": 1,
+      "why": "family representative as control, ONE stage - the baseline the silhouette stage must beat, so P2 is not just measuring 'family beats wolf'"
+    },
+    "S2b": {
+      "control": "family:<family>",
+      "stages": 2,
+      "stage1_cn": 0.2,
+      "why": "THE USER'S PROPOSAL: pass 1 at weak cn lets the family shape adapt to the species, its filled silhouette (F6) becomes the control for pass 2 at full cn"
+    },
+    "S2c": {
+      "control": "family:<family>",
+      "stages": 2,
+      "stage1_cn": 0.35,
+      "why": "P2.4 knob split: stage 1 at a STRONGER cn than S2b's 0.20, to test whether the drift is a knob problem or a design problem"
+    },
+    "S2d": {
+      "control": "family:<family>",
+      "stages": 2,
+      "stage1_cn": 0.5,
+      "why": "P2.4: stage 1 at the SAME cn as stage 2 \u2014 the upper bound, where stage 1 cannot drift at all"
     }
   },
   "_untrained_note": [

@@ -461,6 +461,23 @@ def edge_map(rgb, thresh=30):
     e = (np.array(rgb.convert("L").filter(ImageFilter.FIND_EDGES)) > thresh).astype(np.uint8) * 255
     return Image.fromarray(e).convert("RGB")
 
+def silhouette_of(rgba, min_cov=0.02):
+    """An RGBA sprite -> its ALPHA as a solid dark shape on white (F6).
+
+    Stage 2 sees ONE closed contour and nothing else: no muzzle, no eye, no fur break, no colour
+    boundary. Feeding the sprite itself would hand `edge_map` every interior line and lock in stage
+    1's drawing decisions, which is what stage 2 exists to redo.
+
+    Returns None when the cut left almost nothing — an empty control is worse than the reference it
+    would replace, and silently passing a blank plate to ControlNet reads as 'no constraint'."""
+    a = np.array(rgba.convert("RGBA"))
+    op = a[..., 3] > 128
+    if op.mean() < min_cov:
+        return None
+    out = np.full(a.shape[:2] + (3,), 255, dtype=np.uint8)
+    out[op] = 32                                  # near-black fill; edge_map thresholds the boundary
+    return Image.fromarray(out, "RGB")
+
 def remove_bg_floodfill(img_rgb, thresh=60.0, choke=2, feather=0.8, max_iter=4096):
     """Corner-seeded flood fill -> transparent background. Auto-detects the bg
     colour from the four corners, floods inward, STOPS at the first sharp colour
@@ -543,7 +560,7 @@ def _base(g):
                "lora_name":LORA,"strength_model":LORA_STRENGTH,"strength_clip":LORA_STRENGTH}}
     return ["50",0], ["50",1]
 
-def _tail(pos, neg, ref_name, edge_name, model_ref, seed, clip_ref=("4",1), size=512, dn=None):
+def _tail(pos, neg, ref_name, edge_name, model_ref, seed, clip_ref=("4",1), size=512, dn=None, cn=None):
     """The shared graph tail. `ref_name`/`edge_name` may be None (template-free): the i2i
     latent falls back to an EmptyLatentImage and the ControlNet nodes (30/31/32) are omitted
     entirely, so the sampler reads the raw text conditioning."""
@@ -563,17 +580,17 @@ def _tail(pos, neg, ref_name, edge_name, model_ref, seed, clip_ref=("4",1), size
     if edge_name is not None:
         g["30"] = {"class_type":"LoadImage","inputs":{"image":edge_name}}
         g["31"] = {"class_type":"ControlNetLoader","inputs":{"control_net_name":CN_MODEL}}
-        g["32"] = {"class_type":"ControlNetApplyAdvanced","inputs":{"positive":["6",0],"negative":["7",0],"control_net":["31",0],"image":["30",0],"strength":CN,"start_percent":0.0,"end_percent":CN_END}}
+        g["32"] = {"class_type":"ControlNetApplyAdvanced","inputs":{"positive":["6",0],"negative":["7",0],"control_net":["31",0],"image":["30",0],"strength":(CN if cn is None else cn),"start_percent":0.0,"end_percent":CN_END}}
         pos_ref, neg_ref = ["32",0], ["32",1]
     else:
         pos_ref, neg_ref = ["6",0], ["7",0]
     g["3"] = {"class_type":"KSampler","inputs":{"seed":seed,"steps":STEPS,"cfg":CFG,"sampler_name":SAMPLER,"scheduler":SCHED,"denoise":denoise,"model":model_ref,"positive":pos_ref,"negative":neg_ref,"latent_image":latent}}
     return g
 
-def graph_hero(pos, neg, ref_name, edge_name, seed, dn=None):
+def graph_hero(pos, neg, ref_name, edge_name, seed, dn=None, cn=None):
     g = {}
     model_ref, clip_ref = _base(g)
-    g.update(_tail(pos, neg, ref_name, edge_name, model_ref, seed, clip_ref, dn=dn)); return g
+    g.update(_tail(pos, neg, ref_name, edge_name, model_ref, seed, clip_ref, dn=dn, cn=cn)); return g
 
 def graph_ip(pos, neg, ref_name, edge_name, hero_name, seed):
     g = {}
@@ -623,6 +640,8 @@ def main():
     ap.add_argument("--lora", default=None, help="style LoRA to apply, as ComfyUI sees it under models/loras (e.g. rd_quadruped_e07.safetensors); applied to BOTH the model and the text encoders")
     ap.add_argument("--lora-strength", type=float, default=1.0, help="LoRA strength for model+clip (default 1.0; try 0.6-0.9 if it overpowers the template)")
     ap.add_argument("--style", default=None, help="override the style boilerplate appended to --positive (use the LoRA's trained tags, e.g. 'rd_style, rd_animal, rd_quadruped, {face}')")
+    ap.add_argument("--stage1-cn", type=float, default=0.0,
+                    help="SILHOUETTE STAGE (0 = off). Run a first pass against the resolved control at this WEAKER cn so the shape can adapt to the species, then use that pass's filled silhouette as the control for the real pass. Try 0.15-0.30; stage 1 still needs SOME control (I6: an unconstrained probe lands ~52%% short and matches primates).")
     ap.add_argument("--refine", type=float, default=0.0,
                     help="second pass denoise (0 = off). i2i from the first pass with the SAME ControlNet edge, so the sprite is tidied rather than regenerated. Try 0.25-0.40; at 1.0 it just makes a different sprite.")
     ap.add_argument("--ip-weight", type=float, default=IP_WEIGHT,
@@ -744,6 +763,32 @@ def main():
                 edge_name = _upload(edge_map(tpl, args.edge_thresh), f"artgen_{cseed}_{d}_edge.png")
             else:
                 ref_name = edge_name = None      # template-free: no i2i latent, no ControlNet
+            if args.stage1_cn > 0.0 and tpl is not None:
+                # SILHOUETTE STAGE (the user's proposal, P2). Pass 1 runs the SAME prompt against the
+                # resolved control at a WEAKER cn, so the shape is free to move off the reference
+                # toward the species. Its alpha — flattened to a solid on white per F6 — becomes the
+                # control for the real pass, which then runs at full cn against a species-adapted
+                # silhouette instead of a borrowed one.
+                #
+                # Stage 1 is CONSTRAINED on purpose. I6 measured the unconstrained version: a
+                # template-free probe comes out upright and compact, matches primates, and lands
+                # ~52% short. The model will not produce this convention unaided, so the stage that
+                # generates a silhouette still needs something holding the pose.
+                s1_pos = f"{pos}, {style_for(d, STYLE_FORM, args.body_plan, STYLE_OVERRIDE)}"
+                s1_ref = _upload(tpl, f"artgen_{cseed}_{d}_s1ref.png")
+                s1_edge = _upload(edge_map(tpl, args.edge_thresh), f"artgen_{cseed}_{d}_s1edge.png")
+                s1_raw = _run(graph_hero(s1_pos, neg, s1_ref, s1_edge, cseed, cn=args.stage1_cn))
+                s1_img = Image.open(io.BytesIO(s1_raw)).convert("RGB")
+                s1_cut = remove_bg_floodfill(s1_img, thresh=args.bg_thresh, choke=args.choke)
+                sil = silhouette_of(s1_cut)
+                if sil is None:
+                    print(f"generate: stage 1 produced no usable silhouette for {d}; "
+                          f"falling back to the resolved control", file=sys.stderr)
+                else:
+                    tpl = sil
+                    ref_name = _upload(tpl, f"artgen_{cseed}_{d}_ref.png")
+                    edge_name = _upload(edge_map(tpl, args.edge_thresh), f"artgen_{cseed}_{d}_edge.png")
+                    print(f"  stage1[{d}] -> silhouette generated at cn={args.stage1_cn}")
             full_pos = f"{pos}, {style_for(d, STYLE_FORM, args.body_plan, STYLE_OVERRIDE)}"
             # Echo what is actually SENT. The style form is invisible in the output and its failure
             # mode is artifacts nobody attributes to the prompt (I1) — so the prompt is not a thing
