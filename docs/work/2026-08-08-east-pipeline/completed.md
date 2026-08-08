@@ -42,3 +42,37 @@ _Dated entries: what landed and **how it was verified**. Newest last._
   filename misses, and a *wrong-but-plausible* reference would silently mis-score every method
   afterwards while looking entirely healthy. A perfect self-score is the only cheap proof that
   `iou_ref` is comparing each species against itself.
+
+- **2026-08-08 · P0.4 · S0 baseline = `iou_ref` 0.731, and the aspect column proves
+  [I1](issues.md#i1) as a measurement rather than a code read.** 18 generations, wolf template,
+  6 species × 3 seeds.
+
+  | species | mean `iou_ref` | mean `d_aspect` |
+  |---|---|---|
+  | tiger | 0.808 | +6.9 |
+  | wolf | 0.785 | −16.0 |
+  | fox | 0.735 | −15.0 |
+  | deer | 0.700 | +3.6 |
+  | bear | 0.699 | **−34.9** |
+  | elephant | 0.657 | **−28.8** |
+  | **all** | **0.731** | |
+
+  **The wolf reaches the highest single score of any species — 0.935 against a best-of-the-rest of
+  0.811.** Its mean is dragged to 0.785 only by seed 4102, which failed the structural gate. So the
+  template's own species has the highest ceiling, which is what I1 predicted.
+
+  **The proof is in `d_aspect`, not `iou_ref`.** Signed proportion error against the real animal:
+  **bear −34.9% and elephant −28.8%** — the two bulkiest animals come out roughly a third *more
+  compact* than they should, squeezed toward a canid's lither outline. Deer (+3.6) and tiger (+6.9)
+  are nearly right, and they are the two species whose proportions already sit closest to the wolf's.
+  **13 of 18 sprites are more compact than the real animal.** That is the wolf template imposing
+  itself, measured per species, and it is exactly the "wolf→cat came out leggy" failure the design
+  doc described.
+
+  **Seed 4102 is bad across species** — it produced 3 blobs for wolf, bear *and* elephant, the only
+  gate failures in the run. Kept in the set rather than swapped out: a method that survives a hostile
+  seed is the one worth having, and silently replacing it would flatter every later comparison.
+
+  This is the floor. Every method below must beat 0.731, and must fix `d_aspect` on bear and
+  elephant specifically — a method that raises mean `iou_ref` while leaving those two squashed has
+  not addressed the defect that opened the stream.

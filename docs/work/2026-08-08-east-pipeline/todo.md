@@ -10,7 +10,7 @@ settled. A labelled run owns the code it started with ([predecessor D2](../2026-
 - [x] Pick 6 trained species spanning body plan and colour, all with a corpus east sprite. Acceptance: a list in `eval-east.json`; each has an `e.png` in the silhouette bank and a real sprite for `iou_ref`.
 - [x] Build an east harness reporting `iou_ref`, signed aspect, interior lum/sat, and the gate. Acceptance: one row per species per method; `iou_ref` is against the REAL sprite, never against the control.
 - [x] Score the REAL corpus sprites through the harness as a self-check. Acceptance: `iou_ref` = 1.0 for every species — if it is not, the reference lookup is wrong and every later number is meaningless.
-- [ ] Record the S0 incumbent baseline: wolf template on all 6 species. Acceptance: a table; this is the number the bear-as-wolf defect actually scores, and the floor every method must beat.
+- [x] Record the S0 incumbent baseline: wolf template on all 6 species. Acceptance: a table; this is the number the bear-as-wolf defect actually scores, and the floor every method must beat.
 
 ## P1 — The stage ladder, measured {#p1}
 
