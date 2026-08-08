@@ -193,3 +193,50 @@ first defect in the stream that only appears where the product actually lives.
 - **Too-pale is much worse here.** Untrained luminance runs **143–194** against the corpus band of
   62–121; only okapi (69–94) lands inside it. The predecessor's pale-output defect is amplified when
   the model has no learned example of the species to anchor value.
+
+## I8 — one seed systematically reverts to the naturalistic STANDING pose {#i8}
+_2026-08-08 · the user's observation on the wolf grid, run down across the set_
+
+> *"we have a seed that really wanted to stuff the legs back in there."*
+
+Confirmed, and the legs are a **symptom** rather than the thing. Signed aspect error against the
+real animal (negative = more compact = standing upright rather than crouched):
+
+| species | 4101 | 4102 | 4103 |
+|---|---|---|---|
+| wolf | −4.1 | +0.1 | **−31.0** |
+| bear | −7.3 | −1.6 | **−34.3** |
+| deer | −18.8 | +1.4 | **−31.3** |
+| fox | −2.0 | −0.4 | −2.7 |
+| elephant | −1.4 | −44.1 | −1.2 |
+| tiger | −1.3 | −1.1 | −0.6 |
+
+```
+seed 4101: mean  -5.8   badly compacted (< -20%): 0/6
+seed 4102: mean  -7.6   badly compacted (< -20%): 1/6   (elephant)
+seed 4103: mean -16.9   badly compacted (< -20%): 3/6   (wolf, bear, deer)
+```
+
+**Seed 4103 breaks the pose convention on half the set**, and the three it breaks — wolf, bear,
+deer — are exactly the species for which "standing quadruped" is the overwhelming prior in natural
+images. Fox and tiger (long, low, lithe) and elephant resist it. So this is not a seed that likes
+legs; it is a seed that reverts to the **naturalistic pose**, and separated legs are what that looks
+like at the silhouette's bottom edge.
+
+**A measurement of mine that FAILED, recorded so it is not retried.** The obvious metric is
+"connected runs along the bottom strip", on the reasoning that the convention means an unbroken
+bottom edge. **The real corpus sprites score 2–4 on it, not 1** — actual on-model animals do have
+gaps under them — so the metric has no clean threshold and cannot support a conclusion. `d_aspect`
+is the honest instrument here.
+
+**The consequence that matters, and it is a hole in [P1](todo.md)'s S5 selector:** a standing wolf
+has `blobs = 1` and a perfectly uniform plate, so the **reference-free gate selector cannot see this
+failure at all**. It would happily pick 4103. Only `d_aspect` catches it, and `d_aspect` needs the
+real sprite — which is exactly what untrained species do not have.
+
+**And the obvious reference-free substitute does not work either.** An aspect floor sounds
+promising until measured: over 200 corpus species the east aspect runs min 0.54, p5 0.74, median
+1.59, p95 2.82, and **55 of 200 sit below 1.30**. A floor that rejected standing wolves would
+reject a quarter of the real corpus. Pose-convention checking for unknown species is therefore an
+**open problem**, not a knob — and it is the second thing (after [I7](issues.md#i7)) that the
+untrained path needs and does not have.
