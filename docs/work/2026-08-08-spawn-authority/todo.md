@@ -13,8 +13,10 @@ in [`forks.md`](forks.md) (F#), the anticipated-issue inventory in
 
 ## P1 — the verb and the doors
 
-- [ ] Codec: `SPAWN_REQUEST` (3 × Imm, no write set); CREATE stays as-is.
-      Acceptance: unit — the program frames; write/read sets empty.
+- [ ] Codec: `SPAWN_REQUEST` (3 × Imm — [x:16|y:16] [rot:4|type:4|sub:12|kind:12]
+      [v0:4…v7:4], the F1 layout; no write set); CREATE stays as-is. Acceptance:
+      unit — the program frames; write/read sets empty; the def reconstruction
+      round-trips (word ↔ def + rotation).
 - [ ] Edge: SPAWN_REQUEST joins CLIENT_VERBS, CREATE LEAVES it (F4); the FULL
       new-verb sweep (I1: event-shard module, orchestrator, edge, worker, wasm,
       webgl). Acceptance: a queued client CREATE is refused at the door; a
@@ -22,15 +24,19 @@ in [`forks.md`](forks.md) (F#), the anticipated-issue inventory in
 
 ## P2 — the worker's authority
 
-- [ ] Worker: the SPAWN_REQUEST arm — validate the def against the definitions
-      mirror + corpus (I4), the position in-world + PATHABLE (F2, refuse loudly),
-      variants ≤15. Acceptance: bad def / water position / variant 16 all log
-      distinct refusals; nothing mints.
-- [ ] Worker: `mint_parts` — PART entries composed server-side for ≥2-part kinds
-      (variant hints substituted, I8), then queue `PROMOTE CREATE def pos count
-      payload…` worker-side (one per request — I5). Acceptance: unit — a human
-      def + hints (5, 12) yields the exact PART words the chat used to pack;
-      wolf yields none.
+- [ ] Worker: the SPAWN_REQUEST arm — reconstruct def + rotation from word 2;
+      validate the def against the definitions mirror + corpus (I4), the position
+      in-world + PATHABLE (F2, refuse loudly), rotation ≤3, and the variant
+      nibbles against the CORPUS PART COUNT (F3 — extra nonzero nibbles refuse).
+      Acceptance: bad def / water position / rotation 7 / a third nibble on a
+      human all log distinct refusals; nothing mints.
+- [ ] Worker: `mint_parts` — PART entries composed server-side per the kind's
+      declared parts (nibble i → part i's variant; a single-part kind takes
+      nibble 0 into its own def variant), then queue `PROMOTE CREATE def pos
+      count payload…` worker-side (one per request — I5), the CREATE seeding the
+      requested FACING. Acceptance: unit — a human + nibbles (5, 12) yields the
+      exact PART words the chat used to pack; the wolf's nibble 0 lands in its
+      def variant; the minted row carries the rotation.
 
 ## P3 — the clients become requesters
 

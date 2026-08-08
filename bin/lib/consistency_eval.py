@@ -94,9 +94,17 @@ def run_cell(cfg, subj, seed, style_form, out_root, extra):
 
 
 def measure_cell(paths):
+    """Measure, RE-RESOLVING each path first.
+
+    The harness invokes generate.py once per direction, and each invocation quarantines its own
+    leaf. So east can be written live, then moved into `_rejected/` by the LATER `--dir s` call when
+    south fails the gate — after east's path was already resolved. Resolving once at write time is
+    therefore not enough (the first half of I7); the path has to be re-resolved at measure time,
+    which is the only moment the file is actually opened."""
     out = {}
     for d, p in paths.items():
-        if not os.path.exists(p): continue
+        p, _ = resolve_written(p)
+        if p is None: continue
         m = G.interior_metrics(Image.open(p))
         if m: out[d] = m
     return out

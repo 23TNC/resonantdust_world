@@ -9,6 +9,19 @@ for MINTING the pawn and its data ("quite a bit of data logic is happening clien
 side" — true: `/spawn` packs PART opcode words in the chat handler). With authority
 in place, INVESTIGATE the teleporting — very likely desync.
 
+Plan review (user): the request's layout — "u32 event_id (spawn), u16 unit.x u16
+unit.y, u4 rotation u4 type u12 subtype u12 kind, vec<u4> variant (one per part)…
+we would probably want parts declared in the toml so we know what to expect passed
+during the spawn". Pinned (with one refinement, accepted): the ≤4-parts law means
+the variant vec fits ONE nibble-packed u32, so the verb stays FIXED arity 3 and the
+event shard/orchestrator frame it corpus-free —
+
+    SPAWN_REQUEST [x:16|y:16] [rotation:4|type:4|subtype:12|kind:12] [v0:4|v1:4|…]
+
+The corpus part declarations are the tail's CONTRACT: nibble i = part i's variant;
+nonzero nibbles beyond the declared part count REFUSE. Rotation seeds the initial
+facing (0–3; 4–15 refused) — spawns stop all facing south.
+
 ## The stance
 
 - **One client verb: `SPAWN_REQUEST def position variants`** ([F1](forks.md#f1)) —

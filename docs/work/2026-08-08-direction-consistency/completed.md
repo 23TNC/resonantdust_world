@@ -128,3 +128,43 @@ _Dated entries: what landed and **how it was verified**. Newest last._
   graph. Same failure shape as [I5](issues.md#i5) — reasoning about a mechanism without first
   checking that the instrument can perform it — which is why it is recorded rather than quietly
   dropped.
+
+- **2026-08-08 · P1.3 · The prompt form does NOT move the spread. It moves everything else.**
+  Paired over all 12 cells, same seeds and knobs, prompt text the only difference:
+
+  | | mean spread | worst | clears 9.0 | lum mean | in band | sat mean |
+  |---|---|---|---|---|---|---|
+  | **tags** | **23.4** | 61.0 | 2/12 | 143.3 | 4/36 | 29.7 |
+  | prose | 21.5 | 65.1 | 2/12 | **131.4** | **10/36** | 57.5 |
+
+  **Spread: −1.9, prose lower in 6 of 12.** Against per-cell swings of ±34 that is a coin flip, and
+  both forms clear the ceiling in exactly 2 of 12. The item asked to "confirm it moves the spread or
+  say it does not" — **it does not.**
+
+  Prose *is* meaningfully closer on **absolute value** (131.4 against 143.3; 10 of 36 in the corpus
+  band against 4). That is a real result and it does not make prose the winner, because the
+  saturation figure that looks like an improvement is not colour — it is artifacts.
+
+  **The eye overturns the metric, which is what [F4](forks.md#f4) exists for.** Sheet:
+  `.staging/p13-tags-vs-prose.png`, wolf 9101. Prose's **north carries a glowing green-and-yellow
+  disc** stamped in the middle of the animal's back, and its **south is truncated at the frame
+  edge**. The tag row is a clean grey-and-white wolf in all three views with the correct upward tail
+  spike. Prose's saturation of 57.5 is that hallucinated disc and its relatives, not pigment.
+
+  **Kept: tags**, on the images, with the metric recorded as neutral rather than supportive. This is
+  the fourth time in this project that the pictures have overruled the numbers.
+
+  **Two measurement defects fixed on the way, both of which had made prose look better than it is.**
+  First reading gave prose mean 17.9 against 23.4 — a large apparent win that was **survivorship**:
+  three cells had gone missing, and the two recoverable ones turned out to be prose's *worst*
+  (wolf 9101 at 65.1, anteater 9101 at 35.2). Causes were separate:
+
+  - **[I7](issues.md#i7) again, at a later point.** The harness resolves each sprite's path right
+    after writing it, but generate.py is invoked once *per direction* and each invocation
+    quarantines its own leaf — so east could be written live and then moved into `_rejected/` by
+    the later `--dir s` call. Resolving once at write time is not enough; `measure_cell` now
+    re-resolves at the moment it opens the file. I had also guessed the missing sprites were
+    keying away to nothing — checked it, and **0 of 34 were empty**, so that hypothesis was wrong
+    and the stale path was the whole story.
+  - **A transient HTTP failure** to ComfyUI killed two of bear/9103's directions. Regenerated;
+    unrelated to the prompt form.

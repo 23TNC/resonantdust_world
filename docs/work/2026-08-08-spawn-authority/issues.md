@@ -60,8 +60,18 @@ speculation bug — cosmetic but jarring). The probes tag each event AUTH or
 RENDER with the row pair / the belief-vs-auth pair, so the verdict names which
 pipeline is lying before anything gets patched.
 
-## I8 — /spawn's variant hints only apply to multi-part kinds {#i8}
+## I8 — the variant tail maps by the corpus part declarations {#i8}
 
-The worker composes PART entries only when the kind's corpus authors ≥2 mover
-parts (the human shape); single-part kinds (wolf, bunny) mint bare and IGNORE
-variant hints — same as today's client behavior, now enforced in one place.
+Nibble i = declared part i's variant (F3): a ≥2-part kind (the human) composes
+PART entries; a single-part kind (wolf, bunny) takes nibble 0 into its OWN def
+variant — its coat — and mints bare. Nonzero nibbles beyond the declared count
+refuse. The wolf gaining a requestable coat is a small behavior GAIN over
+today's client (which always minted wolves at variant 0) — stated, intended.
+
+## I9 — CREATE's data word must carry the rotation without breaking the serial {#i9}
+
+The minted row's `data` packs `facing | trip_serial` (`pack_pawn_data`). The
+spawn currently writes `data: 0`; seeding the requested facing must leave the
+serial lane 0 (no chain exists yet) and the movement rewrite path untouched —
+the MOVE_TO stamp overwrites facing on the first order, which is correct (the
+spawn facing is the RESTING pose).
