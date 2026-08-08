@@ -68,6 +68,16 @@ variant — its coat — and mints bare. Nonzero nibbles beyond the declared cou
 refuse. The wolf gaining a requestable coat is a small behavior GAIN over
 today's client (which always minted wolves at variant 0) — stated, intended.
 
+## I10 — thing/tile spawns are COLD writes: the request completes before the SET lands {#i10}
+
+The pawn branch mints in the same pass (the spawn reducer); the thing/tile
+branches QUEUE a SET that composes a tic later — the request's "success" log
+precedes the visible thing by the barrier window. Harmless, but the drill must
+wait for the overlay row, not the request log. And an occupancy RACE (two
+requests naming one cell in adjacent tics) resolves by compose order — the
+second SET overwrites; dev-scale accepted, stated (the interactive door is a
+debug tool).
+
 ## I9 — CREATE's data word must carry the rotation without breaking the serial {#i9}
 
 The minted row's `data` packs `facing | trip_serial` (`pack_pawn_data`). The

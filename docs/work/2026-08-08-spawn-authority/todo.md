@@ -37,6 +37,11 @@ in [`forks.md`](forks.md) (F#), the anticipated-issue inventory in
       requested FACING. Acceptance: unit — a human + nibbles (5, 12) yields the
       exact PART words the chat used to pack; the wolf's nibble 0 lands in its
       def variant; the minted row carries the rotation.
+- [ ] Worker: the TYPE router (F6) — TYPE_BIOME_THING → the cold-overlay SET
+      (named cell must be EMPTY on the thing layer, else refuse); TYPE_BIOME_TILE
+      → the tile-layer SET (the build lane); rotation → the SET data word.
+      Acceptance: drill — a meat SPAWN_REQUEST lands meat at the named cell; the
+      same cell again refuses (occupied); a tile request replaces ground.
 
 ## P3 — the clients become requesters
 

@@ -53,6 +53,26 @@ refused at the edge door. The npc and webgl both switch to SPAWN_REQUEST in the
 same stream, so nothing legitimate breaks; anything else composing CREATE was
 already outside the design.
 
+## F6 — the TYPE nibble routes: one request spawns ANYTHING {#f6}
+
+The user's observation at plan review: the layout "gives us a spawn request for
+anything… in theory the ability to spawn meat on the ground, in addition to
+spawning pawns" — and tiles "would currently break, but doesn't have to". Adopted
+as a ROUTER on word 2's type nibble, each branch landing on the authority path
+that ALREADY exists for its type:
+
+| type | path | validation |
+|---|---|---|
+| `TYPE_PAWN` | the CREATE ledger mint (F1) | in-world + PATHABLE cell, rotation ≤3, part-count nibbles |
+| `TYPE_BIOME_THING` | the cold-overlay `SET` (death/forage/drop's composer) | in-world + the named cell EMPTY on the thing layer (no scan — F2's refusal posture) |
+| `TYPE_BIOME_TILE` | the tile-layer `SET` (BUILD_WALL's per-tile write) | in-world (a tile spawn REPLACES ground — the build lane) |
+
+The rotation nibble = FACING for pawns; for things/tiles it flows into the SET's
+`data` word (the autotile/rotation lanes live there) — 0 today, open not refused.
+The variant nibble 0 maps into the thing/tile kind_reference's variant lane. A
+side profit: the console drill lanes stop hand-composing raw SETs — the typed,
+validated request replaces that hack class.
+
 ## F5 — the teleport hunt is evidence-first {#f5}
 
 The bug-sweep I11 discipline: instrument, reproduce, correlate — then fix. Two

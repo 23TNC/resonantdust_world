@@ -22,6 +22,12 @@ The corpus part declarations are the tail's CONTRACT: nibble i = part i's varian
 nonzero nibbles beyond the declared part count REFUSE. Rotation seeds the initial
 facing (0–3; 4–15 refused) — spawns stop all facing south.
 
+Second review (user): "this gives us a spawn request for ANYTHING… spawn meat on
+the ground, in addition to spawning pawns" — adopted as the TYPE ROUTER
+([F6](forks.md#f6)): pawns → the CREATE mint, things → the cold-overlay SET
+(exact-cell, refuse-if-occupied), tiles → the tile-layer SET (the build lane).
+One request verb, three existing authority paths.
+
 ## The stance
 
 - **One client verb: `SPAWN_REQUEST def position variants`** ([F1](forks.md#f1)) —
