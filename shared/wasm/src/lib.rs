@@ -322,8 +322,14 @@ impl Content {
     /// `[packed_row, set_tic, …]` (stat-model F2); traits + stored conditions decode from
     /// `payload`. The eval is the SAME `needs_eval` the npc and worker import natively.
     #[wasm_bindgen(js_name = pawnConditions)]
-    pub fn pawn_conditions(&self, payload: Vec<u32>, needs: Vec<u32>, now_tic: u16) -> Vec<f64> {
-        let (traits, conditions) = decode_payload(&payload);
+    pub fn pawn_conditions(
+        &self,
+        kind: u16,
+        payload: Vec<u32>,
+        needs: Vec<u32>,
+        now_tic: u16,
+    ) -> Vec<f64> {
+        let (traits, conditions) = decode_payload(&self.bundle, kind, &payload);
         let need_rows = decode_need_rows(&needs);
         let active = resonantdust_content::needs_eval::active_conditions(
             &self.bundle, &traits, &need_rows, &conditions, now_tic,
@@ -344,8 +350,14 @@ impl Content {
     /// `[active_index, sum0..sum15]` (index = the u4 declaration order; empty → 0 = fine).
     /// The ONE `emotion_eval` argmax every consumer shares.
     #[wasm_bindgen(js_name = pawnEmotion)]
-    pub fn pawn_emotion(&self, payload: Vec<u32>, needs: Vec<u32>, now_tic: u16) -> Vec<f64> {
-        let (traits, conditions) = decode_payload(&payload);
+    pub fn pawn_emotion(
+        &self,
+        kind: u16,
+        payload: Vec<u32>,
+        needs: Vec<u32>,
+        now_tic: u16,
+    ) -> Vec<f64> {
+        let (traits, conditions) = decode_payload(&self.bundle, kind, &payload);
         let need_rows = decode_need_rows(&needs);
         let active = resonantdust_content::needs_eval::active_conditions(
             &self.bundle, &traits, &need_rows, &conditions, now_tic,
@@ -495,8 +507,14 @@ impl Content {
     /// (band crossing under the PIECEWISE rate, or a stored row's expiry), or `-1` when
     /// nothing ahead changes — what lets the panel re-evaluate on a schedule (F4).
     #[wasm_bindgen(js_name = pawnNextCrossing)]
-    pub fn pawn_next_crossing(&self, payload: Vec<u32>, needs: Vec<u32>, now_tic: u16) -> f64 {
-        let (traits, conditions) = decode_payload(&payload);
+    pub fn pawn_next_crossing(
+        &self,
+        kind: u16,
+        payload: Vec<u32>,
+        needs: Vec<u32>,
+        now_tic: u16,
+    ) -> f64 {
+        let (traits, conditions) = decode_payload(&self.bundle, kind, &payload);
         let need_rows = decode_need_rows(&needs);
         resonantdust_content::needs_eval::next_crossing_tic(
             &self.bundle, &traits, &need_rows, &conditions, now_tic,
@@ -560,8 +578,14 @@ impl Content {
     /// `stat_eval`. `0` = no walks / rows not fanned yet — the host falls back to
     /// `defaultTicsPerTile`.
     #[wasm_bindgen(js_name = pawnGroundSpeed)]
-    pub fn pawn_ground_speed(&self, payload: Vec<u32>, needs: Vec<u32>, now_tic: u16) -> f64 {
-        let (traits, conditions) = decode_payload(&payload);
+    pub fn pawn_ground_speed(
+        &self,
+        kind: u16,
+        payload: Vec<u32>,
+        needs: Vec<u32>,
+        now_tic: u16,
+    ) -> f64 {
+        let (traits, conditions) = decode_payload(&self.bundle, kind, &payload);
         let need_rows = decode_need_rows(&needs);
         let active = resonantdust_content::needs_eval::active_conditions(
             &self.bundle, &traits, &need_rows, &conditions, now_tic,
@@ -579,12 +603,13 @@ impl Content {
     pub fn tile_menu_options(
         &self,
         tile_def_id: u16,
+        pawn_kind: u16,
         payload: Vec<u32>,
         needs: Vec<u32>,
         now_tic: u16,
         cheb_distance: u32,
     ) -> js_sys::Array {
-        menu_options(&self.bundle, self.bundle.tile_interactions(tile_def_id), payload, needs, now_tic, cheb_distance)
+        menu_options(&self.bundle, self.bundle.tile_interactions(tile_def_id), pawn_kind, payload, needs, now_tic, cheb_distance)
     }
 
     /// The same for a clicked THING's kind (`object_id`) — trees offer `cut_down` here
@@ -593,12 +618,32 @@ impl Content {
     pub fn thing_menu_options(
         &self,
         object_id: u16,
+        pawn_kind: u16,
         payload: Vec<u32>,
         needs: Vec<u32>,
         now_tic: u16,
         cheb_distance: u32,
     ) -> js_sys::Array {
-        menu_options(&self.bundle, self.bundle.thing_interactions(object_id), payload, needs, now_tic, cheb_distance)
+        menu_options(&self.bundle, self.bundle.thing_interactions(object_id), pawn_kind, payload, needs, now_tic, cheb_distance)
+    }
+
+    /// The object's emitted LIGHTS (trait-lights F4/F8) through THE merged accessor —
+    /// flat **stride 9** per light: `[r, g, b, intensity, reach, fall_off, elevation,
+    /// radius, flags]` (`flags` bit 0 = cast, bit 1 = hot, bit 2 = flicker). Empty =
+    /// nothing on this object emits. Payload optional (cold things pass none).
+    #[wasm_bindgen(js_name = objectLights)]
+    pub fn object_lights_js(&self, kind: u16, payload: Vec<u32>) -> Vec<f64> {
+        let rows = resonantdust_codec::payload::payload_traits(&payload);
+        let lights = self.bundle.object_lights(kind, &rows);
+        let mut out = Vec::with_capacity(lights.len() * 9);
+        for l in lights {
+            out.extend_from_slice(&[
+                l.color.0, l.color.1, l.color.2, l.intensity, l.reach, l.fall_off,
+                l.elevation, l.radius,
+                f64::from(u8::from(l.cast) | (u8::from(l.hot) << 1) | (u8::from(l.flicker) << 2)),
+            ]);
+        }
+        out
     }
 
     /// A gameplay def's u32 `definition_reference` (registry-first, seed fallback) — the
@@ -621,8 +666,14 @@ impl Content {
     /// The EFFECTIVE max of a need for a pawn's rows (`need_bounds` hi — the leveled-trait
     /// cap): the inventory panel's GRID SIZE (inventory F7; a level-2 trait widens it).
     #[wasm_bindgen(js_name = needMax)]
-    pub fn need_max(&self, payload: Vec<u32>, need: String, now_tic: u16) -> Option<f64> {
-        let (traits, conditions) = decode_payload(&payload);
+    pub fn need_max(
+        &self,
+        kind: u16,
+        payload: Vec<u32>,
+        need: String,
+        now_tic: u16,
+    ) -> Option<f64> {
+        let (traits, conditions) = decode_payload(&self.bundle, kind, &payload);
         let np = self.bundle.need_params(&need)?;
         let (_, hi) = resonantdust_content::needs_eval::need_bounds(
             &self.bundle, &need, &np, &traits, &conditions, now_tic,
@@ -649,7 +700,7 @@ impl Content {
                 self.bundle.interaction_params(&b.name).is_some_and(|ip| ip.location == "slot")
             })
             .collect();
-        menu_options(&self.bundle, binds, payload, needs, now_tic, 0)
+        menu_options(&self.bundle, binds, pawn_object_id, payload, needs, now_tic, 0)
     }
 
     /// A thing's placeholder/background colour by `object_id` (`0xRRGGBB`), or `None` —
@@ -969,12 +1020,13 @@ impl Content {
 fn menu_options(
     bundle: &dsl::loader::Bundle,
     binds: Vec<dsl::loader::InteractionBind>,
+    pawn_kind: u16,
     payload: Vec<u32>,
     needs: Vec<u32>,
     now_tic: u16,
     cheb_distance: u32,
 ) -> js_sys::Array {
-    let (traits, conditions) = decode_payload(&payload);
+    let (traits, conditions) = decode_payload(bundle, pawn_kind, &payload);
     let need_rows = decode_need_rows(&needs);
     let active = resonantdust_content::needs_eval::active_conditions(
         bundle, &traits, &need_rows, &conditions, now_tic,
@@ -1017,9 +1069,16 @@ fn menu_options(
 }
 
 /// Decode a pawn payload into its (trait rows, condition rows) — the stat-model shapes.
-fn decode_payload(payload: &[u32]) -> (Vec<u32>, Vec<(u32, u16)>) {
+/// Trait rows go through THE merged accessor (trait-lights F5): the kind's CONSTANT
+/// binds derive here beside the payload's runtime rows, so every eval on this side of
+/// the wasm boundary sees the same traits the worker and npc do.
+fn decode_payload(
+    bundle: &dsl::loader::Bundle,
+    kind: u16,
+    payload: &[u32],
+) -> (Vec<u32>, Vec<(u32, u16)>) {
     (
-        resonantdust_codec::payload::payload_traits(payload),
+        bundle.object_trait_rows(kind, &resonantdust_codec::payload::payload_traits(payload)),
         resonantdust_codec::payload::payload_conditions(payload),
     )
 }

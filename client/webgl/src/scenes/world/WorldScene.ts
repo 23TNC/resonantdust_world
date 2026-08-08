@@ -155,7 +155,7 @@ export class WorldScene extends Scene {
           // Stride 4: [condition_id, magnitude_sum, remaining, priority]. The eval returns
           // them ALREADY SORTED (conditions F3, emotions F4 — priority desc, Σ magnitude
           // desc, id asc); this loop preserves that order and must never re-sort.
-          const flat = c.pawnConditions(payload, needs, now);
+          const flat = c.pawnConditions(info.kind, payload, needs, now);
           for (let i = 0; i + 3 < flat.length; i += 4) {
             // `condition_id` is a u32 gameplay definition_reference now (interactions F1) —
             // labels resolve BY REF, never by position. The pie slices + tooltip lines
@@ -193,7 +193,7 @@ export class WorldScene extends Scene {
             });
           }
           // The ACTIVE emotion (emotions F3): `[index, sum0..sum15]` from the ONE argmax.
-          const em = c.pawnEmotion(payload, needs, now);
+          const em = c.pawnEmotion(info.kind, payload, needs, now);
           const idx = em.length > 0 ? em[0] : 0;
           emotion = {
             index: idx,
@@ -258,7 +258,7 @@ export class WorldScene extends Scene {
           const payload = this.moverLayer.pawnPayload(entity) ?? new Uint32Array(0);
           const d = this.ctx.client.ticDelta(0);
           const now = d === null ? 0 : ((Math.floor(d) % 0x10000) + 0x10000) % 0x10000;
-          const hi = c.needMax(payload, "inventory", now);
+          const hi = c.needMax(info.kind, payload, "inventory", now);
           return hi === undefined || hi === null ? null : Math.round(hi);
         } catch {
           return null;
@@ -757,7 +757,7 @@ export class WorldScene extends Scene {
       const payload2 = this.moverLayer.pawnPayload(actor) ?? new Uint32Array(0);
       const needs2 = this.moverLayer.pawnNeeds(actor);
       const cheb2 = Math.max(Math.abs(info.tileX - victim.tileX), Math.abs(info.tileY - victim.tileY));
-      const options = (getContent().thingMenuOptions(victim.kind, payload2, needs2, now2, cheb2) as unknown as PieMenuOption[])
+      const options = (getContent().thingMenuOptions(victim.kind, info.kind, payload2, needs2, now2, cheb2) as unknown as PieMenuOption[])
         // Slot-vocabulary interactions (drop) bind from the INVENTORY panel, not a
         // world click — offering them here would only refuse at the composer.
         .filter((o) => !o.inputs.some((n) => n === "slot" || n === "item"));
@@ -785,7 +785,7 @@ export class WorldScene extends Scene {
       const tileY = Math.floor((p.y + p.height - 1) / SQUARE);
       const kind = this.bridge.thingDefAt(tileX, tileY);
       if (kind === 0) return;
-      const options = getContent().thingMenuOptions(kind, payload, needs, now, cheb(tileX, tileY)) as unknown as PieMenuOption[];
+      const options = getContent().thingMenuOptions(kind, info.kind, payload, needs, now, cheb(tileX, tileY)) as unknown as PieMenuOption[];
       this.pieMenu.open(cx, cy, options, (o) => this.fireOption(o, actor, tileX, tileY));
       return;
     }
@@ -793,7 +793,7 @@ export class WorldScene extends Scene {
     const tileY = Math.floor(w.y / SQUARE);
     const defId = this.bridge.tileDefAt(tileX, tileY);
     if (defId === 0) return; // unstreamed ground — nothing to offer
-    const options = getContent().tileMenuOptions(defId, payload, needs, now, cheb(tileX, tileY)) as unknown as PieMenuOption[];
+    const options = getContent().tileMenuOptions(defId, info.kind, payload, needs, now, cheb(tileX, tileY)) as unknown as PieMenuOption[];
     this.pieMenu.open(cx, cy, options, (o) => this.fireOption(o, actor, tileX, tileY));
   }
 

@@ -714,11 +714,6 @@ fn one_u16() -> u16 {
 }
 
 impl TraitBindToml {
-  fn pair(&self) -> (String, u16) {
-    let (n, l, _) = self.bind();
-    (n, l)
-  }
-
   /// The full resolved bind: `(name, level, constant)` — a bare string is
   /// level 1, non-constant.
   fn bind(&self) -> (String, u16, bool) {
@@ -3005,6 +3000,78 @@ tint = "#ffffff"
     let over = text.replace("level = 2, constant = true", "level = 3, constant = true");
     let e = load(&[src("t.toml", &over)]).unwrap_err();
     assert!(e.iter().any(|e| e.message.contains("out of range")), "{e:?}");
+  }
+
+  /// trait-lights F5 (P2): the merged accessor — a constant bind appears with the
+  /// payload absent; a forged payload row for a constant-bound trait is IGNORED
+  /// (constant wins); runtime rows for other traits ride through. And F4/F8 through
+  /// `object_lights`: the torch yields its bound level's tuple; five light traits
+  /// yield five tuples, nothing drops.
+  #[test]
+  fn the_merged_accessor_derives_constants_and_lights() {
+    let mut text = String::from(
+      r##"
+[[trait]]
+name = "glow_a"
+emit_light = [ { color = "#ff0000", reach = 4 } ]
+
+[[trait]]
+name = "marker"
+
+[[thing]]
+name = "torch"
+type = "biome-thing"
+kind = "torch"
+subType = ["default"]
+variant = ["0"]
+traits = [ { name = "glow_a", constant = true } ]
+[[thing.part]]
+tint = "#ffffff"
+
+[[thing]]
+name = "beacon"
+type = "biome-thing"
+kind = "beacon"
+subType = ["default"]
+variant = ["0"]
+traits = [
+"##,
+    );
+    for i in 0..5 {
+      // five distinct light traits, all bound constant on one thing (F8: all attach)
+      text = format!(
+        "[[trait]]\nname = \"g{i}\"\nemit_light = [ {{ color = \"#00ff00\", reach = {} }} ]\n{text}",
+        i + 1
+      );
+    }
+    text.push_str(
+      &(0..5).map(|i| format!("  {{ name = \"g{i}\", constant = true }},\n")).collect::<String>(),
+    );
+    text.push_str("]\n[[thing.part]]\ntint = \"#ffffff\"\n");
+    let b = load(&[src("t.toml", &text)]).expect("clean load");
+
+    let torch = b.thing_object_id("torch").expect("torch");
+    // The constant bind appears with NO payload…
+    let rows = b.object_trait_rows(torch, &[]);
+    assert_eq!(rows.len(), 1);
+    // …and a forged payload row for the SAME trait is ignored (constant wins), while
+    // a runtime row for another trait rides through.
+    let glow_ref = b.gameplay_reference("trait", "glow_a").expect("ref");
+    let marker_ref = b.gameplay_reference("trait", "marker").expect("ref");
+    let forged = resonantdust_codec::object::pack_gameplay_row(glow_ref, 7);
+    let runtime = resonantdust_codec::object::pack_gameplay_row(marker_ref, 1);
+    let merged = b.object_trait_rows(torch, &[forged, runtime]);
+    assert_eq!(merged.len(), 2, "constant + the marker row: {merged:?}");
+    assert_eq!(merged[0], resonantdust_codec::object::pack_gameplay_row(glow_ref, 1));
+    assert_eq!(merged[1], runtime);
+
+    // Lights: the torch yields exactly its bound tuple; the beacon yields five.
+    let lights = b.object_lights(torch, &[]);
+    assert_eq!(lights.len(), 1);
+    assert_eq!(lights[0].reach, 4.0);
+    let beacon = b.thing_object_id("beacon").expect("beacon");
+    let five = b.object_lights(beacon, &[]);
+    assert_eq!(five.len(), 5, "all five attach — nothing drops (F8)");
   }
 
   /// trait-lights F6: a NON-constant trait bind on a non-pawn thing refuses with a

@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use client::world::tile_to_position;
-use resonantdust_codec::action::{EXECUTE_INTERACTION, PROMOTE};
+use resonantdust_codec::action::EXECUTE_INTERACTION;
 use resonantdust_codec::object::{def_kind_id, position_macro};
 use resonantdust_codec::payload::{payload_conditions, payload_traits};
 use resonantdust_codec::speed::DEFAULT_TICS_PER_TILE;
@@ -97,7 +97,14 @@ impl Bunnies {
     }
 
     fn rows_of(&self, id: u32) -> (Vec<u32>, Vec<(u32, u16)>, Vec<(u32, u16)>) {
-        let traits = self.payloads.get(&id).map(|p| payload_traits(p)).unwrap_or_default();
+        // trait-lights F5: constant binds derive through THE merged accessor.
+        let traits = match &self.bundle {
+            Some(b) => b.object_trait_rows(
+                def_kind_id(self.def),
+                &self.payloads.get(&id).map(|p| payload_traits(p)).unwrap_or_default(),
+            ),
+            None => self.payloads.get(&id).map(|p| payload_traits(p)).unwrap_or_default(),
+        };
         let conds = self.payloads.get(&id).map(|p| payload_conditions(p)).unwrap_or_default();
         let needs =
             self.need_rows.get(&id).map(|m| m.values().copied().collect()).unwrap_or_default();

@@ -8,9 +8,9 @@ use std::time::Duration;
 
 use client::world::tile_to_position;
 use client::Event;
-use resonantdust_codec::action::{EXECUTE_INTERACTION, GRANT_CONDITION, PROMOTE, SET_NEED};
+use resonantdust_codec::action::{EXECUTE_INTERACTION, GRANT_CONDITION, SET_NEED};
 use resonantdust_codec::object::{
-    def_sans_variant, gameplay_row_key, pack_gameplay_row, position_macro, TYPE_PAWN,
+    def_kind_id, def_sans_variant, gameplay_row_key, pack_gameplay_row, position_macro, TYPE_PAWN,
 };
 use resonantdust_codec::payload::{payload_conditions, payload_traits};
 use resonantdust_codec::refs::entity_ref_type_id;
@@ -237,7 +237,8 @@ impl Wolves {
         let Some(wolf) = self.wolf else { return };
         let Some(bundle) = &self.bundle else { return };
         let payload = self.payloads.get(&wolf).cloned().unwrap_or_default();
-        let trait_rows = payload_traits(&payload);
+        // trait-lights F5: constant binds derive through THE merged accessor.
+        let trait_rows = bundle.object_trait_rows(def_kind_id(self.def), &payload_traits(&payload));
         let cond_rows = payload_conditions(&payload);
         let needs = self.wolf_needs();
 
@@ -498,7 +499,10 @@ impl Wolves {
     fn usable_eat(&self, kind: u16, now: u16) -> Option<(String, f64)> {
         let bundle = self.bundle.as_ref()?;
         let wolf = self.wolf?;
-        let trait_rows = self.payloads.get(&wolf).map(|p| payload_traits(p)).unwrap_or_default();
+        let trait_rows = bundle.object_trait_rows(
+            def_kind_id(self.def),
+            &self.payloads.get(&wolf).map(|p| payload_traits(p)).unwrap_or_default(),
+        );
         let cond_rows =
             self.payloads.get(&wolf).map(|p| payload_conditions(p)).unwrap_or_default();
         let need_rows = self.wolf_needs();
@@ -541,7 +545,10 @@ impl Wolves {
     fn usable_drink(&self, kind: u16, now: u16) -> Option<(String, f64)> {
         let bundle = self.bundle.as_ref()?;
         let wolf = self.wolf?;
-        let trait_rows = self.payloads.get(&wolf).map(|p| payload_traits(p)).unwrap_or_default();
+        let trait_rows = bundle.object_trait_rows(
+            def_kind_id(self.def),
+            &self.payloads.get(&wolf).map(|p| payload_traits(p)).unwrap_or_default(),
+        );
         let cond_rows =
             self.payloads.get(&wolf).map(|p| payload_conditions(p)).unwrap_or_default();
         let need_rows = self.wolf_needs();
@@ -677,11 +684,14 @@ impl Wolves {
     /// covers only the pre-fan window.
     fn derived_speed(&self) -> u16 {
         let Some(bundle) = &self.bundle else { return DEFAULT_TICS_PER_TILE };
-        let rows = self
-            .wolf
-            .and_then(|w| self.payloads.get(&w))
-            .map(|p| payload_traits(p))
-            .unwrap_or_default();
+        let rows = bundle.object_trait_rows(
+            def_kind_id(self.def),
+            &self
+                .wolf
+                .and_then(|w| self.payloads.get(&w))
+                .map(|p| payload_traits(p))
+                .unwrap_or_default(),
+        );
         let v = stat_eval::stat_value(bundle, "ground_speed", &rows, &self.active_set);
         if v >= 1.0 { v.round() as u16 } else { DEFAULT_TICS_PER_TILE }
     }

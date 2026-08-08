@@ -113,15 +113,53 @@ fn mint_parts(def_sans_variant: u32, nibbles: &[u8; 8], part_count: usize) -> Ve
 
 /// The CREATE sidecars a def implies (stat-model F11): TRAIT payload entries + full-value
 /// packed need rows, composed HERE from the corpus — the pawn module holds none.
+/// The pawn's gameplay rows for eval — (trait rows, condition rows) — through THE
+/// merged-traits accessor (trait-lights F5): the kind's CONSTANT binds derive beside
+/// the payload's runtime rows, so the worker, npc and client evaluate the same traits
+/// by construction. Kind comes from the pawn's own state row; no row → no rows.
+fn pawn_gameplay_rows(
+    bundle: &resonantdust_content::loader::Bundle,
+    pawn: &pawn::DbConnection,
+    entity: u32,
+) -> (Vec<u32>, Vec<(u32, u16)>) {
+    let kind = pawn
+        .db()
+        .entity_state()
+        .iter()
+        .find(|r| r.entity_reference == entity)
+        .map(|r| def_kind_id(r.definition_reference))
+        .unwrap_or(0);
+    let (raw_traits, conditions) = pawn
+        .db()
+        .payload()
+        .iter()
+        .find(|r| r.entity_reference == entity)
+        .map(|r| {
+            (
+                resonantdust_codec::payload::payload_traits(&r.payload),
+                resonantdust_codec::payload::payload_conditions(&r.payload),
+            )
+        })
+        .unwrap_or_default();
+    (bundle.object_trait_rows(kind, &raw_traits), conditions)
+}
+
 fn mint_sidecars(bundle: &resonantdust_content::loader::Bundle, def: u32) -> (Vec<u32>, Vec<u32>) {
     let kind = def_kind_id(def);
     let mut trait_rows = Vec::new();
     let mut trait_words = Vec::new();
     for b in bundle.thing_traits(kind) {
+        // trait-lights F5: a CONSTANT bind is derived by every reader through the
+        // merged accessor — minting a row for it would just be shadowed data. The
+        // full-value need mint below still needs the trait IN HAND for its caps, so
+        // constant binds join `trait_rows` (the eval set) but never `trait_words`
+        // (the stored payload).
         if let Some(r) = bundle.gameplay_reference("trait", &b.name) {
             let row = resonantdust_codec::object::pack_gameplay_row(r, b.level);
             trait_rows.push(row);
-            trait_words.extend_from_slice(&resonantdust_codec::payload::trait_entry(row));
+            if !b.constant {
+                trait_words.extend_from_slice(&resonantdust_codec::payload::trait_entry(row));
+            }
         }
     }
     let mut need_rows = Vec::new();
@@ -168,12 +206,20 @@ needs = [ { need = "corpus", max = [1.0, 2.0] } ]
 
 [[thing]]
 name = "bunny"
+type = "pawn"
+kind = "bunny"
+subType = ["animal"]
+variant = ["0"]
 needs = ["corpus"]
 traits = [ { name = "corpus", level = 1 } ]
 packed = [ { tint = "#b0a090" } ]
 
 [[thing]]
 name = "wolf"
+type = "pawn"
+kind = "wolf"
+subType = ["animal"]
+variant = ["0"]
 needs = ["corpus"]
 traits = [ { name = "corpus", level = 2 } ]
 packed = [ { tint = "#5f6b3c" } ]
@@ -223,6 +269,10 @@ needs = [ { need = "inventory", max = [6.0] } ]
 
 [[thing]]
 name = "human"
+type = "pawn"
+kind = "human"
+subType = ["human"]
+variant = ["0"]
 needs = ["inventory"]
 traits = [ { name = "inventory", level = 1 } ]
 packed = [ { tint = "#c0b0a0" } ]
@@ -236,6 +286,52 @@ packed = [ { tint = "#c0b0a0" } ]
         let q = resonantdust_codec::object::gameplay_row_data(needs[0]);
         let v = f64::from(resonantdust_codec::value::dequantize(q, np.min as f32, np.max as f32));
         assert!((v - 6.0).abs() < 0.01, "6 free slots at birth, got {v}");
+    }
+
+    /// trait-lights F5 (P2): a CONSTANT bind never mints a payload row — readers derive
+    /// it — while its levels still cap the need mint (the trait is IN HAND at mint).
+    #[test]
+    fn mint_sidecars_skips_constant_binds() {
+        let src = r##"
+[[need]]
+name = "corpus"
+min = 0
+max = 2
+
+[[trait]]
+name = "corpus"
+needs = [ { need = "corpus", max = [1.0, 2.0] } ]
+
+[[trait]]
+name = "night_eyes"
+emit_light = [ { color = "#88ff88", reach = 3 } ]
+
+[[thing]]
+name = "cat"
+type = "pawn"
+kind = "cat"
+subType = ["animal"]
+variant = ["0"]
+needs = ["corpus"]
+traits = [ { name = "corpus", level = 2 }, { name = "night_eyes", constant = true } ]
+packed = [ { tint = "#303030" } ]
+"##;
+        let b = resonantdust_content::loader::load(&[("t.toml".into(), src.into())])
+            .expect("fixture loads");
+        let kind = b.thing_object_id("cat").expect("cat");
+        let def = pack_definition_reference(0, pack_kind_reference(kind, 0));
+        let (words, needs) = mint_sidecars(&b, def);
+        // ONE stored trait entry (corpus — non-constant); night_eyes derives instead.
+        let stored = resonantdust_codec::payload::payload_traits(&words);
+        assert_eq!(stored.len(), 1, "only the non-constant bind mints: {stored:?}");
+        let corpus_ref = b.gameplay_reference("trait", "corpus").expect("ref");
+        assert_eq!(stored[0], resonantdust_codec::object::pack_gameplay_row(corpus_ref, 2));
+        // The constant bind still reaches eval through the accessor — and the light rides.
+        let merged = b.object_trait_rows(kind, &stored);
+        assert_eq!(merged.len(), 2, "constant + stored: {merged:?}");
+        assert_eq!(b.object_lights(kind, &stored).len(), 1, "the cat's eyes glow");
+        // The need still minted under the corpus cap (level 2 ⇒ the 0..2 encoding max).
+        assert_eq!(needs.len(), 1);
     }
 }
 
@@ -619,18 +715,7 @@ async fn main() {
         // gate refuses a 0-derived pawn at the front door. (Hoisted to pass level by
         // chord-movement: the compose's resolves need it too.)
         let ground_speed_tics = |entity: u32, now: u16| -> u16 {
-            let (trait_rows, cond_rows) = pawn
-                .db()
-                .payload()
-                .iter()
-                .find(|r| r.entity_reference == entity)
-                .map(|r| {
-                    (
-                        resonantdust_codec::payload::payload_traits(&r.payload),
-                        resonantdust_codec::payload::payload_conditions(&r.payload),
-                    )
-                })
-                .unwrap_or_default();
+            let (trait_rows, cond_rows) = pawn_gameplay_rows(&bundle, &pawn, entity);
             let need_rows: Vec<(u32, u16)> = pawn
                 .db()
                 .needs()
@@ -1237,18 +1322,7 @@ async fn main() {
                         continue;
                     };
                     let kind = def_kind_id(prow.definition_reference);
-                    let (trait_rows, cond_rows) = pawn
-                        .db()
-                        .payload()
-                        .iter()
-                        .find(|r| r.entity_reference == *obj)
-                        .map(|r| {
-                            (
-                                resonantdust_codec::payload::payload_traits(&r.payload),
-                                resonantdust_codec::payload::payload_conditions(&r.payload),
-                            )
-                        })
-                        .unwrap_or_default();
+                    let (trait_rows, cond_rows) = pawn_gameplay_rows(&bundle, &pawn, *obj);
                     // The mirrored needs, with THIS write upserted.
                     let mut need_rows: Vec<(u32, u16)> = pawn
                         .db()
@@ -1850,20 +1924,10 @@ async fn main() {
                         reject("no carrier in range offers this interaction (F4/F2 location rule)");
                         continue;
                     };
-                    // The pawn's gameplay rows: traits + stored conditions from the payload
-                    // sidecar, needs from the `needs` sub-table (stat-model F1/F2).
-                    let (trait_rows, cond_rows) = pawn
-                        .db()
-                        .payload()
-                        .iter()
-                        .find(|r| r.entity_reference == target)
-                        .map(|r| {
-                            (
-                                resonantdust_codec::payload::payload_traits(&r.payload),
-                                resonantdust_codec::payload::payload_conditions(&r.payload),
-                            )
-                        })
-                        .unwrap_or_default();
+                    // The pawn's gameplay rows: merged traits (constant binds derive —
+                    // trait-lights F5) + stored conditions from the payload sidecar,
+                    // needs from the `needs` sub-table (stat-model F1/F2).
+                    let (trait_rows, cond_rows) = pawn_gameplay_rows(&bundle, &pawn, target);
                     let need_rows: Vec<(u32, u16)> = pawn
                         .db()
                         .needs()
@@ -2046,18 +2110,7 @@ async fn main() {
                         let (eval_traits, eval_conds, eval_needs) = if sat_target == target {
                             (&trait_rows, &cond_rows, &need_rows)
                         } else {
-                            let (tr, cr) = pawn
-                                .db()
-                                .payload()
-                                .iter()
-                                .find(|r| r.entity_reference == sat_target)
-                                .map(|r| {
-                                    (
-                                        resonantdust_codec::payload::payload_traits(&r.payload),
-                                        resonantdust_codec::payload::payload_conditions(&r.payload),
-                                    )
-                                })
-                                .unwrap_or_default();
+                            let (tr, cr) = pawn_gameplay_rows(&bundle, &pawn, sat_target);
                             s_traits = tr;
                             s_conds = cr;
                             s_needs = pawn

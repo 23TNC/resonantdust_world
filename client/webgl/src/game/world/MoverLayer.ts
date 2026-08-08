@@ -619,7 +619,10 @@ export class MoverLayer {
     const needs = this.pawnNeeds(entity);
     const d = this.client.ticDelta(0);
     const now = d === null ? 0 : ((Math.floor(d) % 0x10000) + 0x10000) % 0x10000;
-    const s = this.content.pawnGroundSpeed(payload, needs, now);
+    // The kind routes the eval through THE merged-traits accessor (trait-lights F5)
+    // so a constant bind contributes here exactly as it does worker-side.
+    const kind = this.movers.get(entity)?.kind ?? 0;
+    const s = this.content.pawnGroundSpeed(kind, payload, needs, now);
     return s >= 1 ? Math.round(s) : defaultTicsPerTile();
   }
 

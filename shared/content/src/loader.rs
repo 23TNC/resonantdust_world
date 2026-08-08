@@ -1251,6 +1251,55 @@ impl Bundle {
       .map(|d| d.traits.clone())
       .unwrap_or_default()
   }
+  /// THE merged-traits accessor (trait-lights F5) — the ONE answer to "what traits
+  /// does this object carry", as packed gameplay rows: the def's CONSTANT binds
+  /// (derived here, zero storage) followed by the payload's runtime rows. On a name
+  /// collision the CONSTANT bind wins and the payload row is ignored — a forged row
+  /// cannot shadow authored truth. This is also the enforcement seam: constant binds
+  /// never come FROM storage, so nothing at runtime can have written one (I4).
+  pub fn object_trait_rows(&self, object_id: u16, payload_rows: &[u32]) -> Vec<u32> {
+    let mut rows: Vec<u32> = Vec::new();
+    let mut constant_keys: Vec<u16> = Vec::new();
+    for b in self.thing_traits(object_id) {
+      if !b.constant {
+        continue;
+      }
+      if let Some(r) = self.gameplay_reference("trait", &b.name) {
+        rows.push(resonantdust_codec::object::pack_gameplay_row(r, b.level));
+        constant_keys.push(resonantdust_codec::object::gameplay_row_key(
+          resonantdust_codec::object::pack_gameplay_row(r, b.level),
+        ));
+      }
+    }
+    for &row in payload_rows {
+      if !constant_keys.contains(&resonantdust_codec::object::gameplay_row_key(row)) {
+        rows.push(row);
+      }
+    }
+    rows
+  }
+
+  /// The object's emitted LIGHTS (trait-lights F4/F8): every merged trait whose bound
+  /// level authors an `emit_light` tuple yields it, in authored order — constant binds
+  /// first (def order), then runtime rows. NOTHING drops here; the render's spill
+  /// packing (F8) is presentation, not derivation.
+  pub fn object_lights(&self, object_id: u16, payload_rows: &[u32]) -> Vec<TraitLight> {
+    let mut out = Vec::new();
+    for row in self.object_trait_rows(object_id, payload_rows) {
+      let nref = resonantdust_codec::object::gameplay_row_reference(
+        resonantdust_codec::object::GAMEPLAY_TRAIT,
+        row,
+      );
+      let Some((_, name)) = self.gameplay_lookup(nref) else { continue };
+      let Some(p) = self.trait_params(&name) else { continue };
+      let level = resonantdust_codec::object::gameplay_row_data(row) as usize;
+      if level >= 1 && level <= p.emit_light.len() {
+        out.push(p.emit_light[level - 1]);
+      }
+    }
+    out
+  }
+
   /// A thing kind's interaction bindings — `(interaction name, magnitude)`
   /// (stat-model F5/F9): what this carrier OFFERS.
   pub fn thing_interactions(&self, object_id: u16) -> Vec<InteractionBind> {

@@ -27,19 +27,19 @@ decisions in [`forks.md`](forks.md) (F#), the anticipated-issue inventory in
 
 ## P2 — the ONE merged-traits accessor
 
-- [ ] shared/content: `object_traits(def, payload)` — the def's CONSTANT binds
+- [x] shared/content: `object_traits(def, payload)` — the def's CONSTANT binds
       merged with payload rows, constant wins on collision (F5). Acceptance:
       unit — a constant bind appears with payload absent; a forged payload row
       for a constant-bound trait is ignored.
-- [ ] `object_lights(def, payload)` beside it: every merged trait whose bound
+- [x] `object_lights(def, payload)` beside it: every merged trait whose bound
       level authors emit_light yields its tuple, in authored order — NOTHING
       drops (F8). Acceptance: unit — torch yields one tuple matching its
       authored level; a def with five light traits yields five.
-- [ ] Move ALL trait readers onto the accessor (I1): stat_eval, emotions,
+- [x] Move ALL trait readers onto the accessor (I1): stat_eval, emotions,
       inventory capacity, food-chain caps, Tag checks, npc, webgl panels.
       Acceptance: grep shows no direct def-bind/payload trait merge outside
       the accessor; emotions goldens unchanged (I7).
-- [ ] `mint_sidecars` skips constant binds (they derive; nothing mints).
+- [x] `mint_sidecars` skips constant binds (they derive; nothing mints).
       Acceptance: a spawned human's payload rows match pre-change (no bind is
       constant yet — I9); a test kind with a constant bind mints no row for it.
 
