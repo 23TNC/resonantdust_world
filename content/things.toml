@@ -255,7 +255,9 @@ kind = "male"
 subType = ["human"]
 variant = ["0"]
 needs = ["thirst", "hunger", "corpus", "inventory"]
-traits = ["biological_lifeform", { name = "walks", level = 1 }, { name = "lumberjack", level = 1 }, { name = "corpus", level = 1 }, { name = "inventory", level = 1 }, "forager", "omnivore"]
+# trait-lights P4 DRILL: the constant bind lights the EXISTING male (derived, no
+# mint) — the acceptance capture; remove after the stream closes if undesired.
+traits = ["biological_lifeform", { name = "walks", level = 1 }, { name = "lumberjack", level = 1 }, { name = "corpus", level = 1 }, { name = "inventory", level = 1 }, "forager", "omnivore", { name = "emit_light", level = 1, constant = true }]
 interactions = [ { name = "death" }, { name = "drop" } ]
 
   [[thing.part]]

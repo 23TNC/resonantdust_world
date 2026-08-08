@@ -25,6 +25,8 @@ import type { WasmClient, StateObject, MoveIntent } from "../../client/WasmClien
 import { defaultTicsPerTile } from "../../client/WasmClient";
 import type { Content } from "../../client/wasm";
 import type { Viewport } from "../viewport/Viewport";
+import type { PrimitiveLight } from "../viewport/SquareCache";
+import { SQUARE } from "../viewport/squareMath";
 import type { PackedChannel } from "../viewport/material";
 import { moverSlotTexture } from "./WorldBridge";
 import { placeThing, readLayout } from "./thingPlacement";
@@ -230,6 +232,14 @@ interface Mover {
    *  recreated mover whose `lastIntentTic` is null (the hole the teleport hid in); and
    *  the AUTH probe scales its stride threshold by the tic gap between rows. */
   authTic: number | null;
+  /** trait-lights P4/F8: the SPILL light prims — lights past the part count ride
+   *  light-only sibling prims anchored by `carrierOf` (the reconciler re-derives their
+   *  position from the carrier every frame, so they never need moving; they only need
+   *  removing with the pawn). */
+  lightPrims: number[];
+  /** The lights' identity last built — a change (a payload trait joined, a hot-swap
+   *  retuned the corpus) rebuilds the pawn's prims so every tuple re-attaches. */
+  lightSig: string;
 }
 
 /** Render-chase cap: the render may move at most this multiple of the pawn's true speed
@@ -377,6 +387,32 @@ export class MoverLayer {
 
   /** Wall-clock of the previous {@link tick} — the chase integrates real dt. */
   private lastTickMs = 0;
+
+  /** The mover's emitted LIGHTS (trait-lights P4): the merged traits' tuples through
+   *  the wasm `objectLights` (stride 9 — the ONE accessor, F5), shaped for the prim
+   *  record. `hot` is FORCED — a mover's light anchor moves every frame, whatever the
+   *  corpus says. `fall_off` (slot 5) is authored-not-yet-consumed (I10). */
+  private moverLights(kind: number, entity: number): PrimitiveLight[] {
+    const payload = this.payloads.get(entity) ?? new Uint32Array(0);
+    const flat = this.content.objectLights(kind, payload);
+    const out: PrimitiveLight[] = [];
+    for (let i = 0; i + 8 < flat.length; i += 9) {
+      const reach = flat[i + 4];
+      if (!(reach > 0)) continue; // reach IS the "no light" test — the shared law
+      const flags = flat[i + 8];
+      out.push({
+        color: [flat[i], flat[i + 1], flat[i + 2]],
+        intensity: flat[i + 3],
+        reach: reach * SQUARE,
+        emitterRadius: flat[i + 7] * SQUARE,
+        height: flat[i + 6] * SQUARE, // authored ELEVATION — the torch emits from its flame
+        castShadows: (flags & 1) !== 0,
+        hot: true,
+        flicker: (flags & 4) !== 0,
+      });
+    }
+    return out;
+  }
 
   /** Record a teleport-probe event (ring-capped) and mirror it to the console so a
    *  soak's timeline reads straight out of devtools (spawn-authority P5). */
@@ -988,11 +1024,20 @@ export class MoverLayer {
       });
     }
 
+    // trait-lights P4: the mover's LIGHTS from its merged traits — part i carries
+    // light i on its own prim (the torch pattern: billboard + light, one prim); lights
+    // past the part count SPILL into light-only sibling prims (F8 — nothing drops).
+    const lights = this.moverLights(kind, key);
+    const lightSig = JSON.stringify(lights);
+
     // A slot-count change (a late payload join won't change the count — the DSL fixes it —
-    // but a content hot-swap can): rebuild from scratch.
-    if (m && m.parts.length !== specs.length) {
+    // but a content hot-swap can), or the LIGHT SET changing (a payload trait joined, a
+    // corpus retune): rebuild from scratch so every tuple re-attaches.
+    if (m && (m.parts.length !== specs.length || m.lightSig !== lightSig)) {
       for (const p of m.parts) this.viewport.warmRemovePrim(p.id);
+      for (const id of m.lightPrims) this.viewport.warmRemovePrim(id);
       m.parts = [];
+      m.lightPrims = [];
     }
 
     if (!m || m.parts.length === 0) {
@@ -1019,6 +1064,7 @@ export class MoverLayer {
           rotation: facing, // P4: the record carries the TRUE cardinal (the frame follows it anyway)
           carrierOf: i > 0 ? parts[0].id : undefined, // P5: pieces name the carrier owner
           elevation: sp.elevation ?? 0, // z-positioning P3 — `y` is already shifted north by this
+          light: lights[i], // trait-lights P4: part i carries light i (undefined past the set)
         });
         parts.push({
           id,
@@ -1026,8 +1072,27 @@ export class MoverLayer {
           tint: sp.tint, geoColor: sp.geoColor, zIndex: sp.zIndex,
         });
       }
+      // The SPILL (F8): lights past the part count ride light-only sibling prims —
+      // no texture, no outline, an EMPTY box (nothing bakes; the record path accepts
+      // emit-only prims), anchored to the carrier so the reconciler re-derives their
+      // ground position every frame. Mint once, remove with the pawn.
+      const lightPrims: number[] = [];
+      for (let j = specs.length; j < lights.length; j++) {
+        lightPrims.push(this.viewport.warmAddPrim({
+          texture: this.viewport.white,
+          x: ax, y: ay, width: 0, height: 0,
+          tint: 0,
+          zIndex: orderRowBase,
+          hot: true,
+          rotation: facing,
+          carrierOf: parts[0].id,
+          light: lights[j],
+        }));
+      }
       if (m) {
         m.parts = parts;
+        m.lightPrims = lightPrims;
+        m.lightSig = lightSig;
         m.macroPosition = macroPosition;
       } else {
         this.movers.set(key, {
@@ -1037,6 +1102,8 @@ export class MoverLayer {
           lastFaceMs: 0,
           lastIntentTic: null,
           authTic: null,
+          lightPrims,
+          lightSig,
         });
       }
       return;
@@ -1082,6 +1149,7 @@ export class MoverLayer {
     const m = this.movers.get(key);
     if (m) {
       for (const p of m.parts) this.viewport.warmRemovePrim(p.id);
+      for (const id of m.lightPrims) this.viewport.warmRemovePrim(id);
       this.movers.delete(key);
     }
     this.pawnDefs.delete(key);
@@ -1094,6 +1162,7 @@ export class MoverLayer {
     for (const [key, m] of this.movers) {
       if (m.macroPosition === macroPosition) {
         for (const p of m.parts) this.viewport.warmRemovePrim(p.id);
+        for (const id of m.lightPrims) this.viewport.warmRemovePrim(id);
         this.movers.delete(key);
         this.pawnDefs.delete(key);
         this.payloads.delete(key);

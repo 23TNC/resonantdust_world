@@ -62,11 +62,11 @@ decisions in [`forks.md`](forks.md) (F#), the anticipated-issue inventory in
 
 ## P4 — pawns glow
 
-- [ ] Movers whose merged traits yield lights attach light pieces at the CHASE
+- [x] Movers whose merged traits yield lights attach light pieces at the CHASE
       position + authored elevation (I8); a TOML test bind on a pawn kind
       glows. Acceptance: screenshot; the light pans with a trip across a
       re-anchor; a torch-CARRYING pawn without the trait stays dark (I5).
-- [ ] The SPILL packing (F8): billboards keep their authored depth slots;
+- [x] The SPILL packing (F8): billboards keep their authored depth slots;
       lights past the piece budget ride sibling light-only prims at the same
       carrier anchor, moving/despawning/classing with it. Acceptance: a test
       kind with 2 parts + 5 lights renders all five (light-count probe) and

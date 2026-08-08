@@ -1,5 +1,33 @@
 # Completed — trait lights
 
+## 2026-08-08 — P4: pawns glow
+
+**Mover lights** — `MoverLayer.moverLights` shapes the wasm `objectLights`
+tuples for the record (`hot` FORCED — a mover's anchor moves every frame;
+authored elevation → the light-height lane); part i carries light i on its own
+prim (the torch pattern); a `lightSig` change (payload join, corpus hot-swap)
+rebuilds the pawn's prims. Verified live: a constant `emit_light` bind on
+human_male lit the EXISTING pawn on hot-swap with an EMPTY payload
+(`objectLights(kind, []) → the warm tuple`; part-0 prim carries it — the
+zero-storage derivation on a pawn), and the glow PANNED with a full trip
+across re-anchors (three captures). The carried-torch check (I5): the human
+picked up the (99,51) torch — `thingDefAt(99,51)` absent after (the tombstone
+lane), inventory row present, NO light attached to the carrier. (A leftover
+warm torch at (100,50) from an earlier session's build drills confused the
+first capture — identified by SQL/JS, not a ghost.)
+
+**The spill (F8)** — lights past the part count ride width-0 light-only
+sibling prims (`carrierOf` anchors them; the reconciler re-derives their
+ground position every frame, so they never need moving — mint once, remove
+with the pawn). Verified live with four throwaway drill traits: FIVE lights on
+the two-part human — 2 on the billboards (warm, red), 3 spill prims (green,
+blue, magenta), `spillCount = 3`, scene light count EXACTLY 8 (5 + 3 world
+torches — the hot-swap rebuild left no ghosts, exercising the removal path),
+`droppedLights: 0`, bake cost logged at 0.01 ms/lighting-update. The combined
+pool renders (capture: the rainbow pawn). Drill traits REVERTED (the running
+master never seeded them — no registry holes); the male's single warm bind
+stays for the user's eyes.
+
 ## 2026-08-08 — P3: the torch converts, the light block dies
 
 **content** — the `emit_light` trait def APPENDED (order-is-law; the master
