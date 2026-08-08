@@ -32,9 +32,9 @@ decisions in [`forks.md`](forks.md) (F#), the anticipated-issue inventory in
       unit — a constant bind appears with payload absent; a forged payload row
       for a constant-bound trait is ignored.
 - [ ] `object_lights(def, payload)` beside it: every merged trait whose bound
-      level authors emit_light yields its tuple, piece-budget capped
-      loudest-first (F8). Acceptance: unit — torch yields one tuple matching
-      its authored level; a two-light def yields two.
+      level authors emit_light yields its tuple, in authored order — NOTHING
+      drops (F8). Acceptance: unit — torch yields one tuple matching its
+      authored level; a def with five light traits yields five.
 - [ ] Move ALL trait readers onto the accessor (I1): stat_eval, emotions,
       inventory capacity, food-chain caps, Tag checks, npc, webgl panels.
       Acceptance: grep shows no direct def-bind/payload trait merge outside
@@ -63,6 +63,11 @@ decisions in [`forks.md`](forks.md) (F#), the anticipated-issue inventory in
       position + authored elevation (I8); a TOML test bind on a pawn kind
       glows. Acceptance: screenshot; the light pans with a trip across a
       re-anchor; a torch-CARRYING pawn without the trait stays dark (I5).
+- [ ] The SPILL packing (F8): billboards keep their authored depth slots;
+      lights past the piece budget ride sibling light-only prims at the same
+      carrier anchor, moving/despawning/classing with it. Acceptance: a test
+      kind with 2 parts + 5 lights renders all five (light-count probe) and
+      despawns clean; bake cost per extra light logged, not capped.
 
 ## P5 — the drills, and the truth
 

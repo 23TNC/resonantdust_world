@@ -107,14 +107,31 @@ and the whole cold-baking path stay untouched ([I3](issues.md#i3)).
 **Why.** Two authoring lanes for one phenomenon is how the corpus rots; the
 consumer shape staying constant makes the deletion cheap.
 
-## F8 — multiple light-carrying traits ALL attach {#f8}
-_2026-08-08 · resolved at plan time_
+## F8 — multiple light traits ALL attach; overflow SPILLS into a child prim {#f8}
+_2026-08-08 · revised with the user at plan review — nothing drops_
 
 **Chosen.** Every bound trait whose level authors emit_light contributes a
-light, up to the prim's piece budget (≤4 pieces; excess drops loudest-first by
-reach, logged). Lights already accumulate by the max-accumulate invariant, so
-two sources on one object is a rendering non-event.
+light. The prim's ≤4-piece budget is honored by the primitive graph's OWN
+escape hatch — a piece may be a PRIM — so pieces past the budget spill into a
+child prim (the user's proposal: 2 billboards + 5 lights = a root of 3 pieces
++ a child carrying the rest). The packing rule: BILLBOARDS keep their authored
+depth slots in the root (the existing head-over-body z machinery — authored
+slot depth, facing-flipped), and LIGHTS are the spill candidates in authored
+TOML order — legitimate because lights are ORDER-INDEPENDENT under the
+max-accumulate invariant, so which prim carries a light cannot change the
+render. Deterministic, and provably identical to any other packing.
 
-**Why.** Any first-one-wins rule invents an authoring order dependence the
-corpus never had. **Rejected — refuse multiple**: a burning torch-bearer is a
-legitimate future.
+**Implementation note.** The client flattens the graph at stamp time (fixed
+8-px commands, CPU-stamped positions), so the spill child needs no new command
+format: it is a sibling `addPrim` at the SAME carrier anchor — a light-only
+`Primitive` (no texture; `light` is already independent of the billboard
+fields) that must move/despawn/class with its carrier (the
+addPrim-copies-fields-EXPLICITLY law).
+
+**The real bound, stated:** slots are not the cost — BAKES are. Each hot light
+is a per-light lightmap pass chasing a moving anchor; five on one mover is
+five passes. Unbounded by design, bounded by authoring sanity; the drill
+measures it rather than capping it. **Rejected — cap-and-drop loudest-first**
+(this fork's first draft): silently extinguishing an authored light is the
+worst failure mode a lighting corpus can have. **Rejected — first-one-wins**:
+invents an authoring-order dependence the corpus never had.

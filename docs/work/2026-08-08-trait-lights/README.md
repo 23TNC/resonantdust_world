@@ -41,8 +41,11 @@ data — the first compression law for thing-side traits.
 - `visual.light` **DELETES** with `thing_light()`'s consumer shape held
   bit-identical ([F7](forks.md#f7)) — cold baking stays free
   ([I3](issues.md#i3)).
-- Multiple light-carrying traits on one object ALL attach, within the prim's
-  piece budget ([F8](forks.md#f8)).
+- Multiple light-carrying traits ALL attach — pieces past the prim's ≤4 budget
+  SPILL into a child prim (prim-as-piece, the graph's own escape hatch;
+  billboards keep their authored depth slots, lights spill order-independently
+  under max-accumulate; the real bound is bake cost, measured not capped)
+  ([F8](forks.md#f8)).
 
 **Exit**: the torch renders identically from its constant trait (screenshot
 pair), a TOML-lit pawn kind glows at its authored elevation and the light pans
