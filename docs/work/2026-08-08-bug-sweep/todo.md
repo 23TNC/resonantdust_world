@@ -101,6 +101,8 @@ in [`forks.md`](forks.md) (F#), the anticipated-issue inventory in
       intermittent geo/misdraw DURING movement is the report's exact shape),
       plausibly cured by the P2 fix; the re-armable probe snippet is in the
       issue for re-observation.
-- [ ] Docs + memory truth pass + a stack bounce with arcs green; **the user's eyes
+- [x] Docs + memory truth pass + a stack bounce with arcs green; **the user's eyes
       close the stream**. Acceptance: docs-check green; captures + logs in
-      completed.md.
+      completed.md. → bug-sweep-delivered memory + MEMORY.md line; docs-check
+      green; full bounce: worker composing, the wolf re-adopted, 3 bunny
+      adoptions. B1 = the user's eyes.
