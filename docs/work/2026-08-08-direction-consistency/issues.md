@@ -181,3 +181,38 @@ same knobs → bit-identical output, 36 for 36. Unlike the training runs (two id
 by 17.31/255 mean, 0/75 cells identical), an A/B here is *exact* — any difference between two labels
 is caused by the change, not by sampling noise. That makes single-seed comparisons legitimate for
 diagnosis, and it is why the identical table was diagnosable at all.
+
+## I9 — P3's premise is wrong: batching buys throughput, not consistency {#i9}
+_2026-08-08 · found while writing P3.1, before spending GPU time on it · **plan error**_
+
+[README](README.md) claimed the batched pass was "the single most promising" capability:
+
+> three views denoised together share one noise schedule and one prompt evaluation, which is the
+> standard way consistency is bought
+
+That reasoning holds only when the batch items **share conditioning**. Ours cannot. Each direction
+needs its own prompt (`rd_east` vs `rd_south`) *and* its own ControlNet image (the e/s/n template).
+In core ComfyUI a `KSampler` takes **one** positive/negative conditioning and
+`ControlNetApplyAdvanced` takes **one** image, both broadcast across the whole latent batch. So a
+literal batch-3 would render the same view three times. Per-item conditioning is not expressible,
+which makes P3.1 as written ("three latents, three control images, one KSampler") unbuildable —
+and, more to the point, pointless: three items with three different prompts and three different
+controls are three independent generations that happen to share a sampler call. That is throughput.
+
+**The mechanism that would actually share information across views is attention sharing**, and it
+is **not available for SDXL on this box**. Surveyed `/object_info`: there is `ReferenceLatent`,
+`USOStyleReference`, `FluxKontextMultiReferenceLatentMethod` and a pile of video-model reference
+nodes — but **no `ReferenceOnlySimple`**, which is the SDXL cross-attention-sharing node this would
+need. Every reference-attention node present belongs to an architecture we are not running.
+
+**What the 24 GB actually buys us, corrected:** running IP-Adapter *and* ControlNet *and* multiple
+reference images resident at once — which is [P2](todo.md), not P3. And true reference attention is
+a property of the **edit-model architecture** ([P6](todo.md)/[F5](forks.md#f5)), where
+`ReferenceLatent` is exactly how Qwen-Image-Edit conditions on a source image.
+
+So the headroom claim in the README was right about the hardware and wrong about the mechanism.
+P3 is rewritten to record the negative result rather than build the thing.
+
+**Caught before any GPU time was spent**, by checking what the nodes can express before writing the
+graph. Recorded because the failure shape is the same one as [I5](#i5): reasoning about a mechanism
+without verifying the instrument can perform it.

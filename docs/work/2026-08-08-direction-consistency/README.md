@@ -69,12 +69,24 @@ Verified present on the box today, not assumed:
 | **IP-Adapter with content weight types** | `comfyui_ipadapter_plus`, `ip-adapter-plus_sdxl_vit-h`, `clip-vit-h-14-laion2B` — `IPAdapterAdvanced` exposes composition-carrying weight types, not just `style transfer` |
 | **Split style from composition** | `IPAdapterStyleComposition` takes a style reference *and* a composition reference as separate inputs |
 | **Many references at once** | `IPAdapterBatch`, `IPAdapterEncoder`, `IPAdapterCombineEmbeds` — a view can be anchored on *both* others rather than on east alone |
-| **All three views in ONE sampler pass** | `LatentBatch`, `RepeatLatentBatch`, `ImageBatch` — batch 3 at 768/1024 with ControlNet **and** IP-Adapter resident simultaneously is an 11 GB impossibility and a 24 GB routine |
 | **Union control** | `controlnet-union-promax` + `SetUnionControlNetType` — several control signals in one pass |
 
-The single most promising of these is the **batched pass**: three views denoised together share one
-noise schedule and one prompt evaluation, which is the standard way consistency is bought. It was
-out of reach at 11 GB and is not now.
+**Correction, 2026-08-08 ([I9](issues.md#i9)).** This section originally called the batched pass
+"the single most promising" capability, on the reasoning that "three views denoised together share
+one noise schedule and one prompt evaluation, which is the standard way consistency is bought."
+**That is wrong for our case.** It holds only when batch items share conditioning, and ours cannot:
+each direction needs its own prompt *and* its own ControlNet template, while a `KSampler` broadcasts
+one conditioning and `ControlNetApplyAdvanced` one image across the whole batch. Three views with
+three prompts and three controls are three independent generations sharing a sampler call — that is
+throughput, not consistency. The mechanism that *would* share information across views is attention
+sharing, and no SDXL `ReferenceOnlySimple` exists on this box; every reference-attention node
+present belongs to an architecture we are not running.
+
+**What the 24 GB actually buys, corrected:** IP-Adapter *and* ControlNet *and* several reference
+images resident at once — which is [P2](todo.md). True reference attention is a property of the
+**edit-model architecture** ([P6](todo.md)/[F5](forks.md#f5)), where `ReferenceLatent` is precisely
+how Qwen-Image-Edit conditions on a source image. The hardware claim was right; the mechanism was
+not.
 
 ## Design stance
 

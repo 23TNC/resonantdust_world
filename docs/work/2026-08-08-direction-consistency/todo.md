@@ -26,11 +26,11 @@ varies is the pipeline.** `cn` must not go below 0.5 ([README](README.md) future
 - [ ] Try `IPAdapterStyleComposition` with the hero as style and the template as composition. Acceptance: one sheet; this is the node that matches the actual division of labour, so it gets its own trial.
 - [ ] Sweep `IP_WEIGHT` at the winning weight type. Acceptance: three values; the point where identity holds without the template being overpowered is recorded.
 
-## P3 — One sampler pass for all three views
+## P3 — The batched pass (premise DISPROVEN by [I9](issues.md#i9) — record, do not build)
 
-- [ ] Build a batch-3 graph: three latents, three control images, one KSampler. Acceptance: one call returns three images; peak VRAM recorded against 24576 MiB.
-- [ ] Measure the spread from the batched pass against the sequential hero chain. Acceptance: both numbers on the same species and seed — this is the 24 GB capability the stream exists to test.
-- [ ] Decide whether batching replaces the hero chain or supplements it. Acceptance: a fork entry naming the winner, with the loser's sheet kept.
+- [x] Check whether per-item conditioning is expressible before building the graph. Acceptance: it is not — one `KSampler` broadcasts one conditioning and `ControlNetApplyAdvanced` one image across the batch, so three views need three calls ([I9](issues.md#i9)).
+- [x] Check whether SDXL attention-sharing is available on the box. Acceptance: `/object_info` has no `ReferenceOnlySimple`; every reference-attention node present belongs to another architecture ([I9](issues.md#i9)).
+- [x] Redirect the VRAM headroom claim to what it actually buys. Acceptance: README corrected — the 24 GB win is IP-Adapter + ControlNet + several references resident at once (P2), not a shared sampler pass.
 
 ## P4 — Lock value and palette
 

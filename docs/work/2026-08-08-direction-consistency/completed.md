@@ -102,3 +102,29 @@ _Dated entries: what landed and **how it was verified**. Newest last._
   with `resolve_written()` plus a `--measure-only` mode; re-measuring from disk recovered the cell
   (east lum 146.0) and completed all 12 sets. The aggregate did not move — that cell's east
   happened to fall between its own south and north — but the next draw would not have been so kind.
+
+## P3 — The batched pass: a negative result, recorded before it cost GPU time
+
+- **2026-08-08 · P3.1–P3.3 · The premise was wrong and the phase is closed without building it
+  ([I9](issues.md#i9)).** The README called the batched sampler pass the stream's most promising
+  capability, reasoning that three views denoised together share a noise schedule and a prompt
+  evaluation. That holds only when batch items **share conditioning**, and ours cannot: each
+  direction needs its own prompt *and* its own ControlNet template, while a `KSampler` broadcasts
+  one conditioning and `ControlNetApplyAdvanced` one image across the whole latent batch. Three
+  views with three prompts and three controls are three independent generations that happen to
+  share a sampler call — throughput, not consistency.
+
+  **Verified rather than assumed:** surveyed `/object_info` for the mechanism that *would* share
+  information across a batch. There is no SDXL **`ReferenceOnlySimple`** on this box. What is there
+  — `ReferenceLatent`, `USOStyleReference`, `FluxKontextMultiReferenceLatentMethod`, and a set of
+  video-model reference nodes — belongs to architectures we are not running.
+
+  **The corrected claim, now in the README:** 24 GB buys IP-Adapter *and* ControlNet *and* several
+  reference images resident at once, which is [P2](todo.md). True reference attention is a property
+  of the **edit-model** architecture ([P6](todo.md)), where `ReferenceLatent` is exactly how
+  Qwen-Image-Edit conditions on a source image. The hardware claim was right; the mechanism was not.
+
+  **Caught before any GPU time was spent**, by asking what the nodes can express before writing the
+  graph. Same failure shape as [I5](issues.md#i5) — reasoning about a mechanism without first
+  checking that the instrument can perform it — which is why it is recorded rather than quietly
+  dropped.
