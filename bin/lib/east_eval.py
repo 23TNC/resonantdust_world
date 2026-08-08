@@ -62,6 +62,8 @@ def generate(cfg, method, subj, seed):
            "--cn", str(cfg["cn"]), "--cn-end", str(cfg["cn_end"]),
            "--size", str(cfg["size"]), "--body-plan", subj["body_plan"],
            "--control", control_arg(method, cfg, subj), "--no-metrics"]
+    if cfg["methods"][method].get("refine"):
+        cmd += ["--refine", str(cfg["methods"][method]["refine"])]
     r = subprocess.run(cmd, cwd=REPO, capture_output=True, text=True,
                        env={**os.environ, "RD_REPO_ROOT": REPO})
     if r.returncode != 0:
@@ -169,7 +171,7 @@ def main():
             data[m] = json.load(open(p))["rows"]
         keys = sorted({(r["subject"], r.get("seed")) for rs in data.values() for r in rs},
                       key=lambda k: (k[0], k[1] or 0))
-        w = max(len(m) for m in a.compare) + 2
+        w = max(max(len(m) for m in a.compare) + 2, 8)   # values are 5 chars; short method names must not collide
         print(f"  {'subject':10s} {'seed':>5s} " + "".join(f"{m:>{w}s}" for m in a.compare) + "   (iou_ref)")
         for subj, seed in keys:
             cells = []

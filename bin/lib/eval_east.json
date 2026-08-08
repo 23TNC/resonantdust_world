@@ -35,37 +35,85 @@
     "control image the generator was handed, which is the distinction that makes a wolf-shaped bear",
     "score badly instead of well (I3)."
   ],
-
   "lora": "rd_diremph_anima_r20_g07.safetensors",
   "lora_strength": 0.7,
   "cn": 0.5,
   "cn_end": 0.9,
   "dir": "e",
-  "seeds": [4101, 4102, 4103],
+  "seeds": [
+    4101,
+    4102,
+    4103
+  ],
   "size": 512,
   "template_from": "pawn/animal/wolf",
-
   "subjects": [
-    { "id": "wolf",     "corpus": "Wolf_Timber",    "positive": "grey timber wolf",   "body_plan": "rd_quadruped",
-      "why": "incumbent; the shape every other species is forced into" },
-    { "id": "bear",     "corpus": "AEXP_BlackBear", "positive": "black bear",         "body_plan": "rd_quadruped",
-      "why": "darkest in corpus; the species that broke visibly" },
-    { "id": "fox",      "corpus": "Fox_Red",        "positive": "red fox",            "body_plan": "rd_quadruped",
-      "why": "most saturated and longest" },
-    { "id": "deer",     "corpus": "Deer",           "positive": "deer",               "body_plan": "rd_quadruped",
-      "why": "most compact, thin legs; a canid template cannot fake it" },
-    { "id": "elephant", "corpus": "Elephant",       "positive": "elephant",           "body_plan": "rd_quadruped",
-      "why": "brightest and achromatic; where too-pale is correct" },
-    { "id": "tiger",    "corpus": "Tiger",          "positive": "tiger",              "body_plan": "rd_quadruped",
-      "why": "high-frequency interior markings; iou_ref is blind to stripes" }
+    {
+      "id": "wolf",
+      "corpus": "Wolf_Timber",
+      "positive": "grey timber wolf",
+      "body_plan": "rd_quadruped",
+      "why": "incumbent; the shape every other species is forced into"
+    },
+    {
+      "id": "bear",
+      "corpus": "AEXP_BlackBear",
+      "positive": "black bear",
+      "body_plan": "rd_quadruped",
+      "why": "darkest in corpus; the species that broke visibly"
+    },
+    {
+      "id": "fox",
+      "corpus": "Fox_Red",
+      "positive": "red fox",
+      "body_plan": "rd_quadruped",
+      "why": "most saturated and longest"
+    },
+    {
+      "id": "deer",
+      "corpus": "Deer",
+      "positive": "deer",
+      "body_plan": "rd_quadruped",
+      "why": "most compact, thin legs; a canid template cannot fake it"
+    },
+    {
+      "id": "elephant",
+      "corpus": "Elephant",
+      "positive": "elephant",
+      "body_plan": "rd_quadruped",
+      "why": "brightest and achromatic; where too-pale is correct"
+    },
+    {
+      "id": "tiger",
+      "corpus": "Tiger",
+      "positive": "tiger",
+      "body_plan": "rd_quadruped",
+      "why": "high-frequency interior markings; iou_ref is blind to stripes"
+    }
   ],
-
   "methods": {
-    "S0": { "control": "template",         "stages": 1, "why": "the incumbent wolf template - the control, and the floor" },
-    "S1": { "control": "corpus:<species>", "stages": 1, "why": "the species' OWN real silhouette; one flag, already implemented" },
-    "S3": { "control": "auto",             "stages": 2, "why": "probe template-free, then nearest bank body plan by measurement" }
+    "S0": {
+      "control": "template",
+      "stages": 1,
+      "why": "the incumbent wolf template - the control, and the floor"
+    },
+    "S1": {
+      "control": "corpus:<species>",
+      "stages": 1,
+      "why": "the species' OWN real silhouette; one flag, already implemented"
+    },
+    "S3": {
+      "control": "auto",
+      "stages": 2,
+      "why": "probe template-free, then nearest bank body plan by measurement"
+    },
+    "S4": {
+      "control": "corpus:<species>",
+      "stages": 2,
+      "refine": 0.35,
+      "why": "S1 plus a low-denoise second pass (i2i from pass 1, same ControlNet edge) to tidy outline and flats"
+    }
   },
-
   "_untrained_note": [
     "P4's untrained species are NOT listed here. iou_ref is undefined for them (no corpus sprite),",
     "so they cannot share this file's scoring contract and get their own set when P3 has chosen a",

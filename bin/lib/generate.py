@@ -543,7 +543,7 @@ def _base(g):
                "lora_name":LORA,"strength_model":LORA_STRENGTH,"strength_clip":LORA_STRENGTH}}
     return ["50",0], ["50",1]
 
-def _tail(pos, neg, ref_name, edge_name, model_ref, seed, clip_ref=("4",1), size=512):
+def _tail(pos, neg, ref_name, edge_name, model_ref, seed, clip_ref=("4",1), size=512, dn=None):
     """The shared graph tail. `ref_name`/`edge_name` may be None (template-free): the i2i
     latent falls back to an EmptyLatentImage and the ControlNet nodes (30/31/32) are omitted
     entirely, so the sampler reads the raw text conditioning."""
@@ -556,7 +556,7 @@ def _tail(pos, neg, ref_name, edge_name, model_ref, seed, clip_ref=("4",1), size
     if ref_name is not None:                       # i2i from the control art
         g["20"] = {"class_type":"LoadImage","inputs":{"image":ref_name}}
         g["21"] = {"class_type":"VAEEncode","inputs":{"pixels":["20",0],"vae":["4",2]}}
-        latent, denoise = ["21",0], DN
+        latent, denoise = ["21",0], (DN if dn is None else dn)
     else:                                          # template-free: nothing to denoise FROM
         g["21"] = {"class_type":"EmptyLatentImage","inputs":{"width":size,"height":size,"batch_size":1}}
         latent, denoise = ["21",0], 1.0
@@ -570,10 +570,10 @@ def _tail(pos, neg, ref_name, edge_name, model_ref, seed, clip_ref=("4",1), size
     g["3"] = {"class_type":"KSampler","inputs":{"seed":seed,"steps":STEPS,"cfg":CFG,"sampler_name":SAMPLER,"scheduler":SCHED,"denoise":denoise,"model":model_ref,"positive":pos_ref,"negative":neg_ref,"latent_image":latent}}
     return g
 
-def graph_hero(pos, neg, ref_name, edge_name, seed):
+def graph_hero(pos, neg, ref_name, edge_name, seed, dn=None):
     g = {}
     model_ref, clip_ref = _base(g)
-    g.update(_tail(pos, neg, ref_name, edge_name, model_ref, seed, clip_ref)); return g
+    g.update(_tail(pos, neg, ref_name, edge_name, model_ref, seed, clip_ref, dn=dn)); return g
 
 def graph_ip(pos, neg, ref_name, edge_name, hero_name, seed):
     g = {}
@@ -623,6 +623,8 @@ def main():
     ap.add_argument("--lora", default=None, help="style LoRA to apply, as ComfyUI sees it under models/loras (e.g. rd_quadruped_e07.safetensors); applied to BOTH the model and the text encoders")
     ap.add_argument("--lora-strength", type=float, default=1.0, help="LoRA strength for model+clip (default 1.0; try 0.6-0.9 if it overpowers the template)")
     ap.add_argument("--style", default=None, help="override the style boilerplate appended to --positive (use the LoRA's trained tags, e.g. 'rd_style, rd_animal, rd_quadruped, {face}')")
+    ap.add_argument("--refine", type=float, default=0.0,
+                    help="second pass denoise (0 = off). i2i from the first pass with the SAME ControlNet edge, so the sprite is tidied rather than regenerated. Try 0.25-0.40; at 1.0 it just makes a different sprite.")
     ap.add_argument("--ip-weight", type=float, default=IP_WEIGHT,
                     help=f"IP-Adapter weight for the south/north hero anchor (default {IP_WEIGHT})")
     ap.add_argument("--ip-weight-type", default=IP_WEIGHT_TYPE,
@@ -752,6 +754,14 @@ def main():
             else:
                 raw = _run(graph_ip(full_pos, neg, ref_name, edge_name, hero_name, cseed))
             img = Image.open(io.BytesIO(raw)).convert("RGB")
+            if args.refine > 0.0:
+                # SECOND PASS at low denoise, i2i from the sprite we just made, same ControlNet edge.
+                # The first pass decides the animal; this one only tidies it, so the denoise must stay
+                # low enough that the subject survives — at 1.0 it would simply generate a new sprite.
+                refined = _upload(img, f"artgen_{cseed}_{d}_refine.png")
+                raw = _run(graph_hero(full_pos, neg, refined, edge_name, cseed, dn=args.refine))
+                img = Image.open(io.BytesIO(raw)).convert("RGB")
+                print(f"  refine[{d}] -> second pass at dn={args.refine}")
             if d == "e":
                 hero_name = _upload(img, f"artgen_{cseed}_hero.png")   # east (on white) becomes the IP anchor
                 if args.east_self_anchor:

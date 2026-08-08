@@ -140,3 +140,42 @@ _Dated entries: what landed and **how it was verified**. Newest last._
   should be — because the model will not produce our convention without something already holding
   the pose. [P2](todo.md)'s stage 1 cannot be "txt2img and see"; it needs its own constraint, and
   finding that is the phase's real question rather than an implementation detail.
+
+- **2026-08-08 · P1/S4 · The refine pass earns nothing and is dropped.** Added `--refine <denoise>`
+  to `generate.py` — a second pass, i2i from the first with the *same* ControlNet edge, so the
+  sprite is tidied rather than regenerated. Ran S1 + refine 0.35 over the full set.
+
+  **`iou_ref` 0.850 against S1's 0.852** — a −0.002 difference across 18 cells, for **double the
+  GPU cost**. The item's acceptance also required the eye on outline cleanliness, because `iou_ref`
+  is a silhouette statistic and cannot see it: `.staging/p1-s4-refine.png` puts S1 and S4 side by
+  side at seed 4102 and they are **visually indistinguishable**. Outlines are equally clean in both.
+
+  Dropped, on both criteria. The flag stays in `generate.py` — it is a general capability and costs
+  nothing unused — but no method in the ladder uses it. **A stage earns its place by moving the
+  number; this one does not**, and keeping it would have doubled the cost of every later phase.
+
+  **Incidental finding worth its own note:** the elephant at seed 4102 has a **green plate that
+  survived background keying** in both S1 and S4, which is what its 0.680 actually measures. That is
+  a *keying* failure, not a shape failure — the corner flood-fill did not recognise the plate — and
+  it is the same cell that failed the gate in S0. Recorded so no later phase reads elephant/4102 as
+  evidence about silhouettes.
+
+- **2026-08-08 · P1/S5 · Best-of-N works, and the selector that generalises captures under half of
+  it.** Computed from the S1 cells already on disk rather than by generating more — three seeds per
+  species *is* a best-of-3 sample, so the question needed no new GPU time.
+
+  | selection | mean `iou_ref` | Δ vs single shot | available for untrained species? |
+  |---|---|---|---|
+  | single shot (expected value of one attempt) | 0.852 | — | yes |
+  | best-of-3 **by `iou_ref`** | **0.949** | +0.097 | **no** — needs the real sprite |
+  | best-of-3 **by the structural gate** | 0.892 | +0.040 | **yes** — reference-free |
+
+  The item asked for the comparison to be fair on GPU cost: best-of-3 costs 3×, and the honest
+  baseline for one attempt is the *mean* of the three, which is what 0.852 is.
+
+  **The split between the two selectors is the point.** Choosing by `iou_ref` is the strongest
+  result in the stream so far — but it is choosing by the answer key, so it cannot be part of a
+  method that must serve animals with no corpus sprite ([F2](forks.md#f2)). The **gate** selector —
+  prefer `blobs == 1`, then the most uniform plate — uses nothing but the generated image, works for
+  any species, and still recovers **+0.040 of the +0.097** available. That is the number [P4](todo.md)
+  inherits; the 0.949 is not.
