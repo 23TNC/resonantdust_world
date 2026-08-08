@@ -6,10 +6,11 @@ in [`forks.md`](forks.md) (F#), the anticipated-issue inventory in
 
 ## P0 — the paper
 
-- [ ] VARIABLES.md: the inventory need (0..16 encoding, count-as-value, MINT-EMPTY
-      rule — F1/I2), the leveled trait, the `inventory` sub-table shape + PawnInventory
-      frame (F2), INV_ADD/INV_REMOVE (F3), `below_max`/`slot`/`spawn = "carried"`/
-      `store` vocabulary (F4/F5). Acceptance: docs-check green.
+- [ ] VARIABLES.md: the inventory need (0..16 encoding, FREE-SLOTS-as-value —
+      F1/I2; standing mint law correct as-is), the leveled trait, the `inventory`
+      sub-table shape + PawnInventory frame (F2), INV_ADD/INV_REMOVE (F3),
+      `slot`/`spawn = "carried"`/`store` vocabulary (F4/F5). Acceptance: docs-check
+      green.
 - [ ] TABLES.md: the pawn-shard `inventory` table row (uid, entity, macro, slot,
       item, state — F2, state RESERVED). Acceptance: docs-check green.
 
@@ -27,15 +28,13 @@ in [`forks.md`](forks.md) (F#), the anticipated-issue inventory in
 
 ## P2 — the corpus and the loader
 
-- [ ] Loader: check form `below_max` (F4 — absent row never passes; value < effective
-      max via need_bounds); location rule `"slot"`; effect `spawn = "carried"` +
-      `store = "carrier"`; refusals for misuse. Acceptance: round-trip + refusal
-      tests green.
-- [ ] needs: mint rule (`mint = "empty"` — I2) parsed + honored by mint_sidecars.
-      Acceptance: unit test — thirst mints full, inventory mints 0.
-- [ ] Content: need `inventory` (0..16, deplete 0, mint empty); leveled trait
-      `inventory` (max = [6]); humans get {inventory, 1}; affordance can_carry.
-      Acceptance: golden diff = the authored rows.
+- [ ] Loader: location rule `"slot"`; effect `spawn = "carried"` + `store =
+      "carrier"`; refusals for misuse (store on a tile carrier, carried without a
+      slot location…). Acceptance: round-trip + refusal tests green.
+- [ ] Content: need `inventory` (0..16, deplete 0 — FREE slots, F1); leveled trait
+      `inventory` (max = [6]); humans get {inventory, 1}; affordance can_carry =
+      `{need inventory, gt 0}`. Acceptance: golden diff = the authored rows; mint
+      unit test — a human mints 6 free, 0 rows (I2).
 - [ ] Content: `pick_up` (adjacent, can_carry, store, duration 10) on meat/
       plant_matter/logs/rock/reed/torch/torch_blue (F6); `drop` (location slot,
       spawn carried) on human kinds. Acceptance: golden re-blessed; six consumers
@@ -44,16 +43,16 @@ in [`forks.md`](forks.md) (F#), the anticipated-issue inventory in
 ## P3 — the worker executes
 
 - [ ] Worker: `store = "carrier"` — tombstone SET + INV_ADD(first free slot) +
-      SET_NEED count, ONE program (F3/I3); completion re-validates carrier + capacity
-      (I7). Acceptance: drill — walk-then-pick-up a log; row + count 1; the log gone
-      from the world.
-- [ ] Worker: full-capacity refusal — can_carry gates at queue AND completion; the
-      6th item fills, the 7th refuses. Acceptance: drill — a full human's pick_up
-      logs the refusal; count stays 6.
+      `SET_NEED free − 1`, ONE program (F3/I3); completion re-validates carrier +
+      free slot (I7). Acceptance: drill — walk-then-pick-up a log; 1 row, need 5;
+      the log gone from the world.
+- [ ] Worker: full-capacity refusal — can_carry (`gt 0`) gates at queue AND
+      completion; the 6th item fills, the 7th refuses. Acceptance: drill — a full
+      human's pick_up logs the refusal; 6 rows, need 0.
 - [ ] Worker: `drop` — slot carrier resolve (inputs slot + expected item, mismatch
       no-op — I5), spawn carried at the adjacent scan, REFUSE when no cell (I10),
-      INV_REMOVE + SET_NEED. Acceptance: drill — drop slot 0; the thing reappears
-      beside the pawn; count decrements.
+      INV_REMOVE + `SET_NEED free + 1`. Acceptance: drill — drop slot 0; the thing
+      reappears beside the pawn; rows 0, need 6.
 - [ ] Worker: death/remove clears inventory rows (the remove reducer already
       deletes them — verify the composed path). Acceptance: kill a carrying pawn;
       no orphan inventory rows in SQL.

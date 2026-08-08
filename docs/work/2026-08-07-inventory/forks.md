@@ -1,16 +1,18 @@
 # Forks — inventory
 
-## F1 — the need is the count; the leveled trait is the capacity {#f1}
+## F1 — the need counts FREE SLOTS; the leveled trait is the capacity {#f1}
 
-Options: (a) a bespoke capacity field on kinds; (b) a stat; (c) the user's shape — a
-need whose value counts and whose max caps. **(c)**: need `inventory`, encoding
-domain 0..16 (headroom for future tiers), `deplete = 0`, no bands; value = held
-count, worker-written. The leveled `inventory` trait (`needs = [{ need =
-"inventory", max = [6] }]`) provides + caps it — humans `{inventory, 1}` = 6. The
-food-chain laws carry over unchanged: HIGHEST-wins caps, effective max via
-need_bounds, the need-write TRIGGER now fires on inventory mutations (future "on
-full" behaviors are free). Rejected (a)/(b): a second capacity vocabulary beside
-the one the corpus trait already proved.
+The user's correction at plan review: "we don't need a mint empty. We just flip
+how we handle it. the inventory need becomes free slots instead of filled slots.
+So at 0 we have 0 free slots." Need `inventory`, encoding domain 0..16,
+`deplete = 0`, no bands; VALUE = free slots, worker-written. The leveled
+`inventory` trait (`needs = [{ need = "inventory", max = [6] }]`) provides + caps
+it — humans `{inventory, 1}` = 6. Everything falls out of standing law: needs
+MINT AT THE EFFECTIVE MAX (= all slots free — no new mint rule), `can_carry` is
+the EXISTING check form `{ need = "inventory", gt = 0 }` (no below_max
+machinery), pick_up DECREMENTS, drop INCREMENTS, and the need-write TRIGGER
+fires on inventory changes for free. Filled count = rows; free count = the
+need — never conflate them ([I2](issues.md#i2)).
 
 ## F2 — items are sub-table rows; `state` is the reserved future {#f2}
 
@@ -35,15 +37,15 @@ reject law). Rejected: deriving the need lazily from row count — it would
 special-case one need inside the ONE needs eval and break the trigger law's
 "a write is the trigger".
 
-## F4 — pick_up: adjacent walk-then-act, `below_max`, `store = "carrier"` {#f4}
+## F4 — pick_up: adjacent walk-then-act, `gt 0` free slots, `store = "carrier"` {#f4}
 
 `pick_up` on portable things, location `adjacent` (cheb ≤ 1, the lumberjack
-compose), duration 10. Affordance `can_carry` = the NEW check form
-`{ need = "inventory", below_max = true }`: passes iff the row EXISTS (absent
-never passes — the standing law gives "has inventory need" free) AND lazy value <
-the EFFECTIVE max (need_bounds, so capacity tiers keep working). Effect `store =
-"carrier"`: the destroy tombstone SET (the thing leaves the world) + INV_ADD of
-the carrier's kind def + the count SET_NEED, one program. Completion re-validates
+compose), duration 10. Affordance `can_carry` = the EXISTING check form
+`{ need = "inventory", gt = 0 }` (F1's free-slots inversion): passes iff the row
+EXISTS (absent never passes — the standing law gives "has inventory need" free)
+AND a slot is free. No new check machinery. Effect `store = "carrier"`: the
+destroy tombstone SET (the thing leaves the world) + INV_ADD of the carrier's
+kind def + `SET_NEED inventory = free − 1`, one program. Completion re-validates
 (lumberjack law) — two pawns racing one log: the loser logs a NO-OP (I7).
 
 ## F5 — drop: ONE interaction, location `"slot"`, `spawn = "carried"` {#f5}
@@ -54,9 +56,10 @@ location rule `"slot"` makes the carrier an inventory slot of the ACTING pawn;
 the slot index + EXPECTED item def ride the event inputs, and the completion
 re-validates the slot still holds that item (I5 — slots mutate under queued
 intents). Effect `spawn = "carried"`: the food-chain adjacent scan (first EMPTY
-pathable cell) places the SLOT's kind, then INV_REMOVE + the count SET_NEED. One
-drop covers every item because the effect names the CARRIED def, never a fixed
-thing. No empty pathable neighbor → REFUSE and keep the item (I10). Rejected:
+pathable cell) places the SLOT's kind, then `INV_REMOVE` + `SET_NEED inventory =
+free + 1`. One drop covers every item because the effect names the CARRIED def,
+never a fixed thing. No empty pathable neighbor → REFUSE and keep the item
+(I10). Rejected:
 per-thing drop interactions (N copies of the same verb); an item-side location
 "inventory" lane (real, but the successor — in-hand verbs like eat-from-hand
 join F5's slot menu later without reshaping it).
@@ -80,5 +83,9 @@ squares — placeholder tint + name tooltip per item, fed by the PawnInventory f
 — and does not render at all for inventory-less objects. A slot click opens the
 pie menu ON the slot (input-rework menu_text rects) listing the pawn's
 slot-located interactions through the ONE wasm availability filter, which gains
-the slot context. Display names: the TOML `name` as-is (human_male, meat) — a
-`display` field is a recorded nicety, not this stream (I9).
+the slot context. Display names: the TOML `name` as-is — CONFIRMED at plan
+review ("human_male and plant_matter are fine… I just need to know what
+something is"): today the panel prints `pawn/human/male #11` and
+`thing #26335, texture (geo)`, which identifies nothing — a green square that is
+actually a shrub stays a mystery. Name (or the kind leaf) + tile is the whole
+job; a `display` field is a recorded nicety, not this stream (I9).

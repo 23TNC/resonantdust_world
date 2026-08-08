@@ -8,13 +8,14 @@ deliberately: redeploy pawn → restart master → re-mint the cast (/spawn + np
 adoption). The worker's subscription SQL is a string — add
 `SELECT * FROM inventory` and verify LIVE (build-gates law).
 
-## I2 — inventories must MINT EMPTY {#i2}
+## I2 — FREE vs FILLED must never conflate {#i2}
 
-Needs mint at the EFFECTIVE max (food-chain I2) — minting inventory that way
-births pawns "full" and `can_carry` refuses forever. The need corpus gains a mint
-rule (`mint = "empty"` on the inventory need; default stays full) and
-`mint_sidecars` honors it. Unit-test both directions: thirst still full,
-inventory zero.
+The need counts FREE slots (the user's F1 inversion): a fresh pawn mints at the
+effective max = 6 free, 0 rows. Every consumer must pick the right number — the
+GRID fills from ROWS (the fan), never `max − need` arithmetic; the AFFORDANCE
+reads the need; logs should say which they print. The failure smell: an empty
+pawn showing 6 items, or a full pawn's pick_up passing. One unit test pins the
+mint (6 free, 0 rows) and one drill pins the display.
 
 ## I3 — count/rows drift {#i3}
 
@@ -39,10 +40,10 @@ law) and logs a NO-OP on mismatch. Never fire on "whatever is in N now".
 
 ## I6 — the pie menu must GRAY pick_up when full {#i6}
 
-The wasm availability filter evaluates `below_max` — it needs the pawn's need
-rows + trait rows for need_bounds at menu-build time. The signature already
-carries them (food-chain); verify the browser path actually passes the ACTIVE
-pawn's rows, or the menu offers a pick_up the worker then refuses (offered-then-
+`can_carry` is a plain `gt 0` need check (F1/F4) — the wasm availability filter
+already evaluates need checks (food-chain's can_die). Verify the browser path
+passes the ACTIVE pawn's need rows for a THING-carried interaction's check on
+the ACTOR, or the menu offers a pick_up the worker then refuses (offered-then-
 refused is the exact class input-rework's filter exists to kill).
 
 ## I7 — two pawns race one thing {#i7}

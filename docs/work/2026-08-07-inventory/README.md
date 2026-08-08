@@ -12,18 +12,22 @@ the inventory need by 1. The panel draws items as SQUARES in a grid; clicking a
 square prompts for interactions on the item in that slot. Pick up goes on all
 current things ("most things"). A DROP interaction too — the user asked for a
 generic shape (and flagged that u32 defs may not carry enough object STATE — "so it
-understands where it is").
+understands where it is"). Plan review flipped the need's sense: it counts FREE
+slots ("at 0 we have 0 free slots"), so pick up DECREMENTS it; and confirmed
+TOML names in the panel — the point is identification (today `thing #26335,
+texture (geo)` hides that a green square is a shrub).
 
 ## The stance
 
-- **The need IS the count; the trait IS the capacity** ([F1](forks.md#f1)): need
-  `inventory` on a 0..16 encoding domain, `deplete = 0`, no bands — its VALUE is the
-  held-item count, written by the worker at every mutation (so the food-chain
-  need-write TRIGGER fires on inventory changes for free). ONE leveled `inventory`
-  trait (`max = [6]`, the corpus pattern) provides the need and caps it — humans
-  level 1 = capacity 6; future levels (backpacks) append slots. Inventories MINT
-  EMPTY — a new mint rule, since needs mint at the effective max today
-  ([I2](issues.md#i2)).
+- **The need counts FREE SLOTS; the trait is the capacity** ([F1](forks.md#f1) —
+  the user's plan-review correction: "the inventory need becomes free slots…
+  at 0 we have 0 free slots"): need `inventory` on a 0..16 encoding domain,
+  `deplete = 0`, no bands — VALUE = free slots, worker-written (the food-chain
+  need-write TRIGGER fires on inventory changes for free). ONE leveled
+  `inventory` trait (`max = [6]`, the corpus pattern) provides the need and caps
+  it — humans level 1 = capacity 6; future levels (backpacks) append slots. The
+  standing mint-at-effective-max law is CORRECT as-is (all slots free at birth);
+  free vs filled must never conflate ([I2](issues.md#i2)).
 - **Items are rows in a pawn-shard sub-table** ([F2](forks.md#f2)):
   `inventory(entity, slot, item, state)` — `item` = the u32 definition_reference,
   `state` a RESERVED word (0 today). The user's where-is-it worry is answered by the
@@ -38,11 +42,11 @@ understands where it is").
   and rows never diverge ([I3](issues.md#i3)). New codec verbs = event-shard module
   redeploy + edge allowlist ([I4](issues.md#i4)).
 - **pick_up is walk-then-act on the thing** ([F4](forks.md#f4)): location
-  `adjacent`, affordance `can_carry` = the NEW `below_max` need check ("has the
-  need" falls out — a check on an absent row never passes; "not max" = lazy value <
-  the EFFECTIVE max via need_bounds). Effect `store = "carrier"`: the destroy-lane
-  tombstone SET + INV_ADD + SET_NEED, one program. Authored on every portable thing
-  ([F6](forks.md#f6)).
+  `adjacent`, affordance `can_carry` = the EXISTING `{ need = "inventory",
+  gt = 0 }` check ("has the need" falls out — a check on an absent row never
+  passes; "not max" = a free slot remains; no new check machinery). Effect
+  `store = "carrier"`: the destroy-lane tombstone SET + INV_ADD + `SET_NEED
+  free − 1`, one program. Authored on every portable thing ([F6](forks.md#f6)).
 - **drop is ONE generic interaction on the PAWN** ([F5](forks.md#f5) — the user's
   open question): carried by inventory-bearing pawn kinds (the death `self`
   precedent), NEW location rule `"slot"` — the carrier is an inventory slot of the
@@ -50,8 +54,9 @@ understands where it is").
   re-validates the slot still holds that item — [I5](issues.md#i5)). Effect
   `spawn = "carried"`: the food-chain adjacent scan places the SLOT's kind beside
   the pawn — because the effect names the carried item, not a fixed thing, one drop
-  covers every item. No empty pathable cell → REFUSE, the item stays held (never
-  the forage all-full-swallows rule — [I10](issues.md#i10)).
+  covers every item; then `INV_REMOVE` + `SET_NEED free + 1`. No empty pathable
+  cell → REFUSE, the item stays held (never the forage all-full-swallows rule —
+  [I10](issues.md#i10)).
 - **The panels** ([F7](forks.md#f7)): the details panel drops its text block and
   shows NAME (the def's TOML name) + TILE; a top button row gains [Inventory],
   shown iff the selected kind's corpus carries the inventory need. The inventory
