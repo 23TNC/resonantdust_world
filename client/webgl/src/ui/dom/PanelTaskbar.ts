@@ -24,8 +24,8 @@ const BAR_CSS: Partial<CSSStyleDeclaration> = {
   color: "#ecd6aa",
   fontFamily: "sans-serif",
   fontSize: "12px",
-  // Above every panel TIER (bug-sweep F1: tiers 32-56 × the 10k stride top out
-  // below 64 × 10k) — the taskbar is CHROME, outside the panel ordering.
+  // Above every panel TIER (bug-sweep F1) — the taskbar is CHROME, outside the
+  // panel ordering (Z_CHROME_BASE + 1; kept literal to avoid an import cycle).
   zIndex: String(64 * 10000 + 1),
   userSelect: "none",
   boxSizing: "border-box",

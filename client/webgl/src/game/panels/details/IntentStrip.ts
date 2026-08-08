@@ -8,6 +8,7 @@
 //! reports the entry's worker-minted id upward (the CANCEL_INTENT sender — P4).
 
 import type { QueueEntry } from "../../world/IntentQueues";
+import { Z_CHROME_BASE } from "../../../ui/dom/DomPanel";
 
 /** The TOML visuals the wasm accessor returns (defaults already applied). */
 export interface QueueVisual {
@@ -51,7 +52,8 @@ export class IntentStrip {
       "flex-direction:column-reverse;align-items:center;gap:6px;" +
       "padding:6px 0;box-sizing:border-box;overflow:hidden;";
     this.tooltip.style.cssText =
-      "position:fixed;display:none;z-index:60001;pointer-events:none;" +
+      // bug-sweep F1: tooltips are CHROME, one above the pie menu.
+      `position:fixed;display:none;z-index:${Z_CHROME_BASE + 11};pointer-events:none;` +
       "background:#1c1f24;color:#d7dde5;border:1px solid #444;border-radius:4px;" +
       "padding:2px 8px;font:11px/1.6 monospace;white-space:nowrap;";
     document.body.appendChild(this.tooltip);

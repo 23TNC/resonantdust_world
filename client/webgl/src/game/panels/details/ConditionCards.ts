@@ -24,6 +24,8 @@
 //! EMOTION-INDEX order from 12 o'clock. One modifier = solid; none = solid `fine` gray. NO card
 //! text — the everything-tooltip (F6) is the whole read surface.
 
+import { Z_CHROME_BASE } from "../../../ui/dom/DomPanel";
+
 /** One emotion slice, colors/labels resolved by the provider (the corpus owns look). */
 export interface EmotionSlice {
   /** The emotion's u4 declaration index — the slice ORDER key (F5). */
@@ -137,7 +139,8 @@ export class ConditionCards {
       "pointer-events:none",
     ].join(";");
     this.tooltip.style.cssText =
-      "position:fixed;display:none;z-index:60001;pointer-events:none;" +
+      // bug-sweep F1: tooltips are CHROME, above every panel tier.
+      `position:fixed;display:none;z-index:${Z_CHROME_BASE + 11};pointer-events:none;` +
       "background:#1c1f24;color:#d7dde5;border:1px solid #444;border-radius:4px;" +
       "padding:4px 8px;font:11px/1.6 monospace;white-space:pre;";
     document.body.appendChild(this.tooltip);

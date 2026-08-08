@@ -44,6 +44,25 @@ and the per-frame probe log timestamped so a vanish frame indexes into the log.
 If it will not reproduce in a session, record THAT (with the attempted
 conditions) rather than guessing — the deliverable is identified conditions.
 
+## I9 — FOUND: same-kind pawns at different facings fight over subframe cell 0 {#i9}
+
+The geo-flash root cause exposed a deeper pre-existing defect: `subframeSlot`
+registers the CURRENT facing's rect under `<stem>#0`, so two pawns of one kind
+facing differently RE-REGISTER against each other on every visual apply —
+a continuous repack churn (previously: continuous geo flashing; now: stale-crop
+serving, so at worst a briefly-wrong facing crop on one of them). The real fix is
+per-facing subframe CELLS applied at RESOLVE (subframe-ingest F6's direction) with
+the prim passing `cell = rot` — a successor stream touching pack layout, bbox, and
+the shadow card. Recorded, not built here.
+
+## I10 — FOUND: fixed-position chrome had hand-rolled z literals {#i10}
+
+The pie menu (z 60000, reported invisible by the user mid-stream), both tooltips
+(60001), and the taskbar (50001) all sank under the game view's new tier z
+(320001). All chrome now rides `Z_CHROME_BASE` (tier 64 × the stride): taskbar +1,
+pie menu +10, tooltips +11. Any FUTURE fixed-position chrome must use the constant
+— a literal is exactly how these four broke.
+
 ## I7 — the wall flag is a CONTENT change: the six-consumer law {#i7}
 
 `pathable = false` on wall_smooth → golden re-blessed, worker/npc/wasm/webgl/

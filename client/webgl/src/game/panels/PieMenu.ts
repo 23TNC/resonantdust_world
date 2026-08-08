@@ -7,6 +7,8 @@
 //! closes. Spacing refinements are explicitly deferred (user: "We will work on the spacing
 //! later").
 
+import { Z_CHROME_BASE } from "../../ui/dom/DomPanel";
+
 /** One offered interaction — the wasm `tileMenuOptions` row (already predicate- and
  *  location-filtered; the menu never re-decides availability). */
 export interface PieMenuOption {
@@ -47,13 +49,13 @@ export class PieMenu {
       const y = cy + Math.sin(angle) * RADIUS_PX;
       const b = document.createElement("div");
       b.textContent = o.menuText;
-      // z 60000 = above every DomPanel band incl. "ontop" (50000 + the 10k stride) — a
-      // transient input overlay outranks all chrome by definition.
+      // bug-sweep F1: the pie menu is CHROME — above every panel tier (the old 60000
+      // sank under the game view's 320001 the moment the numeric tiers landed).
       b.style.cssText =
         `position:fixed;left:${x}px;top:${y}px;transform:translate(-50%,-50%);` +
         "padding:6px 14px;border-radius:10px;background:#1c2128;border:1px solid #444c56;" +
         "color:#adbac7;font:12px/1.4 ui-monospace,monospace;white-space:nowrap;" +
-        "cursor:pointer;user-select:none;box-shadow:0 2px 8px rgba(0,0,0,0.5);z-index:60000;";
+        `cursor:pointer;user-select:none;box-shadow:0 2px 8px rgba(0,0,0,0.5);z-index:${Z_CHROME_BASE + 10};`;
       b.addEventListener("pointerdown", (ev) => {
         ev.stopPropagation();
         ev.preventDefault();

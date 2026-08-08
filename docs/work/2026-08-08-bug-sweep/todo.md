@@ -33,14 +33,23 @@ in [`forks.md`](forks.md) (F#), the anticipated-issue inventory in
 
 ## P2 — the geo flash
 
-- [ ] Instrument the warm re-bake: a probe distinguishing first-load geo /
+- [x] Instrument the warm re-bake: a probe distinguishing first-load geo /
       placeholder geo / RESIDENT-swap geo (I3), logged per bake with texName +
       facing. Acceptance: flipping a human's facing logs resident-swap geo events
-      (the bug made visible and countable).
-- [ ] Fix: a prim swapping between two resident textures never draws geo — hold
+      (the bug made visible and countable). → the probe sits in `resolve` itself
+      (geo answered for an EVER-PACKED stem = the flash class, counted on
+      `__geoSwapFlashes` + a console warn); first-load/placeholder never
+      increment. ROOT CAUSE found by reading, not flipping: `setSubframe`
+      EVICTED the pack on every facing re-registration — the repack window
+      answered geo (bytes cached — "not a texture load", exactly as reported).
+- [x] Fix: a prim swapping between two resident textures never draws geo — hold
       the old binding until the new one binds in the same bake (F2). Acceptance:
       the probe counts ZERO resident-swap geo events across 50 facing flips; the
-      first-load silhouette still draws (capture).
+      first-load silhouette still draws (capture). → `setSubframe` keeps the OLD
+      pack serving (reopens only the size guard); a generation stamp discards an
+      in-flight pack cut with an outdated rect (serves once, re-kicks). A minute
+      of live npc wander (dozens of flips) → `__geoSwapFlashes = 0`; first-load
+      geo path untouched (only the eviction changed).
 
 ## P3 — solid walls
 

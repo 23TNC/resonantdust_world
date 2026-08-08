@@ -35,6 +35,11 @@ export const Z_TIER_SYSTEM = 56;   // settings, debug HUD
  *  Chrome is not a panel and takes no part in the ordering. */
 export const Z_TIER_CHROME = 64;
 
+/** The chrome band's base CSS z-index — for NON-panel fixed-position chrome (the
+ *  taskbar, the pie menu, tooltips). Everything here sits above every panel tier;
+ *  order within the band: taskbar +1, pie menu +10, tooltips +11 (over menus). */
+export const Z_CHROME_BASE = Z_TIER_CHROME * 10000;
+
 /** Per-tier z stride — large enough that ordinary focus traffic can't bleed one
  *  tier into the next (10k = ~10k focus bumps before overlap; sessions hit dozens). */
 const Z_STRIDE = 10000;

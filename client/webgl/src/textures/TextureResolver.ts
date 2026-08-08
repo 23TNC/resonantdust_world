@@ -171,8 +171,12 @@ export class TextureResolver {
    *  It also replaces `internal_padding` — a uniform inset IS a uniform subframe, so a linked tile
    *  grid authors its inset the same way everything else does (F6).
    *
-   *  A CHANGE evicts the stem's packed frames so they repack under the new rect — the same eviction
-   *  discipline as {@link setSpriteScale} (bytes stay cached; only the pack redoes). */
+   *  A CHANGE re-packs under the new rect — but the OLD packed frame KEEPS SERVING until the new
+   *  pack lands (bug-sweep F2: the mover re-registers the facing's rect on every turn, and the
+   *  old evict-first discipline made `resolve` answer GEO for the repack window — the direction-
+   *  change geo flash, which was never a texture load; bytes stay cached throughout). The
+   *  generation stamp discards an in-flight pack cut with an outdated rect (it serves once,
+   *  stale, and immediately re-kicks). */
   setSubframe(stem: string, cell: number, x: number, y: number, w: number, h: number, ax = 0.5, ay = 0.5): void {
     const key = `${stem}#${cell}`;
     const cur = this.subframe.get(key);
@@ -181,13 +185,23 @@ export class TextureResolver {
     // unauthored stem take the crop path for a no-op, and evict on first registration.
     if (!cur && x === 0 && y === 0 && w === 1 && h === 1 && ax === 0.5 && ay === 0.5) return;
     this.subframe.set(key, [x, y, w, h, ax, ay]);
-    // `cellFrames` is keyed by (packed frame, cell) and a registered rect changes that cell's UVs,
-    // so the stem's frames must go: dropping `packed` orphans the old TexFrame objects and the
-    // WeakMap entries go with them. Bytes stay cached — only the pack redoes.
-    this.packed.delete(stem);
-    this.packedSize.delete(stem);   // or the guard blocks the re-pack at the same size, forever
+    this.subframeGen.set(stem, (this.subframeGen.get(stem) ?? 0) + 1);
+    // Reopen the size guard so the next `resolve` kicks a re-pack — WITHOUT dropping `packed`:
+    // the stale frame keeps serving (a momentarily-old crop beats a geo box). The new pack
+    // replaces `packed` on completion; the orphaned TexFrame's WeakMap entries go with it.
+    this.packedSize.delete(stem);
     this.packedHash.delete(stem);
   }
+
+  /** bug-sweep F2: bumped per subframe registration — `ensureCoPack` captures it at start and
+   *  treats a finished pack whose stem re-registered meanwhile as STALE (serve + re-kick). */
+  private readonly subframeGen = new Map<string, number>();
+
+  /** bug-sweep P2's probe: counts `resolve` answering GEO for a stem that HAS served a real
+   *  pack this session — exactly the resident-swap flash class (first-load geo and placeholder
+   *  geo never increment). Exposed on `globalThis.__geoSwapFlashes` for the drill. */
+  private geoSwapFlashes = 0;
+  private readonly everPacked = new Set<string>();
 
   /** The authored rect for one addressable frame, or null. */
   private subframeFor(stem: string, cell: number): [number, number, number, number, number, number] | undefined {
@@ -288,7 +302,17 @@ export class TextureResolver {
       if (have < PREVIEW_PX && entry.maxSize > PREVIEW_PX) this.ensureCoPack(stem, PREVIEW_PX, entry.hash);
       this.ensureCoPack(stem, entry.maxSize, entry.hash);
     }
-    if (!cf) return { frame: null, geo: true };
+    if (!cf) {
+      // The probe (bug-sweep P2/I3): geo for a stem that HAS served a pack this session is
+      // the resident-swap flash — the class the F2 fix eliminates. Count it loudly.
+      if (this.everPacked.has(stem)) {
+        this.geoSwapFlashes++;
+        (globalThis as { __geoSwapFlashes?: number }).__geoSwapFlashes = this.geoSwapFlashes;
+        console.warn(`[resolver] RESIDENT-SWAP GEO: ${stem} (${map}) — flash #${this.geoSwapFlashes}`);
+      }
+      return { frame: null, geo: true };
+    }
+    this.everPacked.add(stem);
     const quad = this.quadrant(cf, map); // this map's N×N quadrant of the co-packed frame
     if (entry.grid && cell != null) {
       // texture-generalization: the DSL internal_padding (units of the 16-unit cell) joins
@@ -423,8 +447,19 @@ export class TextureResolver {
       const quadN = (albedo ?? surf)!.width; // square masters → every map is quadN × quadN
       // Re-check the guard: the master may have landed while these bytes were in flight.
       if ((this.packedSize.get(stem) ?? 0) >= size) { for (const b of bmps) b?.close(); return; }
+      // bug-sweep F2: the subframe generation this pack CUTS with — a registration landing
+      // while the bytes were in flight makes this pack stale-on-arrival (see below).
+      const genAtCut = this.subframeGen.get(stem) ?? 0;
       const ok = this.packCoPack(stem, size, quadN, bmps, scaled ? scale : undefined, this.rawBBox.get(stem));
       for (const b of bmps) b?.close();
+      if (ok && (this.subframeGen.get(stem) ?? 0) !== genAtCut) {
+        // Cut with an outdated rect: SERVE it (a stale crop beats geo) but leave the size
+        // guard open and re-kick, so the fresh rect's pack replaces it directly.
+        this.packedHash.delete(stem);
+        this.pending.delete(pkey);
+        setTimeout(() => void this.ensureCoPack(stem, size, hash), 0);
+        return;
+      }
       if (ok) {
         this.packedSize.set(stem, size);
         this.packedHash.set(stem, hash);
