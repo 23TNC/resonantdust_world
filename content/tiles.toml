@@ -77,6 +77,11 @@ tint = "#ffffff"
 height = 1.0
 build = "wall"
 receives_shadows = 1.0
+# Impassable (bug-sweep F3): walls block ROUTES through the ONE derived-pathability
+# law (the water flag's sibling) — worker A*, client glide, and npc all follow.
+# Walls already refuse move_to as a DEST (they bind no interactions); enclosures
+# genuinely trap now (doors are the successor).
+pathable = false
 rotation = 1.0
 linked = { w = 4.0, h = 4.0 }
 padding = 1.0

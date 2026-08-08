@@ -91,6 +91,7 @@ meat Some(10500144)
 plant_matter Some(5816394)
 == impathable kinds (tile/thing name) ==
 tile water
+tile wall_smooth
 thing tree
 == tile_texture_stems ==
 white

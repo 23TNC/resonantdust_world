@@ -53,12 +53,17 @@ in [`forks.md`](forks.md) (F#), the anticipated-issue inventory in
 
 ## P3 — solid walls
 
-- [ ] Content: `pathable = false` on the wall tile (F3) + the six-consumer sweep
+- [x] Content: `pathable = false` on the wall tile (F3) + the six-consumer sweep
       (I7: golden, rebuilds, cache-bust). Acceptance: golden diff = the one flag;
-      worker/npc/wasm rebuilt and restarted.
-- [ ] Drill: a route detours around a wall LINE; a wall-enclosed destination
+      worker/npc/wasm rebuilt and restarted. → golden shows exactly
+      `tile wall_smooth` joining the impathable list; worker/npc restarted,
+      wasm/webgl rebuilt + cache-busted.
+- [x] Drill: a route detours around a wall LINE; a wall-enclosed destination
       refuses (F5 log); the standing pen's interior refuses from outside (I4).
-      Acceptance: worker logs + a capture of the detour.
+      Acceptance: worker logs + a capture of the detour. → the pen interior
+      (105,62) logged the F5 refusal; the (98,67)→(110,62) trip crossed the pen's
+      line-of-sight and arrived AROUND it — a 120 ms monitor on every mover's
+      auth + render tiles vs the wall def counted ZERO violations.
 
 ## P4 — outlines occlude
 
