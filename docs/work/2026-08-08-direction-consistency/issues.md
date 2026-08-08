@@ -216,3 +216,32 @@ P3 is rewritten to record the negative result rather than build the thing.
 **Caught before any GPU time was spent**, by checking what the nodes can express before writing the
 graph. Recorded because the failure shape is the same one as [I5](#i5): reasoning about a mechanism
 without verifying the instrument can perform it.
+
+## I10 — the weight types the adapter actually offers {#i10}
+_2026-08-08 · read off `/object_info/IPAdapterAdvanced`, so P2.2 is an action rather than a search_
+
+```
+weight_type      linear · ease in · ease out · ease in-out · reverse in-out ·
+                 weak input · weak output · weak middle · strong middle ·
+                 style transfer · composition · strong style transfer
+combine_embeds   concat · add · subtract · average · norm average
+embeds_scaling   V only · K+V · K+V w/ C penalty · K+mean(V) w/ C penalty
+```
+
+The pipeline has always used **`style transfer`**, which is the one type in the list that exists
+specifically to carry style *while discarding content* ([I3](#i3)) — and cross-view identity is
+content.
+
+**The four worth sweeping, and why**, out of twelve:
+
+| type | why it is in the sweep |
+|---|---|
+| `linear` | the plain full application — carries style **and** content, so it is the natural candidate for "same animal" |
+| `composition` | the stated complement of `style transfer`; carries structure rather than palette |
+| `strong style transfer` | tests whether the current type merely needs more of itself |
+| `style transfer` | the **control** — the current behaviour, so the sweep has a floor |
+
+The eight omitted (`ease in/out`, `weak/strong middle`, `reverse in-out`) are **timestep weighting
+curves**, not different content/style splits. They vary *when* the adapter applies during
+denoising, which is a second axis worth touching only if the first one moves the number — noted so
+the omission is a decision rather than an oversight.
