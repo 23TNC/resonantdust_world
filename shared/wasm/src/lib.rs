@@ -599,6 +599,57 @@ impl Content {
         self.bundle.gameplay_reference(&category, &name)
     }
 
+    /// Does `object_id`'s thing def carry the named NEED (inventory F7)? The [Inventory]
+    /// button and panel gate on `kindHasNeed(kind, "inventory")` — resolved by NAME so
+    /// registry/seed drift cannot bite.
+    #[wasm_bindgen(js_name = kindHasNeed)]
+    pub fn kind_has_need(&self, object_id: u16, need: String) -> bool {
+        self.bundle.thing_needs(object_id).iter().any(|r| {
+            self.bundle.gameplay_lookup(*r).is_some_and(|(c, n)| c == "need" && n == need)
+        })
+    }
+
+    /// The EFFECTIVE max of a need for a pawn's rows (`need_bounds` hi — the leveled-trait
+    /// cap): the inventory panel's GRID SIZE (inventory F7; a level-2 trait widens it).
+    #[wasm_bindgen(js_name = needMax)]
+    pub fn need_max(&self, payload: Vec<u32>, need: String, now_tic: u16) -> Option<f64> {
+        let (traits, conditions) = decode_payload(&payload);
+        let np = self.bundle.need_params(&need)?;
+        let (_, hi) = resonantdust_content::needs_eval::need_bounds(
+            &self.bundle, &need, &np, &traits, &conditions, now_tic,
+        );
+        Some(hi)
+    }
+
+    /// The SLOT pie-menu options (inventory F5): the acting pawn's OWN kind's
+    /// slot-located interactions (drop today), availability-filtered by the SAME rules
+    /// as every other menu (`location_in_range("slot", ·)` is definitionally in range).
+    #[wasm_bindgen(js_name = slotMenuOptions)]
+    pub fn slot_menu_options(
+        &self,
+        pawn_object_id: u16,
+        payload: Vec<u32>,
+        needs: Vec<u32>,
+        now_tic: u16,
+    ) -> js_sys::Array {
+        let binds: Vec<_> = self
+            .bundle
+            .thing_interactions(pawn_object_id)
+            .into_iter()
+            .filter(|b| {
+                self.bundle.interaction_params(&b.name).is_some_and(|ip| ip.location == "slot")
+            })
+            .collect();
+        menu_options(&self.bundle, binds, payload, needs, now_tic, 0)
+    }
+
+    /// A thing's placeholder/background colour by `object_id` (`0xRRGGBB`), or `None` —
+    /// the inventory panel's slot fill (inventory F7).
+    #[wasm_bindgen(js_name = thingColor)]
+    pub fn thing_color(&self, object_id: u16) -> Option<u32> {
+        self.bundle.thing_color_for_object(object_id)
+    }
+
     /// An interaction's queue-strip visuals by its `definition_reference`
     /// (intent-queue-ui F2): `{ hover, size, background, progress, progressColor,
     /// progressFill, cancelable }`. `hover` falls back to the LABEL; colors are

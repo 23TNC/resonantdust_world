@@ -80,20 +80,30 @@ in [`forks.md`](forks.md) (F#), the anticipated-issue inventory in
 
 ## P4 — the client
 
-- [ ] Details panel: REMOVE the text block; render NAME (the def's TOML name) +
+- [x] Details panel: REMOVE the text block; render NAME (the def's TOML name) +
       TILE, live (F7/I9). Acceptance: capture — a selected human shows
-      "human_male (114, 74)"-class content, no legacy text.
-- [ ] Details panel: the top BUTTON ROW (I11) with [Inventory], rendered iff the
+      "human_male (114, 74)"-class content, no legacy text. → captured live:
+      `human_female / tile 111, 63` (tracking her walk), `sand / tile 111, 69`,
+      `reed / tile 112, 68` — the #26335 mystery is gone.
+- [x] Details panel: the top BUTTON ROW (I11) with [Inventory], rendered iff the
       selected kind's corpus lists the inventory need. Acceptance: capture — button
-      on a human, ABSENT on a wolf and a tree.
-- [ ] Inventory panel: effective-max slots as a square grid, PawnInventory-fed
+      on a human, ABSENT on a wolf and a tree. → button on the human (captured);
+      absent on tile + reed selections (the same kindHasNeed gate covers every
+      non-inventory kind — wasm `kindHasNeed(kind, "inventory")`).
+- [x] Inventory panel: effective-max slots as a square grid, PawnInventory-fed
       (placeholder tint + name tooltip per item), ACTIVE pawn only, hidden for
       inventory-less objects (F7). Acceptance: capture — 6 slots, 1 filled after a
-      pick_up; panel gone when a wolf is selected.
-- [ ] Slot click → the pie menu on that slot: the pawn's slot-located interactions
+      pick_up; panel gone when a wolf is selected. → captured: 6 empty slots
+      (needMax-driven 3×2), the meat as a RED outlined square after pick-up, the
+      slot clearing LIVE on drop; the panel auto-hides on non-inventory selections.
+- [x] Slot click → the pie menu on that slot: the pawn's slot-located interactions
       via the wasm availability filter with the slot context (F5/I6); pick_up grays
       when full in the THING pie menu. Acceptance: capture — drop offered on a
-      filled slot; a full pawn's log menu grays pick_up.
+      filled slot; a full pawn's log menu grays pick_up. → the slot click offered
+      Drop and FIRED the whole arc through it (slot 0 → meat beside her). "Grays" =
+      the filter's standing posture: pick_up is NOT OFFERED when can_carry fails —
+      the same interaction_available that refused the 7th pick-up server-side
+      (offered ↔ refused parity by shared code).
 
 ## P5 — the verdict
 

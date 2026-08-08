@@ -1,10 +1,10 @@
-//! The details panel (ui-select P2) — re-implemented on `DomPanel`, displaying the SELECTED
-//! object's details live from the {@link SelectionModel} + the world's providers. One panel,
-//! three shapes: a PAWN (kind/stem, entity ref, authoritative tile, facing, speed, zone
-//! address, in-flight flag — refreshed on a short timer while selected, since pawns move), a
-//! THING (texture, position, footprint), a TILE (world coordinates + world px). Empty state
-//! when nothing is selected. Consumes the model's change event only (D1) — it never touches
-//! input, so the future drag-box multi-select lands here as "N selected" without rewiring.
+//! The details panel (ui-select P2, reworked by inventory F7) — the SELECTED object's
+//! IDENTITY: its TOML name (`human_male`, `meat`, `grass`) + its tile, live from the
+//! {@link SelectionModel} + the world's providers. The old debug text block (facing/
+//! speed/zone/texture rows) is GONE (the user: "I just need to know what something is").
+//! A top BUTTON ROW (I11) opens sibling panels — [Inventory] renders only when the
+//! selected kind carries the inventory need. Consumes the model's change event only
+//! (D1) — it never touches input, so drag-box multi-select lands as "N selected".
 
 import { DomPanel } from "../../../ui/dom/DomPanel";
 import { ConditionCards, CARD_H, PAD_BOTTOM } from "./ConditionCards";
@@ -24,6 +24,11 @@ export interface DetailsProviders {
   pawn(entity: number): {
     kind: number; stem: string; tileX: number; tileY: number; facing: number;
     macroPosition: number; moving: boolean; ticsPerTile: number;
+    /** The TOML name (inventory F7 — `human_male`, `wolf`): identification is the
+     *  panel's whole job now; `pawn/human/male #11` told the user nothing. */
+    name: string;
+    /** Does this kind's corpus carry the `inventory` need — the [Inventory] button gate. */
+    hasInventory: boolean;
     /** The pawn's ACTIVE conditions (needs-moodlets P5), evaluated lazily by the provider
      *  through the ONE wasm eval. The NEED scalars are deliberately absent — the panel
      *  shows CONSEQUENCES, never bars (the stream's whole point).
@@ -37,17 +42,25 @@ export interface DetailsProviders {
   } | null;
   thing(primId: number): {
     textureName?: string; x: number; y: number; width: number; height: number; zIndex: number;
+    /** The TOML name of the thing at the anchor cell (`shrub`, `meat`), or null unresolved. */
+    name: string | null;
   } | null;
+  /** The ground tile's TOML name at (x, y) (`grass`, `water`), or null while unstreamed. */
+  tileName(x: number, y: number): string | null;
 }
 
 const PANEL_KEY = "gameDetailsPanel";
-const FACING = ["south", "east", "north", "west"];
 
 export class DetailsPanel extends DomPanel {
   /** The flex ROW (intent-queue-ui F5): the strip pinned LEFT, the text content
    *  SHIFTED RIGHT beside it. */
   private readonly rowEl = document.createElement("div");
   private readonly bodyEl = document.createElement("div");
+  /** The top BUTTON ROW (inventory F7/I11) — panel-opening buttons land here;
+   *  [Inventory] is the first, gated per selection. */
+  private readonly buttonRowEl = document.createElement("div");
+  private readonly inventoryBtn = document.createElement("button");
+  private readonly textEl = document.createElement("div");
   private readonly unsubSel: () => void;
   private readonly unsubQueues: () => void;
   private readonly timer: number;
@@ -74,8 +87,23 @@ export class DetailsPanel extends DomPanel {
     // the reserve the last row would hide behind it.
     this.rowEl.style.cssText = "display:flex;height:100%;box-sizing:border-box;";
     this.bodyEl.style.cssText =
-      "padding:8px 12px;font:12px/1.7 monospace;white-space:pre;overflow:auto;height:100%;" +
+      "padding:8px 12px;overflow:auto;height:100%;display:flex;flex-direction:column;" +
       `box-sizing:border-box;flex:1 1 auto;padding-bottom:${CARD_H + PAD_BOTTOM * 2}px;`;
+    // The button row (inventory I11): a named ROW, not "the inventory button" — the
+    // next panel button (character sheet…) lands beside it without rewiring.
+    this.buttonRowEl.style.cssText = "display:flex;gap:6px;margin-bottom:6px;flex:0 0 auto;";
+    this.inventoryBtn.textContent = panelText(PANEL_KEY, "inventoryButton");
+    this.inventoryBtn.style.cssText =
+      "font:11px monospace;padding:2px 10px;cursor:pointer;background:rgba(255,255,255,0.08);" +
+      "color:inherit;border:1px solid rgba(255,255,255,0.25);border-radius:3px;display:none;";
+    this.inventoryBtn.addEventListener("mousedown", (e) => {
+      e.stopPropagation();
+      this.onInventoryClick?.();
+    });
+    this.buttonRowEl.appendChild(this.inventoryBtn);
+    this.textEl.style.cssText = "font:12px/1.7 monospace;white-space:pre;flex:1 1 auto;";
+    this.bodyEl.appendChild(this.buttonRowEl);
+    this.bodyEl.appendChild(this.textEl);
     this.strip = new IntentStrip(
       (ref) => {
         try {
@@ -129,6 +157,10 @@ export class DetailsPanel extends DomPanel {
   /** Injected by the scene (P4) — sends `CANCEL_INTENT pawn entry_id`. */
   cancelSender: ((pawn: number, entryId: number) => void) | null = null;
 
+  /** Injected by the scene (inventory F7) — opens the inventory panel for the
+   *  active pawn. The button only renders when the selection HAS an inventory. */
+  onInventoryClick: (() => void) | null = null;
+
   private render(): void {
     const rows: string[] = [];
     /** The conditions this render resolved — empty for every non-pawn selection, which is what
@@ -140,55 +172,47 @@ export class DetailsPanel extends DomPanel {
     let wash = "";
     const all = this.selection.all;
     const p = this.selection.primary;
+    /** The [Inventory] button's gate this render (inventory F7): no inventory need on
+     *  the selected object's kind → no button (the user's law). */
+    let showInventory = false;
     if (!p) {
-      this.bodyEl.textContent = panelText(PANEL_KEY, "empty");
+      this.textEl.textContent = panelText(PANEL_KEY, "empty");
+      this.inventoryBtn.style.display = "none";
       this.rowEl.style.background = "";
       this.cards.setCards([]);
       this.strip.setEntries([]);
       return;
     }
     if (all.length > 1) rows.push(`${all.length} selected — primary:`);
+    // The panel's whole job is IDENTIFICATION (inventory F7, the user at plan review:
+    // "I just need to know what something is" — `thing #26335, texture (geo)` hid that
+    // a green square was a shrub). NAME from the TOML + the TILE; everything else lives
+    // in the cards, the strip, and the wash.
     if (p.kind === "pawn") {
       const info = this.providers.pawn(p.entity);
-      rows.push(`pawn      0x${p.entity.toString(16)}`);
       if (info) {
-        rows.push(
-          `kind      ${info.stem} (#${info.kind})`,
-          `tile      ${info.tileX}, ${info.tileY}`,
-          `facing    ${FACING[info.facing & 3]}`,
-          `speed     ${info.ticsPerTile} tics/tile`,
-          `zone      ${info.macroPosition}`,
-          `state     ${info.moving ? "moving" : "resting"}`,
-        );
-        // The mood row is RETIRED (emotions F4) — the active emotion's wash (F7) and the
-        // condition tooltips (F6) are the affect surface now.
-        // Conditions are NOT text rows any more — they render as cards in the sibling strip
-        // (P4). The order arrives already sorted by the shared eval; pass it through untouched.
+        rows.push(info.name, `tile  ${info.tileX}, ${info.tileY}`);
+        showInventory = info.hasInventory;
         cards = info.conditions;
         const c = info.emotion.color;
         wash = `rgba(${(c >> 16) & 0xff}, ${(c >> 8) & 0xff}, ${c & 0xff}, 0.16)`;
       } else {
-        rows.push("(despawned)");
+        rows.push(`0x${p.entity.toString(16)}`, "(despawned)");
       }
     } else if (p.kind === "thing") {
       const t = this.providers.thing(p.primId);
-      rows.push(`thing     #${p.primId}`);
       if (t) {
-        rows.push(
-          `texture   ${t.textureName ?? "(geo)"}`,
-          `tile      ${Math.floor((t.x + t.width / 2) / SQUARE)}, ${Math.floor((t.y + t.height) / SQUARE)}`,
-          `footprint ${Math.round(t.width / SQUARE)}×${Math.round(t.height / SQUARE)} tiles`,
-        );
+        const tx = Math.floor((t.x + t.width / 2) / SQUARE);
+        const ty = Math.floor((t.y + t.height) / SQUARE);
+        rows.push(t.name ?? t.textureName ?? "(unknown thing)", `tile  ${tx}, ${ty}`);
       } else {
         rows.push("(streamed out)");
       }
     } else {
-      rows.push(
-        `tile      ${p.x}, ${p.y}`,
-        `world px  ${p.x * SQUARE}, ${p.y * SQUARE}`,
-      );
+      rows.push(this.providers.tileName(p.x, p.y) ?? "(unstreamed)", `tile  ${p.x}, ${p.y}`);
     }
-    this.bodyEl.textContent = rows.join("\n");
+    this.textEl.textContent = rows.join("\n");
+    this.inventoryBtn.style.display = showInventory ? "" : "none";
     this.rowEl.style.background = wash;
     this.cards.setCards(cards);
     // The strip shows the SELECTED pawn's queue only; anything else clears it.

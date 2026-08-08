@@ -78,3 +78,26 @@
   7th logged the affordance refusal; drop slot 0 put the meat back at (108,66)
   and wrote free=1 with the item-0 frame relayed; a re-drop of the empty slot
   logged the I5 no-op; corpus→0 on the 5-item human left ZERO orphan rows.
+
+## 2026-08-08 — P4: the client
+
+- Wasm: `kindHasNeed` (the button/panel gate), `needMax` (the grid size — the
+  effective cap through the ONE eval), `slotMenuOptions` (the pawn kind's
+  slot-located interactions through the SAME availability filter), `thingColor`.
+- The details panel reworked to IDENTIFICATION (F7): the TOML name + the live
+  tile — the debug text block (facing/speed/zone/texture) DELETED; the top
+  BUTTON ROW (I11, named a row so the next button lands beside) gates
+  [Inventory] on `kindHasNeed`.
+- `InventoryStore` (the PawnInventory mirror, item-0 = slot cleared) +
+  `InventoryPanel` (a needMax-sized slot grid; filled squares = placeholder
+  tint + BLACK OUTLINE — the F9 law carried into the UI; name tooltips; hidden
+  for non-inventory selections); slot clicks open the pie menu via
+  `slotMenuOptions` and bind `pawn`/`slot`/`item` (the item the clicker SAW —
+  the worker's I5 re-validation input).
+- Drilled live end to end through the REAL UI: `/spawn human_female` →
+  `human_female / tile 111, 63` + [Inventory]; 6 empty slots; pie-menu Pick Up
+  on meat → the slot filled RED live; slot click → Drop → the slot cleared and
+  the meat landed beside her; `sand` and `reed` selections show names, no
+  button, and the panel auto-hides. "Grays when full" is realized as
+  NOT-OFFERED (the input-rework posture — the same `interaction_available`
+  that refused the 7th pick-up server-side).

@@ -14,6 +14,8 @@ import { MoverLayer } from "../../game/world/MoverLayer";
 import { IntentQueues } from "../../game/world/IntentQueues";
 import { ChatPanel } from "../../game/panels/chat/ChatPanel";
 import { DetailsPanel } from "../../game/panels/details/DetailsPanel";
+import { InventoryPanel } from "../../game/panels/InventoryPanel";
+import { InventoryStore } from "../../game/world/InventoryStore";
 import type { ConditionCard, EmotionSlice } from "../../game/panels/details/ConditionCards";
 import { BuildPanel } from "../../game/panels/build/BuildPanel";
 import { buildMenuEntries, blueprintStemFor, type BuildEntry } from "../../game/world/buildMenu";
@@ -55,6 +57,10 @@ export class WorldScene extends Scene {
   private intentQueues!: IntentQueues;
   private chat!: ChatPanel;
   private details: DetailsPanel | null = null;
+  /** The inventory surface (inventory F7): the PawnInventory mirror + the slot-grid panel. */
+  private inventoryStore: InventoryStore | null = null;
+  private inventoryPanel: InventoryPanel | null = null;
+  private invUnsub: (() => void) | null = null;
   private contentUnsub: (() => void) | null = null;
   private urlCommands: UrlCommand[] = [];
   private dragId: number | null = null;
@@ -195,11 +201,37 @@ export class WorldScene extends Scene {
             color: c.emotionColor(idx) >= 0 ? c.emotionColor(idx) : 0x9aa4b0,
           };
         }
-        return { ...info, conditions, emotion };
+        // Identification (inventory F7): the TOML name + the [Inventory] gate — both
+        // by the pawn's KIND through the corpus.
+        let name = `0x${e.toString(16)}`;
+        let hasInventory = false;
+        try {
+          const c = getContent();
+          name = c.thingNames()[info.kind - 1] ?? name;
+          hasInventory = c.kindHasNeed(info.kind, "inventory");
+        } catch { /* boot race — the 500 ms refresh self-corrects */ }
+        return { ...info, conditions, emotion, name, hasInventory };
       },
       thing: (id) => {
         const t = this.panel.view.coldGetPrim(id);
-        return t ? { textureName: t.textureName, x: t.x, y: t.y, width: t.width, height: t.height, zIndex: t.zIndex } : null;
+        if (!t) return null;
+        // The thing's ANCHOR cell → its drawn kind → the TOML name (inventory F7).
+        const tx = Math.floor((t.x + t.width / 2) / SQUARE);
+        const ty = Math.floor((t.y + t.height - 1) / SQUARE);
+        let name: string | null = null;
+        try {
+          const kind = this.bridge.thingDefAt(tx, ty);
+          if (kind > 0) name = getContent().thingNames()[kind - 1] ?? null;
+        } catch { /* boot race */ }
+        return { textureName: t.textureName, x: t.x, y: t.y, width: t.width, height: t.height, zIndex: t.zIndex, name };
+      },
+      tileName: (x, y) => {
+        try {
+          const defId = this.bridge.tileDefAt(x, y);
+          return defId > 0 ? getContent().tileNames()[defId - 1] ?? null : null;
+        } catch {
+          return null;
+        }
       },
     }, this.intentQueues);
     // intent-queue-ui F3/F4: a strip-circle click sends the cancel by entry_id.
@@ -209,6 +241,58 @@ export class WorldScene extends Scene {
     this.details.open();
     // DEBUG: `__details` — the strip's ring-percentage probe (intent-queue-ui I5).
     (globalThis as unknown as { __details: DetailsPanel }).__details = this.details;
+
+    // ── the inventory surface (inventory F7) ── the store mirrors PawnInventory
+    // frames; the panel shows the ACTIVE pawn's slot grid; the details button opens it.
+    const invStore = new InventoryStore(ctx.client);
+    this.inventoryStore = invStore;
+    const invPanel = new InventoryPanel(ctx, {
+      capacity: (entity) => {
+        // The effective max of the pawn's inventory need through the ONE eval — null
+        // when the kind carries no inventory (the panel hides itself on that).
+        const info = this.moverLayer.pawnInfo(entity);
+        if (!info) return null;
+        try {
+          const c = getContent();
+          if (!c.kindHasNeed(info.kind, "inventory")) return null;
+          const payload = this.moverLayer.pawnPayload(entity) ?? new Uint32Array(0);
+          const d = this.ctx.client.ticDelta(0);
+          const now = d === null ? 0 : ((Math.floor(d) % 0x10000) + 0x10000) % 0x10000;
+          const hi = c.needMax(payload, "inventory", now);
+          return hi === undefined || hi === null ? null : Math.round(hi);
+        } catch {
+          return null;
+        }
+      },
+      slots: (entity) => invStore.slotsOf(entity),
+      itemName: (item) => {
+        try {
+          const kind = (item >> 4) & 0xfff;
+          return getContent().thingNames()[kind - 1] ?? `#${item.toString(16)}`;
+        } catch {
+          return `#${item.toString(16)}`;
+        }
+      },
+      itemColor: (item) => {
+        try {
+          const kind = (item >> 4) & 0xfff;
+          const c = getContent().thingColor(kind);
+          return c === undefined || c === null ? "" : `#${c.toString(16).padStart(6, "0")}`;
+        } catch {
+          return "";
+        }
+      },
+      onSlotClick: (entity, slot, item, x, y) => this.openSlotMenu(entity, slot, item, x, y),
+    });
+    this.inventoryPanel = invPanel;
+    this.details.onInventoryClick = () => invPanel.show();
+    // The ACTIVE pawn drives the panel's target; anything else hides it (the user's
+    // law: no inventory → no panel).
+    this.selection.subscribe(() => {
+      const p = this.selection.primary;
+      invPanel.setTarget(p?.kind === "pawn" ? p.entity : null);
+    });
+    this.invUnsub = invStore.subscribe(() => invPanel.refresh());
     // build-walls P2: the build panel — categories/icons entirely from content (D3).
     this.buildPanel = new BuildPanel(ctx, ctx.textureResolver,
       () => buildMenuEntries(getContent()),
@@ -283,6 +367,12 @@ export class WorldScene extends Scene {
     this.chat?.destroy();
     this.details?.destroy();
     this.details = null;
+    this.invUnsub?.();
+    this.invUnsub = null;
+    this.inventoryPanel?.destroy();
+    this.inventoryPanel = null;
+    this.inventoryStore?.destroy();
+    this.inventoryStore = null;
     this.buildPanel?.destroy();
     this.buildPanel = null;
     this.moverLayer?.dispose();
@@ -672,6 +762,37 @@ export class WorldScene extends Scene {
     if (defId === 0) return; // unstreamed ground — nothing to offer
     const options = getContent().tileMenuOptions(defId, payload, needs, now, cheb(tileX, tileY)) as unknown as PieMenuOption[];
     this.pieMenu.open(cx, cy, options, (o) => this.fireOption(o, actor, tileX, tileY));
+  }
+
+  /** The SLOT pie menu (inventory F5): a filled inventory square was clicked — offer
+   *  the pawn's slot-located interactions (drop) through the ONE wasm filter, then
+   *  bind `pawn`/`slot`/`item` and queue. The `item` input is the def the clicker SAW —
+   *  the worker re-validates the slot still holds it (I5). */
+  private openSlotMenu(entity: number, slot: number, item: number, cx: number, cy: number): void {
+    this.pieMenu.close();
+    const info = this.moverLayer.pawnInfo(entity);
+    if (!info) return;
+    const d = this.ctx.client.ticDelta(0);
+    if (d === null) return;
+    const now = ((Math.floor(d) % 0x10000) + 0x10000) % 0x10000;
+    const payload = this.moverLayer.pawnPayload(entity) ?? new Uint32Array(0);
+    const needs = this.moverLayer.pawnNeeds(entity);
+    const options = getContent().slotMenuOptions(info.kind, payload, needs, now) as unknown as PieMenuOption[];
+    if (options.length === 0) return;
+    this.pieMenu.open(cx, cy, options, (o) => {
+      const inputs = new Uint32Array(o.inputs.length);
+      for (let i = 0; i < o.inputs.length; i++) {
+        const name = o.inputs[i];
+        if (name === "pawn") inputs[i] = entity;
+        else if (name === "slot") inputs[i] = slot;
+        else if (name === "item") inputs[i] = item;
+        else {
+          console.warn(`slot menu: unbindable input '${name}' on ${o.name}`);
+          return;
+        }
+      }
+      this.ctx.client.queue(composeInteraction(o.reference, inputs));
+    });
   }
 
   /** input-rework F5: bind an option's input SIGNATURE by the reserved vocabulary and
