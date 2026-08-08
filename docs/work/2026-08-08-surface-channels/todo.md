@@ -16,13 +16,22 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P1 — resolve G (the user's first ask)
 
-- [ ] `depth_ao.py`: teach discovery the FOLDED leaf name ([I1](issues.md#i1)), matching
+- [x] `def_span.py`: derive the stem from `<type>/<subType[0]>/<kind>` — the corpus stopped
+      authoring `texture =` ([I11](issues.md#i11)). Acceptance: `def_span --all` resolves the
+      five art-bearing stems; conifer reports span 2 / square 256.
+- [x] `_surface_kind`: force G to the diffuse's geometry and catch a `-N` split
+      ([I12](issues.md#i12)). Acceptance: the conifer reassembles as one map; the 27 orphan
+      `surface.*-[0-9].png` files are gone from the tree.
+- [ ] Re-remaster the tree under the fixed span reader — user-run, since remaster rewrites
+      masters from the source sheets. Acceptance: conifer masters are 256 again and every
+      derived map agrees.
+- [x] `depth_ao.py`: teach discovery the FOLDED leaf name ([I1](issues.md#i1)), matching
       `bin/art`'s `_find_diffuse`. Acceptance: `find_diffuse` on a conifer leaf dir returns
       one path per direction/part.
-- [ ] `depth_ao.py`: same treatment for the WRITE path (`d.with_name("occlusion.png")` emits
+- [x] `depth_ao.py`: same treatment for the WRITE path (`d.with_name("occlusion.png")` emits
       the flat name). Acceptance: `art ao textures/biome-thing/default/conifer` writes
       `occlusion.e.0.png` in place.
-- [ ] Delete `depth_ao.py`'s `--surface` writer, flag and help — the contradictory second
+- [x] Delete `depth_ao.py`'s `--surface` writer, flag and help — the contradictory second
       layout ([F2](forks.md#f2)). Acceptance: `art maps` still assembles surface via
       `_surface_kind`; nothing else writes one.
 - [ ] Add the AO GEOMETRY guard to `_surface_kind` ([F3](forks.md#f3)): warn when G's opaque

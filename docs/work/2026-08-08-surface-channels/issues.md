@@ -128,6 +128,62 @@ filtered graphics twin. So an outline mask in R is read exactly, which is what a
 The constraint to respect: do not "helpfully" move surface onto the graphics twin, and do not
 encode the outline as something that needs interpolation to be correct.
 
+## I11 — the span reader went stale; every remastered leaf lost its span {#i11}
+
+_2026-08-08 — PROVEN and FIXED (user report: "albedos are not obeying span, coming back as 128
+instead of the proper 256")._ `bin/lib/def_span.py` keyed its table on a part's explicit
+`texture = "<stem>"`. The corpus stopped authoring that key when defs became registry-numbered
+with a **derived** taxonomy — the stem is now `<type>/<subType[0]>/<kind>`, and the only
+`texture =` lines left in `content/things.toml` are `texture = "white"`, the flat placeholder
+the scanner deliberately skips. So `scan()` returned `{}`:
+
+```
+def_span: content/things.toml yielded no texture-bearing defs — the corpus moved or this
+reader is stale (see content-toml-only I4)   [exit 2]
+```
+
+`_span_side` then returned empty, `cmd_split` fell back to **1 tile = 128 px**, and every
+freshly mastered leaf came out half-size. This is precisely the failure `_span_side`'s own
+comment predicts ("that failure once hid behind this `2>/dev/null` for a whole migration and
+every freshly mastered leaf lost its span") — the loud exit-2 worked exactly as designed; it
+had simply not been read yet.
+
+Confusing detail worth recording: `meta.json` still said `span 2 / square 256 / span_from
+corpus`. Those keys are merged forward by `meta.py`, so they were **July's** values riding
+through today's rewrite while the pixels went to 128. The sidecar and the art disagreed and
+only the art was wrong.
+
+**Fix:** `def_span._things` now also reads the def's `type` / `kind` / `subType[0]` and derives
+the stem; an explicit `texture` still wins where one is authored. Verified: `def_span --all`
+resolves the five stems that have real art (conifer 2/256, flora, wolf, human male+female) and
+skips every `white` placeholder.
+
+## I12 — a mismatched channel lane SPLITS the surface map into a numbered sequence {#i12}
+
+_2026-08-08 — PROVEN and FIXED (user report: "we shouldn't have surface.e.0-1 and
+surface.e.0-2")._ Downstream of [I11](#i11): today's remaster wrote the diffuse/normal/albedo at
+128 while `occlusion.*.png` sat at its stale 256 ([I2](#i2)). `_surface_kind` forces the R lane
+to the diffuse's size but **never resized G**, so `convert "$r" "$g" "$b" -combine` got a
+128/256/128 sequence, gave up on combining, and wrote the three lanes out as
+
+```
+surface.e.0-0.png  128x128   (R)
+surface.e.0-1.png  256x256   (G — the stale occlusion)
+surface.e.0-2.png  128x128   (B)
+```
+
+leaving the real `surface.e.0.png` **untouched at its July bytes**. 27 such orphans were in the
+tree. Silent, because every step returned 0 — and worse, the zero-coverage guard then inspected
+the *stale* `surface.e.0.png`, found healthy coverage, and said nothing. That stale file is what
+"I am still seeing incorrect surface" was: the client was loading July art.
+
+**Fix:** G is resized to the diffuse's geometry exactly as R already is, plus a post-write check
+that names the split and removes the orphans if a lane ever mismatches again. Verified: the
+conifer reassembles as one 128×128 map with zero `-N` files.
+
+Note the resize fixes the SPLIT, not the SCALE — a 256 AO squeezed into 128 keeps its wrong
+subject extent. The [F3](forks.md#f3) bbox guard is still owed.
+
 ## I10 — the client redraw must respect warm-over-cold and the depth key {#i10}
 
 _2026-08-08._ The display blit mixes cold and warm composites by `wcov` and resolves
