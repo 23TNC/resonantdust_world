@@ -6,19 +6,19 @@ decisions in [`forks.md`](forks.md) (F#), the anticipated-issue inventory in
 
 ## P0 — the corpus
 
-- [ ] content: the `debug_torch` pawn kind (F1 — type pawn, flat tint part,
+- [x] content: the `debug_torch` pawn kind (F1 — type pawn, flat tint part,
       `walks` level 2, constant `emit_light` level 1, NO needs); the human's
       drill bind REVERTED (F4). Acceptance: load + content-check green; golden
       re-blessed; no `emit_light` remains on a human kind.
 
 ## P1 — the torches brain
 
-- [ ] npc: `brains/torches.rs` (F2 — the bunnies group shape: SPAWN_REQUEST
+- [x] npc: `brains/torches.rs` (F2 — the bunnies group shape: SPAWN_REQUEST
       mints to `NPC_TORCHES` with pathable politeness + retry, adopt, wander
       forever with a fresh move_to per arrival inside the home radius) +
       the main.rs registry arm. Acceptance: npc builds; unit-free (the shape
       is proven) — the live mint is P2 row 1's first check.
-- [ ] Wire the container run: `bin/sim run npc` env passthrough already
+- [x] Wire the container run: `bin/sim run npc` env passthrough already
       carries `NPC_BRAIN`/`NPC_TORCHES`/`NPC_HOME` — document the exact
       command in completed.md. Acceptance: a torches container starts and
       logs its config.

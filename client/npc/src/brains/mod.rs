@@ -5,4 +5,5 @@
 //! player or a debug console, never by the npc.
 
 pub mod bunnies;
+pub mod torches;
 pub mod wolves;

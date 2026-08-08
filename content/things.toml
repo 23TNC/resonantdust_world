@@ -255,9 +255,7 @@ kind = "male"
 subType = ["human"]
 variant = ["0"]
 needs = ["thirst", "hunger", "corpus", "inventory"]
-# trait-lights P4 DRILL: the constant bind lights the EXISTING male (derived, no
-# mint) — the acceptance capture; remove after the stream closes if undesired.
-traits = ["biological_lifeform", { name = "walks", level = 1 }, { name = "lumberjack", level = 1 }, { name = "corpus", level = 1 }, { name = "inventory", level = 1 }, "forager", "omnivore", { name = "emit_light", level = 1, constant = true }]
+traits = ["biological_lifeform", { name = "walks", level = 1 }, { name = "lumberjack", level = 1 }, { name = "corpus", level = 1 }, { name = "inventory", level = 1 }, "forager", "omnivore"]
 interactions = [ { name = "death" }, { name = "drop" } ]
 
   [[thing.part]]
@@ -364,3 +362,23 @@ interactions = [ { name = "eat_plant_matter", magnitude = 30 }, { name = "pick_u
   sprite_anchor = { x = 0.5, y = 1.0 }
   size = 0.5
   sprite_scale = { w = 0.4, h = 0.3 }
+
+# DEBUG TORCH — the torch-perf stream's measurement pawn (torch-perf F1): a MINIMAL
+# mover-with-a-light. walks 2 = the wolf's brisk 12 tics/tile (motion stresses the hot
+# bakes); the constant emit_light level 1 = the REAL warm torch tuple; NO needs —
+# nothing decays, nothing confounds the measurement. Driven by the `torches` npc brain.
+[[thing]]
+name = "debug_torch"
+type = "pawn"
+kind = "debug_torch"
+subType = ["animal"]
+variant = ["0"]
+traits = [ { name = "walks", level = 2 }, { name = "emit_light", level = 1, constant = true } ]
+
+  [[thing.part]]
+  texture = "white"
+  tint = "#ffcf70"
+  anchor = { x = 0.5, y = 1.0 }
+  sprite_anchor = { x = 0.5, y = 1.0 }
+  size = 0.5
+  sprite_scale = { w = 0.5, h = 0.5 }
