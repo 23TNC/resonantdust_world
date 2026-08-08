@@ -101,3 +101,25 @@
   button, and the panel auto-hides. "Grays when full" is realized as
   NOT-OFFERED (the input-rework posture — the same `interaction_available`
   that refused the 7th pick-up server-side).
+
+## 2026-08-08 — P5: the chain, end to end
+
+1. **Pick up a log** — the female walked from (109,65)-ish to the log at
+   (114,71) and stored it: `pick_up … stored=Some("logs") dest="(114, 71)"
+   version=1`; the world cell composed to 0.
+2. **Reload-persist** — a FULL page reload, re-select, open the panel: slot 0 =
+   `logs` (the wood-tint outlined square) from the ZONE-SNAPSHOT replay alone —
+   no live mutation frames involved.
+3. **Drop from the slot menu** — the slot click offered Drop (a REAL pointer
+   click; PieMenu options listen on pointerdown — synthetic mouse events don't
+   fire them, a drill gotcha), and the log landed at (112,69) beside her at
+   (113,70): `drop … slot=Some(0)`; the grid cleared live.
+4. **Pick it back up** — `stored=Some("logs")` again; slot 0 refilled;
+   `thingDefAt(112,69) = 0`.
+5. **The bounce** — master/orchestrator/worker/npc/bunnies restarted: worker
+   composing, the SAME wolf re-adopted (no duplicate mint this time), 4 bunny
+   adoptions, and the HELD LOG survived in the durable `inventory` table AND
+   re-rendered in the live panel after the client's auto-reconnect.
+
+Truth pass: `inventory-delivered` memory + the MEMORY.md line; docs-check green
+(the 4 standing warnings only). B1: the user's eyes close the stream.

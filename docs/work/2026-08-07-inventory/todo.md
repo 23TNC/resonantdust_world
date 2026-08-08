@@ -107,9 +107,16 @@ in [`forks.md`](forks.md) (F#), the anticipated-issue inventory in
 
 ## P5 — the verdict
 
-- [ ] The chain drill: pick up a log → the panel fills → walk away → drop → the
+- [x] The chain drill: pick up a log → the panel fills → walk away → drop → the
       log reappears beside the pawn (world + reload-persist) → pick it back up.
-      Acceptance: captures + worker logs of every link.
-- [ ] Docs + memory truth pass + a stack bounce with arcs green; **the user's eyes
+      Acceptance: captures + worker logs of every link. → the female walked to
+      (114,71), stored the log (walk-then-act); a FULL PAGE RELOAD re-filled the
+      grid from the zone-snapshot replay alone (`slot0: logs`); the slot-menu Drop
+      put it at (112,69) beside her; the re-pick-up returned it to slot 0 and the
+      cell composed to 0. Worker logs + captures in completed.md.
+- [x] Docs + memory truth pass + a stack bounce with arcs green; **the user's eyes
       close the stream**. Acceptance: docs-check green; captures + logs in
-      completed.md.
+      completed.md. → inventory-delivered memory + MEMORY.md line; docs-check
+      green; full bounce (master/orchestrator/worker/npc/bunnies): worker
+      composing, the SAME wolf re-adopted, 4 bunny adoptions, the held log
+      SURVIVED in the durable table and the live panel. B1 = the user's eyes.
