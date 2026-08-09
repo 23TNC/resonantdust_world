@@ -25,13 +25,13 @@ categories are pure content.
   deepest table 3, highest bind 2, u4 gives 15): a stored TRAIT row is the BARE u32
   `definition_reference` (walks tier 2 = the walks def at variant 2); markers at variant 0;
   per-level arrays become per-variant authoring sugar; binds rename `level` → `variant`.
-- **Condition and need rows standardize on u64 = `reference:32 | data:32`** (F1/F7): full
-  subtype + variant lanes on every family, and the data lane grows to u32 — the def's TOML
-  declares HOW its u32 is interpreted (the two default encodings = today's u16 value /
-  remaining; a def may declare LANES, e.g. a condition packing 4 × i8 onto authored
-  targets). Compact and generic: the row is always (ref, data); the MEANING lives in the
-  corpus. The u64 exceeds f64 — the JS boundary carries rows as two u32s (I9). The FULL
-  consumer sweep follows (the ONE eval, worker, wasm, webgl, npc, panels).
+- **Condition and need rows standardize on u64 = `dead:16 | data:16 | reference:32`**
+  (F1/F7): full subtype + variant lanes on every family; the data u16 kept (most are a
+  single value); the dead 16 held ZERO so a row is 48 significant bits — ONE lossless f64
+  through wasm and JSON (I9: assert the dead lane; TS splits by division, never `>>> 32`).
+  The def's TOML declares HOW the u16 is interpreted (defaults = today's value/remaining;
+  a def may declare lanes, e.g. 2 × i8 onto authored targets — F7). The FULL consumer
+  sweep follows (the ONE eval, worker, wasm, webgl, npc, panels).
 - **Six categories replace two** (F2): `pawn_trait_constant` / `pawn_trait_active` /
   `pawn_trait_passive` / `player_trait_constant` / `player_trait_active` /
   `player_trait_passive`, appended to the gameplay palette; today's `trait` and

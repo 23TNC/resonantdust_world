@@ -6,14 +6,14 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 ## P0 — the paper
 
 - [ ] VARIABLES.md: trait rows = bare refs, tier = VARIANT (F1/F6); condition/need rows
-      u64 with DEF-DECLARED encodings (F7/I9/I10); the six categories (F2); the ACTIVE law
-      (I5); sprint (F4). Acceptance: docs-check green.
+      u64 48-bit (dead 16 ZERO, def-declared u16 encodings — F7/I9/I10); the six categories
+      (F2); the ACTIVE law (I5); sprint (F4). Acceptance: docs-check green.
 
 ## P1 — the row shape
 
-- [ ] codec: trait rows = bare refs; u64 condition/need helpers + the encoding decoder
-      seam (F7, unknown refuses — I10); their payload entries grow a word (TRAIT stays
-      one); the six categories (F2). Acceptance: unit round-trips all shapes + 4×i8 lanes.
+- [ ] codec: trait rows = bare refs; u64 condition/need helpers (48-bit law) + the
+      encoding decoder seam (F7, unknown refuses — I10); their payload entries grow a word
+      (TRAIT stays one); the six categories (F2). Acceptance: unit round-trips + 2×i8 lanes.
 - [ ] Modules: the `needs` column u64 in pawn + player_pawn; republished (WIPING, I2);
       st-bindings + edge bindings regenerated. Acceptance: publish green; a hand SET_NEED
       lands a u64 row.

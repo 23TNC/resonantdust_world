@@ -59,14 +59,15 @@ A player-pawn can bind active traits and the worker will validate ACTIVATE again
 nothing user-facing triggers one (no hotbar). The stream proves the lane with a WS-queued
 ACTIVATE on a player-pawn; the human-facing surface is a named successor.
 
-## I9 — u64 rows do NOT fit f64; the JS boundary splits words
+## I9 — the 48-bit transport law (dead 16 = ZERO; no `>>> 32` in TS)
 
-`reference:32 | data:32` = 64 significant bits — past f64's 2^53, so the wasm/webgl boundary
-can no longer pass a row as one number (the 48-bit reserved-zero trick died with the wider
-data lane). Condition/need rows cross the boundary as TWO u32s (ref, data) — which is also
-their natural shape everywhere else; nothing in JS should ever hold a joined u64. Audit
-every wasm export and Need/PawnNeed frame field for a joined row before calling the sweep
-done.
+`dead:16 | data:16 | reference:32` = 48 significant bits — INSIDE f64's 2^53, so a row rides
+the wasm boundary and JSON frames as ONE lossless number, exactly as u32 rows always did.
+Two laws keep it true: (a) the dead 16 is ASSERTED ZERO at every boundary (waking it is a
+deliberate future revisit that must re-decide transport); (b) TS splits the halves by
+DIVISION (`Math.floor(row / 2**32)` for the reference, `row % 2**16` &c for data) — JS
+bitwise ops truncate at 32 bits, so a `row >>> 32` is silently wrong. Grep the sweep for
+bitwise on row values before calling it done.
 
 ## I10 — the encoding declarations need a refusal posture
 

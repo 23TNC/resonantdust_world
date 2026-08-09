@@ -7,14 +7,17 @@ a trait's tier is its definition's VARIANT nibble (u4, 15 tiers + the 0 default 
 times today's authored depth). A stored TRAIT row is JUST the full u32
 `definition_reference`: no data lane, no packing helper, payload TRAIT entries stay ONE
 word, `object_trait_rows` returns plain refs. Condition and need rows STANDARDIZE on u64 =
-`definition_reference:32 | data:32` — full subtype AND variant lanes on all three families,
-and the data lane GROWS to u32 because "needs and conditions should likely use more data"
-(the user): the def's TOML declares how its u32 is interpreted (F7). Their payload entries
-and the `needs` sub-table columns widen. `pack_gameplay_row`'s trait callers DELETE; its
-condition/need callers move to the u64 shape — either way every consumer breaks loudly at
-compile, which is the sweep finding itself. Rejected: a uniform u64 for traits too (a data
-lane nothing fills); keeping level beside variant (two tier numbers is how drift starts);
-u16 data held (the standardization + headroom beat the two saved bytes).
+`dead:16 | data:16 | reference:32` (the user's settlement): full subtype AND variant lanes
+on all three families, the data u16 kept ("most of our conditions and needs are constant or
+a single value anyway"), and the DEAD 16 held at ZERO — 48 significant bits, so a row rides
+the wasm/JSON boundary as ONE lossless f64 (I9). The def's TOML still declares how the u16
+is interpreted (F7). Their payload entries and the `needs` sub-table columns widen to u64.
+`pack_gameplay_row`'s trait callers DELETE; its condition/need callers move to the u64
+shape — either way every consumer breaks loudly at compile, which is the sweep finding
+itself. Rejected: a uniform u64 for traits too (a data lane nothing fills); keeping level
+beside variant (two tier numbers is how drift starts); a u32 data lane (its 64 significant
+bits force split-word JS transport for headroom nothing authored needs — revisit by waking
+the dead 16, which is exactly what it is reserved for).
 
 ## F6 — level → variant: the authoring and eval mapping
 
@@ -28,16 +31,15 @@ each authored tier gets its registry row like any variant.
 
 ## F7 — the data u32 is DEF-INTERPRETED: the TOML declares the encoding
 
-"The toml can determine HOW we interpret the u32 available" (user). A condition/need def
-authors its data ENCODING — the default shapes are what exists today (need: the u16
-fixed-point value in the low half; condition: the u16 remaining-at-write in the low half),
-and a def may instead declare LANES, e.g. a condition packing `4 × i8` bound to authored
-targets (emotion nudges, stacked magnitudes, charge counts). The ONE eval reads data
-THROUGH the def's declared encoding — consumers never hard-code a layout again; new
-encodings are pure content + one decoder arm. v1 ships the two default encodings plus the
-`4 × i8` lane form (sprint/exhaustion don't need it, but the drill pins the machinery);
-richer encodings are appends. This keeps the system compact and generic — the row is always
-(ref, u32), the MEANING lives in the corpus.
+"The toml can determine HOW we interpret the data" (user). A condition/need def authors
+its data ENCODING over the u16 — the defaults are what exists today (need: the fixed-point
+value; condition: remaining-at-write), and a def may instead declare LANES, e.g. `2 × i8`
+bound to authored targets (emotion nudges, stacked magnitudes, charge counts). The ONE eval
+reads data THROUGH the def's declared encoding — consumers never hard-code a layout again;
+new encodings are pure content + one decoder arm. v1 ships the two defaults plus the
+`2 × i8` lane form (sprint doesn't need it; the drill pins the machinery); wider lane sets
+arrive by waking the dead 16 (a deliberate, single revisit — I9's transport law is the
+gate). The row is always (ref, data); the MEANING lives in the corpus.
 
 ## F2 — six authored categories; the old two retire empty
 
