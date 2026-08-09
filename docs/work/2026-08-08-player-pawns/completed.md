@@ -1,5 +1,14 @@
 # Completed — player-pawns
 
+## 2026-08-08 — P4 (second half): the npc coupling drill
+
+The earlier "silent failure" was NO bug: the P2 players-DB reset reshuffled claim order —
+Wolves is player 1025 now (the first drill deleted 1024 = Bunnies, whose intact linkage hit
+the fast path). Re-drilled against BOTH: linkage + ledger + entity deleted, containers
+restarted — each brain re-minted through the login funnel: Wolves → 0x40800009, Bunnies →
+0x4080000a, BOTH carrying def 0x30030120 (the default `player` def — per-brain defs are
+npc-host's F5 scope) and the full wolf_count row 0xffff0050 on THEIR player-pawn.
+
 ## 2026-08-08 — P4 (first half): the eval drill
 
 Live: a WS-queued SET_NEED zeroed PPDrill4's wolf_count (row 0x0050) through the full event

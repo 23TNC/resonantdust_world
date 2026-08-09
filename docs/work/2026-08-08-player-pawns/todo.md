@@ -41,7 +41,7 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 - [x] The eval drill: write wolf_count low through the event system; the band/condition/
       emotion evaluate via the ONE eval; NO death lane at zero (I8). Acceptance: probe
       evidence in completed.md (I7).
-- [ ] The npc coupling drill (F5): an npc login plays as its player-pawn with its brain-def
+- [x] The npc coupling drill (F5): an npc login plays as its player-pawn with its brain-def
       binds landed. Acceptance: the brain's wolf_count visible on ITS player-pawn.
 
 ## P5 — the truth
