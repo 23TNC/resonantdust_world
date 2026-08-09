@@ -25,13 +25,14 @@ significant bits force split-word JS transport for headroom nothing needs).
 
 ## F6 — level → variant: the authoring and eval mapping
 
-The per-level ARRAYS stay as authoring sugar — array index i authors VARIANT i+1 (`walks`'s
-`add = [16, 12, 8]` = variants 1..3), so today's corpus re-authors by RENAMING `level = 2`
-binds to `variant = 2` and nothing renumbers. Marker traits (bite, herbivore…) live at
-variant 0 — the bare def IS the capability. `trait_params(name, level)` lookups become
-params-by-REF (the variant indexes the table); "level 0 = absent" semantics die — absence
-is absence of the row. The registry already numbers per-variant tuples (the u4 slot law);
-each authored tier gets its registry row like any variant.
+REFINED at implementation: tiers are 0-BASED — array index i authors VARIANT i (`walks`'s
+`add = [16, 12, 8]` = variants 0..2), matching every other def family (thing variants start
+at 0; no dead slot, no +1 skew). Today's `level = N` binds re-author as `variant = N-1`;
+markers (single-entry tables) live at variant 0 like everything else — a marker IS a
+one-tier trait. `trait_params(name, level)` lookups become params-by-REF (the variant
+indexes the table); "level 0 = absent" semantics die — absence is absence of the row. The
+registry already numbers per-variant tuples (the u4 slot law); each authored tier gets its
+registry row like any variant.
 
 ## F7 — the data u32 is DEF-INTERPRETED: the TOML declares the encoding
 
