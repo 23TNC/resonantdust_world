@@ -79,6 +79,11 @@ pub const TYPE_THING: u8 = 7;
 /// variation (`default` = 0). These ids ride payload words and event inputs, never placements.
 pub const TYPE_GAMEPLAY: u8 = 8;
 
+/// An npc module's def — its constants as content (npc-host F5, VARIABLES.md §Brains). A
+/// brain is never a world object; its def exists to be a player-pawn's
+/// `definition_reference`, resolved by LOGIN NAME.
+pub const TYPE_BRAIN: u8 = 9;
+
 // The gameplay CATEGORY palette — `subtype_id` values under [`TYPE_GAMEPLAY`]. Code-owned like
 // the type palette (a category implies a loader schema + an executor, so an unknown one is a
 // corpus error, never a number invented on the spot). APPEND-ONLY.

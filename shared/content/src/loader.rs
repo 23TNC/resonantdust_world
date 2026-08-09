@@ -782,11 +782,25 @@ fn fnv_str(h: &mut u64, s: &str) {
 }
 
 /// Everything the runtime needs, built once at load — REGISTRIES in id order
+/// A `[[brain]]` def (npc-host F5/F10, VARIABLES.md §Brains): an npc module's CONSTANTS as
+/// content — needs + constant player-trait binds ONLY. A brain is never a world object; its
+/// def exists to be a player-pawn's `definition_reference`, resolved by LOGIN NAME.
+#[derive(Debug, Default, Clone)]
+pub(crate) struct BrainDef {
+  pub version: u32,
+  pub taxonomy: Option<Taxonomy>,
+  pub name: String,
+  pub needs: Vec<String>,
+  pub player_traits: Vec<TraitBind>,
+}
+
 /// (index = id − 1; a `""`-named slot is a retired id) + evaluated params.
 #[derive(Default, Debug)]
 pub struct Bundle {
   pub(crate) tiles: Vec<TileDef>,
   pub(crate) things: Vec<ThingDef>,
+  /// The brain defs (npc-host F5) — corpus order = the kind seed, like every def vec.
+  pub(crate) brains: Vec<BrainDef>,
   /// Evaluation order = priority (first match wins), NOT an id namespace.
   pub(crate) biomes: Vec<BiomeDef>,
   pub(crate) materials: Vec<(String, MaterialParams)>,
@@ -822,6 +836,7 @@ pub struct Bundle {
   affordance_names: Vec<String>,
   stat_names: Vec<String>,
   player_trait_names: Vec<String>,
+  brain_names: Vec<String>,
   /// The REGISTRY override for `name → definition_reference` (definition-registry P4/P5), keyed
   /// `(is_tile, name)`. `None` means "resolve from corpus position", which is what a registry-less
   /// boot and every unit test does.
@@ -953,6 +968,7 @@ impl Bundle {
     self.affordance_names = self.affordances.iter().map(|(n, _)| n.clone()).collect();
     self.stat_names = self.stats.iter().map(|(n, _)| n.clone()).collect();
     self.player_trait_names = self.player_traits.iter().map(|(n, _)| n.clone()).collect();
+    self.brain_names = self.brains.iter().map(|d| d.name.clone()).collect();
     self
   }
 
@@ -1304,6 +1320,79 @@ impl Bundle {
       .map(|d| d.traits.clone())
       .unwrap_or_default()
   }
+  // ── brains (npc-host F5/F10) ─────────────────────────────────────────────────────────
+
+  /// The brain-def name registry, id order (npc-host F5).
+  pub fn brain_names(&self) -> &[String] {
+    &self.brain_names
+  }
+  pub fn brain_taxonomy(&self, id: u16) -> Option<&Taxonomy> {
+    self.brains.get(id.checked_sub(1).map(usize::from)?)?.taxonomy.as_ref()
+  }
+  pub fn brain_version(&self, id: u16) -> Option<u32> {
+    self.brains.get(id.checked_sub(1).map(usize::from)?).map(|d| d.version)
+  }
+  pub fn brain_object_id(&self, name: &str) -> Option<u16> {
+    Self::id_of(&self.brain_names, name)
+  }
+  /// The need refs a brain def grants its player-pawn (mirrors [`Self::thing_needs`]).
+  pub fn brain_needs(&self, brain_id: u16) -> Vec<u32> {
+    self
+      .brains
+      .get(brain_id.checked_sub(1).map(usize::from).unwrap_or(usize::MAX))
+      .map(|d| d.needs.iter().filter_map(|n| self.gameplay_reference("need", n)).collect())
+      .unwrap_or_default()
+  }
+  /// The brain def's constant player-trait binds (the F7 parameters ride these levels).
+  pub fn brain_player_traits(&self, brain_id: u16) -> Vec<TraitBind> {
+    self
+      .brains
+      .get(brain_id.checked_sub(1).map(usize::from).unwrap_or(usize::MAX))
+      .map(|d| d.player_traits.clone())
+      .unwrap_or_default()
+  }
+  /// A brain-parameter STAT read from CONSTANT player-trait BINDS (npc-host F10): sums the
+  /// bound levels' `add` contributions for `stat`, clamped to the stat's authored domain.
+  /// Bind-based deliberately — player-trait rows never enter the trait lanes (F4: a packed
+  /// row's low 16 cannot name its category), and constant binds need no rows at all.
+  pub fn player_trait_stat(&self, stat: &str, binds: &[TraitBind]) -> f64 {
+    let (mut v, mut any) = (0.0, false);
+    for b in binds {
+      let Some(p) = self.player_traits.iter().find(|(n, _)| n == &b.name).map(|(_, p)| p) else {
+        continue;
+      };
+      let Some(level) = p.levels.get((b.level as usize).saturating_sub(1)) else { continue };
+      for m in &level.stats {
+        if m.stat == stat {
+          v += m.add;
+          any = true;
+        }
+      }
+    }
+    if !any {
+      return 0.0;
+    }
+    match self.stats.iter().find(|(n, _)| n == stat).map(|(_, p)| p) {
+      Some(sp) => v.clamp(sp.min, sp.max),
+      None => v,
+    }
+  }
+
+  /// A brain def's packed `definition_reference` by NAME — the LOGIN-NAME resolution law's
+  /// lookup (F10). Packed from the authored taxonomy + corpus position (`TYPE_BRAIN <<28 |
+  /// subtype <<16 | kind <<4 | variant 0`) — the SEED derivation, which the registry's
+  /// append-only law keeps identical to the registry's own numbering.
+  pub fn brain_definition_reference(&self, name: &str) -> Option<u32> {
+    let id = self.brain_object_id(name)?;
+    let tax = self.brain_taxonomy(id)?;
+    let sub = self.subtype_id_of("brain", tax.sub_type.first()?)?;
+    use resonantdust_codec::object as obj;
+    Some(obj::pack_definition_reference(
+      obj::pack_type_reference(obj::TYPE_BRAIN, sub),
+      (id << 4) as u16,
+    ))
+  }
+
   /// The PLAYER-trait bindings a thing kind authors (player-pawns F4) — the dedicated
   /// lane: CONSTANT-only (load-enforced), zero storage, never merged into
   /// [`Bundle::object_trait_rows`]; consumers read levels/params here + through
@@ -1535,6 +1624,9 @@ impl Bundle {
   }
 
   /// Every stat name, corpus order.
+  pub fn player_trait_names(&self) -> &[String] {
+    &self.player_trait_names
+  }
   pub fn stat_names(&self) -> &[String] {
     &self.stat_names
   }

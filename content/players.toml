@@ -30,11 +30,47 @@ emotions = [
   { emotion = "uncomfortable", magnitude = 2 },
 ]
 
-# The starter PLAYER trait (F4/F7): the pack-steward classification, two levels for the
-# per-level machinery to exercise. Parameters (group size, area radius) arrive with
-# npc-host's brain defs — levels alone carry the drill.
+# The bunny twin of wolf_count (npc-host P1) — same shape, same band condition.
+[[need]]
+name = "bunny_count"
+label = "Bunnies"
+min = 0
+max = 16
+deplete = 0.0
+band = [
+  { condition = "packless", lo = 0, hi = 1 },
+]
+
+# The brain-parameter STATS (npc-host F10: parameters ride the STAT lane — the player
+# traits' per-level `stats` contributions feed these through the ONE stat eval).
+[[stat]]
+name = "group_size"
+label = "Group Size"
+min = 0
+max = 32
+
+[[stat]]
+name = "area_radius"
+label = "Area of Influence"
+min = 0
+max = 64
+
+# The PLAYER traits (F4/F7): per-level parameters as stat contributions. A brain def binds
+# a level CONSTANT; the host reads group_size/area_radius through stat_value with the
+# brain's player-trait rows.
 [[player_trait]]
 name = "wolf_pack"
 label = "Wolf pack"
+stats = [ { stat = "group_size", add = [2, 4] } ]
+
+[[player_trait]]
+name = "bunny_fluffle"
+label = "Bunny fluffle"
+stats = [ { stat = "group_size", add = [3, 6] } ]
+
+[[player_trait]]
+name = "area_of_influence"
+label = "Area of influence"
+stats = [ { stat = "area_radius", add = [8, 12, 16] } ]
 
 # The default player-pawn THING def lives at the END of things.toml (append-only seed order).

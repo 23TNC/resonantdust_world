@@ -22,3 +22,8 @@ id = 2
 type = "pawn"
 name = "player"
 id = 3
+
+[[subtype]]
+type = "brain"
+name = "npc"
+id = 1

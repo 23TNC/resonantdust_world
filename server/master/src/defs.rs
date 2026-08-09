@@ -14,7 +14,7 @@
 
 use resonantdust_codec::object::{
     gameplay_subtype_id, pack_definition_from_ids, KIND_ID_LIMIT, TYPE_BIOME_THING,
-    TYPE_BIOME_TILE, TYPE_GAMEPLAY, TYPE_PAWN, VARIANT_ID_LIMIT,
+    TYPE_BIOME_TILE, TYPE_BRAIN, TYPE_GAMEPLAY, TYPE_PAWN, VARIANT_ID_LIMIT,
 };
 use resonantdust_content::loader::{Bundle, Taxonomy};
 
@@ -317,6 +317,7 @@ fn type_id_of(type_name: &str) -> Option<u8> {
         "biome-thing" => Some(TYPE_BIOME_THING),
         "pawn" => Some(TYPE_PAWN),
         "gameplay" => Some(TYPE_GAMEPLAY),
+        "brain" => Some(TYPE_BRAIN),
         _ => None,
     }
 }
@@ -339,6 +340,9 @@ fn subtype_id_of(bundle: &Bundle, type_id: u8, sub_type: &str) -> Option<u16> {
     }
     if type_id == TYPE_PAWN {
         return bundle.subtype_id_of("pawn", sub_type);
+    }
+    if type_id == TYPE_BRAIN {
+        return bundle.subtype_id_of("brain", sub_type);
     }
     bundle.biome_subtype_id(sub_type)
 }
@@ -418,6 +422,16 @@ pub fn allocations(bundle: &Bundle) -> Result<Vec<Allocation>, AllocError> {
     // `gameplay/<category>/<name>/default` — and the kind seed is the corpus position,
     // exactly the posture the tile/thing seeds established (the migration proof: a fresh
     // registry reproduces what the seed fallback already resolves).
+    // The brain defs (npc-host F5): authored taxonomy, corpus-position kind seed.
+    for (i, name) in bundle.brain_names().iter().enumerate() {
+        let brain_id = (i + 1) as u16;
+        if name.is_empty() {
+            continue;
+        }
+        if let Some(tax) = bundle.brain_taxonomy(brain_id) {
+            out.extend(expand(bundle, tax, brain_id, bundle.brain_version(brain_id).unwrap_or(0))?);
+        }
+    }
     for (category, names) in [
         ("need", bundle.need_names()),
         ("condition", bundle.condition_names()),
@@ -425,6 +439,7 @@ pub fn allocations(bundle: &Bundle) -> Result<Vec<Allocation>, AllocError> {
         ("interaction", bundle.interaction_names()),
         ("affordance", bundle.affordance_names()),
         ("stat", bundle.stat_names()),
+        ("player_trait", bundle.player_trait_names()),
     ] {
         for (i, name) in names.iter().enumerate() {
             if name.is_empty() {

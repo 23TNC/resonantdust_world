@@ -25,10 +25,34 @@ fn a_zeroed_wolf_count_bands_packless_and_never_kills() {
     let conds = needs_eval::active_conditions(&b, &[], &need_rows, &[], 35303);
     let packless = b.gameplay_reference("condition", "packless").expect("packless");
     assert!(conds.iter().any(|c| c.condition_id == packless), "packless activates: {conds:?}");
-    // The dedicated player-trait lane carries the player def's constant bind.
+    // The default player def carries NO binds (npc-host P1 moved them to the brains).
     let player_kind = b.thing_object_id("player").expect("player thing");
-    let binds = b.thing_player_traits(player_kind);
-    assert_eq!(binds.len(), 1);
-    assert!(binds[0].constant && binds[0].name == "wolf_pack");
+    assert!(b.thing_player_traits(player_kind).is_empty());
     assert!(b.player_trait_params("wolf_pack").is_some());
+}
+
+#[test]
+fn brain_defs_carry_the_binds_and_pack_type_brain() {
+    // npc-host P1 (F5/F10): the brain defs registry-number under TYPE_BRAIN and carry the
+    // constant player-trait binds whose levels select the STAT-lane parameters.
+    let b = corpus();
+    for (name, need, size) in [("wolf_pack", "wolf_count", 2.0), ("bunny_fluffle", "bunny_count", 3.0)] {
+        let id = b.brain_object_id(name).expect(name);
+        let def = b.brain_definition_reference(name).expect("packs");
+        assert_eq!(def >> 28, u32::from(resonantdust_codec::object::TYPE_BRAIN));
+        let needs = b.brain_needs(id);
+        assert_eq!(needs.len(), 1);
+        assert_eq!(needs[0], b.gameplay_reference("need", need).unwrap());
+        let binds = b.brain_player_traits(id);
+        assert_eq!(binds.len(), 2, "{name}: group trait + area_of_influence");
+        assert!(binds.iter().all(|t| t.constant));
+        // The F10 parameter read: level-selected stat contributions from the CONSTANT binds.
+        let gs = b.player_trait_stat("group_size", &binds);
+        assert_eq!(gs, size, "{name}'s level-1 group_size");
+    }
+    // The area levels differ: wolves bind level 2 (12 tiles), bunnies level 1 (8).
+    let w = b.brain_player_traits(b.brain_object_id("wolf_pack").unwrap());
+    let f = b.brain_player_traits(b.brain_object_id("bunny_fluffle").unwrap());
+    assert_eq!(b.player_trait_stat("area_radius", &w), 12.0);
+    assert_eq!(b.player_trait_stat("area_radius", &f), 8.0);
 }

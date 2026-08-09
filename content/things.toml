@@ -410,5 +410,5 @@ type = "pawn"
 kind = "player"
 subType = ["player"]
 variant = ["0"]
-needs = ["wolf_count"]
-traits = [ { name = "wolf_pack", level = 1, constant = true } ]
+# needs/traits: NONE — the group needs + player traits moved to the BRAIN defs
+# (npc-host P1, brains.toml); a human's default player-pawn carries no rows yet.

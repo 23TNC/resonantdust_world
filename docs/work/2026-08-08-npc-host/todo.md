@@ -14,10 +14,10 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P1 — brains as content
 
-- [ ] content: the `brain` type (`content/brains.toml`, F5) — `wolf_pack` + `bunny_fluffle`
+- [x] content: the `brain` type (`content/brains.toml`, F5) — `wolf_pack` + `bunny_fluffle`
       brain defs with constant trait binds; loader/registry/goldens extended. Acceptance:
       content tests green; the defs registry-number.
-- [ ] content: the `player`-tagged traits (F7) — pack/fluffle group size + `area_of_influence`
+- [x] content: the `player`-tagged traits (F7) — pack/fluffle group size + `area_of_influence`
       radius, per level; the granted `wolf_pawn` need (F8). Acceptance: unit — params resolve
       per level; load green.
 

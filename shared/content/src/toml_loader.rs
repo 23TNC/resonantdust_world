@@ -39,6 +39,9 @@ struct Corpus {
   /// The player-facing trait lane (player-pawns F4) — the trait SCHEMA, own category.
   #[serde(default)]
   player_trait: Vec<TraitToml>,
+  /// Brain defs (npc-host F5) — an npc module's constants as content.
+  #[serde(default)]
+  brain: Vec<BrainToml>,
   #[serde(default)]
   interaction: Vec<InteractionToml>,
   #[serde(default)]
@@ -465,6 +468,29 @@ struct EmotionToml {
   color: String,
 }
 
+/// A `[[brain]]` def (npc-host F5, VARIABLES.md §Brains): needs + CONSTANT player-trait
+/// binds only — no visuals, no parts; never a world object.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BrainToml {
+  name: String,
+  #[serde(default)]
+  version: u32,
+  #[serde(default, rename = "type")]
+  type_name: Option<String>,
+  #[serde(default)]
+  kind: Option<String>,
+  #[serde(default, rename = "subType")]
+  sub_type: Vec<String>,
+  #[serde(default)]
+  variant: Vec<String>,
+  #[serde(default)]
+  needs: Vec<String>,
+  /// CONSTANT player-trait binds ONLY (validated at load).
+  #[serde(default)]
+  traits: Vec<TraitBindToml>,
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct TraitToml {
@@ -740,6 +766,7 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
         all.condition.extend(c.condition);
         all.trait_.extend(c.trait_);
         all.player_trait.extend(c.player_trait);
+        all.brain.extend(c.brain);
         all.interaction.extend(c.interaction);
         all.affordance.extend(c.affordance);
         all.stat.extend(c.stat);
@@ -779,6 +806,7 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
   unique("condition", all.condition.iter().map(|d| d.name.as_str()).collect());
   unique("trait", all.trait_.iter().map(|d| d.name.as_str()).collect());
   unique("player_trait", all.player_trait.iter().map(|d| d.name.as_str()).collect());
+  unique("brain", all.brain.iter().map(|d| d.name.as_str()).collect());
   unique("interaction", all.interaction.iter().map(|d| d.name.as_str()).collect());
   unique("affordance", all.affordance.iter().map(|d| d.name.as_str()).collect());
   unique("stat", all.stat.iter().map(|d| d.name.as_str()).collect());
@@ -1620,6 +1648,66 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
         &mut errors,
       ),
       None => ThingDef::default(),
+    });
+  }
+
+  // Brains (npc-host F5): needs + CONSTANT player-trait binds only. No retirement holes —
+  // the vec is fresh; corpus order is the kind seed like every def.
+  for br in &all.brain {
+    let tax = taxonomy(&br.type_name, &br.kind, &br.sub_type, &br.variant, &format!("brain `{}`", br.name), &mut errors);
+    if let Some(t) = &tax {
+      if t.type_name != "brain" {
+        errors.push(LoadError {
+          file: String::new(),
+          message: format!("brain `{}`: type must be `brain`, got `{}`", br.name, t.type_name),
+        });
+      }
+    }
+    let mut needs = Vec::new();
+    for n in &br.needs {
+      if need_exists(n) {
+        needs.push(n.clone());
+      } else {
+        errors.push(LoadError {
+          file: String::new(),
+          message: format!("brain `{}`: unknown need `{n}`", br.name),
+        });
+      }
+    }
+    let mut player_traits = Vec::new();
+    for tb in &br.traits {
+      let (name, level, constant) = tb.bind();
+      match player_trait_level_counts.get(&name) {
+        None => errors.push(LoadError {
+          file: String::new(),
+          message: format!(
+            "brain `{}`: `{name}` is not a player_trait — brains bind PLAYER traits only",
+            br.name
+          ),
+        }),
+        Some(&count) if level == 0 || level as usize > count => errors.push(LoadError {
+          file: String::new(),
+          message: format!(
+            "brain `{}`: player_trait `{name}` level {level} is out of range ({count} level(s))",
+            br.name
+          ),
+        }),
+        Some(_) if !constant => errors.push(LoadError {
+          file: String::new(),
+          message: format!(
+            "brain `{}`: player_trait `{name}` must be `constant = true` (player-pawns F4)",
+            br.name
+          ),
+        }),
+        Some(_) => player_traits.push(TraitBind { name, level, constant }),
+      }
+    }
+    b.brains.push(crate::loader::BrainDef {
+      version: br.version,
+      taxonomy: tax,
+      name: br.name.clone(),
+      needs,
+      player_traits,
     });
   }
 
