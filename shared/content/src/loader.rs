@@ -1118,6 +1118,24 @@ impl Bundle {
     &self.thing_names
   }
 
+  /// The needs any condition or trait level DRAINS via a deplete modifier (survival
+  /// F4) — the crossing scheduler's watch list. Sorted, deduped, corpus-derived.
+  pub fn drain_target_needs(&self) -> Vec<String> {
+    let mut out: Vec<String> = self
+      .conditions
+      .iter()
+      .flat_map(|(_, cp)| cp.needs.iter())
+      .chain(self.traits.iter().flat_map(|(_, tp)| {
+        tp.levels.iter().flat_map(|l| l.needs.iter())
+      }))
+      .filter(|m| m.deplete.is_some())
+      .map(|m| m.need.clone())
+      .collect();
+    out.sort();
+    out.dedup();
+    out
+  }
+
   /// Every thing's GEO-TIER glyph in `object_id` order (survival F1): the authored
   /// `geo_label`, or the name's first character UPPERCASED (bunny → "B", logs → "L").
   /// Drawn centered on the geo/placeholder box by the client; never rides the wire.

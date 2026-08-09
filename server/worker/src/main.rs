@@ -28,7 +28,7 @@ use spacetimedb_sdk::{DbContext, Table as _};
 use resonantdust_codec::action::{
     self, Route, BUILD_WALL, CANCEL_INTENT, CREATE, EXECUTE_INTERACTION, GRANT_CONDITION,
     INIT_ZONE, INV_ADD, INV_REMOVE, MOVE_STEP, MOVE_TO, PLACE, PROMOTE, PROMOTE_EVENT,
-    QUEUE_STATE, SET, SET_NEED, SPAWN_REQUEST,
+    QUEUE_STATE, RESTAMP_NEED, SET, SET_NEED, SPAWN_REQUEST,
 };
 use resonantdust_codec::object::{
     cold_row_layer_id, cold_row_macro_position, cold_row_subtype, data_rotation, def_kind_id,
@@ -625,6 +625,11 @@ async fn main() {
     // the user-visible teleport. Each (event, instruction) executes ONCE per session;
     // a worker bounce forgets the set and the in-band-behind replay posture is unchanged.
     let mut executed_interactions: HashSet<(u32, u32)> = HashSet::new();
+    // survival F4/I2: the crossing scheduler's pending slots — (pawn, need_ref) → the
+    // queued RESTAMP's fire tic. Worker MEMORY on purpose: the ensure pass below
+    // re-derives schedules from live rows every tic, so a bounce loses nothing but a
+    // few duplicate (harmless, re-validating) re-stamps.
+    let mut crossing_slots: HashMap<(u32, u32), u16> = HashMap::new();
     // The DISPLAY identity mint (intent-queue-ui) — never 0, ephemeral like the queue.
     let mut intent_entry_seq: u32 = 0;
     // Cancelled EXECUTING intents (intent-queue-ui F3): `(pawn, fire_tic)` — consumed
@@ -1271,10 +1276,43 @@ async fn main() {
             // so this arm only relays. Idempotent by content at this tic, so a failed call
             // defers the whole tic (like a write) and the re-pass re-calls harmlessly.
             let mut need_failed = false;
+            // survival D1: the crossing re-stamps this pass computed — the sweep below
+            // consumes them exactly like SET_NEED writes (the death lane).
+            let mut restamps: Vec<(u32, u32)> = Vec::new();
             for (_event_reference, actions) in &events {
                 for inst in action::program(actions) {
                     let Ok(inst) = inst else { break };
                     let r = match (inst.action, inst.operands) {
+                        // survival F4/D1: the crossing re-stamp — evaluate the need's
+                        // CURRENT lazy value (never a queued prediction) and write it.
+                        (RESTAMP_NEED, [obj, nref]) => {
+                            crossing_slots.remove(&(*obj, *nref));
+                            let (trait_rows, cond_rows) = pawn_gameplay_rows(&bundle, &pawn, *obj);
+                            let need_rows: Vec<(u32, u16)> = pawn
+                                .db()
+                                .needs()
+                                .iter()
+                                .filter(|r| r.entity_reference == *obj)
+                                .map(|r| (r.need, r.set_tic))
+                                .collect();
+                            let Some((_, name)) = bundle.gameplay_lookup(*nref) else { continue };
+                            let Some(np) = bundle.need_params_by_ref(*nref) else { continue };
+                            let Some(sat) = resonantdust_content::needs_eval::need_satisfaction(
+                                &bundle, &name, &trait_rows, &need_rows, &cond_rows, t,
+                            ) else {
+                                continue; // no row (a dead/absent pawn) — nothing to stamp
+                            };
+                            let row = resonantdust_codec::object::pack_gameplay_row(
+                                *nref,
+                                resonantdust_codec::value::quantize(
+                                    sat as f32, np.min as f32, np.max as f32,
+                                ),
+                            );
+                            restamps.push((*obj, row));
+                            tracing::info!(tic = t, pawn = format!("{obj:#010x}"), need = %name,
+                                value = sat, "crossing re-stamp (survival F4)");
+                            pawn.reducers().set_need(self_ref, t, *obj, row)
+                        }
                         // stat-model: both verbs carry ONE packed gameplay row beside the obj.
                         (SET_NEED, [obj, row]) => pawn.reducers().set_need(self_ref, t, *obj, *row),
                         (GRANT_CONDITION, [obj, row]) => pawn.reducers().grant_condition(self_ref, t, *obj, *row),
@@ -1304,10 +1342,21 @@ async fn main() {
             // system order through the same event door everything rides — the fire-time
             // re-validation keeps the barrier window honest (a heal saves the pawn).
             let mut swept: HashSet<(u32, u32)> = HashSet::new();
+            // survival D1: the sweep consumes SET_NEED writes AND this pass's crossing
+            // re-stamps through one list — a re-stamp at ≤ 0 fires death exactly like
+            // any other corpus write.
+            let mut sweep_writes: Vec<(u32, u32)> = restamps.clone();
             for (_er, actions) in &events {
                 for inst in action::program(actions) {
                     let Ok(inst) = inst else { break };
-                    let (SET_NEED, [obj, row]) = (inst.action, inst.operands) else { continue };
+                    if let (SET_NEED, [obj, row]) = (inst.action, inst.operands) {
+                        sweep_writes.push((*obj, *row));
+                    }
+                }
+            }
+            for &(obj_v, row_v) in &sweep_writes {
+                {
+                    let (obj, row) = (&obj_v, &row_v);
                     let nref = resonantdust_codec::object::gameplay_row_reference(
                         resonantdust_codec::object::GAMEPLAY_NEED,
                         *row,
@@ -1503,6 +1552,66 @@ async fn main() {
             // `PROMOTE GRANT_CONDITION`) — the BUILD_WALL pattern (interactions F4): this verb
             // writes nothing itself, so the typed queued verbs carry the write set. A validation
             // failure LOGS AND DROPS THE EVENT WHOLE (I6) — never half-executes.
+            // ── THE CROSSING SCHEDULER (survival F4/I2/I4/I8) ── every pass, ENSURE
+            // each live pawn's drain-target needs carry one pending RESTAMP at their
+            // predicted floor crossing. Ensure-not-event-driven on purpose: a fresh
+            // mint's needs decay with NO write ever arriving, and a bounced worker's
+            // lost slots re-derive from the live rows (I4's durability for free). An
+            // EARLIER prediction supersedes (queue + overwrite the slot; the stale
+            // event re-validates harmlessly); a LATER one waits for the pending fire.
+            {
+                let drain_targets: Vec<(String, u32)> = bundle
+                    .drain_target_needs()
+                    .into_iter()
+                    .filter_map(|n| bundle.gameplay_reference("need", &n).map(|r| (n, r)))
+                    .collect();
+                if !drain_targets.is_empty() {
+                    let live: HashSet<u32> =
+                        pawn.db().entity_state().iter().map(|r| r.entity_reference).collect();
+                    crossing_slots.retain(|(p, _), fire| {
+                        live.contains(p) && fire.wrapping_sub(t) <= u16::MAX / 2
+                    });
+                    for &p in &live {
+                        let (trait_rows, cond_rows) = pawn_gameplay_rows(&bundle, &pawn, p);
+                        let need_rows: Vec<(u32, u16)> = pawn
+                            .db()
+                            .needs()
+                            .iter()
+                            .filter(|r| r.entity_reference == p)
+                            .map(|r| (r.need, r.set_tic))
+                            .collect();
+                        for (name, nref) in &drain_targets {
+                            let Some(np) = bundle.need_params_by_ref(*nref) else { continue };
+                            let Some(cross) = resonantdust_content::needs_eval::floor_crossing_tic(
+                                &bundle, name, np.min, &trait_rows, &need_rows, &cond_rows,
+                            ) else {
+                                continue;
+                            };
+                            // The horizon clamp (I8): a crossing beyond the safe window
+                            // re-stamps at the horizon and chains from the fresh row.
+                            let ahead = cross.wrapping_sub(t);
+                            let fire = if ahead > 20_000 { tic_add(t, 20_000) } else { cross };
+                            let fire = if fire.wrapping_sub(t) < 4 { tic_add(master, 4) } else { fire };
+                            let key = (p, *nref);
+                            let earlier = crossing_slots
+                                .get(&key)
+                                .is_none_or(|pending| fire.wrapping_sub(t) < pending.wrapping_sub(t));
+                            if earlier {
+                                if event
+                                    .reducers()
+                                    .queue_at(vec![RESTAMP_NEED, p, *nref], fire)
+                                    .is_ok()
+                                {
+                                    crossing_slots.insert(key, fire);
+                                    tracing::info!(tic = t, pawn = format!("{p:#010x}"),
+                                        need = %name, fire, "crossing re-stamp scheduled (survival F4)");
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             // Pass-local inventory adds (inventory I2): two SAME-TIC pick_up completions
             // read the same table snapshot — this count keeps the second from overfilling.
             let mut inv_adds_this_pass: HashMap<u32, usize> = HashMap::new();

@@ -131,6 +131,13 @@ pub const INV_REMOVE: u32 = 16;
 /// tiles → the validated [`SET`].
 pub const SPAWN_REQUEST: u32 = 17;
 
+/// `RESTAMP_NEED obj need_reference` — the CROSSING RE-STAMP (survival F4/D1,
+/// WORKER-ONLY): re-evaluate `obj`'s named need's lazy value AT PROCESSING and write
+/// it, feeding the need-write sweep (death at ≤ 0). Queued by the worker's crossing
+/// scheduler at the predicted floor-crossing tic; a stale prediction (the pawn ate)
+/// re-stamps the honest value and re-schedules — never the predicted one.
+pub const RESTAMP_NEED: u32 = 18;
+
 /// Compose a [`SPAWN_REQUEST`] program (spawn-authority F1) — ONE packer shared by every
 /// client so the words cannot drift. `def` is a full `definition_reference` whose variant
 /// nibble is IGNORED (variants ride the nibble vec); `variants[i]` = part i's u4.
@@ -213,6 +220,7 @@ pub fn signature(action: u32) -> Option<&'static [OperandKind]> {
         INV_ADD => &[Write, Imm],    // obj, item definition_reference (inventory F3)
         INV_REMOVE => &[Write, Imm], // obj, slot index (inventory F3)
         SPAWN_REQUEST => &[Imm, Imm, Imm], // xy, rot_def, variants — a pure request, no write set
+        RESTAMP_NEED => &[Write, Imm], // obj, need_reference — the crossing re-stamp (survival D1)
         _ => return None,
     })
 }
