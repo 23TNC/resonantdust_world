@@ -202,6 +202,9 @@ async fn session_worker(
                 // login simply retries).
                 if let (Some(player_id), Some(p)) = (session, players.as_ref()) {
                     tokio::spawn(ensure_player_pawn(pool.clone(), p.clone(), player_id));
+                    // The OWNER fan (P3, F6): the session's own player-pawn rows, relayed
+                    // on the EXISTING `Need` frame — a 0x40… ref is self-describing.
+                    tokio::spawn(fan_player_pawn(pool.clone(), p.clone(), player_id, out_tx.clone()));
                 }
             }
             ClientMsg::Queue { cid, actions } => {
@@ -973,6 +976,62 @@ async fn build_players(
     // The handle must outlive this fn or the subscription tears down immediately.
     std::mem::forget(handle);
     Some(conn)
+}
+
+/// The OWNER fan (player-pawns P3, F6): relay the session's OWN player-pawn `needs` rows on
+/// the existing `Need` frame (the ref's type nibble makes it self-describing — no new
+/// protocol). Waits for the linkage (the mint may be in flight), subscribes the one
+/// entity's rows, and lives until the session's outbound channel closes.
+async fn fan_player_pawn(
+    pool: Arc<Pool>,
+    players: Arc<bindings::players::DbConnection>,
+    player_id: u32,
+    out_tx: mpsc::UnboundedSender<String>,
+) {
+    use bindings::players::player_pawns_table::PlayerPawnsTableAccess;
+    use bindings::player_pawn::needs_table::NeedsTableAccess;
+
+    let mut ppref = None;
+    for _ in 0..PLAYER_READ_POLLS {
+        if let Some(r) =
+            players.db().player_pawns().iter().find(|r| r.player_id == player_id && r.active)
+        {
+            ppref = Some(r.player_pawn_reference);
+            break;
+        }
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+    let Some(ppref) = ppref else { return }; // no linkage yet — the next login fans
+    let Some((conn, ready)) =
+        crate::connections::connect_player_pawn(&pool.cfg.uri, &pool.cfg.player_pawn_db())
+    else {
+        return;
+    };
+    if !await_ready(ready).await {
+        return;
+    }
+    let o = out_tx.clone();
+    conn.db().needs().on_insert(move |_ctx, row| send(&o, player_pawn_need_frame(row)));
+    let o = out_tx.clone();
+    conn.db().needs().on_update(move |_ctx, _old, row| send(&o, player_pawn_need_frame(row)));
+    let handle = conn
+        .subscription_builder()
+        .on_error(|_ctx, err| tracing::warn!(%err, "player_pawn needs fan error"))
+        .subscribe([format!("SELECT * FROM needs WHERE entity_reference = {ppref}")]);
+    // Live until the session's outbound closes; dropping conn + handle tears down.
+    while !out_tx.is_closed() {
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    }
+    drop(handle);
+}
+
+fn player_pawn_need_frame(row: &bindings::player_pawn::Needs) -> ServerMsg {
+    ServerMsg::Need {
+        entity_reference: row.entity_reference,
+        zone: row.macro_position_reference,
+        need: row.need,
+        set_tic: row.set_tic,
+    }
 }
 
 /// Ensure the player owns a player-pawn (player-pawns P2, F2/I6) — the login funnel's second

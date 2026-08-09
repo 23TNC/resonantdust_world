@@ -32,7 +32,7 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 - [x] content: the `player` gameplay subtypes (F4) — a `wolf_count` need + a starter player
       trait authored; the player-pawn's definition derives them (F5). Acceptance: content
       tests green; the derived rows appear on a minted player-pawn.
-- [ ] The owner fan (F6/I3): the session receives its OWN player-pawn's rows through the
+- [x] The owner fan (F6/I3): the session receives its OWN player-pawn's rows through the
       edge + client/core surface. Acceptance: the npc Bot (or a probe client) logs its
       wolf_count row after login.
 

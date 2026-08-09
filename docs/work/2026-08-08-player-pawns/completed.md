@@ -1,5 +1,15 @@
 # Completed — player-pawns
 
+## 2026-08-08 — P3 (second half): the owner fan
+
+The edge's `fan_player_pawn`, spawned per session after LoginOk: waits for the ACTIVE
+linkage (the mint may be in flight), subscribes the ONE entity's `needs` rows on its own
+player_pawn connection, and relays them on the EXISTING `Need` frame — a `0x40…` reference
+is self-describing (type nibble), so no new protocol; client/core's need lane carries it
+unchanged. Lives until the session's outbound channel closes. Verified LIVE: a probe client
+logging in as PPDrill4 received `{'t': 'need', 'entity_reference': 0x40800008,
+'need': 0xFFFF0050 (wolf_count FULL), 'set_tic': 0}` within a second of login_ok.
+
 ## 2026-08-08 — P3 (first half): the player gameplay lane
 
 **codec** — `GAMEPLAY_PLAYER_TRAIT = 7` appended (palette 7 entries, the frozen-order test
