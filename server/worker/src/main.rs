@@ -129,7 +129,7 @@ fn pawn_gameplay_rows(
     bundle: &resonantdust_content::loader::Bundle,
     pawn: &pawn::DbConnection,
     entity: u32,
-) -> (Vec<u32>, Vec<(u32, u16)>) {
+) -> (Vec<u64>, Vec<(u64, u16)>) {
     let kind = pawn
         .db()
         .entity_state()
@@ -152,21 +152,26 @@ fn pawn_gameplay_rows(
     (bundle.object_trait_rows(kind, &raw_traits), conditions)
 }
 
-fn mint_sidecars(bundle: &resonantdust_content::loader::Bundle, def: u32) -> (Vec<u32>, Vec<u32>) {
+fn mint_sidecars(bundle: &resonantdust_content::loader::Bundle, def: u32) -> (Vec<u32>, Vec<u64>) {
     let kind = def_kind_id(def);
-    let mut trait_rows = Vec::new();
+    let mut trait_rows: Vec<u64> = Vec::new();
     let mut trait_words = Vec::new();
     for b in bundle.thing_traits(kind) {
-        // trait-lights F5: a CONSTANT bind is derived by every reader through the
-        // merged accessor — minting a row for it would just be shadowed data. The
-        // full-value need mint below still needs the trait IN HAND for its caps, so
-        // constant binds join `trait_rows` (the eval set) but never `trait_words`
-        // (the stored payload).
-        if let Some(r) = bundle.gameplay_reference("trait", &b.name) {
-            let row = resonantdust_codec::object::pack_gameplay_row(r, b.level);
+        // trait-rows-u32 F2: constancy is CATEGORY membership; the tier is the bind's
+        // VARIANT on the def's reference. Constant binds join the eval set (the need
+        // caps below read them) but never the stored payload.
+        use resonantdust_codec::object as obj;
+        let Some(cat) = bundle.trait_category(&b.name) else { continue };
+        let Some(cat_name) = obj::gameplay_category(cat) else { continue };
+        if let Some(r0) = bundle.gameplay_reference(cat_name, &b.name) {
+            let r = (r0 & !0xF) | (u32::from(b.variant) & 0xF);
+            let row = obj::pack_row(r, 0);
             trait_rows.push(row);
-            if !b.constant {
-                trait_words.extend_from_slice(&resonantdust_codec::payload::trait_entry(row));
+            let constant = cat == obj::GAMEPLAY_PAWN_TRAIT_CONSTANT
+                || cat == obj::GAMEPLAY_PLAYER_TRAIT_CONSTANT;
+            if !constant {
+                trait_words
+                    .extend_from_slice(&resonantdust_codec::payload::trait_entry(r, 0));
             }
         }
     }
@@ -187,7 +192,7 @@ fn mint_sidecars(bundle: &resonantdust_content::loader::Bundle, def: u32) -> (Ve
                 np.min as f32,
                 np.max as f32,
             );
-            need_rows.push(resonantdust_codec::object::pack_gameplay_row(nref, q));
+            need_rows.push(resonantdust_codec::object::pack_row(nref, q));
         }
     }
     (trait_words, need_rows)
@@ -239,7 +244,7 @@ packed = [ { tint = "#5f6b3c" } ]
             let kind = b.thing_object_id(kind_name).expect(kind_name);
             let def = pack_definition_reference(0, pack_kind_reference(kind, 0));
             let (_, needs) = mint_sidecars(&b, def);
-            let q = resonantdust_codec::object::gameplay_row_data(needs[0]);
+            let q = resonantdust_codec::object::row_data(needs[0]);
             f64::from(resonantdust_codec::value::dequantize(q, np.min as f32, np.max as f32))
         };
         assert!((value_of("bunny") - 1.0).abs() < 0.01, "the bunny mints 1");
@@ -291,7 +296,7 @@ packed = [ { tint = "#c0b0a0" } ]
         let kind = b.thing_object_id("human").expect("human");
         let def = pack_definition_reference(0, pack_kind_reference(kind, 0));
         let (_, needs) = mint_sidecars(&b, def);
-        let q = resonantdust_codec::object::gameplay_row_data(needs[0]);
+        let q = resonantdust_codec::object::row_data(needs[0]);
         let v = f64::from(resonantdust_codec::value::dequantize(q, np.min as f32, np.max as f32));
         assert!((v - 6.0).abs() < 0.01, "6 free slots at birth, got {v}");
     }
@@ -333,7 +338,7 @@ packed = [ { tint = "#303030" } ]
         let stored = resonantdust_codec::payload::payload_traits(&words);
         assert_eq!(stored.len(), 1, "only the non-constant bind mints: {stored:?}");
         let corpus_ref = b.gameplay_reference("trait", "corpus").expect("ref");
-        assert_eq!(stored[0], resonantdust_codec::object::pack_gameplay_row(corpus_ref, 2));
+        assert_eq!(stored[0], resonantdust_codec::object::pack_row(corpus_ref, 2));
         // The constant bind still reaches eval through the accessor — and the light rides.
         let merged = b.object_trait_rows(kind, &stored);
         assert_eq!(merged.len(), 2, "constant + stored: {merged:?}");
@@ -740,7 +745,7 @@ async fn main() {
         // chord-movement: the compose's resolves need it too.)
         let ground_speed_tics = |entity: u32, now: u16| -> u16 {
             let (trait_rows, cond_rows) = pawn_gameplay_rows(&bundle, &pawn, entity);
-            let need_rows: Vec<(u32, u16)> = pawn
+            let need_rows: Vec<(u64, u16)> = pawn
                 .db()
                 .needs()
                 .iter()
@@ -1336,7 +1341,7 @@ async fn main() {
             let mut need_failed = false;
             // survival D1: the crossing re-stamps this pass computed — the sweep below
             // consumes them exactly like SET_NEED writes (the death lane).
-            let mut restamps: Vec<(u32, u32)> = Vec::new();
+            let mut restamps: Vec<(u32, u64)> = Vec::new();
             for (_event_reference, actions) in &events {
                 for inst in action::program(actions) {
                     let Ok(inst) = inst else { break };
@@ -1346,7 +1351,7 @@ async fn main() {
                         (RESTAMP_NEED, [obj, nref]) => {
                             crossing_slots.remove(&(*obj, *nref));
                             let (trait_rows, cond_rows) = pawn_gameplay_rows(&bundle, &pawn, *obj);
-                            let need_rows: Vec<(u32, u16)> = pawn
+                            let need_rows: Vec<(u64, u16)> = pawn
                                 .db()
                                 .needs()
                                 .iter()
@@ -1360,7 +1365,7 @@ async fn main() {
                             ) else {
                                 continue; // no row (a dead/absent pawn) — nothing to stamp
                             };
-                            let row = resonantdust_codec::object::pack_gameplay_row(
+                            let row = resonantdust_codec::object::pack_row(
                                 *nref,
                                 resonantdust_codec::value::quantize(
                                     sat as f32, np.min as f32, np.max as f32,
@@ -1374,14 +1379,26 @@ async fn main() {
                         // stat-model: both verbs carry ONE packed gameplay row beside the obj.
                         // player-pawns P1: the relay lands on the target's OWN shard by its
                         // type nibble — a TYPE_PLAYER row-carrier composes on player_pawn.
-                        (SET_NEED, [obj, row]) if shard_of(*obj) == Shard::PlayerPawn => {
-                            player_pawn.reducers().set_need(self_ref, t, *obj, *row)
+                        (SET_NEED, [obj, nref, data]) if shard_of(*obj) == Shard::PlayerPawn => {
+                            player_pawn.reducers().set_need(
+                                self_ref, t, *obj,
+                                resonantdust_codec::object::pack_row(*nref, *data as u16),
+                            )
                         }
-                        (SET_NEED, [obj, row]) => pawn.reducers().set_need(self_ref, t, *obj, *row),
-                        (GRANT_CONDITION, [obj, row]) if shard_of(*obj) == Shard::PlayerPawn => {
-                            player_pawn.reducers().grant_condition(self_ref, t, *obj, *row)
+                        (SET_NEED, [obj, nref, data]) => pawn.reducers().set_need(
+                            self_ref, t, *obj,
+                            resonantdust_codec::object::pack_row(*nref, *data as u16),
+                        ),
+                        (GRANT_CONDITION, [obj, cref, data]) if shard_of(*obj) == Shard::PlayerPawn => {
+                            player_pawn.reducers().grant_condition(
+                                self_ref, t, *obj,
+                                resonantdust_codec::object::pack_row(*cref, *data as u16),
+                            )
                         }
-                        (GRANT_CONDITION, [obj, row]) => pawn.reducers().grant_condition(self_ref, t, *obj, *row),
+                        (GRANT_CONDITION, [obj, cref, data]) => pawn.reducers().grant_condition(
+                            self_ref, t, *obj,
+                            resonantdust_codec::object::pack_row(*cref, *data as u16),
+                        ),
                         // inventory F3: the item verbs relay the same way — the module owns
                         // the slot scan; the free-count SET_NEED rides the same program.
                         (INV_ADD, [obj, item]) => pawn.reducers().inv_add(self_ref, t, *obj, *item),
@@ -1411,22 +1428,20 @@ async fn main() {
             // survival D1: the sweep consumes SET_NEED writes AND this pass's crossing
             // re-stamps through one list — a re-stamp at ≤ 0 fires death exactly like
             // any other corpus write.
-            let mut sweep_writes: Vec<(u32, u32)> = restamps.clone();
+            let mut sweep_writes: Vec<(u32, u64)> = restamps.clone();
             for (_er, actions) in &events {
                 for inst in action::program(actions) {
                     let Ok(inst) = inst else { break };
-                    if let (SET_NEED, [obj, row]) = (inst.action, inst.operands) {
-                        sweep_writes.push((*obj, *row));
+                    if let (SET_NEED, [obj, nref, data]) = (inst.action, inst.operands) {
+                        sweep_writes
+                            .push((*obj, resonantdust_codec::object::pack_row(*nref, *data as u16)));
                     }
                 }
             }
             for &(obj_v, row_v) in &sweep_writes {
                 {
                     let (obj, row) = (&obj_v, &row_v);
-                    let nref = resonantdust_codec::object::gameplay_row_reference(
-                        resonantdust_codec::object::GAMEPLAY_NEED,
-                        *row,
-                    );
+                    let nref = resonantdust_codec::object::row_reference(*row);
                     if !swept.insert((*obj, nref)) {
                         continue; // one sweep per (pawn, need) per tic
                     }
@@ -1439,16 +1454,16 @@ async fn main() {
                     let kind = def_kind_id(prow.definition_reference);
                     let (trait_rows, cond_rows) = pawn_gameplay_rows(&bundle, &pawn, *obj);
                     // The mirrored needs, with THIS write upserted.
-                    let mut need_rows: Vec<(u32, u16)> = pawn
+                    let mut need_rows: Vec<(u64, u16)> = pawn
                         .db()
                         .needs()
                         .iter()
                         .filter(|r| r.entity_reference == *obj)
                         .map(|r| (r.need, r.set_tic))
                         .collect();
-                    let key = resonantdust_codec::object::gameplay_row_key(*row);
+                    let key = resonantdust_codec::object::row_reference(*row);
                     need_rows
-                        .retain(|(r, _)| resonantdust_codec::object::gameplay_row_key(*r) != key);
+                        .retain(|(r, _)| resonantdust_codec::object::row_reference(*r) != key);
                     need_rows.push((*row, t));
                     let active = resonantdust_content::needs_eval::active_conditions(
                         &bundle, &trait_rows, &need_rows, &cond_rows, t,
@@ -1639,7 +1654,7 @@ async fn main() {
                     });
                     for &p in &live {
                         let (trait_rows, cond_rows) = pawn_gameplay_rows(&bundle, &pawn, p);
-                        let need_rows: Vec<(u32, u16)> = pawn
+                        let need_rows: Vec<(u64, u16)> = pawn
                             .db()
                             .needs()
                             .iter()
@@ -1791,7 +1806,7 @@ async fn main() {
                         continue;
                     }
                     use resonantdust_content::loader::Operand;
-                    use resonantdust_codec::object::{gameplay_row_data, pack_gameplay_row};
+                    use resonantdust_codec::object::{pack_row, row_data};
                     // The acting PAWN: the reserved `pawn` input FIRST (input-rework F5) —
                     // an effect's target can name ANOTHER pawn now (attack F2: satisfy
                     // hits `@target`, the VICTIM), so binding the actor from the effect
@@ -2103,7 +2118,7 @@ async fn main() {
                     // trait-lights F5) + stored conditions from the payload sidecar,
                     // needs from the `needs` sub-table (stat-model F1/F2).
                     let (trait_rows, cond_rows) = pawn_gameplay_rows(&bundle, &pawn, target);
-                    let need_rows: Vec<(u32, u16)> = pawn
+                    let need_rows: Vec<(u64, u16)> = pawn
                         .db()
                         .needs()
                         .iter()
@@ -2327,9 +2342,10 @@ async fn main() {
                             reject("unknown need def");
                             continue;
                         };
-                        let need_key = need_ref & 0xFFFF;
                         let Some(&(nrow, set_tic)) =
-                            eval_needs.iter().find(|(r, _)| r & 0xFFFF == need_key)
+                            eval_needs
+                                .iter()
+                                .find(|(r, _)| resonantdust_codec::object::row_reference(*r) == need_ref)
                         else {
                             reject("target carries no row for the need");
                             continue;
@@ -2337,7 +2353,7 @@ async fn main() {
                         let (_, need_name) =
                             bundle.gameplay_lookup(need_ref).expect("resolved above");
                         let value = f64::from(resonantdust_codec::value::dequantize(
-                            gameplay_row_data(nrow),
+                            row_data(nrow),
                             np.min as f32,
                             np.max as f32,
                         ));
@@ -2360,7 +2376,8 @@ async fn main() {
                             PROMOTE,
                             SET_NEED,
                             sat_target,
-                            pack_gameplay_row(need_ref, q),
+                            need_ref,
+                            u32::from(q),
                         ]);
                         satisfied_need = Some(need_name);
                         log_from = now_sat;
@@ -2433,7 +2450,7 @@ async fn main() {
                     // slots, so a mutation writes `effective max − filled-after`. Computed
                     // from the ROWS (the structural truth) so any drift self-heals at the
                     // next mutation (I2/I3).
-                    let inv_free_row = |filled_after: usize| -> Option<u32> {
+                    let inv_free_row = |filled_after: usize| -> Option<(u32, u16)> {
                         let nref = bundle.gameplay_reference("need", "inventory")?;
                         let np = bundle.need_params_by_ref(nref)?;
                         let (_, hi) = resonantdust_content::needs_eval::need_bounds(
@@ -2445,7 +2462,7 @@ async fn main() {
                             np.min as f32,
                             np.max as f32,
                         );
-                        Some(pack_gameplay_row(nref, q))
+                        Some((nref, q))
                     };
                     // The STORE effect (inventory F4): the carrier leaves the world through
                     // the destroy tombstone lane, its kind def lands in the acting pawn's
@@ -2516,7 +2533,9 @@ async fn main() {
                             0,
                         ]);
                         program.extend_from_slice(&[INV_ADD, target, item_def]);
-                        program.extend_from_slice(&[PROMOTE, SET_NEED, target, free_row]);
+                        program.extend_from_slice(&[
+                            PROMOTE, SET_NEED, target, free_row.0, u32::from(free_row.1),
+                        ]);
                         stored = bundle.thing_name(ckind >> 4).map(|s| s.to_string());
                     }
                     // The SPAWN effect: a NAMED thing (food-chain F5/F6 — `on` = the target
@@ -2595,7 +2614,9 @@ async fn main() {
                                 continue;
                             };
                             program.extend_from_slice(&[INV_REMOVE, target, u32::from(slot)]);
-                            program.extend_from_slice(&[PROMOTE, SET_NEED, target, free_row]);
+                            program.extend_from_slice(&[
+                            PROMOTE, SET_NEED, target, free_row.0, u32::from(free_row.1),
+                        ]);
                         }
                         None => {}
                     }
@@ -2623,7 +2644,8 @@ async fn main() {
                             PROMOTE,
                             GRANT_CONDITION,
                             target,
-                            pack_gameplay_row(cref, cp.duration as u16),
+                            cref,
+                            u32::from(cp.duration as u16),
                         ]);
                         for m in &cp.needs {
                             if satisfied_need.as_deref() == Some(m.need.as_str()) {
@@ -2633,13 +2655,14 @@ async fn main() {
                                 continue;
                             };
                             let Some(mp) = bundle.need_params_by_ref(mref) else { continue };
-                            let Some(&(mrow, mset)) =
-                                need_rows.iter().find(|(r, _)| r & 0xFFFF == mref & 0xFFFF)
+                            let Some(&(mrow, mset)) = need_rows
+                                .iter()
+                                .find(|(r, _)| resonantdust_codec::object::row_reference(*r) == mref)
                             else {
                                 continue; // the pawn doesn't carry this need — nothing to stamp
                             };
                             let mvalue = f64::from(resonantdust_codec::value::dequantize(
-                                gameplay_row_data(mrow),
+                                row_data(mrow),
                                 mp.min as f32,
                                 mp.max as f32,
                             ));
@@ -2658,7 +2681,8 @@ async fn main() {
                                 PROMOTE,
                                 SET_NEED,
                                 target,
-                                pack_gameplay_row(mref, mq),
+                                mref,
+                                u32::from(mq),
                             ]);
                         }
                     }

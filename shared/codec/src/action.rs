@@ -209,8 +209,10 @@ pub fn signature(action: u32) -> Option<&'static [OperandKind]> {
         MOVE_STEP => &[ReadWrite, Imm, Imm], // obj, dest, trip-serial (worker-only chain hop)
         SET => &[Write, Imm, Imm, Imm, Imm], // cold_row, type_id, tile_reference, kind_reference, data
         BUILD_WALL => &[Imm, Imm, Imm], // start, end, object — writes nothing; the worker queues SETs
-        SET_NEED => &[Write, Imm], // obj, packed row (value:16 | kind:12 | variant:4)
-        GRANT_CONDITION => &[Write, Imm], // obj, packed row (remaining_at_write:16 | key:16)
+        // trait-rows-u32 F1: the u64 row rides the u32-word program SPLIT — obj, the FULL
+        // reference, the def-interpreted data u16 (low half of its word).
+        SET_NEED => &[Write, Imm, Imm], // obj, need reference, data (value u16)
+        GRANT_CONDITION => &[Write, Imm, Imm], // obj, condition reference, data (remaining u16)
         // EXECUTE_INTERACTION is variable-arity (interaction, version, count, inputs×count —
         // all Imm; writes ride the verbs the worker queues) — framed in the reader like
         // CREATE/INIT_ZONE, no fixed signature.
