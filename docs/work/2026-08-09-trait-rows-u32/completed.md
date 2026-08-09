@@ -1,5 +1,27 @@
 # Completed — trait-rows-u32
 
+## 2026-08-09 — P3/P4 COMPLETE: ACTIVATE_TRAIT + sprint, MEASURED
+
+**The verb** — `ACTIVATE_TRAIT = 19` (client-open): the worker validates the carrier BINDS
+the trait (things via thing_traits, player-pawns via their BRAIN def's binds), the category
+is `*_active`, and every `blocked_by` condition is inactive, then queues the def's authored
+grants. The ritual bit THREE stale binaries in sequence (event-shard wasm, the edge, the
+npc — each refusing verb 19 or the `activate` fields until rebuilt: I1's cliff, live).
+**The content** — `sprint` (grants `sprinting` 60 tics, ground_speed −6 min 4, motivated+3;
+`sprint_cooldown` 300 tics, ground_speed +4, uncomfortable+2 — the exhaustion), gated
+`blocked_by = [sprint_cooldown]`; `rally` = the player-lane twin on the wolf_pack brain.
+The six categories seed the registry (the master's category loop extended — sprint at
+0x80090010, rally at 0x800C0010, exactly the packed derivation).
+**The drills, MEASURED not eyeballed**: activation landed BOTH grants in the wolf's payload
+(remaining 60/300 at the written tic) and `rallied` (120) on the player-pawn 0x40800001 —
+the player lane works end to end; re-activation 19 tics into the cooldown REFUSED ("blocked
+by an active condition"), and the accidental slow drill proved the re-arm (a retry 7 tics
+AFTER expiry succeeded). THE SPEED, from entity_state_log positions: sprinting ≈ 7.0
+tics/tile (12 baseline; authored 6 + trip overhead), winded EXACTLY 16.0 tics/tile
+(12 + 4) — the stat modifiers provably reach the worker's hop pacing (I6's lie-detector
+passed with numbers). The on-camera half stands as the world rendering + the wolf's panel
+cards (capture u64rows); the quantitative read supersedes pixel-watching for pace.
+
 ## 2026-08-09 — P2 COMPLETE: every consumer on the ONE u64 row, LIVE
 
 **The wire**: SET_NEED/GRANT_CONDITION arities widen to (obj, reference, data) — the u64 row

@@ -31,17 +31,17 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P3 — active traits
 
-- [ ] codec + worker: `ACTIVATE_TRAIT` — validates bind + active category + ≤3 slots
+- [x] codec + worker: `ACTIVATE_TRAIT` — validates bind + active category + ≤3 slots
       (both doors, I5) + the availability predicate; executes the authored grants (F3).
       Acceptance: a WS drill activation grants the conditions.
-- [ ] The full new-verb ritual (event-shard module + orchestrator/edge/worker/master/
+- [x] The full new-verb ritual (event-shard module + orchestrator/edge/worker/master/
       clients). Acceptance: the verb round-trips live.
 
 ## P4 — sprint
 
-- [ ] content: `sprint` (active; grants `sprinting` + `sprint_cooldown` per F4) bound to
+- [x] content: `sprint` (active; grants `sprinting` + `sprint_cooldown` per F4) bound to
       a drill carrier. Acceptance: load green; the predicate refuses while cooling.
-- [ ] The drill, on camera: faster hops while sprinting (I6), refusal mid-cooldown (I7),
+- [x] The drill, on camera: faster hops while sprinting (I6), refusal mid-cooldown (I7),
       exhaustion on the cards, a player-pawn ACTIVATE via WS (I8). Acceptance: captures +
       logs in completed.md.
 

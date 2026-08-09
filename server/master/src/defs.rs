@@ -440,6 +440,12 @@ pub fn allocations(bundle: &Bundle) -> Result<Vec<Allocation>, AllocError> {
         ("affordance", bundle.affordance_names()),
         ("stat", bundle.stat_names()),
         ("player_trait", bundle.player_trait_names()),
+        ("pawn_trait_constant", bundle.gameplay_names_of("pawn_trait_constant")),
+        ("pawn_trait_active", bundle.gameplay_names_of("pawn_trait_active")),
+        ("pawn_trait_passive", bundle.gameplay_names_of("pawn_trait_passive")),
+        ("player_trait_constant", bundle.gameplay_names_of("player_trait_constant")),
+        ("player_trait_active", bundle.gameplay_names_of("player_trait_active")),
+        ("player_trait_passive", bundle.gameplay_names_of("player_trait_passive")),
     ] {
         for (i, name) in names.iter().enumerate() {
             if name.is_empty() {

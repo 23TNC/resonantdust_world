@@ -1651,6 +1651,11 @@ impl Bundle {
   pub fn player_trait_names(&self) -> &[String] {
     &self.player_trait_names
   }
+  /// A gameplay category's name registry by NAME — the public face of the internal
+  /// `gameplay_names` (the master's seed loop enumerates the six trait categories).
+  pub fn gameplay_names_of(&self, category: &str) -> &[String] {
+    self.gameplay_names(category).unwrap_or(&[])
+  }
   pub fn stat_names(&self) -> &[String] {
     &self.stat_names
   }
