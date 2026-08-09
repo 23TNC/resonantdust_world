@@ -1,5 +1,10 @@
 # absolute-positions — THE 48-BIT LAW; one absolute coordinate for everything
 
+> **CLOSED unexecuted (user, 2026-08-09): "we're not re-designing everything."** The design
+> is preserved intact — the law, the spike plan, the ladder — with no obligation attached.
+> The existing nibble hierarchy is correct and shipped; this folder is a recorded option,
+> not a debt. Reopen only if it is ever genuinely wanted.
+
 _User (2026-08-09): "Well that changes everything." The u32 self-limit existed because JS had
 no u64 — but everything passes as f64, so the real ceiling is 48 bits (53 with margin). With
 the law in place the clever optimizations stop being necessary. Positions become
