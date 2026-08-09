@@ -110,14 +110,16 @@ pub struct Needs {
     /// The zone-subscription key — slaved to the entity's zone (the state hook).
     #[index(btree)]
     pub macro_position_reference: u16,
-    /// The packed gameplay row: `value:16 | kind:12 | variant:4`.
-    pub need: u32,
+    /// The ONE u64 gameplay row (trait-rows-u32 F1): `dead:16 | data:16 | reference:32`.
+    pub need: u64,
     pub set_tic: u16,
 }
 
 /// Upsert one need row (the `SET_NEED` body + the spawn mint path).
-fn upsert_need_row(ctx: &ReducerContext, tic: u16, entity: u32, row: u32, zone: u16) {
-    let uid = ((entity as u64) << 16) | (row as u64 & 0xFFFF);
+fn upsert_need_row(ctx: &ReducerContext, tic: u16, entity: u32, row: u64, zone: u16) {
+    // The uid keys on the row's LOW 16 (kind|variant within the category) — unchanged
+    // width; the row's full reference lives in the row itself now.
+    let uid = ((entity as u64) << 16) | (row & 0xFFFF);
     let r = Needs {
         uid,
         entity_reference: entity,
@@ -271,7 +273,7 @@ pub fn set_need(
     _worker: u8,
     tic: u16,
     entity_reference: u32,
-    row: u32,
+    row: u64,
 ) -> Result<(), String> {
     let zone = entity_zone(ctx, entity_reference);
     upsert_need_row(ctx, tic, entity_reference, row, zone);
@@ -288,7 +290,7 @@ pub fn grant_condition(
     _worker: u8,
     tic: u16,
     entity_reference: u32,
-    row: u32,
+    row: u64,
 ) -> Result<(), String> {
     write_payload_entry(ctx, tic, entity_reference, |p| {
         resonantdust_codec::payload::upsert_condition(p, row, tic);
@@ -393,7 +395,7 @@ pub fn spawn(
     definition_reference: u32,
     position_reference: u32,
     payload: Vec<u32>,
-    needs: Vec<u32>,
+    needs: Vec<u64>,
     // `data` (spawn-authority I9): the minted row's byte — `facing | trip_serial`
     // packed by the WORKER (`pack_pawn_data(rotation, 0)`; the serial lane stays 0,
     // no chain exists yet). The request's rotation nibble seeds the RESTING pose.

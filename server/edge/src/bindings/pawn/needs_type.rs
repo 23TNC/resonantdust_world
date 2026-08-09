@@ -16,7 +16,7 @@ pub struct Needs {
     pub uid: u64,
     pub entity_reference: u32,
     pub macro_position_reference: u16,
-    pub need: u32,
+    pub need: u64,
     pub set_tic: u16,
 }
 
@@ -33,7 +33,7 @@ pub struct NeedsCols {
     pub uid: __sdk::__query_builder::Col<Needs, u64>,
     pub entity_reference: __sdk::__query_builder::Col<Needs, u32>,
     pub macro_position_reference: __sdk::__query_builder::Col<Needs, u16>,
-    pub need: __sdk::__query_builder::Col<Needs, u32>,
+    pub need: __sdk::__query_builder::Col<Needs, u64>,
     pub set_tic: __sdk::__query_builder::Col<Needs, u16>,
 }
 
