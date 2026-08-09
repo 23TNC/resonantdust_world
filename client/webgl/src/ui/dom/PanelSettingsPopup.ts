@@ -212,6 +212,7 @@ export class PanelSettingsPopup {
   private readonly maskBtn:        HTMLButtonElement;
   private readonly backgroundSelect: CyclingSelect<BackgroundMode>;
   private readonly clickThroughBtn:  HTMLButtonElement;
+  private readonly outlineBtn:       HTMLButtonElement;
   private readonly layerUpBtn:     HTMLButtonElement;
   private readonly layerDownBtn:   HTMLButtonElement;
   /** Row-element index keyed by `PanelSettingKey`. `refreshControls`
@@ -377,6 +378,10 @@ export class PanelSettingsPopup {
       () => this.boundPanel?.toggleClickThrough());
     this.clickThroughBtn = clickRow.btn;
     this.rowsByKey.set("clickThrough", clickRow.row);
+    const outlineRow = this.addToggleRow(body, pp("outline"), "▣",
+      () => this.boundPanel?.toggleOutline());
+    this.outlineBtn = outlineRow.btn;
+    this.rowsByKey.set("outline", outlineRow.row);
     const layerRow = this.addLayerRow(body);
     this.layerUpBtn   = layerRow.up;
     this.layerDownBtn = layerRow.down;
@@ -568,6 +573,7 @@ export class PanelSettingsPopup {
     this.hideCloseBtnBtn.textContent    = p.isCloseBtnHidden    ? "▣" : "▢";
     this.maskBtn.textContent            = p.isMasked            ? "▣" : "▢";
     this.clickThroughBtn.textContent    = p.isClickThrough      ? "▣" : "▢";
+    this.outlineBtn.textContent         = p.hasOutline          ? "▣" : "▢";
     this.backgroundSelect.setValue(p.background);
     // Draggable: when snap is non-none the value is forced off
     // and the row can't be toggled — dim the glyph to signal

@@ -188,3 +188,34 @@ cards are hidden behind an opaque panel. Overlap is explicitly allowed (panel-gr
 user said they would position the conditions panel themselves, so this was left as authored
 rather than silently re-tiered. If it wants changing, the question is whether a full-width bottom
 HUD belongs *above* the tool panels — a one-line `zOrder` change in `ConditionsPanel`.
+
+## 2026-08-09 — post-review: the `outline` option, and the minimum-size complaint
+
+**`outline` per-panel option** (user request). Same ritual as `background` / `clickThrough`, so
+`PanelSettingKey` again caught the last step. `PANEL_OUTLINE` is extracted as the colour, and
+`applyOutline` swaps it for **`transparent`** rather than setting `border: none` — deliberately.
+The panel is `box-sizing: border-box` with its outer size projected from cells, so `none` would
+hold the outer rect but silently give the BODY 2px in each axis, moving every rect-mirroring
+consumer (the world canvas) on what is meant to be a cosmetic toggle. Verified: border cycles
+`rgb(58,58,74)` → `rgba(0,0,0,0)` → back with the panel's rect **bit-identical** throughout.
+
+**"I cannot reduce the size of the intentions panel — something is enforcing a minimum."**
+Correct, and it was mine: panel-grid put a global 6 × 3 cell floor on every panel, enforced in
+**three** places at once —
+
+1. `PANEL_CSS.minWidth: calc(var(--ui-row) * 6.25)` — a CSS floor, which no amount of setting
+   `style.width` can beat and which cannot be overridden per panel;
+2. `MIN_COLS = 6` / `MIN_ROWS = 3` static constants feeding `clampCell`;
+3. the resize helper's px floors — which also computed the X floor as `MIN_COLS × rowHeight`,
+   multiplying a COLUMN count by a ROW height. Cells are not square off 16:9, so that number was
+   wrong as well as too big.
+
+At ~32px cells the floor made every panel at least ~190px wide, which is exactly why a narrow
+vertical queue strip could not be narrow. Fixed by making the floor **per-panel** (`minCols` /
+`minRows` options) with the default dropped to **2 × 2**: a floor should stop a panel collapsing
+to nothing, not decide its shape. The CSS floor is deleted outright — the cell clamp is the law,
+and a global CSS minimum silently won every argument with it. The px floors now project from the
+panel's own cell floor, using the column width for X.
+
+Verified: the intentions panel resizes from 4 × 11 cells down to **2 × 2** (64 × 83px), and the
+computed CSS `min-width` reads `0px`.

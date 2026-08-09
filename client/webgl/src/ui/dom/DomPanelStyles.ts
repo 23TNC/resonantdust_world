@@ -17,6 +17,11 @@ import { NOTO_EMOJI_FAMILY } from "../../assets/fonts";
 // it (the world) instead. Resolved per panel via `backgroundCss`.
 export const CHROME_BG = "rgba(20, 22, 30, 0.96)";
 
+/** The panel's 1px outline colour. Toggled per panel via the `outline`
+ *  option, which swaps this for `transparent` — never for `none`, so the
+ *  border box (and therefore the body's rect) never changes width. */
+export const PANEL_OUTLINE = "#3a3a4a";
+
 export const PANEL_CSS: Partial<CSSStyleDeclaration> = {
   position: "fixed",
   display: "flex",
@@ -24,9 +29,10 @@ export const PANEL_CSS: Partial<CSSStyleDeclaration> = {
   color: "#ecd6aa",
   fontFamily: "ui-monospace, monospace",
   fontSize: "var(--ui-font)",
-  // 6 columns — the min body width in cells (F4). Kept in row units
-  // so it tracks the grid rather than a dead pixel constant.
-  minWidth: "calc(var(--ui-row) * 6.25)",
+  // No CSS min-width. The minimum is a CELL count and is per-panel
+  // (`minCols` / `minRows`), enforced by `clampCell`; a global CSS floor
+  // could not be overridden per panel and silently won every argument
+  // with the cell clamp.
   zIndex: "20",
   overflow: "hidden",
   // REQUIRED by the cell law, not a detail. `panelGrid.project()`
@@ -39,8 +45,10 @@ export const PANEL_CSS: Partial<CSSStyleDeclaration> = {
   boxSizing: "border-box",
   // 1px outline so overlapping panels (multiple chat / debug
   // surfaces, future DOM panels) read as distinct rectangles
-  // rather than blending into each other.
-  border: "1px solid #3a3a4a",
+  // rather than blending into each other. Per-panel `outline: false`
+  // makes it TRANSPARENT rather than removing it — see
+  // `DomPanel.applyOutline`.
+  border: `1px solid ${PANEL_OUTLINE}`,
 };
 
 export const TITLEBAR_CSS: Partial<CSSStyleDeclaration> = {

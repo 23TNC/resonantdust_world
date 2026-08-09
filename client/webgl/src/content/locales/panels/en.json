@@ -85,7 +85,8 @@
     "clickThrough": "Click through",
     "bgChrome": "Chrome",
     "bgDim": "Dim",
-    "bgNone": "None"
+    "bgNone": "None",
+    "outline": "Outline"
   },
   "debugPanel": {
     "label": "Debug",

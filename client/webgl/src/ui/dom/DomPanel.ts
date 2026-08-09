@@ -5,6 +5,7 @@ import {
   ACTIONS_CSS,
   BODY_CSS,
   CHROME_BG,
+  PANEL_OUTLINE,
   edgeXCssFor,
   edgeYCssFor,
   FOOTER_BG,
@@ -397,6 +398,15 @@ export interface DomPanelOptions {
   /** Initial click-through seed (F2) — `pointer-events: none` on the panel
    *  root, so the body passes clicks to the world beneath. */
   clickThrough?: boolean;
+  /** Draw the panel's 1px outline. Defaults `true`. */
+  outline?: boolean;
+  /** Smallest body width in CELLS this panel may be resized to. Defaults 2.
+   *  Raise it only for a panel whose content genuinely cannot survive being
+   *  narrow — the floor exists to stop degenerate panels, not to impose a
+   *  shape the user did not ask for. */
+  minCols?: number;
+  /** Smallest body height in CELLS. Defaults 2. */
+  minRows?: number;
   /** Per-panel blacklist of `PanelSettingsPopup` rows. Default is
    *  empty — the popup shows every row. Add a key here when a
    *  setting is genuinely meaningless or harmful for this panel
@@ -443,6 +453,7 @@ export type PanelSettingKey =
   | "mask"
   | "background"
   | "clickThrough"
+  | "outline"
   | "layer"
   | "reset"
   | "copyJson"
@@ -495,6 +506,7 @@ export interface PanelStateJSON {
   heightMode?:     HeightMode;
   background?:     BackgroundMode;
   clickThrough?:   boolean;
+  outline?:        boolean;
   draggable?:      boolean;
   minimizable?:    boolean;
   resizableX?:     boolean;
@@ -814,6 +826,9 @@ export class DomPanel {
    *  `_background`: transparent-but-interactive and opaque-but-click-through
    *  are both coherent panels. */
   private _clickThrough = false;
+  /** Draw the 1px outline. Off makes it TRANSPARENT, not `none` — see
+   *  `applyOutline` for why the border box has to stay put. */
+  private _outline = true;
   /** User-toggled "stencil-mask the body content" preference.
    *  Owned by `DomPanel` so the persistence / popup wiring is one
    *  place, but only `PixiPanel` does anything with it (subscribes
@@ -923,6 +938,8 @@ export class DomPanel {
     // (inventory:<surf>:<owner>, gameview:<id>) MUST pass an
     // explicit `defaultsKey` so every instance shares one entry.
     this.defaultsKey = opts.defaultsKey ?? opts.storageKey ?? null;
+    this.minCols    = Math.max(1, opts.minCols ?? 2);
+    this.minRows    = Math.max(1, opts.minRows ?? 2);
     this.minWidth   = opts.minWidth   ?? 200;
     this.minHeight  = opts.minHeight  ?? 100;
     this.baseTitle   = opts.title;
@@ -994,6 +1011,8 @@ export class DomPanel {
                              contentDefaults.background ?? opts.background ?? "chrome");
     this._clickThrough   = this.defaultedBool("clickThrough",
                              contentDefaults.clickThrough ?? opts.clickThrough ?? false);
+    this._outline        = this.defaultedBool("outline",
+                             contentDefaults.outline ?? opts.outline ?? true);
     this._masked         = this.defaultedBool("masked",         contentDefaults.masked         ?? true);
     this._minimizable    = this.defaultedBool("minimizable",    contentDefaults.minimizable    ?? this.initialMinimizable);
     this._resizableX     = this.defaultedBool("resizableX",     contentDefaults.resizableX     ?? this.initialResizable);
@@ -1242,6 +1261,7 @@ export class DomPanel {
     // exist. Both are pure CSS writes, so they need no placement pass.
     this.applyBackground();
     this.applyClickThrough();
+    this.applyOutline();
 
     // Module-level registry — let `resetAllToDefaults` find this
     // panel later. Paired with `destroy()` removal.
@@ -1895,11 +1915,13 @@ export class DomPanel {
     return btn;
   }
 
-  /** Minimum body size in cells. 6 × 3 — roughly the old 200 × 100px
-   *  floors at a 33px row, now expressed in the unit that survives a
-   *  resize. */
-  private static readonly MIN_COLS = 6;
-  private static readonly MIN_ROWS = 3;
+  /** Smallest body size in CELLS, per panel. The default is deliberately
+   *  SMALL: a floor is there to stop a panel collapsing to nothing, not to
+   *  decide its shape. The previous global 6 × 3 made every panel at least
+   *  ~190px wide, which stopped a narrow vertical strip (the intentions
+   *  queue) from being narrow — the user's complaint, 2026-08-09. */
+  private readonly minCols: number;
+  private readonly minRows: number;
 
   /** Is the title bar currently rendered? Decides whether the outer
    *  box carries the extra chrome row. Edit mode forces bars visible,
@@ -1963,7 +1985,7 @@ export class DomPanel {
     const extra = this.titleBarShowing() ? 1 : 0;
     this._cell = clampCell(
       { col: outer.col, row: outer.row + extra, cols: outer.cols, rows: Math.max(1, outer.rows - extra) },
-      { titled: this.titleBarShowing(), minCols: DomPanel.MIN_COLS, minRows: DomPanel.MIN_ROWS },
+      { titled: this.titleBarShowing(), minCols: this.minCols, minRows: this.minRows },
     );
   }
 
@@ -1975,8 +1997,8 @@ export class DomPanel {
     if (!this._cell) return;
     this._cell = clampCell(this._cell, {
       titled:   this.titleBarShowing(),
-      minCols:  DomPanel.MIN_COLS,
-      minRows:  DomPanel.MIN_ROWS,
+      minCols:  this.minCols,
+      minRows:  this.minRows,
     });
   }
 
@@ -2109,12 +2131,17 @@ export class DomPanel {
   }
 
   private wireResize(handle: HTMLDivElement, axis: "both" | "x" | "y"): void {
+    // `self` so the getters below read the live per-panel floor.
+    const self = this;
     attachResize(handle, this.panel, {
       // Floors in CELLS, read fresh so they track the viewport. The
       // px `minWidth` / `minHeight` constructor options are a lower
       // bound of last resort — the cell floor is the real law (F4).
-      get minWidth()  { return DomPanel.MIN_COLS * panelGrid.rowHeight; },
-      get minHeight() { return DomPanel.MIN_ROWS * panelGrid.rowHeight; },
+      // Projected from the panel's OWN cell floor. Note the X axis uses the
+      // column width, not the row height — cells are not square off 16:9, and
+      // the old form multiplied columns by a row height.
+      get minWidth()  { return panelGrid.project({ col: 0, row: 0, cols: self.minCols, rows: 1 }).width; },
+      get minHeight() { return panelGrid.project({ col: 0, row: 0, cols: 1, rows: self.minRows }).height; },
       // Per-handle gate: the corner needs both axes (and an
       // unlocked height); the X-edge needs only its own toggle;
       // the Y-edge needs its toggle AND `heightMode === "off"`
@@ -2231,6 +2258,28 @@ export class DomPanel {
     this._clickThrough = !this._clickThrough;
     this.storageSet("clickThrough", this._clickThrough ? "1" : "0");
     this.applyClickThrough();
+  }
+
+  /** Whether the panel draws its 1px outline. */
+  get hasOutline(): boolean { return this._outline; }
+
+  toggleOutline(): void {
+    this._outline = !this._outline;
+    this.storageSet("outline", this._outline ? "1" : "0");
+    this.applyOutline();
+  }
+
+  /** Show / hide the outline by swapping its COLOUR, never by removing the
+   *  border.
+   *
+   *  `border: none` would shrink the border box by 2px in each axis. The panel
+   *  is `box-sizing: border-box` and its outer size comes from the cell
+   *  projection, so the outer rect would hold — but the BODY would silently
+   *  gain 2px, moving every rect-mirroring consumer (the world canvas) on what
+   *  is meant to be a cosmetic toggle. `transparent` keeps the geometry
+   *  bit-identical and only stops the line being drawn. */
+  protected applyOutline(): void {
+    this.panel.style.borderColor = this._outline ? PANEL_OUTLINE : "transparent";
   }
 
   /** Paint the resolved background onto the title bar, body AND footer.
@@ -2458,7 +2507,7 @@ export class DomPanel {
       // number would oscillate: grow a row -> content reflows into it ->
       // reports a smaller natural height -> shrink a row -> repeat (I7).
       const rows = Math.max(
-        DomPanel.MIN_ROWS,
+        this.minRows,
         Math.ceil(this._contentNaturalHeight / Math.max(1, panelGrid.rowHeight)),
       );
       if (rows === this._cell.rows) return;
@@ -2473,7 +2522,7 @@ export class DomPanel {
     // its outer box exactly the field (F10).
     const chrome = this.titleBarShowing() ? 1 : 0;
     const rows = Math.max(
-      DomPanel.MIN_ROWS,
+      this.minRows,
       Math.round(FIELD_ROWS * HEIGHT_FRACTIONS[this._heightMode]) - chrome,
     );
     if (rows === this._cell.rows) return;
@@ -2724,6 +2773,7 @@ export class DomPanel {
       heightMode:      this._heightMode,
       background:      this._background,
       clickThrough:    this._clickThrough,
+      outline:         this._outline,
       draggable:       this._draggable,
       minimizable:     this._minimizable,
       resizableX:      this._resizableX,
@@ -2754,7 +2804,7 @@ export class DomPanel {
       "anchor", "titleBarHidden", "gridSnap", "masked",
       "minimizable", "resizable", "resizableX", "resizableY",
       "closable", "hideMinimizeBtn", "hideCloseBtn",
-      "pin", "pinned", "heightMode", "background", "clickThrough",
+      "pin", "pinned", "heightMode", "background", "clickThrough", "outline",
       "snap", "draggable",
       "taskbarIcon", "titleSuffix",
     ];
@@ -2781,8 +2831,10 @@ export class DomPanel {
     this._gridSnap        = cd.gridSnap        ?? true;
     this._background      = cd.background      ?? "chrome";
     this._clickThrough    = cd.clickThrough    ?? false;
+    this._outline         = cd.outline         ?? true;
     this.applyBackground();
     this.applyClickThrough();
+    this.applyOutline();
     const nextMasked      = cd.masked          ?? true;
     if (nextMasked !== this._masked) {
       this._masked = nextMasked;
