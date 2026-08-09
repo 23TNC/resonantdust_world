@@ -54,7 +54,7 @@ decisions in [`forks.md`](forks.md) (F#), the anticipated-issue inventory in
 
 ## P4 — the drills
 
-- [ ] The starvation pen: a wolf denied food starves on camera (captures:
+- [x] The starvation pen: a wolf denied food starves on camera (captures:
       the starving card, the falling corpus, the death, the meat); a bunny
       denied water dehydrates likewise. Acceptance: captures + logs in
       completed.md.

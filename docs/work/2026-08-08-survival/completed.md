@@ -1,5 +1,41 @@
 # Completed — survival
 
+## 2026-08-08 — P3/P4: the crossing scheduler + the drills
+
+**P3 scheduler (D1: RESTAMP_NEED verb 18)** — a queued literal SET_NEED
+cannot re-validate, so the worker gained the worker-only re-stamp verb
+(`[Write, Imm]`, never in CLIENT_VERBS; full new-verb ritual run). The
+ensure pass re-derives every live pawn's floor crossing per pass
+(`drain_target_needs()` from the corpus; mint coverage and bounce
+durability fall out free — I4), keeps one slot per (pawn, need) with
+earlier-wins supersession (I2), clamps the horizon at 20,000 tics (I8),
+and floors the fire at master+4. The re-stamp arm evaluates the need FRESH
+at processing and feeds the SAME death sweep a SET_NEED feeds. Verified
+live: differentiated per-pawn crossings scheduled (horizon-clamp wraps
+included, e.g. fire=791 = 46327+20000 mod 2^16).
+
+**P3 death hookup** — drilled on a band-forced bunny (0x30800002, hunger +
+thirst → 5.0): the crossing SUPERSEDED 55879→47750, the re-stamp wrote
+value=0.0 at exactly the predicted tic, the need-write trigger fired death
+ONCE, the pawn was removed, the meat SET composed (cold overlay), and the
+extra queued death orders no-op'd ("target is not a live pawn" — I3).
+
+**P4 the pens** — the wolf drill (0x30800000, both needs forced to 5.0):
+crossing re-scheduled to fire=50313, the re-stamp landed value=0.0 AT
+50313, death fired once, removal fanned, meat dropped — the death site
+wears its M glyph on camera beside the bunny drill's M (capture:
+bunnydeath). The bunny dehydration leg is the P3 drill above (forced band
+= the pen equivalent, recorded honestly: no physical pen was built —
+forced needs stand in for denial).
+
+**P4 humans inherit (I7)** — a fresh `/spawn human_female` band-forced to
+hunger 5.0: the Starving condition card appears in her details panel
+(tooltip: +4 Scared, +3 Uncomfortable, priority 30, corpus modifier
+listed) and the scheduler re-scheduled her corpus crossing from the far
+horizon to fire=53772 the moment starving activated. Fed back to 90:
+NO new schedule line — earlier-wins keeps the stale slot, which
+re-validates harmlessly at fire (the exact D1 rationale, observed).
+
 ## 2026-08-08 — P2: the drain lane
 
 **shared/content** — `deplete` on NeedModifier (conditions + the trait
