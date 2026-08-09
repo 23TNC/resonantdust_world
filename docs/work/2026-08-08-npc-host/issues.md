@@ -70,3 +70,16 @@ Re-anchoring releases old zones on the client while owned pawns still walk there
 StateGone/state events may drop with the subscription. The module must treat "pawn no longer
 streamed" as re-locate-later, not death — the radii overlap during migration keeps this rare,
 but the drill should move an anchor far enough to see churn once.
+
+## I11 — the spawn attribution does NOT exist yet (F4's premise corrected)
+
+Surveyed at P2: `queue(actions)` carries NO issuer — the event_shard's rows never learn which
+player queued them, so the pawn spawn_log's `(event_reference, index)` chain stops one link
+short of a PLAYER. F4's "the attribution exists server-side" was wrong. The chosen shape
+(the durable one, matching F4's intent): the edge stamps the session's `player_id` into
+`queue` → the event row carries `issuer_player_id` → the pawn `spawn` records it in
+`spawn_log` → ownership is queryable and the edge can fan "your mints" to the owning session
+(the re-attach lane). Ripple: event_shard MODULE schema + queue reducer signature, edge
+submit, orchestrator/worker frame pass-through, pawn spawn signature + spawn_log column —
+the full module-redeploy ritual (data-wiping republish of event-shard + pawn). Until it
+lands, module brains keep the LEGACY kind-scan adoption (deleting it is gated on this).
