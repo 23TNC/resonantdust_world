@@ -3713,6 +3713,14 @@ cmd_eval_data() {
 # Sort .staging/eval_data/new/ into <label>-<dir> buckets, capturing WHY a sprite was rejected and
 # whether it was a borderline call. The reason rides in labels.json, never the filename, so hand
 # moves do not have to rewrite names. Delegates to lib/eval_sort.py.
+# The Claude-vision QA gate sprite-gen-plan.md specifies — a judge that looks at the sprite INTERIOR,
+# which is where every failure our geometric metrics cannot see actually lives. Delegates to
+# lib/eval_gate.py.
+cmd_eval_gate() {
+  command -v python3 >/dev/null || { echo "art eval-gate: python3 not found" >&2; return 1; }
+  RD_REPO_ROOT="$REPO_ROOT" exec python3 "$SCRIPT_DIR/lib/eval_gate.py" "$@"
+}
+
 cmd_eval_sort() {
   command -v python3 >/dev/null || { echo "art eval-sort: python3 not found" >&2; return 1; }
   RD_REPO_ROOT="$REPO_ROOT" exec python3 "$SCRIPT_DIR/lib/eval_sort.py" "$@"
@@ -3779,6 +3787,7 @@ main() {
     eval-data) cmd_eval_data "$@" ;;
     eval-agreement) cmd_eval_agreement "$@" ;;
     eval-sort) cmd_eval_sort "$@" ;;
+    eval-gate) cmd_eval_gate "$@" ;;
     generate) cmd_generate "$@" ;;
     generate-tile) cmd_generate_tile "$@" ;;
     retile-linked) cmd_retile_linked "$@" ;;

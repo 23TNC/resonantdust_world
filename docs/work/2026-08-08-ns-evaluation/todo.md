@@ -15,10 +15,10 @@ Every table carries the majority-class baseline; at or below it is reported as f
 
 ## P1 — The vision QA gate the design doc specifies {#p1}
 
-- [ ] Write the gate: one image in, a structured verdict out. Acceptance: single creature / correct facing / clean silhouette / on-style, each with a reason, on the doc's own four questions.
-- [ ] Score the gate against the labelled set. Acceptance: agreement per direction against the majority baseline — the same bar every metric has been held to.
+- [x] Write the gate: one image in, a structured verdict out. Acceptance: single creature / correct facing / clean silhouette / on-style, each with a reason, on the doc's own four questions.
+- [x] Score the gate against the labelled set. Acceptance: agreement per direction against the majority baseline — the same bar every metric has been held to.
 - [ ] Report where the gate and the user disagree, with the images. Acceptance: a sheet; a judge that fails on the borderline cases is usable, one that fails on clear rejects is not.
-- [ ] Measure cost and latency per image. Acceptance: seconds and tokens per sprite; a gate too slow for 12 generations × N species is not a selection procedure.
+- [x] Measure cost and latency per image. Acceptance: seconds and tokens per sprite; a gate too slow for 12 generations × N species is not a selection procedure.
 
 ## P2 — Cheap deterministic checks, kept as a pre-filter
 
