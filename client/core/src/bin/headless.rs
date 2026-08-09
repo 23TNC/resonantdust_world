@@ -147,6 +147,12 @@ fn log_event(event: &Event) {
                 "pawn parts"
             )
         }
+        Event::OwnedPawn { entity_reference } => {
+            info!(entity_reference = format!("{entity_reference:#010x}"), "owned pawn")
+        }
+        Event::PawnInventory { entity_reference, slot, item, .. } => {
+            info!(entity_reference = format!("{entity_reference:#010x}"), slot, item, "pawn inventory row")
+        }
         Event::PawnNeed { macro_position, entity_reference, need, set_tic } => {
             info!(
                 macro_position = format!("{macro_position:#06x}"),

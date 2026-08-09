@@ -156,6 +156,12 @@ pub async fn run_host(config: ClientConfig, host_name: &str, spec: &[(String, (i
                         tracing::info!(module = %m.name, player_pawn = format!("{entity_reference:#010x}"),
                             need = format!("{need:#010x}"), "module's own player-pawn row");
                     }
+                    // The ownership set (I11/F4): the pawns THIS module minted, replayed at
+                    // login and live thereafter — what the P3 policy commands.
+                    Ok(Event::OwnedPawn { entity_reference }) => {
+                        tracing::info!(module = %m.name,
+                            pawn = format!("{entity_reference:#010x}"), "module owns pawn");
+                    }
                     Ok(_) => {}
                     Err(mpsc::error::TryRecvError::Empty) => break,
                     Err(mpsc::error::TryRecvError::Disconnected) => break,
@@ -620,6 +626,10 @@ pub fn log_event(event: &Event) {
         | Event::CallStats(_)
         | Event::SubStats { .. }
         | Event::ClockSync(_) => {}
+        // The ownership re-attach lane (npc-host I11) — the brain-facing arm consumes it.
+        Event::OwnedPawn { entity_reference } => {
+            tracing::info!(entity_reference = format!("{entity_reference:#010x}"), "owned pawn")
+        }
     }
 }
 

@@ -78,6 +78,8 @@ pub enum ServerMsg {
     Need { entity_reference: u32, zone: u16, need: u32, set_tic: u16 },
     /// One `inventory` sub-table row (inventory F2); `item = 0` = the slot emptied.
     Inventory { entity_reference: u32, zone: u16, slot: u8, item: u32, state: u32 },
+    /// A pawn THIS session's player minted (npc-host I11 — the ownership re-attach lane).
+    Owned { entity_reference: u32 },
     /// A settled, promoted event touching a subscribed zone.
     Event {
         event_reference: u32,

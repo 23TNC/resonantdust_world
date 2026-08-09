@@ -205,6 +205,9 @@ async fn session_worker(
                     // The OWNER fan (P3, F6): the session's own player-pawn rows, relayed
                     // on the EXISTING `Need` frame — a 0x40… ref is self-describing.
                     tokio::spawn(fan_player_pawn(pool.clone(), p.clone(), player_id, out_tx.clone()));
+                    // The ownership re-attach lane (npc-host I11/F4): the session's MINTS,
+                    // from the pawn spawn ledger's issuer attribution.
+                    tokio::spawn(fan_owned_pawns(pool.clone(), player_id, out_tx.clone()));
                 }
             }
             ClientMsg::Queue { cid, actions } => {
@@ -1021,6 +1024,36 @@ async fn fan_player_pawn(
         .on_error(|_ctx, err| tracing::warn!(%err, "player_pawn needs fan error"))
         .subscribe([format!("SELECT * FROM needs WHERE entity_reference = {ppref}")]);
     // Live until the session's outbound closes; dropping conn + handle tears down.
+    while !out_tx.is_closed() {
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    }
+    drop(handle);
+}
+
+/// The ownership re-attach fan (npc-host I11/F4): relay every pawn the session's player
+/// MINTED — the spawn ledger rows with its issuer attribution — as `Owned` frames, at login
+/// (the replay) and live as new mints land. A module brain re-attaches to exactly this set.
+async fn fan_owned_pawns(
+    pool: Arc<Pool>,
+    player_id: u32,
+    out_tx: mpsc::UnboundedSender<String>,
+) {
+    use crate::bindings::pawn::spawn_log_table::SpawnLogTableAccess;
+    let Some((conn, ready)) = crate::connections::connect_pawn(&pool.cfg.uri, &pool.cfg.pawn_db())
+    else {
+        return;
+    };
+    if !await_ready(ready).await {
+        return;
+    }
+    let o = out_tx.clone();
+    conn.db().spawn_log().on_insert(move |_ctx, row| {
+        send(&o, ServerMsg::Owned { entity_reference: row.entity_reference })
+    });
+    let handle = conn
+        .subscription_builder()
+        .on_error(|_ctx, err| tracing::warn!(%err, "owned-pawns fan error"))
+        .subscribe([format!("SELECT * FROM spawn_log WHERE issuer_player_id = {player_id}")]);
     while !out_tx.is_closed() {
         tokio::time::sleep(Duration::from_secs(5)).await;
     }

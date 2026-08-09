@@ -1,5 +1,15 @@
 # Completed — npc-host
 
+## 2026-08-09 — P2 (third piece): the ownership re-attach lane
+
+The edge's `fan_owned_pawns` (per session, post-login): subscribes the pawn spawn ledger
+WHERE issuer = the session's player and relays `Owned` frames (replay at login + live on new
+mints); client/core carries `Event::OwnedPawn`; the host surfaces each module's set.
+Verified LIVE: at restart the wolf_pack module logged `module owns pawn 0x30800004` — the
+re-attached set equals the minted set exactly (the item's acceptance). STILL OPEN on the
+item: deleting the legacy brains' kind-scan adoption — gated on their conversion to modules
+(P3's policy), so the box stays open until then.
+
 ## 2026-08-09 — P2 (second half): the ISSUER attribution (I11 built)
 
 The full chain: `queue`/`queue_at` take `issuer_player_id` (the edge stamps its session's

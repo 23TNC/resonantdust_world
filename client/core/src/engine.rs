@@ -549,6 +549,10 @@ impl Engine {
                     set_tic,
                 });
             }
+            // The ownership re-attach lane (npc-host I11) — a mint this player issued.
+            ServerMsg::Owned { entity_reference } => {
+                self.emit(Event::OwnedPawn { entity_reference });
+            }
             // One inventory row (inventory F2) — a pick_up/drop lands as exactly this frame.
             ServerMsg::Inventory { entity_reference, zone, slot, item, state } => {
                 self.emit(Event::PawnInventory {
