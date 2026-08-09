@@ -24,15 +24,16 @@ survive a reset or a corpus export.
 
 ## P1 — the two options
 
-- [ ] `background` per-panel option over named values (`chrome` / `dim` / `none`), full ritual,
+- [x] `background` per-panel option over named values (`chrome` / `dim` / `none`), full ritual,
       applied to title bar, body AND footer (F1/I9). Acceptance: set `none` on a panel via the
       popup → all three surfaces transparent; survives reload.
-- [ ] `PixiPanel`'s private `transparent` body override retires in favour of the option (I9).
-      Acceptance: the world viewport still shows the canvas with no bespoke override left.
-- [ ] `clickThrough` per-panel option — `pointer-events: none` on the root, existing chrome
+- [x] VOID — there is no `PixiPanel`; it was deleted with the pixijs client and
+      nothing overrides a background to transparent. See [I10](issues.md#i10); the stale
+      comments that caused this item were rewritten instead.
+- [x] `clickThrough` per-panel option — `pointer-events: none` on the root, existing chrome
       `auto` preserved (F2). Acceptance: with it on, a body click reaches the world; the title
       bar still drags.
-- [ ] Both options in the settings popup as rows, and in `serializeState` + `resetToDefaults`.
+- [x] Both options in the settings popup as rows, and in `serializeState` + `resetToDefaults`.
       Acceptance: Copy-All emits both; reset restores both.
 
 ## P2 — the conditions panel

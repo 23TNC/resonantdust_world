@@ -37,14 +37,10 @@
     "inventoryButton": "Inventory"
   },
   "gameInventoryPanel": {
-    "label": "Inventory",
-    "empty": "No slots"
+    "label": "Inventory"
   },
   "gameViewPanel": {
     "label": "Game View"
-  },
-  "gameInventoryPanel": {
-    "label": "Inventory"
   },
   "panelSettingsPopup": {
     "label": "Panel Settings",
@@ -84,7 +80,12 @@
     "half": "Half",
     "quarter": "Quarter",
     "player": "Player",
-    "soul": "Soul"
+    "soul": "Soul",
+    "background": "Background",
+    "clickThrough": "Click through",
+    "bgChrome": "Chrome",
+    "bgDim": "Dim",
+    "bgNone": "None"
   },
   "debugPanel": {
     "label": "Debug",

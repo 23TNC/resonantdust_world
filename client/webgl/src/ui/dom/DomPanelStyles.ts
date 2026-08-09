@@ -13,9 +13,8 @@ import { NOTO_EMOJI_FAMILY } from "../../assets/fonts";
 
 // Shared dark fill used by every chrome surface (title bar, body,
 // footer). The panel container itself stays transparent so
-// `PixiPanel` subclasses can flip just their body to transparent
-// and have Pixi content show through the canvas underneath; every
-// other panel paints its own chrome and looks identical to before.
+// a panel can select `background: none` to show whatever is beneath
+// it (the world) instead. Resolved per panel via `backgroundCss`.
 export const CHROME_BG = "rgba(20, 22, 30, 0.96)";
 
 export const PANEL_CSS: Partial<CSSStyleDeclaration> = {
@@ -40,10 +39,7 @@ export const PANEL_CSS: Partial<CSSStyleDeclaration> = {
   boxSizing: "border-box",
   // 1px outline so overlapping panels (multiple chat / debug
   // surfaces, future DOM panels) read as distinct rectangles
-  // rather than blending into each other. `PixiPanel` overrides
-  // this to `none` in its constructor — it draws an equivalent
-  // outline in Pixi instead so the Pixi overlay's drag previews
-  // can still composite over the edge.
+  // rather than blending into each other.
   border: "1px solid #3a3a4a",
 };
 
@@ -68,10 +64,7 @@ export const TITLEBAR_CSS: Partial<CSSStyleDeclaration> = {
   // buttons (minimize / close). Width matches `ACTIONS_CSS.width`
   // below so the title text doesn't bleed into the actions zone.
   // Sized to the *Pixi-chrome* button footprint — two full-row
-  // buttons, a gap and the right pad — because `PixiPanel` paints
-  // wider Pixi glyphs over the narrower DOM buttons and the drag-skip
-  // zone has to cover the visual extent or clicks on the painted
-  // button hit the bare title bar instead.
+  // buttons, a gap and the right pad.
   paddingRight: "calc(var(--ui-row) * 2.5)",
   background: CHROME_BG,
   borderBottom: "1px solid #3a3a4a",
@@ -82,13 +75,13 @@ export const TITLEBAR_CSS: Partial<CSSStyleDeclaration> = {
   cursor: "move",
   gap: "var(--ui-pad)",
   flex: "0 0 auto",
-  // Explicit `auto` is required (not the default) because
-  // `PixiPanel` sets `pointer-events: none` on the parent panel
-  // div so body-region clicks fall through to the Pixi canvas.
-  // Spec-wise descendants with implicit `auto` should still be
-  // hit targets, but in practice we make every chrome element
-  // explicit so drag / minimize / close / resize stay reliably
-  // interactive regardless of the parent's value.
+  // Explicit `auto` is required (not the default) because the
+  // `clickThrough` option sets `pointer-events: none` on the panel
+  // root so body clicks fall through to the world. Chrome must stay
+  // live regardless, or a click-through panel could not be dragged.
+  // Spec-wise descendants with implicit `auto` should still be hit
+  // targets, but every chrome element states it explicitly so drag /
+  // minimize / close / resize never depend on the parent's value.
   pointerEvents: "auto",
 };
 
@@ -105,9 +98,9 @@ export const TABS_CSS: Partial<CSSStyleDeclaration> = {
   borderBottom: "1px solid #3a3a4a",
   background: "rgba(12, 14, 20, 0.96)",
   flex: "0 0 auto",
-  // See `TITLEBAR_CSS` — explicit auto so `PixiPanel`'s
-  // `pointer-events: none` on the panel doesn't take chrome
-  // interactivity with it.
+  // See `TITLEBAR_CSS` — explicit auto so the `clickThrough`
+  // option's `pointer-events: none` on the panel root doesn't take
+  // chrome interactivity with it.
   pointerEvents: "auto",
 };
 
@@ -143,10 +136,8 @@ export const ACTIONS_CSS: Partial<CSSStyleDeclaration> = {
   // right end via flex `justify-end` + 12px right padding, so
   // the visual layout is unchanged. The 80px is sized to the
   // *Pixi-chrome* button footprint (see `TITLEBAR_CSS`
-  // padding-right) — the DOM buttons are narrower but
-  // `PixiPanel` paints wider Pixi-rendered buttons over them,
-  // and the drag-skip zone needs to cover the visual extent
-  // or hover-near-button clicks start an unwanted drag.
+  // padding-right) — the drag-skip zone covers the buttons' full
+  // visual extent so hover-near-button clicks don't start a drag.
   // Cursor is explicit `default` so the actions zone doesn't
   // inherit `move` from the title bar — the user reads
   // "non-drag" by hover alone.
@@ -162,7 +153,7 @@ export const ACTIONS_CSS: Partial<CSSStyleDeclaration> = {
   justifyContent: "flex-end",
   gap: "var(--ui-gap)",
   cursor: "default",
-  // See `TITLEBAR_CSS` — explicit auto for `PixiPanel` parents.
+  // See `TITLEBAR_CSS` — explicit auto under a click-through root.
   pointerEvents: "auto",
 };
 
@@ -174,17 +165,9 @@ export const ACTION_BTN_CSS: Partial<CSSStyleDeclaration> = {
   fontSize: "var(--ui-font-xl)",
   padding: "0",
   lineHeight: "1",
-  // Width matches the Pixi-chrome `BUTTON_WIDTH` (32) so the
-  // DOM hit-area sits exactly under the painted Pixi glyph in
-  // `PixiPanel` — without this, the DOM button is ~20px wide
-  // and the right edge of the Pixi minimize / close glyphs
-  // hangs over bare title-bar pixels that miss the button on
-  // click. `textAlign: center` + `border-box` give the glyph
-  // a 32px slot to centre into, matching the Pixi layout's
-  // `(BUTTON_WIDTH - glyph.width) / 2` positioning. Pure DOM
-  // panels (no Pixi paint) get the same wider button — the
-  // glyph still centres, the layout stays consistent across
-  // panel kinds.
+  // A full row wide, so the hit-area is comfortably larger than the
+  // glyph it holds. `textAlign: center` + `border-box` centre the
+  // glyph in that slot.
   width: "var(--ui-row)",
   boxSizing: "border-box",
   textAlign: "center",
@@ -196,10 +179,10 @@ export const BODY_CSS: Partial<CSSStyleDeclaration> = {
   display: "flex",
   flexDirection: "column",
   minHeight: "0",
-  // Default opaque chrome backdrop for DOM-content panels (chat,
-  // debug, settings). `PixiPanel` overrides to `"transparent"` so
-  // the canvas (and the Pixi content drawn on it) is visible
-  // through the body region.
+  // Default opaque chrome backdrop. Overridden per panel by the
+  // `background` option — `none` makes the body transparent so the
+  // world shows through. `applyBackground` writes the resolved value
+  // onto the title bar, body and footer together.
   background: CHROME_BG,
 };
 
@@ -228,7 +211,7 @@ export const RESIZE_CORNER_CSS: Partial<CSSStyleDeclaration> = {
   width:  `${RESIZE_CORNER_SIZE}px`,
   height: `${RESIZE_CORNER_SIZE}px`,
   cursor: "nwse-resize",
-  // See `TITLEBAR_CSS` — explicit auto for `PixiPanel` parents.
+  // See `TITLEBAR_CSS` — explicit auto under a click-through root.
   pointerEvents: "auto",
   // Two small diagonal lines as a visual grip hint.
   background:

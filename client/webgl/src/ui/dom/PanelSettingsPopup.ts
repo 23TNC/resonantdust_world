@@ -5,6 +5,7 @@ import {
   DomPanel,
   Z_TIER_CHROME,
   type AnchorMode,
+  type BackgroundMode,
   type HeightMode,
   type PanelSettingKey,
   type PinMode,
@@ -130,6 +131,12 @@ const ANCHOR_OPTIONS: readonly { value: AnchorMode; labelKey: string }[] = [
   { value: "bottom-right", labelKey: "bottomRight" },
 ];
 
+const BACKGROUND_OPTIONS: readonly { value: BackgroundMode; labelKey: string }[] = [
+  { value: "chrome", labelKey: "bgChrome" },
+  { value: "dim",    labelKey: "bgDim" },
+  { value: "none",   labelKey: "bgNone" },
+];
+
 const SNAP_OPTIONS: readonly { value: SnapMode; labelKey: string }[] = [
   { value: "none",         labelKey: "none" },
   { value: "top-left",     labelKey: "topLeft" },
@@ -203,6 +210,8 @@ export class PanelSettingsPopup {
   private readonly hideMinimizeBtnBtn: HTMLButtonElement;
   private readonly hideCloseBtnBtn:    HTMLButtonElement;
   private readonly maskBtn:        HTMLButtonElement;
+  private readonly backgroundSelect: CyclingSelect<BackgroundMode>;
+  private readonly clickThroughBtn:  HTMLButtonElement;
   private readonly layerUpBtn:     HTMLButtonElement;
   private readonly layerDownBtn:   HTMLButtonElement;
   /** Row-element index keyed by `PanelSettingKey`. `refreshControls`
@@ -356,6 +365,18 @@ export class PanelSettingsPopup {
     const maskRow = this.addToggleRow(body, pp("mask"), "▣", () => this.boundPanel?.toggleMasked());
     this.maskBtn = maskRow.btn;
     this.rowsByKey.set("mask", maskRow.row);
+
+    // Appearance + interaction (selection-panels F1/F2). Deliberately two
+    // rows: transparency and click-through are independent, and the
+    // conditions panel needs transparent + click-through + clickable cards,
+    // which one flag could not express.
+    const bgRow = this.addBackgroundRow(body);
+    this.backgroundSelect = bgRow.select;
+    this.rowsByKey.set("background", bgRow.row);
+    const clickRow = this.addToggleRow(body, pp("clickThrough"), "▣",
+      () => this.boundPanel?.toggleClickThrough());
+    this.clickThroughBtn = clickRow.btn;
+    this.rowsByKey.set("clickThrough", clickRow.row);
     const layerRow = this.addLayerRow(body);
     this.layerUpBtn   = layerRow.up;
     this.layerDownBtn = layerRow.down;
@@ -546,6 +567,8 @@ export class PanelSettingsPopup {
     this.hideMinimizeBtnBtn.textContent = p.isMinimizeBtnHidden ? "▣" : "▢";
     this.hideCloseBtnBtn.textContent    = p.isCloseBtnHidden    ? "▣" : "▢";
     this.maskBtn.textContent            = p.isMasked            ? "▣" : "▢";
+    this.clickThroughBtn.textContent    = p.isClickThrough      ? "▣" : "▢";
+    this.backgroundSelect.setValue(p.background);
     // Draggable: when snap is non-none the value is forced off
     // and the row can't be toggled — dim the glyph to signal
     // "locked". When snap is none the raw `_draggable` toggle
@@ -665,6 +688,28 @@ export class PanelSettingsPopup {
    *  the anchor row; a non-none value side-effects the Draggable
    *  toggle off (handled in `DomPanel.setSnap`), which the popup
    *  reflects via its `onDraggableChange` subscription. */
+  private addBackgroundRow(
+    parent: HTMLDivElement,
+  ): { row: HTMLDivElement; select: CyclingSelect<BackgroundMode> } {
+    const row = document.createElement("div");
+    Object.assign(row.style, ROW_CSS);
+    const labelEl = document.createElement("span");
+    Object.assign(labelEl.style, LABEL_CSS);
+    labelEl.textContent = pp("background");
+    row.appendChild(labelEl);
+    const wrap = document.createElement("div");
+    Object.assign(wrap.style, CYCLER_WRAP_CSS);
+    const select = new CyclingSelect<BackgroundMode>({
+      options: localizeOptions(BACKGROUND_OPTIONS),
+      labelMinWidth: "92px",
+      onChange: (value) => this.boundPanel?.setBackground(value),
+    });
+    wrap.appendChild(select.element);
+    row.appendChild(wrap);
+    parent.appendChild(row);
+    return { row, select };
+  }
+
   private addSnapRow(parent: HTMLDivElement): { row: HTMLDivElement; select: CyclingSelect<SnapMode> } {
     const row = document.createElement("div");
     Object.assign(row.style, ROW_CSS);

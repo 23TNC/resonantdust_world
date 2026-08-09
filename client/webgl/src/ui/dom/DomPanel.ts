@@ -4,6 +4,7 @@ import {
   ACTION_BTN_CSS,
   ACTIONS_CSS,
   BODY_CSS,
+  CHROME_BG,
   edgeXCssFor,
   edgeYCssFor,
   FOOTER_BG,
@@ -255,6 +256,34 @@ function pinSide(pin: PinMode): PinSide {
  *    details panel toggling between compact and expanded, etc. */
 export type HeightMode = "off" | "full" | "half" | "quarter" | "auto";
 
+/** Per-panel background (selection-panels F1). A NAMED value rather than a
+ *  colour literal: the settings popup speaks toggles and cycling selects, and
+ *  the corpus is hand-edited JSON where `"background": "none"` survives review
+ *  and `"#1a1c22f5"` does not. The value is a string, so an arbitrary
+ *  `#rrggbb` stays an additive change to `backgroundCss` alone.
+ *
+ *  `none` is genuinely transparent — it is what lets a panel sit over the world
+ *  without occluding it. */
+export type BackgroundMode = "chrome" | "dim" | "none";
+
+const VALID_BACKGROUNDS = new Set<BackgroundMode>(["chrome", "dim", "none"]);
+
+function readBackground(raw: string | null, fallback: BackgroundMode): BackgroundMode {
+  return raw && VALID_BACKGROUNDS.has(raw as BackgroundMode)
+    ? (raw as BackgroundMode) : fallback;
+}
+
+/** Resolve a background mode to a CSS value. The ONE place a mode becomes a
+ *  colour — a future `#rrggbb` mode passes straight through here. */
+export function backgroundCss(mode: BackgroundMode): string {
+  switch (mode) {
+    case "none":  return "transparent";
+    case "dim":   return "rgba(20, 22, 30, 0.55)";
+    case "chrome":
+    default:      return CHROME_BG;
+  }
+}
+
 const VALID_HEIGHTS = new Set<HeightMode>(["off", "full", "half", "quarter", "auto"]);
 
 function readHeight(raw: string | null, fallback: HeightMode): HeightMode {
@@ -363,6 +392,11 @@ export interface DomPanelOptions {
    *  (e.g. the details panel sets `"auto"` so the host follows
    *  compact↔expanded content). Defaults to `"off"`. */
   heightMode?: HeightMode;
+  /** Initial background seed when no persisted value exists (F1). */
+  background?: BackgroundMode;
+  /** Initial click-through seed (F2) — `pointer-events: none` on the panel
+   *  root, so the body passes clicks to the world beneath. */
+  clickThrough?: boolean;
   /** Per-panel blacklist of `PanelSettingsPopup` rows. Default is
    *  empty — the popup shows every row. Add a key here when a
    *  setting is genuinely meaningless or harmful for this panel
@@ -407,6 +441,8 @@ export type PanelSettingKey =
   | "close"
   | "hideClose"
   | "mask"
+  | "background"
+  | "clickThrough"
   | "layer"
   | "reset"
   | "copyJson"
@@ -457,6 +493,8 @@ export interface PanelStateJSON {
    *  of `pin`, which chooses *where* the entry sits. */
   pinned?: boolean;
   heightMode?:     HeightMode;
+  background?:     BackgroundMode;
+  clickThrough?:   boolean;
   draggable?:      boolean;
   minimizable?:    boolean;
   resizableX?:     boolean;
@@ -766,6 +804,16 @@ export class DomPanel {
    *  and this flag plus its popup row retire once the layout has been
    *  lived with (work `2026-08-09-panel-grid`, F5). */
   private _gridSnap = true;
+  /** Per-panel background (F1). Reaches the title bar, body AND footer together
+   *  — repainting only the body would leave an opaque bar floating over a
+   *  transparent panel, which reads as a rendering fault, not a setting. */
+  private _background: BackgroundMode = "chrome";
+  /** Per-panel click-through (F2). `pointer-events: none` on the root; chrome
+   *  keeps `auto`, and so must any interactive body content, which inherits
+   *  `none` and would otherwise go silently dead. Independent of
+   *  `_background`: transparent-but-interactive and opaque-but-click-through
+   *  are both coherent panels. */
+  private _clickThrough = false;
   /** User-toggled "stencil-mask the body content" preference.
    *  Owned by `DomPanel` so the persistence / popup wiring is one
    *  place, but only `PixiPanel` does anything with it (subscribes
@@ -942,6 +990,10 @@ export class DomPanel {
       : (contentDefaults.anchor ?? "top-left");
     this._titleBarHidden = this.defaultedBool("titleBarHidden", contentDefaults.titleBarHidden ?? false);
     this._gridSnap       = this.defaultedBool("gridSnap",       contentDefaults.gridSnap       ?? true);
+    this._background     = readBackground(this.storageGet("background"),
+                             contentDefaults.background ?? opts.background ?? "chrome");
+    this._clickThrough   = this.defaultedBool("clickThrough",
+                             contentDefaults.clickThrough ?? opts.clickThrough ?? false);
     this._masked         = this.defaultedBool("masked",         contentDefaults.masked         ?? true);
     this._minimizable    = this.defaultedBool("minimizable",    contentDefaults.minimizable    ?? this.initialMinimizable);
     this._resizableX     = this.defaultedBool("resizableX",     contentDefaults.resizableX     ?? this.initialResizable);
@@ -1185,6 +1237,11 @@ export class DomPanel {
     // restored, reapply `heightMode` so a locked panel overrides
     // whatever raw `height` came back from storage.
     this.applyHeight();
+
+    // Appearance + interaction options, applied once the chrome elements
+    // exist. Both are pure CSS writes, so they need no placement pass.
+    this.applyBackground();
+    this.applyClickThrough();
 
     // Module-level registry — let `resetAllToDefaults` find this
     // panel later. Paired with `destroy()` removal.
@@ -2154,6 +2211,49 @@ export class DomPanel {
    *  reattaches / detaches the mask Graphics; non-Pixi panels just
    *  persist the flag (toggle is a no-op visually, and the row is
    *  default-hidden for them — see `isSettingHidden`). */
+  /** Current background mode (F1). */
+  get background(): BackgroundMode { return this._background; }
+
+  /** Set the background mode and repaint all three chrome surfaces. */
+  setBackground(mode: BackgroundMode): void {
+    if (this._background === mode) return;
+    this._background = mode;
+    this.storageSet("background", mode);
+    this.applyBackground();
+  }
+
+  /** Whether the panel passes clicks through to whatever is beneath (F2). */
+  get isClickThrough(): boolean { return this._clickThrough; }
+
+  /** Flip click-through. Chrome keeps `pointer-events: auto` regardless — the
+   *  title bar stays draggable so a click-through panel is not stranded. */
+  toggleClickThrough(): void {
+    this._clickThrough = !this._clickThrough;
+    this.storageSet("clickThrough", this._clickThrough ? "1" : "0");
+    this.applyClickThrough();
+  }
+
+  /** Paint the resolved background onto the title bar, body AND footer.
+   *
+   *  All three together, deliberately (I9): a panel whose body alone goes
+   *  transparent keeps an opaque bar floating over nothing, which reads as a
+   *  rendering fault rather than a setting. Subclasses that want a different
+   *  body treatment (`PixiPanel` showing the canvas) select `background: none`
+   *  rather than overriding the element directly. */
+  protected applyBackground(): void {
+    const css = backgroundCss(this._background);
+    this.titlebar.style.background = css;
+    this.body.style.background     = css;
+    if (this.footer) this.footer.style.background = css;
+  }
+
+  /** Apply click-through to the panel root. Chrome elements set
+   *  `pointer-events: auto` in their own CSS, so they stay live; body content
+   *  INHERITS `none` and must opt back in explicitly (design invariant 9). */
+  protected applyClickThrough(): void {
+    this.panel.style.pointerEvents = this._clickThrough ? "none" : "auto";
+  }
+
   toggleMasked(): void {
     this._masked = !this._masked;
     this.storageSet("masked", this._masked ? "1" : "0");
@@ -2622,6 +2722,8 @@ export class DomPanel {
       pin:             this._pin,
       pinned:          this._pinned,
       heightMode:      this._heightMode,
+      background:      this._background,
+      clickThrough:    this._clickThrough,
       draggable:       this._draggable,
       minimizable:     this._minimizable,
       resizableX:      this._resizableX,
@@ -2652,7 +2754,7 @@ export class DomPanel {
       "anchor", "titleBarHidden", "gridSnap", "masked",
       "minimizable", "resizable", "resizableX", "resizableY",
       "closable", "hideMinimizeBtn", "hideCloseBtn",
-      "pin", "pinned", "heightMode",
+      "pin", "pinned", "heightMode", "background", "clickThrough",
       "snap", "draggable",
       "taskbarIcon", "titleSuffix",
     ];
@@ -2677,6 +2779,10 @@ export class DomPanel {
     this._anchor          = cd.anchor          ?? "top-left";
     this._titleBarHidden  = cd.titleBarHidden  ?? false;
     this._gridSnap        = cd.gridSnap        ?? true;
+    this._background      = cd.background      ?? "chrome";
+    this._clickThrough    = cd.clickThrough    ?? false;
+    this.applyBackground();
+    this.applyClickThrough();
     const nextMasked      = cd.masked          ?? true;
     if (nextMasked !== this._masked) {
       this._masked = nextMasked;

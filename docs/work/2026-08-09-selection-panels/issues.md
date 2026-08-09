@@ -78,3 +78,30 @@ only repaints the body leaves an opaque title bar and footer floating over a tra
 which will read as a rendering bug. Decide explicitly whether `none` clears all three (probably)
 and what `PixiPanel`'s existing `transparent` body override becomes once the option exists (it
 should stop being a private override and start being a default).
+
+## I10 — PLAN ERROR: `PixiPanel` does not exist (P1 item void)
+
+_Found 2026-08-09 at P1._ The item "`PixiPanel`'s private `transparent` body override retires in
+favour of the option" cannot be done: **there is no `PixiPanel` class**. It was deleted with the
+pixijs client (2026-07-28, when `client/webgl` superseded `client/pixijs`), and what survives is
+**39 stale references in comments** across `DomPanel.ts`, `DomPanelStyles.ts`,
+`PanelSettingsPopup.ts` and `PanelManager.ts` — describing the behaviour of a class that hasn't
+existed for weeks.
+
+The behaviour they describe is gone too. `ViewportPanel` shows the world by hosting the
+viewport's **own `<canvas>`** inside its body (`position: absolute; inset: 0`), which covers the
+body's background entirely — so nothing is overriding a background to `transparent` anywhere in
+the codebase. Verified: `grep 'background = "transparent"'` returns nothing.
+
+**How it got into the plan, which is the part worth remembering.** Those comments were the
+evidence cited in this stream's README for "click-through already exists, undeclared" — the
+`pointerEvents: "auto"` notes in `TITLEBAR_CSS` / `ACTIONS_CSS` / `TABS_CSS` all justify
+themselves by reference to `PixiPanel` setting `pointer-events: none` on the root. The *pattern*
+those comments describe is still exactly right and is what F2 generalizes; only the actor is
+fictional. A comment that names a deleted class reads as evidence of a live mechanism, and it
+bought a whole plan item.
+
+**Resolution.** The item is void — nothing to retire. The stale comments are rewritten in the same
+commit to describe the **option** instead of the dead class, since (a) they are the justification
+for CSS this stream depends on, and (b) leaving them is how the next session repeats this. Comment
+text only, no behaviour.
