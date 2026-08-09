@@ -59,9 +59,18 @@ A player-pawn can bind active traits and the worker will validate ACTIVATE again
 nothing user-facing triggers one (no hotbar). The stream proves the lane with a WS-queued
 ACTIVATE on a player-pawn; the human-facing surface is a named successor.
 
-## I9 — u64 rows on the wire and in JS
+## I9 — u64 rows do NOT fit f64; the JS boundary splits words
 
-The webgl/wasm boundary passes rows as f64-safe numbers today (u32 fits). A u64 row does NOT
-fit f64 beyond 2^53 — but `reserved:16 | data:16 | reference:32` = 48 significant bits, which
-fits exactly. Keep the reserved lane ZERO and assert it at the boundary; the day it's used,
-the JS surface must move to BigInt or split words.
+`reference:32 | data:32` = 64 significant bits — past f64's 2^53, so the wasm/webgl boundary
+can no longer pass a row as one number (the 48-bit reserved-zero trick died with the wider
+data lane). Condition/need rows cross the boundary as TWO u32s (ref, data) — which is also
+their natural shape everywhere else; nothing in JS should ever hold a joined u64. Audit
+every wasm export and Need/PawnNeed frame field for a joined row before calling the sweep
+done.
+
+## I10 — the encoding declarations need a refusal posture
+
+A def-interpreted data lane (F7) means a consumer can meet a row whose def declares an
+encoding it does not know (version skew across the content cliff). The decoder REFUSES
+loudly (log + skip the row) rather than misreading lanes — the geo-flash/unknown-open
+precedents: degrade visibly, never reinterpret.

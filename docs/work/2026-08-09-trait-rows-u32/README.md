@@ -21,14 +21,17 @@ categories are pure content.
 
 ## The stance
 
-- **LEVEL IS REMOVED; the variant nibble is the tier** (F1/F6, the user's revision after
-  the level census — deepest table 3, highest bind 2, u4 gives 15): a stored TRAIT row is
-  the BARE u32 `definition_reference` (walks tier 2 = the walks def at variant 2); marker
-  traits live at variant 0. Condition and need rows keep their real u16 data
-  (remaining_at_write / value) as u64 `reserved:16 | data:16 | reference:32`. Per-level
-  arrays stay as authoring sugar (index i → variant i+1); binds rename `level` →
-  `variant`; the FULL consumer sweep follows (the ONE eval, worker, wasm, webgl, npc,
-  panels).
+- **LEVEL IS REMOVED; the variant nibble is the tier** (F1/F6, after the level census —
+  deepest table 3, highest bind 2, u4 gives 15): a stored TRAIT row is the BARE u32
+  `definition_reference` (walks tier 2 = the walks def at variant 2); markers at variant 0;
+  per-level arrays become per-variant authoring sugar; binds rename `level` → `variant`.
+- **Condition and need rows standardize on u64 = `reference:32 | data:32`** (F1/F7): full
+  subtype + variant lanes on every family, and the data lane grows to u32 — the def's TOML
+  declares HOW its u32 is interpreted (the two default encodings = today's u16 value /
+  remaining; a def may declare LANES, e.g. a condition packing 4 × i8 onto authored
+  targets). Compact and generic: the row is always (ref, data); the MEANING lives in the
+  corpus. The u64 exceeds f64 — the JS boundary carries rows as two u32s (I9). The FULL
+  consumer sweep follows (the ONE eval, worker, wasm, webgl, npc, panels).
 - **Six categories replace two** (F2): `pawn_trait_constant` / `pawn_trait_active` /
   `pawn_trait_passive` / `player_trait_constant` / `player_trait_active` /
   `player_trait_passive`, appended to the gameplay palette; today's `trait` and

@@ -5,15 +5,17 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P0 — the paper
 
-- [ ] VARIABLES.md: trait rows = bare u32 refs, tier = the VARIANT nibble, level DELETED
-      (F1/F6); condition/need rows u64 (I9); the six categories (F2); the ACTIVE law (I5);
-      the sprint lifecycle (F4). Acceptance: docs-check green.
+- [ ] VARIABLES.md: trait rows = bare u32 refs, tier = VARIANT, level DELETED (F1/F6);
+      condition/need rows u64 `ref:32|data:32` with DEF-DECLARED encodings (F7/I10, two
+      u32s at the JS boundary — I9); the six categories (F2); the ACTIVE law (I5); sprint
+      (F4). Acceptance: docs-check green.
 
 ## P1 — the row shape
 
 - [ ] codec: trait rows = bare refs (pack_gameplay_row's trait callers DELETE); u64
-      condition/need helpers; CONDITION payload entries grow a word (TRAIT stays one); the
-      six categories appended (F2). Acceptance: unit round-trips both shapes.
+      `ref:32|data:32` condition/need helpers + the encoding decoder seam (F7, refusal on
+      unknown — I10); CONDITION/NEED payload entries grow a word (TRAIT stays one); the six
+      categories appended (F2). Acceptance: unit round-trips all shapes + the 4×i8 lanes.
 - [ ] Modules: the `needs` column u64 in pawn + player_pawn; republished (WIPING, I2);
       st-bindings + edge bindings regenerated. Acceptance: publish green; a hand SET_NEED
       lands a u64 row.

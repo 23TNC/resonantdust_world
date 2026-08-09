@@ -2,17 +2,19 @@
 
 ## F1 — trait rows are BARE u32 references; condition/need rows are u64 (REVISED, user)
 
-REVISED at review after the level census (14 traits, deepest table 3 levels, highest bind
-L2): LEVEL IS REMOVED — a trait's tier is its definition's VARIANT nibble (u4, 15 tiers +
-the 0 default — five times today's depth). A stored TRAIT row is therefore JUST the full
-u32 `definition_reference`: no data lane, no packing helper, payload TRAIT entries stay ONE
-word, and `object_trait_rows` returns plain refs. Conditions and needs genuinely use their
-u16 data (remaining_at_write / the fixed-point value), so THEIR stored rows are u64 —
-`reserved:16 | data:16 | reference:32` (reserved ZERO, I9) — and their payload/sub-table
-lanes widen. `pack_gameplay_row`'s trait callers DELETE; its condition/need callers move to
-the u64 shape — either way every consumer breaks loudly at compile, which is the sweep
-finding itself. Rejected: a uniform u64 for traits too (a data lane nothing fills);
-keeping level beside variant (two tier numbers is how drift starts).
+REVISED TWICE at review (the level census, then the standardization). LEVEL IS REMOVED —
+a trait's tier is its definition's VARIANT nibble (u4, 15 tiers + the 0 default — five
+times today's authored depth). A stored TRAIT row is JUST the full u32
+`definition_reference`: no data lane, no packing helper, payload TRAIT entries stay ONE
+word, `object_trait_rows` returns plain refs. Condition and need rows STANDARDIZE on u64 =
+`definition_reference:32 | data:32` — full subtype AND variant lanes on all three families,
+and the data lane GROWS to u32 because "needs and conditions should likely use more data"
+(the user): the def's TOML declares how its u32 is interpreted (F7). Their payload entries
+and the `needs` sub-table columns widen. `pack_gameplay_row`'s trait callers DELETE; its
+condition/need callers move to the u64 shape — either way every consumer breaks loudly at
+compile, which is the sweep finding itself. Rejected: a uniform u64 for traits too (a data
+lane nothing fills); keeping level beside variant (two tier numbers is how drift starts);
+u16 data held (the standardization + headroom beat the two saved bytes).
 
 ## F6 — level → variant: the authoring and eval mapping
 
@@ -23,6 +25,19 @@ variant 0 — the bare def IS the capability. `trait_params(name, level)` lookup
 params-by-REF (the variant indexes the table); "level 0 = absent" semantics die — absence
 is absence of the row. The registry already numbers per-variant tuples (the u4 slot law);
 each authored tier gets its registry row like any variant.
+
+## F7 — the data u32 is DEF-INTERPRETED: the TOML declares the encoding
+
+"The toml can determine HOW we interpret the u32 available" (user). A condition/need def
+authors its data ENCODING — the default shapes are what exists today (need: the u16
+fixed-point value in the low half; condition: the u16 remaining-at-write in the low half),
+and a def may instead declare LANES, e.g. a condition packing `4 × i8` bound to authored
+targets (emotion nudges, stacked magnitudes, charge counts). The ONE eval reads data
+THROUGH the def's declared encoding — consumers never hard-code a layout again; new
+encodings are pure content + one decoder arm. v1 ships the two default encodings plus the
+`4 × i8` lane form (sprint/exhaustion don't need it, but the drill pins the machinery);
+richer encodings are appends. This keeps the system compact and generic — the row is always
+(ref, u32), the MEANING lives in the corpus.
 
 ## F2 — six authored categories; the old two retire empty
 
