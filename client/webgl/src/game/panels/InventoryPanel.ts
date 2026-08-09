@@ -42,6 +42,9 @@ export class InventoryPanel extends DomPanel {
       taskbar: ctx.taskbar,
       pinned: true,
       uiEditMode: ctx.uiEditMode,
+      // Left edge, mid-field — clear of the details / build / chat
+      // cluster that snaps to the bottom-left corner.
+      defaultCell: { col: 0, row: 3, cols: 8, rows: 8 },
     });
     this.gridEl.style.cssText =
       `display:grid;grid-template-columns:repeat(${PER_ROW}, ${CELL}px);gap:${GAP}px;` +

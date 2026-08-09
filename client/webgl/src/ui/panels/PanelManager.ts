@@ -156,12 +156,14 @@ export class PanelManager {
     return null;
   }
 
-  /** Returns the next cascade offset for a free-floating panel.
-   *  Callers stitch `dx`/`dy` into their `defaultRect.left` /
-   *  `defaultRect.top`. Wraps after a handful of steps so panels
-   *  don't drift off-screen on long sessions. */
+  /** Returns the next cascade offset for a free-floating panel, in
+   *  GRID CELLS. Callers add `dx`/`dy` to their `defaultCell.col` /
+   *  `.row`. One cell per step keeps successive panels legibly offset
+   *  at any viewport — a pixel step would be a different visual
+   *  distance on every screen. Wraps after a handful of steps so
+   *  panels don't march off the field on long sessions. */
   nextCascadeOffset(): { dx: number; dy: number } {
-    const step = 30;
+    const step = 1;
     const cycle = 6;
     const i = this.cascadeIndex % cycle;
     this.cascadeIndex++;

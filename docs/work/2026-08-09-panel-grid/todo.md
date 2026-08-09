@@ -94,14 +94,14 @@ reference viewports **1920×1080, 1366×768, 1024×640** ("three sizes" below), 
 
 ## P4 — the corpus
 
-- [ ] "Copy All JSON" exporter emits cell rects (I4). Acceptance: exported JSON carries
+- [x] "Copy All JSON" exporter emits cell rects (I4). Acceptance: exported JSON carries
       `col`/`row`/`cols`/`rows` and no px strings.
-- [ ] `defaults.json` re-authored in cells for all 8 panels, in the same commit as the exporter
+- [x] `defaults.json` re-authored in cells for all 8 panels, in the same commit as the exporter
       (I4). Acceptance: arrange → copy → paste into the file → reset → identical layout.
-- [ ] Every `defaultRect` call site in cells: chat, settings menu, settings popup, video, debug;
+- [x] Every `defaultRect` call site in cells: chat, settings menu, settings popup, video, debug;
       `PanelManager`'s cascade steps too. Acceptance: cleared storage → each opens on-grid inside
       the field.
-- [ ] Login `FormOverlay` re-authored in cells, percentage centring retired (I9). Acceptance: the
+- [x] Login `FormOverlay` re-authored in cells, percentage centring retired (I9). Acceptance: the
       form is centred (or off by at most half a cell) at three sizes.
 
 ## P5 — the truth

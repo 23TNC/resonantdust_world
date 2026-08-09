@@ -141,19 +141,16 @@ function readAnchor(raw: string | null): AnchorMode {
 }
 
 /** Extract only the CSS-rect fields from a `PanelStateJSON`. Used
- *  by the constructor to compose the effective `defaultRect`
+ *  by the constructor to compose the effective default cell rect
  *  (constructor opts ← content-defaults rect ← localStorage). The
  *  remaining `PanelStateJSON` fields are non-positional and applied
  *  separately in the field-init block. */
-function pickRectFields(state: PanelStateJSON): DomPanelRect {
-  const out: DomPanelRect = {};
-  if (state.left   !== undefined) out.left   = state.left;
-  if (state.top    !== undefined) out.top    = state.top;
-  if (state.right  !== undefined) out.right  = state.right;
-  if (state.bottom !== undefined) out.bottom = state.bottom;
-  if (state.width  !== undefined) out.width  = state.width;
-  if (state.height !== undefined) out.height = state.height;
-  return out;
+function pickCellRect(state: PanelStateJSON): CellRect | null {
+  const { col, row, cols, rows } = state;
+  if (col === undefined || row === undefined || cols === undefined || rows === undefined) {
+    return null;
+  }
+  return { col, row, cols, rows };
 }
 
 /** Per-panel snap preset. `"none"` leaves position to the user (via
@@ -273,18 +270,6 @@ const HEIGHT_FRACTIONS: Record<"full" | "half" | "quarter", number> = {
   quarter: 1 / 4,
 };
 
-/** Initial CSS positioning for a new panel. Mirrors the four `position:
- *  fixed` anchors plus dimensions; any subset can be supplied (the
- *  unmentioned ones are left as the browser default). Persisted
- *  `left` / `top` / `width` / `height` override these on restore. */
-export interface DomPanelRect {
-  left?:   string;
-  top?:    string;
-  right?:  string;
-  bottom?: string;
-  width?:  string;
-  height?: string;
-}
 
 export interface DomPanelOptions {
   /** Label shown in the title bar. */
@@ -304,7 +289,11 @@ export interface DomPanelOptions {
    *  constructor opts. */
   defaultsKey?: string;
   /** Initial CSS rect. Defaults to right-anchored under the titlebar. */
-  defaultRect?: DomPanelRect;
+  /** The panel's default geometry as the BODY's cell rect. This is
+   *  how a panel authors its place in the layout (F3) — four integers
+   *  that mean the same thing at every viewport. Overridden by the
+   *  content corpus, then by the user's persisted rect. */
+  defaultCell?: CellRect;
   /** Minimum size when resized via the corner handle. */
   minWidth?:  number;
   minHeight?: number;
@@ -452,12 +441,14 @@ export type PanelSettingKey =
  *  (`"320px"`, `"auto"`, `"calc(100vh - 64px)"`); enums match the
  *  same string values used in localStorage. */
 export interface PanelStateJSON {
-  left?:   string;
-  top?:    string;
-  right?:  string;
-  bottom?: string;
-  width?:  string;
-  height?: string;
+  /** The BODY's rect in grid cells — the authored form of a panel's
+   *  geometry (F3/F4). Replaces the six CSS-string fields this file
+   *  used to carry; those drifted (`"top": "56.3295px"` sat in the
+   *  shipped corpus) and meant nothing at a different viewport. */
+  col?:  number;
+  row?:  number;
+  cols?: number;
+  rows?: number;
   anchor?: AnchorMode;
   snap?:   SnapMode;
   pin?:    PinMode;
@@ -607,7 +598,7 @@ export class DomPanel {
    *  can re-apply it after clearing the user's persisted overrides
    *  — without this, reset would just clear localStorage and leave
    *  the panel wherever the user last dragged it. */
-  private readonly defaultRect: DomPanelRect;
+  private readonly defaultCell: CellRect | null;
   /** Constructor-time base title — never changes after construction.
    *  Used as the prefix when a `titleSuffix` resolver returns a
    *  string (rendered as `"<baseTitle> - <resolved>"`); equals
@@ -998,17 +989,17 @@ export class DomPanel {
 
     this.panel = document.createElement("div");
     Object.assign(this.panel.style, PANEL_CSS);
-    // Merge content-defaults rect over the constructor's defaultRect.
-    // This CSS is only a SEED now: it positions the panel until
-    // `open()` converts whatever it produced into cells. `defaultRect`
-    // is kept so `resetToDefaults` re-seeds from the same stack.
-    this.defaultRect = { ...(opts.defaultRect ?? {}), ...pickRectFields(contentDefaults) };
-    this.applyRect(this.defaultRect);
+    // Geometry precedence: the user's persisted cells, then the
+    // content corpus, then the constructor's authored cells. All three
+    // speak the same unit, so there is no conversion step and nothing
+    // to drift. A panel with none of them derives its cells from
+    // whatever it measures at first mount.
+    this.defaultCell = pickCellRect(contentDefaults) ?? opts.defaultCell ?? null;
     // Persisted cell rect wins outright when present. When it isn't,
     // the CSS applied just above stands as the seed and `captureCell`
     // converts it to cells once the panel is in the DOM (`open()`) —
     // measuring before that would read a zero rect.
-    this._cell = this.restoreCell();
+    this._cell = this.restoreCell() ?? this.defaultCell;
 
     // ── Title bar ────────────────────────────────────────────────
     this.titlebar = document.createElement("div");
@@ -1921,14 +1912,6 @@ export class DomPanel {
     });
   }
 
-  private applyRect(r: DomPanelRect): void {
-    if (r.left   !== undefined) this.panel.style.left   = r.left;
-    if (r.top    !== undefined) this.panel.style.top    = r.top;
-    if (r.right  !== undefined) this.panel.style.right  = r.right;
-    if (r.bottom !== undefined) this.panel.style.bottom = r.bottom;
-    if (r.width  !== undefined) this.panel.style.width  = r.width;
-    if (r.height !== undefined) this.panel.style.height = r.height;
-  }
 
   private applyMinimized(min: boolean): void {
     this._minimized = min;
@@ -2608,20 +2591,21 @@ export class DomPanel {
   /** Snapshot the panel's live state as a `PanelStateJSON`. Reads
    *  current in-memory fields (NOT localStorage — which may be
    *  stale or absent for never-persisted properties) so the result
-   *  reflects exactly what the user sees right now. Position / size
-   *  values come from the panel element's inline style (raw CSS
-   *  strings: `"320px"`, `"auto"`, `"calc(…)"`). Output is shaped
+   *  reflects exactly what the user sees right now. Geometry is the
+   *  BODY's cell rect — four integers that mean the same thing at any
+   *  viewport, unlike the CSS pixel strings this used to emit. Output is shaped
    *  to be paste-ready under `view/src/content/panels/defaults.json`'s
    *  `panels.<defaultsKey>` entry. */
   serializeState(): PanelStateJSON {
-    const s = this.panel.style;
+    // A panel that has never been mounted has no live cell rect yet;
+    // fall back to its authored default so the export is complete
+    // rather than silently missing geometry for closed panels.
+    const cell = this._cell ?? this.defaultCell;
     return {
-      left:   s.left   || undefined,
-      top:    s.top    || undefined,
-      right:  s.right  || undefined,
-      bottom: s.bottom || undefined,
-      width:  s.width  || undefined,
-      height: s.height || undefined,
+      col:  cell?.col,
+      row:  cell?.row,
+      cols: cell?.cols,
+      rows: cell?.rows,
       anchor:          this._anchor,
       snap:            this._snap,
       pin:             this._pin,
@@ -2642,7 +2626,7 @@ export class DomPanel {
   }
 
   /** Wipe all per-panel persisted state and revert the panel to
-   *  its constructor defaults: position/size to `defaultRect`,
+   *  its constructor defaults: geometry to the authored cell rect,
    *  anchor to `"none"`, every toggle back to its constructor cap.
    *  Fires `onAnchorChange` so the taskbar / settings popup
    *  re-sync. Useful when the user has wedged a panel off-screen
@@ -2715,26 +2699,23 @@ export class DomPanel {
     // call site, but being explicit reads cleanly.
     if (this._minimized) this.applyMinimized(false);
 
-    // Clear every CSS rect anchor so the only thing remaining is
-    // what `defaultRect` explicitly sets. Without this, a panel
-    // previously dragged would keep its `left`/`top` and the
-    // default's `right`/`bottom` would fight it.
+    // Clear every CSS rect anchor. `place()` below rewrites all four
+    // from the projection; clearing first means a panel previously
+    // dragged can't keep a stale `left`/`top` alongside them.
     this.panel.style.left   = "";
     this.panel.style.top    = "";
     this.panel.style.right  = "";
     this.panel.style.bottom = "";
     this.panel.style.width  = "";
     this.panel.style.height = "";
-    this.applyRect(this.defaultRect);
 
     // Re-apply anchor (a no-op for `"none"`, but it still resets
     // the resize corner to its default `br` position) + refresh
     // chrome to flush button visibility for the new toggle state.
     this.applyAnchor();
 
-    // Re-run the on-screen positioning `open()` performs. `applyRect`
-    // above pasted the default rect verbatim — but a content default
-    // can carry a stale / off-screen value (a panel nudged off-screen,
+    // Re-run the on-screen positioning `open()` performs. A content
+    // default can carry a stale value (a panel nudged somewhere odd,
     // then captured into `defaults.json`). `open()` always snaps or
     // clamps after positioning so the user never sees that; reset has
     // to as well, or the "I lost a panel" escape hatch strands the
@@ -2743,11 +2724,11 @@ export class DomPanel {
     // when their taskbar entry re-launches them.
     if (this._snap !== "none") this.applySnap();
     else {
-      // Geometry is cells now: drop the rect and re-derive it from the
-      // freshly-applied content default, which `applyRect` just wrote
-      // as CSS. Same path a first-ever open takes.
-      this._cell = null;
-      this.captureCell();
+      // Geometry is cells: go back to the authored rect. When a panel
+      // has none, fall back to measuring — the same path a first-ever
+      // open takes.
+      this._cell = this.defaultCell;
+      if (!this._cell) this.captureCell();
       this.clampCellToField();
       this.place();
       this.persistCell();

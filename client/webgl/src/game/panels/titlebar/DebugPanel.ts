@@ -462,7 +462,7 @@ export class DebugPanel {
       title: panelTitle("debugPanel"),
       storageKey: "debugPanel",
       zOrder: Z_TIER_SYSTEM, // bug-sweep F1: debug at 56
-      defaultRect: { right: "36px", top: "32px", width: "260px" },
+      defaultCell: { col: 43, row: 2, cols: 15, rows: 16 },
       taskbar,
       pinned: true,
       taskbarIcon: "📊",

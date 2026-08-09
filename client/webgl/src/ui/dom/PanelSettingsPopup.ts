@@ -252,7 +252,9 @@ export class PanelSettingsPopup {
       title: panelTitle(POPUP),
       storageKey: "panelSettingsPopup",
       zOrder: Z_TIER_CHROME, // bug-sweep F1: chrome — above every panel tier
-      defaultRect: { right: "12px", top: "44px", width: "260px" },
+      // Top-right flyout, 8 cols. Deep enough for the full row list
+      // without scrolling at the reference viewport.
+      defaultCell: { col: 49, row: 2, cols: 8, rows: 22 },
       resizable: false,
       minimizable: false,
       // Never the auto-bound edit target / last-focused — it edits OTHER

@@ -98,7 +98,7 @@ export class VideoPanel {
       title: panelTitle("videoPanel"),
       storageKey: "videoPanel",
       zOrder: Z_TIER_SYSTEM, // bug-sweep F1: a settings sub-panel — the system tier
-      defaultRect: { right: "72px", top: "32px", width: "260px" },
+      defaultCell: { col: 44, row: 2, cols: 8, rows: 8 },
       resizable: false,
       taskbar,
       pinned: true,

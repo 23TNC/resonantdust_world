@@ -80,18 +80,19 @@ export class FormOverlay {
       minimizable: false,
       closable: false,
       resizable: false,
-      defaultRect: { left: "50%", top: "50%" },
+      // Centred in the field. 58 is even, so an EVEN width centres
+      // exactly: cols 14 -> col 22 leaves 22 columns either side.
+      defaultCell: { col: 22, row: 11, cols: 14, rows: 11 },
       // Hand the edit-mode manager through so the user can
       // click the form in edit mode and tweak it via the
       // shared `PanelSettingsPopup` (anchor / snap / etc.) —
       // same surface every other panel exposes.
       uiEditMode,
     });
-    // Classic centering trick — top-left at viewport center, then
-    // translate back by half the panel's own size. `DomPanelRect`
-    // doesn't carry `transform` (it's not really a rect property),
-    // so set it on the underlying element directly.
-    this.panel.panel.style.transform = "translate(-50%, -50%)";
+    // No centering transform. Centring is expressed in the cell rect
+    // above (an even width on an even column count centres exactly);
+    // a `translate(-50%, -50%)` on top of a projected position would
+    // shift the panel off its cells by half its own size.
 
     this.body = document.createElement("div");
     Object.assign(this.body.style, BODY_CSS);

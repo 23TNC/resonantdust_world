@@ -53,7 +53,9 @@ export class SettingsMenu {
       title: panelTitle("settingsMenu"),
       storageKey: "settingsMenu",
       zOrder: Z_TIER_SYSTEM, // bug-sweep F1: settings at 56
-      defaultRect: { right: "0", top: "32px", width: "200px" },
+      // Top-right, under the taskbar: 6 cols wide, tall enough for
+      // its six rows of items.
+      defaultCell: { col: 52, row: 2, cols: 6, rows: 8 },
       resizable: false,
       minimizable: false,
       taskbar,

@@ -213,3 +213,39 @@ Still open in P3: `heightMode: auto`'s no-oscillation acceptance. The code canno
 construction — it early-returns unless the ROW COUNT changes, not the pixel height — but no
 shipped panel currently uses `auto`, so that argument is structural rather than observed, and the
 item stays unticked until something exercises it.
+
+## 2026-08-09 — P4: the corpus speaks cells
+
+`PanelStateJSON` drops its six CSS-string fields for `col` / `row` / `cols` / `rows`;
+`serializeState` emits them (falling back to a panel's authored default when it has never been
+mounted, so a closed panel still exports geometry); `pickRectFields` became `pickCellRect`. The
+constructor's precedence is now one unit end to end — persisted cells, then the corpus, then the
+panel's authored `defaultCell` — with no conversion step anywhere. `defaultRect`, `applyRect` and
+the `DomPanelRect` type are **deleted**: nothing seeds geometry with CSS any more.
+
+All seven authored call sites converted (the compiler found them by deleting the option): chat,
+settings menu, settings popup, video, debug, the login overlay, and `InventoryPanel` — which had
+no authored default at all and was the one panel exporting empty geometry. `PanelManager`'s
+cascade offset moved from 30**px** to 1 **cell** per step, since a pixel step is a different
+visual distance on every screen.
+
+The login `FormOverlay` lost its `transform: translate(-50%, -50%)`. That was the classic
+centring trick against `left/top: 50%`; against a projected position it would shift the panel off
+its cells by half its own size. Centring is expressed in the cell rect instead — 58 columns is
+even, so an even width centres exactly (14 cols at col 22 leaves 22 columns either side).
+
+`defaults.json` re-authored: all 8 entries carry integer cells, zero `px` anywhere, `gridSnap`
+true throughout.
+
+**The I4 round-trip closes.** Driving the popup's Copy-All button in the live app and parsing
+what it puts on the clipboard: 9 panels, **every entry with integer cells**, no `px` string, no
+legacy rect field, and the exported shape matches the corpus reader's field-for-field. Exporter
+and reader move together, so the next copy-paste can't silently revert the corpus to pixels.
+
+**One thing observed and deliberately NOT changed.** `build`, `chatPanel` and `details` all carry
+`snap: "bottom-left"`, so the corner preset owns their column and row and the authored values are
+ignored — which means three panels stack in one corner and overlap by default. That is
+pre-existing behaviour, unrelated to the grid, and changing a panel's `snap` is a layout decision
+rather than a units decision. What was fixed is the corpus *lying* about it: those three entries
+now record the cells snap actually produces, so the file describes the layout the app builds.
+Whether they should stop sharing a corner is the user's call.

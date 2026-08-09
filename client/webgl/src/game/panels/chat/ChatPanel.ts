@@ -144,7 +144,9 @@ export class ChatPanel {
       // Bottom-left above the taskbar strip. Content defaults
       // (`view/src/content/panels/defaults.json` → `chatPanel`) snap + pin it
       // there; this rect is just the pre-defaults fallback.
-      defaultRect: { left: "0", bottom: "32px", width: "360px", height: "260px" },
+      // Bottom-left of the field, 11 cols x 9 rows (~360x260px at a
+      // 1080p viewport, which is what it was authored as).
+      defaultCell: { col: 0, row: 22, cols: 11, rows: 9 },
       minWidth:  280,
       minHeight: 160,
       taskbar: ctx.taskbar,
