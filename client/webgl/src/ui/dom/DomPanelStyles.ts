@@ -187,6 +187,14 @@ export const ACTION_BTN_CSS: Partial<CSSStyleDeclaration> = {
 };
 
 export const BODY_CSS: Partial<CSSStyleDeclaration> = {
+  // The containing block for absolutely-positioned body content. Without it,
+  // a child using `position: absolute; inset: 0` (the world viewport's canvas
+  // holder) resolves against the PANEL ROOT — which is `position: fixed` — and
+  // so covers the title bar's row too. That is invisible while the bar is
+  // hidden, because body ≈ panel; it appears the moment anything reveals the
+  // bar (entering UI edit mode), when the canvas grows a row taller than the
+  // body the renderer is sizing for. Found by the user, 2026-08-09.
+  position: "relative",
   flex: "1 1 auto",
   overflow: "auto",
   display: "flex",

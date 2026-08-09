@@ -9,6 +9,7 @@
     "pin": "none",
     "pinned": false,
     "heightMode": "off",
+    "backgroundOpacity": 96,
     "clickThrough": false,
     "outline": true,
     "minCols": 1,
@@ -24,8 +25,7 @@
     "titleBarHidden": false,
     "gridSnap": true,
     "masked": true,
-    "minimized": false,
-    "backgroundOpacity": 96
+    "minimized": false
   },
   "settingsMenu": {
     "col": 52,
@@ -37,6 +37,7 @@
     "pin": "top-right",
     "pinned": true,
     "heightMode": "off",
+    "backgroundOpacity": 96,
     "clickThrough": false,
     "outline": true,
     "minCols": 1,
@@ -52,8 +53,7 @@
     "titleBarHidden": false,
     "gridSnap": true,
     "masked": true,
-    "minimized": false,
-    "backgroundOpacity": 96
+    "minimized": false
   },
   "videoPanel": {
     "col": 44,
@@ -65,6 +65,7 @@
     "pin": "none",
     "pinned": true,
     "heightMode": "off",
+    "backgroundOpacity": 96,
     "clickThrough": false,
     "outline": true,
     "minCols": 1,
@@ -80,8 +81,7 @@
     "titleBarHidden": false,
     "gridSnap": true,
     "masked": true,
-    "minimized": false,
-    "backgroundOpacity": 96
+    "minimized": false
   },
   "debugPanel": {
     "col": 43,
@@ -93,6 +93,7 @@
     "pin": "top-right",
     "pinned": true,
     "heightMode": "off",
+    "backgroundOpacity": 96,
     "clickThrough": false,
     "outline": true,
     "minCols": 1,
@@ -108,8 +109,7 @@
     "titleBarHidden": false,
     "gridSnap": true,
     "masked": true,
-    "minimized": false,
-    "backgroundOpacity": 96
+    "minimized": false
   },
   "worldViewport": {
     "col": 0,
@@ -121,6 +121,7 @@
     "pin": "none",
     "pinned": true,
     "heightMode": "full",
+    "backgroundOpacity": 96,
     "clickThrough": false,
     "outline": true,
     "minCols": 1,
@@ -136,8 +137,7 @@
     "titleBarHidden": true,
     "gridSnap": true,
     "masked": true,
-    "minimized": false,
-    "backgroundOpacity": 96
+    "minimized": false
   },
   "details": {
     "col": 1,
@@ -149,6 +149,7 @@
     "pin": "none",
     "pinned": false,
     "heightMode": "off",
+    "backgroundOpacity": 55,
     "clickThrough": false,
     "outline": true,
     "minCols": 1,
@@ -164,8 +165,7 @@
     "titleBarHidden": true,
     "gridSnap": true,
     "masked": true,
-    "minimized": false,
-    "backgroundOpacity": 96
+    "minimized": false
   },
   "conditions": {
     "col": 1,
@@ -177,6 +177,7 @@
     "pin": "bottom-left",
     "pinned": false,
     "heightMode": "off",
+    "backgroundOpacity": 0,
     "clickThrough": true,
     "outline": false,
     "minCols": 1,
@@ -192,8 +193,7 @@
     "titleBarHidden": true,
     "gridSnap": true,
     "masked": true,
-    "minimized": false,
-    "backgroundOpacity": 0
+    "minimized": false
   },
   "intentions": {
     "col": 0,
@@ -205,6 +205,7 @@
     "pin": "bottom-left",
     "pinned": false,
     "heightMode": "off",
+    "backgroundOpacity": 55,
     "clickThrough": false,
     "outline": true,
     "minCols": 1,
@@ -220,8 +221,7 @@
     "titleBarHidden": true,
     "gridSnap": true,
     "masked": true,
-    "minimized": false,
-    "backgroundOpacity": 55
+    "minimized": false
   },
   "inventory": {
     "col": 0,
@@ -233,6 +233,7 @@
     "pin": "bottom-left",
     "pinned": false,
     "heightMode": "off",
+    "backgroundOpacity": 55,
     "clickThrough": false,
     "outline": true,
     "minCols": 1,
@@ -248,8 +249,7 @@
     "titleBarHidden": true,
     "gridSnap": true,
     "masked": true,
-    "minimized": false,
-    "backgroundOpacity": 55
+    "minimized": false
   },
   "build": {
     "col": 0,
@@ -261,6 +261,7 @@
     "pin": "bottom-left",
     "pinned": true,
     "heightMode": "off",
+    "backgroundOpacity": 96,
     "clickThrough": false,
     "outline": true,
     "minCols": 1,
@@ -276,8 +277,7 @@
     "titleBarHidden": false,
     "gridSnap": true,
     "masked": true,
-    "minimized": false,
-    "backgroundOpacity": 96
+    "minimized": true
   },
   "chatPanel": {
     "col": 0,
@@ -289,6 +289,7 @@
     "pin": "bottom-left",
     "pinned": true,
     "heightMode": "off",
+    "backgroundOpacity": 96,
     "clickThrough": false,
     "outline": true,
     "minCols": 1,
@@ -304,7 +305,6 @@
     "titleBarHidden": false,
     "gridSnap": true,
     "masked": true,
-    "minimized": false,
-    "backgroundOpacity": 96
+    "minimized": true
   }
 }

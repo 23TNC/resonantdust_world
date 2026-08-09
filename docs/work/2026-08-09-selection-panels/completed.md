@@ -331,3 +331,29 @@ exactly (`0.96 → 0.91 → 0.86 → 0.81`); it clamps at `0%` where both the bo
 `rgba(0, 0, 0, 0)` together; `5%` gives `rgba(20, 22, 30, 0.05)`. After a clean reload the schema
 stamp reads `3`, no `.background` keys remain, and the conditions panel is still transparent and
 click-through from its corpus entry.
+
+## 2026-08-09 — the viewport changed on entering edit mode
+
+User: _"Entering into UI edit mode changes how we display viewport etc. I am guessing we're taking
+the full height into consideration instead of just the body height?"_ Right in substance, though
+the culprit was one level down.
+
+Measured first: entering edit mode left the world viewport's **body** at `29,860` — invariant, as
+the body-invariant law requires — while its **canvas** grew from `1861×860` to `1861×888`. So the
+body was fine and the canvas was not.
+
+Cause: `ViewportPanel` mounts its canvas in a holder styled `position: absolute; inset: 0`, and
+`BODY_CSS` set **no `position`**. An absolutely-positioned element resolves against its nearest
+*positioned* ancestor — which was the panel ROOT (`position: fixed`) — so the canvas covered the
+whole panel, title-bar row included. `sizeViewport` reads `bodyRect` and was always correct; the
+canvas element simply wasn't contained by the body. The mismatch is invisible while the bar is
+hidden, because body ≈ panel — and appears the instant anything reveals the bar, which is exactly
+what entering edit mode does.
+
+Fix: `BODY_CSS` gains `position: relative`, making the body the containing block for its own
+absolutely-positioned content. One line, and it covers any future body content using `inset`,
+not just this canvas.
+
+**Verified**: the canvas measures `29,1861,860` before, during **and** after edit mode, matching
+the body's rect exactly at every step, while the panel's outer box still grows its title row
+(`28,861 → 0,889`) as designed.
