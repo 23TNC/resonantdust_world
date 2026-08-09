@@ -133,6 +133,12 @@ impl Bunnies {
         self.group = Some((player_pawn, need_ref, min, max));
     }
 
+    /// Inside the operational area? (npc-host F3 — the clamp lives in the SENSE/ACT
+    /// helpers; legacy standalone brains have area == home±radius too, so one law serves.)
+    fn in_area(&self, cell: (i32, i32)) -> bool {
+        (cell.0 - self.home.0).abs().max((cell.1 - self.home.1).abs()) <= self.radius
+    }
+
     fn pick_dest(&mut self) -> (i32, i32) {
         let span = (self.radius * 2 + 1) as u32;
         (
@@ -308,6 +314,7 @@ impl Bunnies {
             }
             if let Some(t) =
                 bot.nearest_tile(at, |kind| self.usable_drink(id, kind, now).is_some())
+                    .filter(|c| self.in_area(*c))
             {
                 let pathable = |c: (i32, i32)| {
                     bot.tile_kind_at(c).is_none_or(|k| {
@@ -362,6 +369,9 @@ impl Bunnies {
             // Skip food on impathable ground (lake drops) — the worker would refuse the
             // trip forever and the bunny would oscillate (the wolves' cell_open rule).
             if let Some(t) = bot.nearest_thing(at, |cell, kind| {
+                if !self.in_area(cell) {
+                    return false;
+                }
                 bot.tile_kind_at(cell)
                     .is_none_or(|k| self.bundle.as_ref().is_none_or(|b| b.tile_pathable(k)))
                     && self.usable_eat(id, kind, now).is_some()

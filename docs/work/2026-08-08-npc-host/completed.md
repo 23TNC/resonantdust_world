@@ -1,5 +1,18 @@
 # Completed — npc-host
 
+## 2026-08-09 — P2 (fourth piece): position, area, migration
+
+The F3 clamp: `in_area` (cheb ≤ radius from the module's center) bounds the fluffle's
+water/food SCANS (the None fall-through IS the I6 wander degrade); wander/mint targets were
+already area-picked. THE MIGRATION DRILL: the host restarted with bunny_fluffle's anchor
+moved (116,71)→(124,75) — F2's law verbatim, the named anchor re-sent at new tiles; the
+owned bunnies re-attached via the ownership fan and, by successive area-targeted commands
+alone, ALL THREE relocated inside the new radius within ~4 minutes (positions probed:
+(119,70)/(119,72)/(123,77)) — migration EMERGENT, no herding verb. On camera at the new
+center (capture migrate3: B glyphs in the fresh area). Found + fixed on the way: the wasm
+loader had missed the brains.toml consumer sweep (boot refused `[[brain]]` — I3's bite,
+black screen) — shared/webgl rebuilt with the OwnedPawn arms (web.rs + wasm lib) added.
+
 ## 2026-08-09 — P3 (first half): the hosted group brain — the F8 loop LIVE
 
 The ACTOR seam threaded through every brain (`on_event`/`tick` + helpers take

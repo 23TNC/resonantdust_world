@@ -1336,6 +1336,10 @@ fn event_to_js(event: &client::Event) -> JsValue {
             raw.copy_from(payload);
             set("payload", &raw);
         }
+        Event::OwnedPawn { entity_reference } => {
+            set("kind", &JsValue::from_str("ownedPawn"));
+            set("entityReference", &JsValue::from_f64(*entity_reference as f64));
+        }
         Event::PawnNeed { macro_position, entity_reference, need, set_tic } => {
             set("kind", &JsValue::from_str("pawnNeed"));
             set("macroPosition", &JsValue::from_f64(*macro_position as f64));

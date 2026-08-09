@@ -595,6 +595,10 @@ impl Engine {
                     payload,
                 });
             }
+            // The ownership re-attach lane (npc-host I11) — a mint this player issued.
+            ServerMsg::Owned { entity_reference } => {
+                self.emit(Event::OwnedPawn { entity_reference });
+            }
             // One needs sub-table row (stat-model F2) — a sip lands as exactly this frame.
             ServerMsg::Need { entity_reference, zone, need, set_tic } => {
                 self.emit(Event::PawnNeed {

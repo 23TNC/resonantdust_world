@@ -29,7 +29,7 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 - [ ] Ownership from spawn attribution (F4/I2): a brain commands only its mints and
       RE-ATTACHES to them on restart via the spawn log; kind-global adoption deleted.
       Acceptance: restart drill — the re-attached set equals the minted set exactly.
-- [ ] Position + area: each module-player anchors at its position (F2); scans/wander/mints
+- [x] Position + area: each module-player anchors at its position (F2); scans/wander/mints
       clamp to the `area_of_influence` radius (F3/I6). Acceptance: a soaked group stays
       in-area; an anchor move migrates the group on camera (I9).
 
