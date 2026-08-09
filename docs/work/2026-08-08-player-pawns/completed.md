@@ -1,5 +1,25 @@
 # Completed — player-pawns
 
+## 2026-08-08 — P3 (first half): the player gameplay lane
+
+**codec** — `GAMEPLAY_PLAYER_TRAIT = 7` appended (palette 7 entries, the frozen-order test
+extended). **loader** — `[[player_trait]]` parses through the ONE trait conversion (chained,
+split by count); `Bundle.player_traits` + names + `player_trait_params` +
+`thing_player_traits`; ONE bind namespace (collision refused); player-trait binds are
+CONSTANT-only on every carrier (no stored row can name the category until a payload opcode
+does — refined from the paper's "same lanes" to a DEDICATED accessor, the safer v1).
+**content** — `players.toml`: `wolf_count` (0..16, deplete 0, `packless` band at 0..1 with
+scared/uncomfortable emotions — bands, never kills); `wolf_pack` player trait; the `player`
+thing def (subtype `player` id 3) LIVES AT THE END of things.toml — the first attempt
+mid-corpus shifted every thing's seed order (191 divergences); the one mis-recorded registry
+row was surgically SQL-deleted and re-seeded clean at 0x30030120. **edge mint** — resolves
+the `player` def + full-at-max need rows from the live worldgen bundle (constant player
+traits derive, never mint). Consumer sweep run (deny_unknown_fields makes old loaders refuse
+the new table): worker/master/npc/wasm/webgl rebuilt, sims restarted. Verified: 70+2 content
+tests green (golden re-blessed deliberately); a fresh login's mint carries def 0x30030120 +
+needs row 0xFFFF0050 (wolf_count FULL); every player incl. Developer now owns a linked
+player-pawn.
+
 ## 2026-08-08 — P2: mint-at-login
 
 **The linkage** — `players.player_pawns` (PK player_pawn_reference, btree player_id, active)

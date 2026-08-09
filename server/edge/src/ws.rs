@@ -1013,10 +1013,40 @@ async fn ensure_player_pawn(
         .subscription_builder()
         .on_error(|_ctx, err| tracing::warn!(%err, "player_pawn spawn_log subscription error"))
         .subscribe([format!("SELECT * FROM spawn_log WHERE event_reference = {player_id}")]);
+    // The definition + derived rows (P3, F5): the default `player` def from the corpus, its
+    // needs minted FULL at max (the pawn mint law; the owner's bookkeeping writes the true
+    // counts). Player traits are CONSTANT binds — derived by readers, never minted (F4).
+    // A corpus without the def degrades to def 0 (row-carrier still works; rows arrive
+    // when the corpus does).
+    let (def, need_rows) = pool
+        .current_worldgen()
+        .and_then(|wg| {
+            let b = wg.bundle();
+            let def = b.definition_reference(false, "player")?;
+            let kind = resonantdust_codec::object::def_kind_id(def);
+            let rows: Vec<u32> = b
+                .thing_needs(kind)
+                .into_iter()
+                .filter_map(|nref| {
+                    let np = b.need_params_by_ref(nref)?;
+                    let q = resonantdust_codec::value::quantize(
+                        np.max as f32,
+                        np.min as f32,
+                        np.max as f32,
+                    );
+                    Some(resonantdust_codec::object::pack_gameplay_row(nref, q))
+                })
+                .collect();
+            Some((def, rows))
+        })
+        .unwrap_or((0, vec![]));
+    if def == 0 {
+        tracing::warn!(player_id, "no `player` def in the corpus — minting def-0 (rows follow the corpus)");
+    }
     // The mint: the ledger key is (player_id, 0) — the login funnel's dedup, not a world
-    // event. def/needs are empty until P3 authors the default `player` def; position 0 and
-    // promote=true so the live row exists (the worker's ghost guard requires it).
-    if let Err(err) = conn.reducers.spawn(0, 0, player_id, 0, 0, 0, vec![], vec![], 0, true) {
+    // event. Position 0 and promote=true so the live row exists (the worker's ghost guard
+    // requires it).
+    if let Err(err) = conn.reducers.spawn(0, 0, player_id, 0, def, 0, vec![], need_rows, 0, true) {
         tracing::warn!(player_id, %err, "player_pawn spawn submit failed — mint deferred");
         return; // dropping `handle` + `conn` tears the subscription down
     }

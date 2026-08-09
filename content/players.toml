@@ -1,0 +1,40 @@
+# ── players.toml — the player-pawn's gameplay surface (player-pawns P3) ─────────────────
+#
+# Player-pawns are ROW-CARRIERS (never rendered, never moved — VARIABLES.md §Player-pawns):
+# the `player` def below is what the login funnel mints every player's player-pawn with, and
+# it derives their rows exactly as pawn kinds derive theirs. npc-host refines this into
+# per-brain defs; this is the ONE default until then.
+
+# The group-state need (F8 shape, the npc-host `wolf_count` drill lane): counts the LIVE
+# pawns a brain-player owns. deplete 0 — only explicit writes (mint/death bookkeeping) move
+# it. Encoding domain 0..16, matching the inventory need's small-count posture.
+[[need]]
+name = "wolf_count"
+label = "Wolves"
+min = 0
+max = 16
+deplete = 0.0
+band = [
+  { condition = "packless", lo = 0, hi = 1 },
+]
+
+# The banded "ran out of pawns" state (I8: it BANDS — it never kills; player defs author no
+# death interaction, so the sweep's can_die gate stays shut by construction). The emotion
+# modifiers are the drill's observable: a packless brain FEELS it (emotions argmax).
+[[condition]]
+name = "packless"
+label = "Packless"
+priority = 40
+emotions = [
+  { emotion = "scared", magnitude = 4 },
+  { emotion = "uncomfortable", magnitude = 2 },
+]
+
+# The starter PLAYER trait (F4/F7): the pack-steward classification, two levels for the
+# per-level machinery to exercise. Parameters (group size, area radius) arrive with
+# npc-host's brain defs — levels alone carry the drill.
+[[player_trait]]
+name = "wolf_pack"
+label = "Wolf pack"
+
+# The default player-pawn THING def lives at the END of things.toml (append-only seed order).

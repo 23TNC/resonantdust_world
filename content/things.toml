@@ -400,3 +400,15 @@ traits = [ { name = "walks", level = 2 } ]
   sprite_anchor = { x = 0.5, y = 1.0 }
   size = 0.5
   sprite_scale = { w = 0.5, h = 0.5 }
+
+# The default player-pawn def. type = "pawn" so the pawn machinery (needs/traits binding,
+# CREATE-shape minting) applies verbatim; subType "player" keeps the taxonomy honest.
+# No parts, no walks — a row-carrier draws nothing and goes nowhere (F3).
+[[thing]]
+name = "player"
+type = "pawn"
+kind = "player"
+subType = ["player"]
+variant = ["0"]
+needs = ["wolf_count"]
+traits = [ { name = "wolf_pack", level = 1, constant = true } ]

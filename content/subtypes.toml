@@ -17,3 +17,8 @@ id = 1
 type = "pawn"
 name = "human"
 id = 2
+
+[[subtype]]
+type = "pawn"
+name = "player"
+id = 3

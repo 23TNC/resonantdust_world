@@ -704,6 +704,10 @@ pub(crate) struct ThingDef {
   /// payload rows at CREATE; CONSTANT binds are derived by readers and never stored.
   /// A bare-string binding authors level 1, non-constant.
   pub traits: Vec<TraitBind>,
+  /// PLAYER-trait bindings (player-pawns F4): CONSTANT-only (zero storage — no payload
+  /// opcode names the category yet), read through the dedicated accessors, never merged
+  /// into the trait lane.
+  pub player_traits: Vec<TraitBind>,
   /// Interaction bindings (stat-model F5/F9; the yield lane — logs-drop F1).
   pub interactions: Vec<InteractionBind>,
   /// May a pawn ENTER a cell this thing occupies? (pathfinding F1 — absence authors
@@ -792,6 +796,11 @@ pub struct Bundle {
   pub(crate) needs: Vec<(String, NeedParams)>,
   pub(crate) conditions: Vec<(String, ConditionParams)>,
   pub(crate) traits: Vec<(String, TraitParams)>,
+  /// The PLAYER-facing trait lane (player-pawns F4): the trait SCHEMA, classified apart under
+  /// `gameplay/player_trait`. v1 binds are CONSTANT-only and consumers read them through the
+  /// DEDICATED accessors — never merged into the trait lane (a stored row could not name its
+  /// category until the payload-opcode successor lands).
+  pub(crate) player_traits: Vec<(String, TraitParams)>,
   pub(crate) interactions: Vec<(String, InteractionParams)>,
   pub(crate) affordances: Vec<(String, AffordanceParams)>,
   pub(crate) stats: Vec<(String, StatParams)>,
@@ -812,6 +821,7 @@ pub struct Bundle {
   interaction_names: Vec<String>,
   affordance_names: Vec<String>,
   stat_names: Vec<String>,
+  player_trait_names: Vec<String>,
   /// The REGISTRY override for `name → definition_reference` (definition-registry P4/P5), keyed
   /// `(is_tile, name)`. `None` means "resolve from corpus position", which is what a registry-less
   /// boot and every unit test does.
@@ -876,6 +886,7 @@ impl Bundle {
       "interaction" => Some(&self.interaction_names),
       "affordance" => Some(&self.affordance_names),
       "stat" => Some(&self.stat_names),
+      "player_trait" => Some(&self.player_trait_names),
       _ => None,
     }
   }
@@ -941,6 +952,7 @@ impl Bundle {
     self.interaction_names = self.interactions.iter().map(|(n, _)| n.clone()).collect();
     self.affordance_names = self.affordances.iter().map(|(n, _)| n.clone()).collect();
     self.stat_names = self.stats.iter().map(|(n, _)| n.clone()).collect();
+    self.player_trait_names = self.player_traits.iter().map(|(n, _)| n.clone()).collect();
     self
   }
 
@@ -1292,6 +1304,17 @@ impl Bundle {
       .map(|d| d.traits.clone())
       .unwrap_or_default()
   }
+  /// The PLAYER-trait bindings a thing kind authors (player-pawns F4) — the dedicated
+  /// lane: CONSTANT-only (load-enforced), zero storage, never merged into
+  /// [`Bundle::object_trait_rows`]; consumers read levels/params here + through
+  /// [`Bundle::player_trait_params`].
+  pub fn thing_player_traits(&self, object_id: u16) -> Vec<TraitBind> {
+    self
+      .things
+      .get(object_id.checked_sub(1).map(usize::from).unwrap_or(usize::MAX))
+      .map(|d| d.player_traits.clone())
+      .unwrap_or_default()
+  }
   /// THE merged-traits accessor (trait-lights F5) — the ONE answer to "what traits
   /// does this object carry", as packed gameplay rows: the def's CONSTANT binds
   /// (derived here, zero storage) followed by the payload's runtime rows. On a name
@@ -1495,6 +1518,12 @@ impl Bundle {
     &self.trait_names
   }
   /// A trait's [`TraitParams`], or `None` if unknown.
+  /// A `player_trait` def's params by name (player-pawns F4) — the dedicated lane; the
+  /// schema is the trait schema, the classification (and registry numbering) is its own.
+  pub fn player_trait_params(&self, name: &str) -> Option<TraitParams> {
+    self.player_traits.iter().find(|(n, _)| n == name).map(|(_, p)| p.clone())
+  }
+
   pub fn trait_params(&self, name: &str) -> Option<TraitParams> {
     self.traits.iter().find(|(n, _)| n == name).map(|(_, p)| p.clone())
   }

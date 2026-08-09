@@ -94,6 +94,10 @@ pub const GAMEPLAY_INTERACTION: u16 = 4;
 pub const GAMEPLAY_AFFORDANCE: u16 = 5;
 /// `subtype_id` of `gameplay/stat` (stat-model F5/F8 — the derived family).
 pub const GAMEPLAY_STAT: u16 = 6;
+/// `subtype_id` of `gameplay/player_trait` (player-pawns F4 — the PLAYER-facing trait lane,
+/// the trait schema classified apart; v1 binds are CONSTANT-only, so no stored row ever
+/// carries this subtype — the payload-opcode successor lifts that).
+pub const GAMEPLAY_PLAYER_TRAIT: u16 = 7;
 
 /// The gameplay category names in `subtype_id` order (index 0 → id 1) — ONE spelling of the
 /// palette, shared by the loader's derived taxonomy (interactions F9) and the master's
@@ -101,8 +105,8 @@ pub const GAMEPLAY_STAT: u16 = 6;
 /// the ORDER also seeds the corpus-position fallback packing, so inserting or reordering
 /// silently renumbers every seed ref on a registry-less boot (stat-model I5). New categories
 /// go at the END.
-pub const GAMEPLAY_CATEGORIES: [&str; 6] =
-    ["need", "condition", "trait", "interaction", "affordance", "stat"];
+pub const GAMEPLAY_CATEGORIES: [&str; 7] =
+    ["need", "condition", "trait", "interaction", "affordance", "stat", "player_trait"];
 
 /// A gameplay category name's `subtype_id`, or `None` for a name outside the palette.
 pub fn gameplay_subtype_id(category: &str) -> Option<u16> {
@@ -628,13 +632,14 @@ mod tests {
         // stat-model I5: these ids seed the corpus-position fallback packing — a reorder or
         // an insertion silently renumbers every seed ref. `stat` APPENDED at 6; the first
         // five are FROZEN. A new category extends this list and this test.
-        let frozen: [(&str, u16); 6] = [
+        let frozen: [(&str, u16); 7] = [
             ("need", GAMEPLAY_NEED),
             ("condition", GAMEPLAY_CONDITION),
             ("trait", GAMEPLAY_TRAIT),
             ("interaction", GAMEPLAY_INTERACTION),
             ("affordance", GAMEPLAY_AFFORDANCE),
             ("stat", GAMEPLAY_STAT),
+            ("player_trait", GAMEPLAY_PLAYER_TRAIT),
         ];
         assert_eq!(GAMEPLAY_CATEGORIES.len(), frozen.len());
         for (i, (name, id)) in frozen.iter().enumerate() {

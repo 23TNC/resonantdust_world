@@ -29,7 +29,7 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P3 — player gameplay
 
-- [ ] content: the `player` gameplay subtypes (F4) — a `wolf_count` need + a starter player
+- [x] content: the `player` gameplay subtypes (F4) — a `wolf_count` need + a starter player
       trait authored; the player-pawn's definition derives them (F5). Acceptance: content
       tests green; the derived rows appear on a minted player-pawn.
 - [ ] The owner fan (F6/I3): the session receives its OWN player-pawn's rows through the

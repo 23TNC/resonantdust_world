@@ -36,6 +36,9 @@ struct Corpus {
   condition: Vec<ConditionToml>,
   #[serde(default, rename = "trait")]
   trait_: Vec<TraitToml>,
+  /// The player-facing trait lane (player-pawns F4) — the trait SCHEMA, own category.
+  #[serde(default)]
+  player_trait: Vec<TraitToml>,
   #[serde(default)]
   interaction: Vec<InteractionToml>,
   #[serde(default)]
@@ -736,6 +739,7 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
         all.need.extend(c.need);
         all.condition.extend(c.condition);
         all.trait_.extend(c.trait_);
+        all.player_trait.extend(c.player_trait);
         all.interaction.extend(c.interaction);
         all.affordance.extend(c.affordance);
         all.stat.extend(c.stat);
@@ -774,10 +778,25 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
   unique("need", all.need.iter().map(|d| d.name.as_str()).collect());
   unique("condition", all.condition.iter().map(|d| d.name.as_str()).collect());
   unique("trait", all.trait_.iter().map(|d| d.name.as_str()).collect());
+  unique("player_trait", all.player_trait.iter().map(|d| d.name.as_str()).collect());
   unique("interaction", all.interaction.iter().map(|d| d.name.as_str()).collect());
   unique("affordance", all.affordance.iter().map(|d| d.name.as_str()).collect());
   unique("stat", all.stat.iter().map(|d| d.name.as_str()).collect());
   unique("emotion", all.emotion.iter().map(|d| d.name.as_str()).collect());
+  drop(unique);
+  // ONE name namespace across the two trait lanes (player-pawns F4): a bind resolves by
+  // name, so a name in BOTH would make the bind ambiguous.
+  for pt in &all.player_trait {
+    if all.trait_.iter().any(|t| t.name == pt.name) {
+      errors.push(LoadError {
+        file: String::new(),
+        message: format!(
+          "player_trait `{}` collides with a trait of the same name — the bind namespace is one",
+          pt.name
+        ),
+      });
+    }
+  }
   // Tiles and things carry NO ids (definition-registry F1/F15): the corpus describes and the
   // server numbers. Their position here is only the SEED a fresh registry allocates from — an
   // existing registry overrides it through `Bundle::with_registry`, which is what makes a
@@ -1016,9 +1035,13 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
   // Traits: the authored per-field ARRAYS become per-LEVEL modifier tables (stat-model F5).
   // Every authored array within one trait must agree on length — that length IS the trait's
   // level count; a trait with no modifier arrays has ONE (empty) level.
-  b.traits = all
+  // player-pawns F4: `[[player_trait]]` shares the SCHEMA, so both lanes convert through the
+  // ONE pass (chained, split by count below) — the classification is the only difference.
+  let n_plain_traits = all.trait_.len();
+  let converted_traits: Vec<(String, TraitParams)> = all
     .trait_
     .iter()
+    .chain(all.player_trait.iter())
     .map(|t| {
       let mut lens: Vec<usize> = Vec::new();
       for s in &t.stats {
@@ -1175,6 +1198,8 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
       })
     })
     .collect();
+  b.traits = converted_traits[..n_plain_traits].to_vec();
+  b.player_traits = converted_traits[n_plain_traits..].to_vec();
 
   // Band → condition references (needs already built; conditions above).
   for n in &all.need {
@@ -1573,6 +1598,8 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
   // A thing's trait BINDING must name a level the trait's table has (stat-model F11).
   let trait_level_counts: HashMap<String, usize> =
     b.traits.iter().map(|(n, p)| (n.clone(), p.levels.len())).collect();
+  let player_trait_level_counts: HashMap<String, usize> =
+    b.player_traits.iter().map(|(n, p)| (n.clone(), p.levels.len())).collect();
 
   for slot in &tiles {
     b.tiles.push(match slot {
@@ -1587,6 +1614,7 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
         &material_id,
         &need_exists,
         &trait_level_counts,
+        &player_trait_level_counts,
         &interaction_exists,
         &thing_exists,
         &mut errors,
@@ -1937,6 +1965,7 @@ fn thing_def(
   material_id: &dyn Fn(&str) -> u16,
   need_exists: &dyn Fn(&str) -> bool,
   trait_level_counts: &HashMap<String, usize>,
+  player_trait_level_counts: &HashMap<String, usize>,
   interaction_exists: &dyn Fn(&str) -> bool,
   thing_exists: &dyn Fn(&str) -> bool,
   errors: &mut Vec<LoadError>,
@@ -1955,12 +1984,39 @@ fn thing_def(
     }
   }
   let mut traits = Vec::new();
+  let mut player_traits = Vec::new();
   // trait-lights F6: non-pawn things take CONSTANT binds ONLY — a runtime (payload)
   // trait on a cold thing could never be saved back to cold, so the loader refuses
   // the bind rather than letting a save lose it. Pawn kinds keep both flavors.
   let is_pawn = tax.as_ref().is_some_and(|x| x.type_name == "pawn");
   for tb in &t.traits {
     let (name, level, constant) = tb.bind();
+    // player-pawns F4: a bind naming a PLAYER trait lands in its own list, CONSTANT-only
+    // on every carrier (no stored row can name the category until the payload-opcode
+    // successor) — checked before the trait arm so the one namespace stays unambiguous.
+    if let Some(&count) = player_trait_level_counts.get(&name) {
+      if level == 0 || level as usize > count {
+        errors.push(LoadError {
+          file: String::new(),
+          message: format!(
+            "thing `{}`: player_trait `{name}` level {level} is out of range ({count} level(s))",
+            t.name
+          ),
+        });
+      } else if !constant {
+        errors.push(LoadError {
+          file: String::new(),
+          message: format!(
+            "thing `{}`: player_trait `{name}` must be `constant = true` — player traits \
+             have no stored-row form (player-pawns F4)",
+            t.name
+          ),
+        });
+      } else {
+        player_traits.push(TraitBind { name, level, constant });
+      }
+      continue;
+    }
     match trait_level_counts.get(&name) {
       None => errors.push(LoadError {
         file: String::new(),
@@ -1994,6 +2050,7 @@ fn thing_def(
     visual,
     needs,
     traits,
+    player_traits,
     interactions: interaction_binds(&t.interactions, interaction_exists, thing_exists, "thing", &t.name, errors),
     pathable: t.pathable,
     geo_label: t.geo_label.clone(),
