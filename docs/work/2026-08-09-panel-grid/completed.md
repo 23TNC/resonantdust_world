@@ -309,3 +309,15 @@ exactly at the native viewport. The JS-computed values are verified at all five.
 is a **real** multi-viewport look — dragging a genuine window edge — which only the user can do
 here. That is the substance of the last open item, and the reason it stays unticked rather than
 being claimed.
+
+## 2026-08-09 — I7 closed by inspection, not by observation
+
+`heightMode: auto` is implemented in cells (round the natural height UP to whole rows, re-apply
+only when the ROW COUNT changes, so a reflow that moves pixels but not rows exits without
+writing). Its stated acceptance — "doesn't oscillate under content churn" — **cannot be run**:
+`setContentNaturalHeight`, the only input `auto` consumes, is never called anywhere in the
+codebase, and no shipped panel selects the mode. So `auto` is inert today.
+
+Ticked on the structural argument with that stated plainly in [I7](issues.md#i7): the feedback
+loop is impossible by construction rather than unobserved in practice. When a consumer starts
+reporting natural heights, this wants a real watch.

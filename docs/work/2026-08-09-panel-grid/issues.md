@@ -67,7 +67,7 @@ toggle, drag end, resize end, snap, `resetToDefaults` — must fire it. `worldVi
 failure case (it's `heightMode: full`, `titleBarHidden`, and holds the game canvas): if it
 desyncs, the world renders at the wrong size and it's obvious. Good canary, watch it first.
 
-## I7 — `heightMode: auto` rounds to rows and may oscillate
+## I7 — `heightMode: auto` rounds to rows and may oscillate — UNEXERCISABLE today
 
 `applyHeight()` in `"auto"` mode sets height from `titlebar.offsetHeight + _contentNaturalHeight`
 — a content-driven pixel number. Rounding it **up** to whole rows can feed back: the panel grows
@@ -114,3 +114,18 @@ baseline"**, measured by comparing the error count and file set before and after
 the errors sit in the renderer's mover data path, and repairing another stream's regression from
 inside this one risks a silent rendering break for no gain to the work in hand. Raised to the user
 and spun out as its own task.
+
+### I7 addendum (2026-08-09, at P5)
+
+`setContentNaturalHeight` — the only way a panel reports the height `auto` mode consumes — is
+**never called anywhere in the codebase**. `auto` is therefore inert today: `applyHeight`
+early-returns on a null natural height, and no shipped panel selects the mode. The oscillation
+acceptance ("doesn't oscillate under content churn") cannot be run, because nothing produces the
+churn.
+
+What was done instead, and why it is enough for now: the cell implementation rounds the natural
+height UP to whole rows and re-applies **only when the row count changes**, so the feedback loop
+the issue describes is structurally impossible — a reflow that changes the pixel height but not
+the row count exits without writing. That is a property of the code, not an observation, and it is
+labelled as such. The moment a consumer starts calling `setContentNaturalHeight`, this deserves a
+real watch.

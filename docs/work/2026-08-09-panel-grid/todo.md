@@ -87,7 +87,7 @@ reference viewports **1920×1080, 1366×768, 1024×640** ("three sizes" below), 
       dragged at either bar stops at the field edge; nothing overlaps a bar at three sizes.
 - [x] Minimums in cells (min body 6 × 3); `heightMode` full/half/quarter become row counts over
       the field. Acceptance: resize refuses under 6×3; a `full` panel spans rows 1..31 exactly.
-- [ ] `heightMode: auto` rounds UP to whole rows, re-applying only when the row count changes
+- [x] `heightMode: auto` rounds UP to whole rows, re-applying only when the row count changes
       (I7). Acceptance: an `auto` panel doesn't oscillate under content churn.
 - [x] Decide minimize under the body-rect law — force-show the title bar, or imply the button
       hidden (I8). Acceptance: a minimized panel always presents a way back, at three sizes.
