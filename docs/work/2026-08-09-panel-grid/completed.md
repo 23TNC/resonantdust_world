@@ -170,3 +170,46 @@ real corner drag), `heightMode: auto`'s no-oscillation claim (the code early-ret
 row COUNT changes, but that isn't the same as having watched it under content churn), the
 unconditional-quantize item (deviated), and the minimize decision under the body-rect law (I8),
 which is untouched.
+
+## 2026-08-09 — P3 (rest): gestures, minimize, and the second mount path
+
+**Drag and resize, measured through synthetic pointer gestures on a real panel.** A drag of
+(−397, +151) — deliberately not a multiple of any cell size — landed every edge on an edge-table
+entry and stored `col 31, row 8, cols 14, rows 15`. A corner resize requesting (+171, +113) grew
+by (+160, +111) with the **top-left anchor pinned exactly** (995,195 before and after), all four
+edges on grid. Storage held integers only; zero pixel keys throughout. That closes both the
+one-pass-placement item (its acceptance was the anchor pivot) and the drag/resize quantize item
+(deviated to stay gated — see `deviations.md`).
+
+Worth noting for anyone reading the first drag attempt: dragging a corner-**snapped** panel is a
+no-op by design, because a non-`none` snap forces `draggable` off. That is correct behaviour, not
+a failure — the test moved to the debug panel, which is free.
+
+**Minimize (I8) resolved.** A minimized panel now always shows its title bar: rolled up, the bar
+IS the panel, so a title-hidden panel would otherwise minimize to *nothing* with no way back —
+a trap. Roll-up collapses the outer box to exactly one ROW rather than `height: ""` (the bar's
+natural content height is off-grid by construction now), and restoring re-places from the cell
+rect instead of replaying a saved pixel string, since the viewport may have changed while the
+panel was rolled up. Verified: minimize → restore left the cell rect untouched and the panel back
+at exactly `37,463`.
+
+This also fixed an inconsistency the work introduced: `titleBarShowing()` (used for layout) and
+`refreshChrome` (used for rendering) were two different predicates, so an edit-mode-forced bar
+would have reserved a chrome row that wasn't drawn. There is now **one** predicate, and it finally
+implements what `UiEditMode`'s class doc has always claimed about forcing bars visible in edit
+mode.
+
+**A real gap found by measuring, not reading:** `ensureVisible()` is a **second mount path** — a
+taskbar click reaches a closed panel through it, not through `open()` — and it never did the
+first-mount cell conversion. Symptom: the debug panel sat at its authored `top: 37px`, off-grid,
+with no cell keys, while every panel that happened to route through `open()` was fine. Closed by
+giving `ensureVisible` the same capture/clamp/place/persist block.
+
+**Verified after the fix**, clean profile, six panels open (including two surfaced by taskbar
+click): all six carry cell keys, **all six on grid** on every edge, none overlapping a bar, zero
+pixel keys anywhere in storage.
+
+Still open in P3: `heightMode: auto`'s no-oscillation acceptance. The code cannot oscillate by
+construction — it early-returns unless the ROW COUNT changes, not the pixel height — but no
+shipped panel currently uses `auto`, so that argument is structural rather than observed, and the
+item stays unticked until something exercises it.

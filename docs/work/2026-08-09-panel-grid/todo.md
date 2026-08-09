@@ -70,7 +70,7 @@ reference viewports **1920×1080, 1366×768, 1024×640** ("three sizes" below), 
 - [x] Versioned one-time migration: px → nearest cell, superseded keys deleted including a stale
       `gridSnap` (I3). Acceptance: a profile seeded with today's px keys lands on sane cells with
       no panel off-field.
-- [ ] Placement becomes ONE pass from the cell rect (`left`/`top`/`width`/`height`,
+- [x] Placement becomes ONE pass from the cell rect (`left`/`top`/`width`/`height`,
       `right`/`bottom` auto), retiring the `snapToGrid` → `applyAnchor` two-pass fight (F7/I5).
       Acceptance: resize from each corner still pivots on the anchor.
 - [x] Fire `rectChange` on every placement path — grid change, migration, title toggle, drag end,
@@ -78,7 +78,7 @@ reference viewports **1920×1080, 1366×768, 1024×640** ("three sizes" below), 
       1920→1280→1920 round-trip.
 - [x] Re-project every panel on grid change. Acceptance: 1920×1080 → 1280×720 → back leaves every
       panel's cell rect identical (before/after logged) with no drift.
-- [ ] Drag + resize quantize to cells unconditionally; `activeSnapGrid`'s null path retires.
+- [x] Drag + resize quantize to cells unconditionally; `activeSnapGrid`'s null path retires.
       Acceptance: after a drag and a resize, storage holds integers only.
 - [x] `_gridSnap` defaults TRUE (`contentDefaults.gridSnap ?? true`); the popup row stays this
       stream (F5). Acceptance: a fresh panel snaps without being told to; the toggle still
@@ -89,7 +89,7 @@ reference viewports **1920×1080, 1366×768, 1024×640** ("three sizes" below), 
       the field. Acceptance: resize refuses under 6×3; a `full` panel spans rows 1..31 exactly.
 - [ ] `heightMode: auto` rounds UP to whole rows, re-applying only when the row count changes
       (I7). Acceptance: an `auto` panel doesn't oscillate under content churn.
-- [ ] Decide minimize under the body-rect law — force-show the title bar, or imply the button
+- [x] Decide minimize under the body-rect law — force-show the title bar, or imply the button
       hidden (I8). Acceptance: a minimized panel always presents a way back, at three sizes.
 
 ## P4 — the corpus

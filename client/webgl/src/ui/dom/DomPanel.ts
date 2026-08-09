@@ -1388,8 +1388,16 @@ export class DomPanel {
     // back into the safe area in case the saved rect is now off-screen
     // (smaller viewport, taskbar reserve, dragged out while hidden).
     if (this._snap !== "none") { this.applySnap(); this.applyAnchor(); }
+    // This is a SECOND mount path — a taskbar click reaches a closed
+    // panel through here, not through `open()` — so it owes the same
+    // first-mount conversion. Without it a panel surfaced this way
+    // keeps the raw CSS from its content default and never joins the
+    // grid at all (measured: the debug panel sitting at its authored
+    // `top: 37px`, off-grid, with no cell keys written).
+    if (!this._cell) this.captureCell();
     this.clampCellToField();
     this.place();
+    this.persistCell();
     // Re-run chrome so resize handles / buttons reflect the now-
     // restored state, and persist the cleared minimize flag.
     this.refreshChrome();
@@ -1839,7 +1847,16 @@ export class DomPanel {
    *  so it counts here too — otherwise entering edit mode would move
    *  every body by a row. */
   private titleBarShowing(): boolean {
-    return this.titleBarAvailable && (!this._titleBarHidden || !!this.uiEditMode?.enabled);
+    return this.titleBarAvailable && (
+      !this._titleBarHidden
+      // Edit mode forces bars visible — they're the drag handle you
+      // rearrange panels by (and the class doc has always claimed it).
+      || !!this.uiEditMode?.enabled
+      // A MINIMIZED panel always shows its bar (I8). Rolled up, the bar
+      // IS the panel; without it a title-hidden panel would minimize to
+      // nothing, with no way back — a trap, not a feature.
+      || this._minimized
+    );
   }
 
   /** The OUTER box's cell rect: the body's, grown one row upward when
@@ -1926,8 +1943,13 @@ export class DomPanel {
         this.hiddenForTaskbar = true;
         this.panel.style.display = "none";
       } else {
+        // Roll up to exactly ONE ROW — the title row. `height: ""`
+        // would collapse to the bar's natural content height, which
+        // is off-grid by construction now.
         this.savedHeight = this.panel.style.height;
-        this.panel.style.height = "";
+        this.panel.style.height = `${panelGrid.rowHeightAt(
+          panelGrid.nearestRow(this.panel.getBoundingClientRect().top),
+        )}px`;
       }
     } else {
       if (this.hiddenForTaskbar) {
@@ -1942,8 +1964,10 @@ export class DomPanel {
         this.hiddenForTaskbar = false;
       }
       if (this.savedHeight !== null) {
-        this.panel.style.height = this.savedHeight;
+        // Re-place from the cell rect rather than replaying the saved
+        // pixel string — the viewport may have changed while rolled up.
         this.savedHeight = null;
+        this.place();
       }
     }
     this.body.style.display = min ? "none" : "";
@@ -2793,7 +2817,7 @@ export class DomPanel {
     // bar visible — the user can still open the settings popup
     // by clicking anywhere on the panel, so a panel with a
     // hidden title bar stays editable from its body.
-    const titleBarVisible = this.titleBarAvailable && !this._titleBarHidden;
+    const titleBarVisible = this.titleBarShowing();
     this.titlebar.style.display = titleBarVisible ? "" : "none";
     if (titleBarVisible) this.applyTitlebarHeight();
 
