@@ -265,9 +265,10 @@ export class PanelSettingsPopup {
    *  reset / external mutation flips the mode). */
   private unsubTitle: (() => void) | null = null;
   private unsubTitleSuffix: (() => void) | null = null;
-  /** Cleanup for the bound panel's `onMaskedChange` subscription.
-   *  Mask can mutate from outside the popup via `resetToDefaults`,
-   *  so the toggle re-syncs on every change. */
+  /** Cleanup for the bound panel's `onMaskedChange` subscription. The
+   *  legacy mask flag can mutate from outside the popup via
+   *  `resetToDefaults`, so the glyph re-syncs on every change — this
+   *  popup is the flag's only subscriber. */
   private unsubMasked: (() => void) | null = null;
 
   constructor() {
@@ -356,12 +357,11 @@ export class PanelSettingsPopup {
     const hideCloseRow = this.addToggleRow(body, pp("hideClose"), "▢", () => this.boundPanel?.toggleHideCloseBtn());
     this.hideCloseBtnBtn = hideCloseRow.btn;
     this.rowsByKey.set("hideClose", hideCloseRow.row);
-    // Mask: stencil-clip the panel body's Pixi content to the body
-    // rect. Default on (~3 draw calls per masked container). Turn
-    // off for panels whose content always fits by construction to
-    // claw those drawcalls back. Default-hidden on non-Pixi panels
-    // — `DomPanel` adds `"mask"` to `_hiddenSettings` for the base
-    // class; `PixiPanel` removes it.
+    // Mask: the legacy body-mask flag (see `DomPanel._masked`). INERT
+    // — it persists and flips this glyph, but nothing clips on it, so
+    // `DomPanel` adds `"mask"` to `_hiddenSettings` and the row is
+    // hidden on every panel. Built anyway so a subclass that opts the
+    // row back in still finds a wired control.
     const maskRow = this.addToggleRow(body, pp("mask"), "▣", () => this.boundPanel?.toggleMasked());
     this.maskBtn = maskRow.btn;
     this.rowsByKey.set("mask", maskRow.row);

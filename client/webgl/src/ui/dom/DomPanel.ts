@@ -504,11 +504,12 @@ export interface PanelStateJSON {
   hideCloseBtn?:    boolean;
   titleBarHidden?: boolean;
   gridSnap?:       boolean;
-  /** Stencil-mask the panel body's Pixi content to the body rect.
-   *  `true` (default) crops overflow at the cost of ~3 draw calls
-   *  per masked container; `false` is the opt-out for panels whose
-   *  content is guaranteed to fit by construction. Surfaced via the
-   *  popup's Mask row; only consulted by `PixiPanel`. */
+  /** Legacy body-mask flag — INERT. It persists, serializes and drives
+   *  the popup's Mask glyph, but nothing clips on it: the canvas-backed
+   *  panel that stencil-masked its body content is gone, and DOM bodies
+   *  crop via CSS `overflow`. Kept so shipped corpus entries carrying
+   *  `"masked"` still load; the popup row is default-hidden on every
+   *  panel (see `_hiddenSettings`) because toggling it does nothing. */
   masked?:         boolean;
   minimized?:      boolean;
   /** Taskbar entry glyph override. `null` (the default) falls
@@ -574,26 +575,25 @@ export class DomPanel {
   }
 
   readonly panel: HTMLDivElement;
-  /** Title bar div. `protected` so `PixiPanel` (and any future
-   *  subclass) can hide its visuals and replace them with a
-   *  Pixi-rendered chrome that draws under the drag overlay,
-   *  letting cards z-order above the title bar. */
+  /** Title bar div. `protected` rather than `private` so a subclass
+   *  could restyle the chrome. No live subclass does, and none should
+   *  need to: appearance is a per-panel option (`background`), which
+   *  reaches all three chrome surfaces at once — reaching in here
+   *  paints one surface and desynchronizes the other two. */
   protected readonly titlebar: HTMLDivElement;
   /** Title-text span inside the title bar. Same `protected` rationale
-   *  as `titlebar` — `PixiPanel` flips its `color` to transparent so
-   *  the visible text is Pixi-drawn while the DOM span still
-   *  reserves layout space + ensures the click hit-area covers the
-   *  text. */
+   *  as `titlebar`. */
   protected readonly titleEl:  HTMLSpanElement;
   private readonly tabsEl:   HTMLDivElement;
   /** Container holding the minimize / close action buttons. Same
-   *  `protected` rationale — `PixiPanel` hides the DOM buttons
-   *  visually (transparent text) while keeping them clickable, and
-   *  draws Pixi glyphs over them. */
+   *  `protected` rationale as `titlebar`; visibility is driven by
+   *  `refreshChrome`, not by subclasses. */
   protected readonly actionsEl: HTMLDivElement;
-  /** Body div. Protected so `PixiPanel` (and any future subclass)
-   *  can adjust its CSS — particularly `pointer-events: none` so
-   *  clicks pass through to the Pixi canvas beneath. */
+  /** Body div. Same `protected` rationale as `titlebar`. Subclasses
+   *  fill it through `setBody` — `ViewportPanel` hands it a holder
+   *  wrapping the viewport's own canvas — and letting clicks reach
+   *  what sits beneath is the `clickThrough` option, not a
+   *  `pointer-events` write here. */
   protected readonly body: HTMLDivElement;
   /** Footer slot — `null` until the consumer installs one via
    *  `setFooter`. Lives below the body but above the resize corner;
@@ -601,10 +601,9 @@ export class DomPanel {
    *  takes the remaining vertical space. Used by chat for the
    *  always-visible input row. */
   private footer: HTMLElement | null = null;
-  /** Resize-corner div. `protected` so `PixiPanel` can hide its
-   *  CSS gradient (the grip-line backdrop) while keeping the
-   *  element in place for pointer capture, then paint Pixi grip
-   *  lines over it. */
+  /** Resize-corner div. Same `protected` rationale as `titlebar`. The
+   *  visible grip is the CSS gradient from `DomPanelStyles`; the
+   *  element is also the pointer-capture target for the gesture. */
   protected readonly resizeCorner: HTMLDivElement;
   /** Width-only resize handle — thin vertical strip on whichever
    *  side of the panel sits opposite the anchor (the same side
@@ -714,11 +713,11 @@ export class DomPanel {
    *  example. */
   private readonly uiEditMode: UiEditMode | null;
   /** Per-panel blacklist of `PanelSettingsPopup` row keys. Seeded
-   *  from `opts.excludeSettings` plus base-class defaults (e.g.
-   *  `"mask"` is default-hidden on plain `DomPanel`; `PixiPanel`
-   *  removes it). Consulted by the popup via `isSettingHidden`.
-   *  Mutable + protected so subclasses can opt back into a default-
-   *  hidden row in their constructor body. */
+   *  from `opts.excludeSettings` plus base-class defaults — currently
+   *  just `"mask"`, hidden on every panel because the flag is inert
+   *  (see `_masked`). Consulted by the popup via `isSettingHidden`.
+   *  Mutable + protected so a subclass can opt back into a default-
+   *  hidden row in its constructor body; none currently does. */
   protected readonly _hiddenSettings: Set<PanelSettingKey>;
   /** The panel's Z-ORDER tier (bug-sweep F1). Frozen at construction time; gates
    *  which recency counter `bringToFront` advances. */
@@ -814,15 +813,13 @@ export class DomPanel {
    *  `_background`: transparent-but-interactive and opaque-but-click-through
    *  are both coherent panels. */
   private _clickThrough = false;
-  /** User-toggled "stencil-mask the body content" preference.
-   *  Owned by `DomPanel` so the persistence / popup wiring is one
-   *  place, but only `PixiPanel` does anything with it (subscribes
-   *  via `onMaskedChange` to attach / detach the mask Graphics).
-   *  Default true; `PixiPanel` reads it on construction to decide
-   *  whether to allocate the mask at all. Persisted under
-   *  `<storageKey>.masked`. Plain `DomPanel`s default-hide the
-   *  popup row (see `isSettingHidden`) since toggling there is a
-   *  no-op. */
+  /** Legacy "mask the body content" preference — INERT. Nothing reads
+   *  it to clip anything: the sole `onMaskedChange` subscriber is the
+   *  settings popup re-reading its own glyph, so the toggle is a closed
+   *  loop. It survives because shipped corpus entries carry `"masked"`
+   *  and the persistence path costs less to keep than to migrate out.
+   *  Default true; persisted under `<storageKey>.masked`; the popup row
+   *  is default-hidden on every panel (see `isSettingHidden`). */
   private _masked = true;
   /** User-toggled "enable minimize" preference. Effective minimize
    *  visibility = `minimizableCap && _minimizable`. Persisted
@@ -942,9 +939,9 @@ export class DomPanel {
     this._taskbarIcon = this.initialTaskbarIcon;
     this.uiEditMode  = opts.uiEditMode  ?? null;
     this.titleBarAvailable = opts.showTitleBar ?? true;
-    // Seed with the caller's blacklist plus `"mask"` — meaningless
-    // on plain `DomPanel` (no Pixi mask to toggle). `PixiPanel`
-    // re-enables the row in its constructor body.
+    // Seed with the caller's blacklist plus `"mask"` — the flag is
+    // inert (see `_masked`), so the row is hidden on every panel. A
+    // subclass could re-enable it in its constructor body; none does.
     this._hiddenSettings = new Set<PanelSettingKey>(opts.excludeSettings ?? []);
     this._hiddenSettings.add("mask");
     this._zOrder = opts.zOrder ?? Z_TIER_TOOLS;
@@ -1218,9 +1215,11 @@ export class DomPanel {
     //
     // Neither the browser nor anything else notifies rect-change
     // subscribers when a panel reflows, so `fireRectChange` here is
-    // what keeps `PixiPanel.syncRect` and rect-mirroring layouts in
-    // step. `applyHeight` runs first so a locked panel tracks the
-    // new safe-area height before subscribers see the new rect.
+    // what keeps rect-mirroring consumers in step — `ViewportPanel`
+    // resizing the world canvas to the BODY rect, and the details
+    // panel's condition cards reflowing against the PANEL rect.
+    // `applyHeight` runs first so a locked panel tracks the new
+    // safe-area height before subscribers see the new rect.
     // Unsubscribed in `destroy`.
     this.unsubGrid = panelGrid.on(() => {
       // A resize is a RE-PROJECTION, not a reflow: the cell rect is
@@ -1367,9 +1366,9 @@ export class DomPanel {
     for (const cb of this.openChangeListeners) cb(true);
     // Now that the panel is mounted, its `getBoundingClientRect`
     // returns real values for the first time. Fire `rectChange`
-    // so subscribers (notably `PixiPanel.syncRect` and any
-    // external consumer subscribed before `open`) lay out
-    // against the actual rect rather than the pre-mount zeros.
+    // so subscribers (notably `ViewportPanel`'s canvas sizing, and
+    // any consumer subscribed before `open`) lay out against the
+    // actual rect rather than the pre-mount zeros.
     this.fireRectChange();
   }
 
@@ -1474,9 +1473,10 @@ export class DomPanel {
     // cross-tier burial cannot happen by construction (bug-sweep F1), so the old
     // ontop-band escalation is gone.
     if (!this.titleBarIsHittable()) this.bringToFront();
-    // Notify subscribers (PixiPanel visibility, taskbar entry styling,
-    // external observers) — but only on the edges that actually
-    // changed so we don't double-fire on an already-visible panel.
+    // Notify subscribers (taskbar entry styling, the details panel's
+    // card reflow, external observers) — but only on the edges that
+    // actually changed so we don't double-fire on an already-visible
+    // panel.
     if (wasClosed)    for (const cb of this.openChangeListeners)     cb(true);
     if (wasMinimized) for (const cb of this.minimizeChangeListeners) cb(false);
     this.fireRectChange();
@@ -1529,9 +1529,7 @@ export class DomPanel {
 
   /** Update the panel's displayed title. Writes the chrome's
    *  live span, updates `titleText`, and fires `onTitleChange`
-   *  so the taskbar entry / Pixi chrome / popup heading
-   *  re-sync. Subclasses (`PixiPanel`) override to also push
-   *  the new string onto their Pixi-rendered title node.
+   *  so the taskbar entry and the settings-popup heading re-sync.
    *
    *  Direct callers (e.g. a panel pushing a live
    *  capacity counter) win until the next `setTitleSuffix`
@@ -1660,8 +1658,10 @@ export class DomPanel {
   get isResizableY(): boolean { return this._resizableY; }
   /** Whether the corner-grab handle (both-axis resize) is
    *  enabled right now. Derived: both X and Y must be toggled
-   *  on AND the height mustn't be locked. Used by `PixiPanel`
-   *  to gate the Pixi corner indicator. */
+   *  on AND the height mustn't be locked. Gates the corner's
+   *  `shouldStart` in `wireResize`, and is the payload
+   *  `onResizableChange` carries. (`refreshChrome` recomputes the
+   *  same expression inline to hide the handle.) */
   get isResizable(): boolean {
     return this._resizableX && this.effectiveResizeY();
   }
@@ -1679,8 +1679,8 @@ export class DomPanel {
    *  `isMinimizeBtnHidden` but for close. */
   get isCloseBtnHidden(): boolean { return this._hideCloseBtn; }
   /** Effective minimize-button visibility — both the capability
-   *  toggle and the hide-button toggle must agree. PixiPanel
-   *  mirrors this onto its Pixi chrome. */
+   *  toggle and the hide-button toggle must agree. `refreshChrome`
+   *  writes it onto the button's `display`. */
   get isMinimizeBtnVisible(): boolean { return this._minimizable && !this._hideMinimizeBtn; }
   /** Effective close-button visibility. */
   get isCloseBtnVisible(): boolean { return this._closable && !this._hideCloseBtn; }
@@ -1712,9 +1712,9 @@ export class DomPanel {
   get heightMode(): HeightMode { return this._heightMode; }
   get activeTabId(): string | null { return this._activeTabId; }
   /** Body region bounding rect in viewport pixels. Title bar and
-   *  tab strip are excluded. Used by `PixiPanel` to mirror the body
-   *  into a Pixi container; also handy for any consumer that needs
-   *  to align an external overlay against the panel's content area. */
+   *  tab strip are excluded. `ViewportPanel` sizes the world canvas
+   *  from it on every `rectChange`; it is also what any consumer
+   *  needs to align an overlay against the panel's content area. */
   get bodyRect(): DOMRect { return this.body.getBoundingClientRect(); }
 
   // ── Events ───────────────────────────────────────────────────────
@@ -1781,9 +1781,9 @@ export class DomPanel {
   }
 
   /** Fires when the user's "hide minimize button" toggle flips.
-   *  PixiPanel subscribes to refresh its chrome's button
-   *  visibility — the DOM side is handled by `refreshChrome`
-   *  which `toggleHideMinimizeBtn` calls directly. */
+   *  No live subscriber — the chrome is updated by `refreshChrome`,
+   *  which `toggleHideMinimizeBtn` calls directly. Kept as the hook
+   *  for an external consumer that needs the edge. */
   onHideMinimizeBtnChange(cb: (hidden: boolean) => void): () => void {
     this.hideMinimizeBtnChangeListeners.add(cb);
     return () => this.hideMinimizeBtnChangeListeners.delete(cb);
@@ -1826,8 +1826,8 @@ export class DomPanel {
   /** Fires whenever the displayed title changes — direct
    *  `setTitle` calls, `setTitleSuffix` recompositions, and
    *  `resetToDefaults` all route through here. The `PanelTaskbar`
-   *  entry, `PixiPanel` Pixi chrome, and `PanelSettingsPopup`
-   *  heading subscribe so they stay in sync without polling. */
+   *  entry and the `PanelSettingsPopup` heading subscribe so they
+   *  stay in sync without polling. */
   onTitleChange(cb: (title: string) => void): () => void {
     this.titleChangeListeners.add(cb);
     return () => this.titleChangeListeners.delete(cb);
@@ -1842,9 +1842,10 @@ export class DomPanel {
     return () => this.titleSuffixChangeListeners.delete(cb);
   }
 
-  /** Fires whenever the user's resize-enabled toggle flips. Used
-   *  by `PixiPanel` to hide / re-show its Pixi resize indicator
-   *  alongside the DOM corner. */
+  /** Fires whenever the user's resize-enabled toggle flips. No live
+   *  subscriber — the DOM handles are shown / hidden directly by
+   *  `refreshChrome`. Kept as the hook for an external consumer that
+   *  needs the edge. */
   onResizableChange(cb: (resizable: boolean) => void): () => void {
     this.resizableChangeListeners.add(cb);
     return () => this.resizableChangeListeners.delete(cb);
@@ -2200,17 +2201,10 @@ export class DomPanel {
     this.refreshChrome();
   }
 
-  /** Whether the panel body's Pixi content is currently stencil-
-   *  masked to the body rect. `true` by default; `PixiPanel` reads
-   *  this on construction and subscribes via `onMaskedChange` to
-   *  attach / detach the mask Graphics live. No-op on plain
-   *  `DomPanel`s. */
+  /** Current value of the legacy mask flag (see `_masked`). Read only
+   *  by the settings popup's Mask glyph — nothing clips on it. */
   get isMasked(): boolean { return this._masked; }
 
-  /** Toggle the body mask. Fires `onMaskedChange` so `PixiPanel`
-   *  reattaches / detaches the mask Graphics; non-Pixi panels just
-   *  persist the flag (toggle is a no-op visually, and the row is
-   *  default-hidden for them — see `isSettingHidden`). */
   /** Current background mode (F1). */
   get background(): BackgroundMode { return this._background; }
 
@@ -2237,9 +2231,10 @@ export class DomPanel {
    *
    *  All three together, deliberately (I9): a panel whose body alone goes
    *  transparent keeps an opaque bar floating over nothing, which reads as a
-   *  rendering fault rather than a setting. Subclasses that want a different
-   *  body treatment (`PixiPanel` showing the canvas) select `background: none`
-   *  rather than overriding the element directly. */
+   *  rendering fault rather than a setting. A panel that wants the world to
+   *  show through its body — the viewport, or a selection panel floating over
+   *  the map — selects `background: "none"` rather than writing
+   *  `body.style.background` itself, which would desynchronize the bar. */
   protected applyBackground(): void {
     const css = backgroundCss(this._background);
     this.titlebar.style.background = css;
@@ -2254,15 +2249,19 @@ export class DomPanel {
     this.panel.style.pointerEvents = this._clickThrough ? "none" : "auto";
   }
 
+  /** Flip the legacy mask flag and persist it. Visually a no-op: the
+   *  only `onMaskedChange` subscriber is the popup re-reading its own
+   *  glyph, and the row is default-hidden on every panel anyway (see
+   *  `isSettingHidden`). */
   toggleMasked(): void {
     this._masked = !this._masked;
     this.storageSet("masked", this._masked ? "1" : "0");
     for (const cb of this.maskedChangeListeners) cb(this._masked);
   }
 
-  /** Fires when the mask toggle flips. `PixiPanel` subscribes to
-   *  attach / detach its mask Graphics so the drawcall saving lands
-   *  without re-creating the panel. */
+  /** Fires when the legacy mask flag flips. The settings popup is the
+   *  only subscriber, and only to re-read its own glyph after a
+   *  `resetToDefaults` — nothing acts on the value. */
   onMaskedChange(cb: (masked: boolean) => void): () => void {
     this.maskedChangeListeners.add(cb);
     return () => this.maskedChangeListeners.delete(cb);
@@ -2422,16 +2421,18 @@ export class DomPanel {
     this.applyHeight();
     this.refreshChrome();
     // `applyHeight` rewrites `panel.style.height` but doesn't
-    // notify rectChange subscribers, so a PixiPanel mirroring
-    // the body region wouldn't re-sync until the next unrelated
-    // event. Fire here so the Pixi content / mask track the
-    // new height on the same tick as the popup click.
+    // notify rectChange subscribers, so a consumer mirroring the
+    // panel's rect — `ViewportPanel`'s canvas, the condition-card
+    // strip — wouldn't re-sync until the next unrelated event.
+    // Fire here so they track the new height on the same tick as
+    // the popup click.
     this.fireRectChange();
     for (const cb of this.heightModeChangeListeners) cb(mode);
     // `effectiveResizeY` includes a `heightMode === "off"` gate,
     // so flipping height mode can also flip the derived
-    // `isResizable` (corner enable). Notify resize subscribers
-    // so the Pixi corner indicator follows.
+    // `isResizable` (corner enable). Notify resize subscribers for
+    // the edge — no live subscriber today; `refreshChrome` above
+    // already hid the handle.
     for (const cb of this.resizableChangeListeners) cb(this.isResizable);
   }
 

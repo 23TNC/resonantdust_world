@@ -2,9 +2,12 @@ import type { LayoutNode } from "../../game/layout/LayoutNode";
 
 /**
  * Minimal interface PanelManager requires of its tracked panels.
- * `DomPanel` (and therefore `PixiPanel`) satisfies it directly;
- * higher-level wrapper classes (e.g. `InventoryPanel`) can
- * implement it by delegating to an inner `PixiPanel`.
+ * `DomPanel` satisfies it directly, and so does every subclass
+ * (`ViewportPanel`, `DetailsPanel`, `InventoryPanel`, `BuildPanel`) —
+ * which is every panel in the client today. Structural, not
+ * `implements`-declared, so a class that *composes* a panel rather than
+ * extending one can satisfy it by forwarding these four methods to its
+ * inner `DomPanel`; none currently does.
  */
 export interface ManagedPanel {
   focus(): void;
@@ -42,14 +45,14 @@ export class PanelManager {
   /** Last-focused panel id, keyed by id prefix (`"inventory"`,
    *  `"gameview"`, etc.) and also by exact id for singletons. */
   private readonly focusedByKey = new Map<string, string>();
-  /** Interior LayoutNode → owning panel map. Wrapper panels
-   *  (`InventoryPanel`, `GameViewPanel`, etc.) register the
-   *  LayoutNode that hosts their interior content (the
-   *  `LayoutInventory`, the `LayoutWorld`, etc.) so a Pixi-side
-   *  hit-test can be resolved back to "which panel owns this
-   *  hit?" via `findPanelByDescendant`. Used by `MainScene`'s
-   *  input handlers to auto-focus the panel a body click /
-   *  drag-start lands inside. */
+  /** Interior LayoutNode → owning panel map, so a hit inside a
+   *  panel's content can be resolved back to "which panel owns this
+   *  hit?" via `findPanelByDescendant`.
+   *
+   *  Currently INERT: `LayoutNode` is a stub interface (see
+   *  `game/layout/LayoutNode.ts`), nothing calls `registerNode`, and
+   *  nothing calls the lookup. It survives as the seam for when the
+   *  card system lands and panel interiors carry a node tree again. */
   private readonly nodeToPanel = new Map<LayoutNode, ManagedPanel>();
   private cascadeIndex = 0;
 
@@ -71,8 +74,8 @@ export class PanelManager {
     // Open + focus the fresh panel. `focus()` on a closed DomPanel
     // first calls `open()` (which mounts the DOM node and fires
     // openChange listeners), then `bringToFront()` (which fires
-    // `onFocus` — picked up by PixiPanel to lift its Pixi nodes to
-    // the top of their layer, and by PanelManager itself to cache
+    // `onFocus` — picked up by the taskbar to restyle the entry, and
+    // by the `handleFocus` subscription just above to cache
     // last-focused-by-prefix). Without this call a freshly-created
     // panel sits in the registry with `isOpen = false` and never
     // renders.
@@ -141,11 +144,13 @@ export class PanelManager {
   }
 
   /** Walk `hit`'s LayoutNode parent chain and return the first
-   *  registered ancestor's panel, or `null`. `MainScene`'s
-   *  `left_click` / `left_drag_start` handlers use this to
-   *  focus the panel a Pixi-side interaction landed inside —
-   *  closing the gap where body clicks (with `pointer-events:
-   *  none` on the DOM panel) wouldn't otherwise raise focus. */
+   *  registered ancestor's panel, or `null`. No caller yet — see
+   *  `nodeToPanel`.
+   *
+   *  The gap it exists to close is the one a `clickThrough` panel
+   *  opens: `pointer-events: none` on the root means a body click
+   *  never reaches the panel, so nothing raises focus. Resolving the
+   *  hit back to its owning panel is how focus would be restored. */
   findPanelByDescendant(hit: LayoutNode | null): ManagedPanel | null {
     let n: LayoutNode | null = hit;
     while (n) {

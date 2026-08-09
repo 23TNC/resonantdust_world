@@ -150,9 +150,12 @@ They join the layout/scale split above as a third category: *layout* comes from 
 **These two are independent, and must stay so.** Transparency is not click-through: a panel can be
 transparent and interactive, or opaque and click-through, and both are coherent. The proof lives
 in the conditions panel, which is transparent AND click-through AND has clickable cards inside it
-— one flag could not express that. This pattern is not new; `PixiPanel` has always set
-`pointer-events: none` on its root with `auto` on the title bar, tabs and action buttons. The
-options make a private arrangement into a declared one.
+— one flag could not express that. The pattern predates the options: the **deleted** `PixiPanel`
+(gone with the pixijs client on 2026-07-28) set `pointer-events: none` on its root with `auto` on
+the title bar, tabs and action buttons. The options turn what was one class's private arrangement
+into a declared per-panel setting. Nothing in `client/webgl` mirrors that class today — the only
+`DomPanel` subclass that mirrors its own body rect is `ViewportPanel`, which hosts the viewport's
+canvas and re-sizes it on `rectChange`.
 
 **Consequence worth knowing before you ship a panel with both.** A click-through panel with no
 title bar has **no grab handle at all** — its body passes clicks through and there is no chrome to
