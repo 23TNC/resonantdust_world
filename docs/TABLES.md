@@ -23,7 +23,7 @@ bottom. Column layouts are cited from [`VARIABLES.md`](VARIABLES.md), never rede
 | `…-event-shard-0` | `event_shard` | the event queue + settled client-visible `event`s |
 | `…-data-shard-0` | `data_shard` | entity composition slots + client-visible `state` (the hot catch-all) |
 | `…-pawn-0` | `pawn` | hot movers — pawns (`TYPE_PAWN`), same `entity_tables!` shape as `data_shard` |
-| `…-playerpawn-0` | `player_pawn` | the players' row-carriers (`TYPE_PLAYER`) — pawn's stamp, one shard (no underscore in the DB name: ST refuses them) |
+| `…-player-pawn-0` | `player_pawn` | the players' row-carriers (`TYPE_PLAYER`) — pawn's stamp, one shard (hyphenated like `event-shard`: ST DB names refuse underscores) |
 | `…-tile-0` | `tile` | cold ground — dense per-zone tiles |
 | `…-thing-0` | `thing` | cold scatter — sparse per-zone things |
 
@@ -61,7 +61,7 @@ login). Every reader resolves THE ACTIVE row through the login funnel — never 
 | column | type | key | notes |
 |---|---|---|---|
 | `player_id` | `u32` | btree | the owner |
-| `player_pawn_reference` | `u32` | PK | `TYPE_PLAYER` entity in `…-playerpawn-0` |
+| `player_pawn_reference` | `u32` | PK | `TYPE_PLAYER` entity in `…-player-pawn-0` |
 | `active` | `bool` | | exactly one true per player — enforced in the login/selection funnel ONLY |
 
 writes the login mint funnel · reads edge (resolve the session's active player-pawn)
@@ -490,7 +490,7 @@ _Work [`2026-08-08-player-pawns`](work/2026-08-08-player-pawns/README.md) F1._
 
 `player_pawn` is **pawn's stamp, re-instantiated**: the same `entity_tables!` core, the same
 `spawn_log` mint machinery, the same `payload` sidecar and `needs` sub-table — one database
-(`…-playerpawn-0`), serving `TYPE_PLAYER` entities (server byte `0x40 | server_id`). See the
+(`…-player-pawn-0`), serving `TYPE_PLAYER` entities (server byte `0x40 | server_id`). See the
 [`pawn`](#pawn) section for every shape; nothing differs but the type nibble and the fan: rows
 fan to the OWNING session (VARIABLES.md §Player-pawns), not to zone subscribers. The
 `inventory` sub-table rides the stamp unused until something wants player storage. The

@@ -99,3 +99,26 @@ module's pawns' lazy needs; thirst banding → nearest water in area + drink; hu
 nearest diet-gated food in area + eat; else wander in area — parameterized by diet, called by
 both modules. The seam stays sense/decide/act so stages 2–5 swap DECIDE only. Rejected:
 leaving the two brains' logic diverged (stage 2+ would fork four ways).
+
+## F9 — the I10 spikes, answered (P0, live evidence)
+
+**(a) Player need rows** live on the PLAYER-PAWN in the `player_pawn` shard — delivered whole
+by [2026-08-08-player-pawns](../2026-08-08-player-pawns/README.md): both npc brains already
+own linked player-pawns carrying `wolf_count` (their completed.md P4 has the probes).
+
+**(b) A module-player's commands validate WITHOUT own-session subscriptions**: a fresh probe
+session (`SpikeB`) logged in, anchored NOTHING, subscribed NOTHING, and queued a bare
+`SPAWN_REQUEST` for a bunny at (116, 71) — the edge accepted (`queue_ok`) and the worker
+MINTED (`spawn request minted … x=116 y=71 def=0x300100d0 tic=43531`). So the host keeps ONE
+shared world model and the module-players stay command-only logins. The one caveat: a zone
+must have been GENERATED (someone subscribed it once) for worldgen-dependent validation —
+the HOST's model subscription covers that by construction (its anchors are the modules').
+
+## F10 — the brain def's login resolution (P0, the paper's law)
+
+The mint funnel picks a player-pawn's def by LOGIN NAME: a `[[brain]]` def whose name equals
+the player's name wins (the host logs each module-player in AS its brain — `wolf_pack` logs
+in as `wolf_pack`); everything else takes the default `player` thing def. One resolution
+point; the future character-select generalizes it. Brain parameters (group_size,
+area_radius) ride the STAT lane — per-level `stats` contributions on the player traits, read
+through the ONE stat eval (no new parameter machinery). VARIABLES.md §Brains is the paper.

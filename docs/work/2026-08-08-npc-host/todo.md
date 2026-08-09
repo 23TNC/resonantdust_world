@@ -5,10 +5,10 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P0 — the paper
 
-- [ ] docs: the module-IS-a-player design, the `brain` type + player traits/needs (F5/F7/F8)
+- [x] docs: the module-IS-a-player design, the `brain` type + player traits/needs (F5/F7/F8)
       in VARIABLES.md/object-model, the wild-pawn fate stated (I8). Acceptance: docs-check
       green.
-- [ ] The I10 spikes, live: (a) where player need rows can live; (b) whether a module-player's
+- [x] The I10 spikes, live: (a) where player need rows can live; (b) whether a module-player's
       mint/intent commands validate without own-session subscriptions. Acceptance: both
       answers written into forks.md with the probe evidence.
 

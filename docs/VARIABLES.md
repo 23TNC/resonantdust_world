@@ -745,7 +745,7 @@ every pawn method — the ONE eval, bands, conditions, emotions — applies unch
 `player_pawn_reference` packs `server_reference = TYPE_PLAYER<<4 | server_id` (`0x40` for
 shard 0), minted by the `player_pawn` shard's spawn machinery. The whole event system routes
 by that nibble: edge allowlist → orchestrator claim → worker write land on
-`…-playerpawn-0`, never colliding with pawn (`0x30…`) refs.
+`…-player-pawn-0`, never colliding with pawn (`0x30…`) refs.
 
 **The linkage + ACTIVE law** (F2): the `players` auth DB owns the linkage — a player's OWNED
 player-pawn list with exactly ONE active bit, resolved at login. The list's length is pinned
@@ -778,6 +778,33 @@ emotions — v1 player-pawns feel the standard 16. Player NEEDS are ordinary `ne
 an npc module's player-pawn takes its BRAIN def (npc-host), whose constant binds land its
 traits and grant its needs; a human's takes the default `player` def (no binds yet). One
 derivation path — minted rows come from the def's bindings exactly as pawn CREATE mints do.
+
+## Brains — the npc module as content (`content/brains.toml`)
+
+_Work [`2026-08-08-npc-host`](work/2026-08-08-npc-host/README.md) (user): a new object TYPE
+`brain` with its own type/subtype/kind/variant — "a place to stuff constants for our brains"._
+
+**The type**: `TYPE_BRAIN = 9` (the u4 palette's next slot, APPEND-ONLY). A `[[brain]]` def
+carries needs + CONSTANT player-trait binds ONLY — no visuals, no parts, no pathability: a
+brain is never a world object; its def exists to be a player-pawn's `definition_reference`.
+Registry tuples number as `brain/<subtype>/<kind>/<variant>` like every def.
+
+**The login resolution law**: the mint funnel picks the def by the LOGIN NAME — a brain def
+whose name equals the logging-in player's name wins (the npc host logs each module-player in
+AS its brain: `wolf_pack` the module logs in as `wolf_pack` the def); anything else takes the
+default `player` thing def. The future character-select generalizes this one resolution
+point; nothing else may pick a def.
+
+**Parameters ride the STAT lane** (F7 refined): per-level brain numbers — `group_size`,
+`area_radius` — are authored `[[stat]]` defs contributed to by the player traits' per-level
+`stats` arrays (`wolf_pack` adds `group_size = [2, 4]` by level). The brain reads them
+through the ONE stat eval with its player-trait rows — no new parameter machinery; stats ARE
+the derived-number lane.
+
+**The wild-pawn fate** (I8, stated): a pawn with no owning player — its minter gone, or
+pre-attribution stock — is RECLAIMED BY THE WORLD: nobody feeds it and survival's drains
+kill it. That is the design, not a leak; a steward brain that adopts the ownerless is the
+named successor if rescue is ever wanted.
 
 ## TOML content schema (`content/*.toml` → `shared` loader → every consumer)
 
