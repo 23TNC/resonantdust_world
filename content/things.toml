@@ -309,6 +309,8 @@ interactions = [ { name = "pick_up" } ]
 
 # The BUNNY: biological life, herbivore, ordinary health (corpus 1). walks level 1 —
 # slower than the wolf ON PURPOSE (the coming hunt must be winnable). Placeholder.
+# FORAGER too: the bunny works flora for its own plant matter — the herbivore that
+# feeds itself. No `inventory` needed; forage drops the yield on the ground (F6).
 [[thing]]
 name = "bunny"
 type = "pawn"
@@ -316,7 +318,7 @@ kind = "bunny"
 subType = ["animal"]
 variant = ["0"]
 needs = ["thirst", "hunger", "corpus"]
-traits = ["biological_lifeform", { name = "walks" }, { name = "corpus" }, "herbivore"]
+traits = ["biological_lifeform", { name = "walks" }, { name = "corpus" }, "herbivore", "forager"]
 # attack F2: the PREY offers being attacked (the water-offers-drink pattern); the
 # NEGATIVE magnitude is the hit — corpus 1, one bite kills (the trigger does the rest).
 interactions = [ { name = "death" }, { name = "attack", magnitude = -1 } ]
