@@ -113,5 +113,5 @@ reference viewports **1920×1080, 1366×768, 1024×640** ("three sizes" below), 
       plus the ratio constant's value if the user wants today's weight back.
 - [ ] The full exit on camera: three sizes, a resize round-trip, a title-bar toggle, a fresh
       profile. Acceptance: captures + measurements in completed.md.
-- [ ] Docs + memory truth pass; **the user's eyes close the stream**. Acceptance: docs-check
+- [x] Docs + memory truth pass; **the user's eyes close the stream**. Acceptance: docs-check
       green; the memory line written.

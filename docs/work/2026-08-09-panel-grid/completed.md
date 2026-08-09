@@ -278,3 +278,34 @@ overflowed at any size, before or after.
 - The **9px floor engages below ~1366×768**, as predicted: the base font is 9px at both 1366×768
   (row 23px, unfloored 8.6) and 1024×640 (row 19px, unfloored 7.1). Text stays legible and the
   rows still hold it; nothing clipped at either size.
+
+## 2026-08-09 — P5: the exit, and the honest limit on this session's evidence
+
+**Fresh-profile run, clean localStorage, four panels open:**
+
+- Both taskbars are exactly one row at **every** viewport tested — 1862×917, 1920×1080,
+  1366×768, 1024×640 (and 3840×2160 earlier): measured heights 28/33/23/19/65 against
+  independently computed `edgeY` differences.
+- **Every panel's cell rect survived every resize** in the sweep, byte-identical, with zero pixel
+  keys in storage throughout.
+- Title bars at the native viewport are exactly **their own** row: 28px at row 20, 27px at row 21
+  — note the two differ, which is the point of `rowHeightAt(nearestRow(top))` over the published
+  `--ui-row`. A single row height would have been wrong for one of those two panels.
+
+**The limit, stated plainly.** This environment cannot resize the browser window (`outerWidth`
+reads 0 under remote Chrome), so every non-native viewport in this stream was produced by
+overriding `window.innerWidth` / `innerHeight` and dispatching `resize`. That genuinely drives the
+code — the grid reads exactly those globals, and `--ui-row`, the bar heights and the projections
+all track correctly. What it does **not** drive is CSS's own resolution of `position: fixed`:
+a bottom-anchored panel's `bottom: 28px` still resolves against the real 917px viewport. So at
+simulated sizes, any measurement that reads a *CSS-resolved* position (a bottom-anchored panel's
+`top`, and the row index derived from it) is unreliable by construction. Three separate checks in
+this stream tripped over that before it was understood; each was re-verified at the native
+viewport, where every number is exact.
+
+**What that means for the exit criteria.** The math is verified exhaustively and off-browser
+(848,656 projection round-trips × 5 viewports, 72,864 clamp cases, all clean). The DOM is verified
+exactly at the native viewport. The JS-computed values are verified at all five. What remains owed
+is a **real** multi-viewport look — dragging a genuine window edge — which only the user can do
+here. That is the substance of the last open item, and the reason it stays unticked rather than
+being claimed.
