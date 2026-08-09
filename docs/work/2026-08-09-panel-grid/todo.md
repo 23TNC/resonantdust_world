@@ -44,6 +44,25 @@ reference viewports **1920×1080, 1366×768, 1024×640** ("three sizes" below), 
       with it, no persisted geometry written (F4). Acceptance: body rect bit-identical across
       hide→show→hide; capture.
 
+## P2b — the UI scale (F9)
+
+- [ ] The grid writes `--ui-row` on `document.documentElement` on every recompute, and nothing
+      else (F9). Acceptance: `getComputedStyle(root).getPropertyValue("--ui-row")` equals the
+      measured row height at three sizes.
+- [ ] Author `--ui-font` as `max(9px, calc(var(--ui-row) * 0.375))` in one `:root` block in
+      `index.html` (F9). Acceptance: it resolves to 12px at a 1080-tall viewport and 9px at 640.
+- [ ] Author the rest of the scale beside it as `calc()` off `--ui-row`: `--ui-font-lg`,
+      `--ui-font-xl`, `--ui-pad`, `--ui-pad-sm`, `--ui-gap`, `--ui-btn` (F9). Acceptance: each
+      resolves to today's px value at a 1080-tall viewport.
+- [ ] Sweep the ~22 hardcoded `fontSize` sites across the 8 files onto `var(--ui-*)`.
+      Acceptance: zero `fontSize: "<n>px"` literals remain under `client/webgl/src`.
+- [ ] Sweep the fixed paddings, gaps and button widths in `DomPanelStyles` + `PanelTaskbar` onto
+      the scale; 1px borders stay literal (F9). Acceptance: chrome at a 1080-tall viewport is
+      pixel-identical to today's; capture the before/after pair.
+- [ ] Confirm the scale costs ONE write per resize, not a traversal. Acceptance: resizing with N
+      panels open performs a single `setProperty` call (counter logged) and no per-element
+      restyle pass exists in the resize path.
+
 ## P3 — panels on cells
 
 - [ ] Replace the six CSS-string storage keys with `col` / `row` / `cols` / `rows` integers (F3).
@@ -89,6 +108,9 @@ reference viewports **1920×1080, 1366×768, 1024×640** ("three sizes" below), 
 
 - [ ] Verify the settings popup + settings menu stay usable at 1024×640 (I10). Acceptance: no
       clipped label, no unreachable row; capture.
+- [ ] Eyeball the scale's two known consequences (I2): the ~13% lighter chrome on a maximized
+      1080p browser, and the 9px floor engaging below ~1366×768. Acceptance: captures at both,
+      plus the ratio constant's value if the user wants today's weight back.
 - [ ] The full exit on camera: three sizes, a resize round-trip, a title-bar toggle, a fresh
       profile. Acceptance: captures + measurements in completed.md.
 - [ ] Docs + memory truth pass; **the user's eyes close the stream**. Acceptance: docs-check

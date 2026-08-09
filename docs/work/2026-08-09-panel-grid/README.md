@@ -67,29 +67,37 @@ replaces all five with one number pair per edge.
   removing it is a separate, trivial commit once the law has been lived with.
 - **The taskbar height is derived and live** (F6): `PanelTaskbar.HEIGHT` is deleted; each bar
   measures one row and re-heights on every grid change, entries sizing off the row.
+- **Text scales with the grid too** (F9, user: _"We will scale font size based on grid height"_).
+  The UI scale derives from the **row**, never the column (cells aren't square off 16:9). The
+  ratios are a discovery rather than an invention — today's chrome is already authored in
+  *eighths of a row*: the 12px font is 3/8, the 4px gaps 1/8, the 8px padding 2/8, the 24px
+  entries 6/8, the 32px action buttons 8/8. Mechanically the grid writes exactly **one** custom
+  property, `--ui-row`, and every other metric is a `calc()` off it in one `:root` block — so a
+  resize re-styles the whole UI with a single write and no traversal.
 
 ## Watch
 
-Cells scale with the viewport and **text does not** ([I2](issues.md#i2)) — a 260px settings
-popup becomes 8 cols, which is 265px at 1920 wide and 188px at 1366. That is the intended
-consequence of the law, but it is where it will first look wrong; the named successor is a UI
-scale derived from the row height, explicitly not built here. Off 16:9, cells stop being square
-([I1](issues.md#i1)) — accepted, because a fixed cell count is exactly what makes a resize a
-pure re-projection. And `defaults.json` is machine-authored by the popup's "Copy all panels"
-button ([I4](issues.md#i4)): the exporter and the reader move in the same commit or the next
-copy-paste silently reverts the corpus to pixels.
+Off 16:9, cells stop being square ([I1](issues.md#i1)) — accepted, because a fixed cell count is
+exactly what makes a resize a pure re-projection; it just means nothing may size itself `1 cell ×
+1 cell` expecting a square. `defaults.json` is machine-authored by the popup's "Copy all panels"
+button ([I4](issues.md#i4)), so the exporter and the reader move in the same commit or the next
+copy-paste silently reverts the corpus to pixels. And the scale has one visible consequence to
+eyeball rather than assume ([I2](issues.md#i2)): a maximized browser on a 1080p screen is ~917px
+of *viewport*, so a row is 27.8px and the base font lands at 10px against today's 12px — the
+chrome comes out ~13% smaller than today. That is the law being right (the bar is now 1/33 of
+the viewport, not a fixed 32px), but the ratio constant is the knob if it reads too light.
 
 ## Not in this stream (named, not built)
 
 Removing the grid-snap row from the settings popup (the user's "later" — F5); retiring
-`SnapMode`'s corner presets, which survive re-expressed in cells (F7); a font/UI scale derived
-from the row (I2); any change to `pin` (which taskbar an entry lives in — unrelated to
-placement).
+`SnapMode`'s corner presets, which survive re-expressed in cells (F7); any change to `pin`
+(which taskbar an entry lives in — unrelated to placement).
 
 ## Exit
 
 Every panel's position and size is four integers; resizing the browser from 1920×1080 to 1280×720
 and back leaves every panel on the same cells with no drift and no panel under a bar; both
 taskbars and every title bar measure exactly one row at three viewport sizes; toggling a title
-bar leaves the body's bounding rect unchanged; a cleared profile opens the full layout on-grid.
-The user's eyes close the stream.
+bar leaves the body's bounding rect unchanged; text scales with the row through a single
+`--ui-row` write, with nothing in the chrome still hardcoding a pixel font; a cleared profile
+opens the full layout on-grid. The user's eyes close the stream.

@@ -11,17 +11,24 @@ Accepted by [F8](forks.md#f8) (a fixed count is what makes resize a pure re-proj
 means **no UI element may assume square cells** — no icon sized `1 cell × 1 cell` expecting a
 square. Size icons off the row height (the smaller axis in practice) and let width breathe.
 
-## I2 — cells scale, text does not — small viewports will look wrong first
+## I2 — cells scale and text does not — RESOLVED into the stream by [F9](forks.md#f9)
 
-This is the loudest consequence of [F3](forks.md#f3) and the most likely thing to be called a
-bug. A cell is 33px wide at 1920 and 23.6px at 1366; the settings popup at 8 cols goes 265px →
-188px while its labels stay 12px. At 1024×640 a row is 19px — under the ~20px a 12px title bar
-needs. No floor is added: a minimum cell size would mean the viewport no longer divides into
-58×33, i.e. the law would stop holding exactly where a user is most likely to notice.
+_Raised 2026-08-09 at planning; resolved same day (user: "We will scale font size based on grid
+height")._ Was: a cell is 33px wide at 1920 and 23.6px at 1366, so the settings popup at 8 cols
+goes 265px → 188px while its labels stay 12px, and at 1024×640 a 19px row can't hold a 12px
+title bar at all. Text was the one thing the grid didn't reach.
 
-The named successor if it does look wrong: derive a **UI scale** (font size, padding, icon size)
-from the row height, so text scales with the grid instead of fighting it. Explicitly not built
-here — record what breaks, with the viewport size, rather than patching a floor in.
+Now the UI scale derives from the row ([F9](forks.md#f9)) and this stops being a risk. Two
+things it leaves behind, both to be checked on camera at P5 rather than assumed:
+
+- **The chrome gets ~13% smaller than today at a maximized 1080p browser.** A maximized window
+  on a 1080p screen is ~917px of *viewport*, not 1080 — so a row is 27.8px, not 32px, and the
+  base font lands at 10px against today's 12px. That is the law being correct (the bar is now
+  1/33 of the viewport, not a fixed 32px), but it is a visible change and the ratio constant is
+  the knob if the user wants today's weight back.
+- **The floor engages below ~1366×768** (row 23.3px → 8.7px unfloored → 9px). Under about
+  528px of viewport height the floored text starts to crowd its row. Record the size at which it
+  actually looks wrong; don't pre-emptively add a second layout mode.
 
 ## I3 — the localStorage migration, and the stale `gridSnap: "0"`
 

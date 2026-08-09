@@ -133,4 +133,45 @@ retunable by editing one line, but they are not a per-viewport function.
 
 Rejected: aspect-adaptive column counts (kills the invariant); a minimum cell pixel size with
 overflow scrolling (introduces a second layout mode for small windows — see
-[I2](issues.md#i2) for the successor we'd rather have).
+[I2](issues.md#i2), and note that F9's font floor is a *different* thing and is safe).
+
+## F9 — the UI scale derives from the ROW; JS writes one custom property, CSS derives the rest
+
+2026-08-09, user: _"We will scale font size based on grid height."_ Promotes
+[I2](issues.md#i2) from a watched risk into the stream. Three decisions inside it:
+
+**Derived from the row height, never the column width.** Cells are non-square off 16:9 (F8), so
+scaling text off cell *width* would inflate it on an ultrawide while the rows it sits in stayed
+put. The row is also the smaller axis in practice and is exactly what a title bar and a taskbar
+now measure — so it is the honest unit for anything text-shaped.
+
+**The ratios are a discovery, not an invention.** Measured against today's 32px bar, the whole
+chrome is already authored in *eighths of a row*: the 12px font is 3/8, the 4px gaps and small
+paddings 1/8, the 8px padding 2/8, the 24px taskbar entries and glyph buttons 6/8, the 32px
+action buttons 8/8, the 100px entry minimum 25/8. Only the 14px secondary font is a half-step
+(3.5/8). So the scale doesn't impose a new rhythm — it names the one the chrome already has,
+which is why 1920×1080 comes out at exactly today's 12px (row 32.7 × 0.375 = 12.3 → 12).
+
+**JS writes ONE property; every other metric is a `calc()` off it.** On each grid recompute the
+grid sets `--ui-row` on `document.documentElement` and nothing else. The derived set —
+`--ui-font`, `--ui-font-lg`, `--ui-font-xl`, `--ui-pad`, `--ui-pad-sm`, `--ui-gap`, `--ui-btn`
+— is authored once as `calc()` in the `:root` block of `index.html`, and the ~22 hardcoded
+`fontSize` sites across 8 files plus the fixed paddings/gaps/button widths in `DomPanelStyles`
+and `PanelTaskbar` become `var(--ui-*)` references. One write per resize then re-styles every
+element with no traversal, which composes with P1's single resize broadcaster. Hairline borders
+stay 1px — they are not a scale, they are a hairline.
+
+**The floor is on the font, not the cell** — `--ui-font: max(9px, calc(var(--ui-row) * 0.375))`.
+This looks like it contradicts F8's refusal of a minimum cell size; it does not, and the
+distinction is the point. A cell floor breaks the layout invariant (the viewport would stop
+dividing into 58×33 and a resize would stop being a pure re-projection). A font floor breaks
+nothing — glyphs don't participate in the grid arithmetic — it only means that on a very small
+viewport text is relatively larger and eventually crowds its row. Unreadable-but-proportional is
+worse than legible-and-tight. No upper clamp: on a 4K viewport the row is 65px and the base font
+24px, which is the whole UI scaling correctly, not a bug.
+
+Rejected: computing all seven values in JS and writing seven properties (same result, seven
+times the write, and the ratios end up buried in TS instead of legible in one `:root` block);
+a `rem`-based scale off `html { font-size }` (would rescale anything using rem for *layout*, and
+the layout is cells now — the two must not share a knob); scaling by cell *area* or by a
+viewport diagonal (neither is what a line of text sits in).
