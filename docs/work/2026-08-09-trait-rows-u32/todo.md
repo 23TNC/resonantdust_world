@@ -5,7 +5,7 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P0 — the paper
 
-- [ ] VARIABLES.md: the ONE u64 row (48-bit law, dead ZERO, def-declared u16 encodings,
+- [x] VARIABLES.md: the ONE u64 row (48-bit law, dead ZERO, def-declared u16 encodings,
       trait data reserved — F1/F6/F7/I9/I10); tier = VARIANT, level DELETED; the six
       categories (F2); the ACTIVE law (I5); sprint (F4). Acceptance: docs-check green.
 

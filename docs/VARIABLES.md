@@ -559,24 +559,60 @@ fourth is DERIVED:
 - **Stats** — DERIVED ONLY, never stored, never fanned (F8): computed from the trait/condition
   rows + corpus anywhere they're needed. Affordances are PREDICATES over stats.
 
-**The packed row** (F1): within a family every def shares `type = gameplay` + the category
-subtype, so a stored row spends its u32 as **`data:16 | kind:12 | variant:4`** — the LOW 16 bits
-are exactly the low 16 of the def's `definition_reference` (kind/variant in place), and the HIGH
-16 carry the family's payload: trait `level` (0 = absent — a stored row is ≥ 1), condition
-`remaining_at_write`, need `value`. Reconstruct the full reference as
-`TYPE_GAMEPLAY<<28 | subtype<<16 | (row & 0xFFFF)`.
+**The ONE u64 row** (work [`2026-08-09-trait-rows-u32`](work/2026-08-09-trait-rows-u32/README.md)
+F1, the user's shape — SUPERSEDES stat-model F1's u16-identity row): every stored gameplay
+row — trait, condition, need — is
 
-**The CONSTANT assignment law** (work [`2026-08-08-trait-lights`](work/2026-08-08-trait-lights/README.md)
-F2/F5/F6, user): a trait BIND may be marked `constant = true` **at the assignment site** in TOML.
-A constant bind is TOML-only — it cannot be assigned at runtime, cannot be modified at runtime,
-and **never rides spacetime**: its level is statically known from the def, so readers DERIVE it
-(zero storage; this is how lights bake into cold). Non-constant binds ride the pawn payload
-exactly as before. THINGS take traits now, but accept **constant binds only** — a thing carrying
-non-constant traits could not be saved to cold (extra data we do not compress), so the loader
-REFUSES a non-constant bind on a non-pawn thing. Every reader sees traits through the ONE merged
-accessor (`object_traits`: the def's constant binds + the payload's runtime rows; on a name
-collision the CONSTANT bind wins and the payload row is ignored). Any future trait-writing verb
-must check the def's constant binds and refuse — the law in print (trait-lights I4).
+```
+u64 gameplay_row
+  u16 dead                        bits 48–63    ALWAYS ZERO (asserted at every boundary)
+  u16 data                        bits 32–47    def-interpreted (below)
+  u32 definition_reference        bits 0–31     the FULL reference — subtype names the
+                                                category, variant names the TIER
+```
+
+**THE 48-BIT TRANSPORT LAW**: 48 significant bits ride every JS boundary (JSON frames, wasm
+returns, SQL results) as ONE lossless f64 — JS integers are exact to 2^53. Two rules keep it
+true: the dead 16 are asserted ZERO wherever a row crosses; TS splits halves by DIVISION
+(`Math.floor(row / 2**32)`), never `>>> 32` — JS bitwise truncates at 32 bits and a shift
+there is silently wrong.
+
+**LEVEL IS DELETED; the tier is the VARIANT nibble** (F6, after the level census — deepest
+authored table 3, highest bind 2, the u4 holds 15): `walks` tier 2 IS the walks def at
+variant 2; marker traits (bite, herbivore) are the bare def at variant 0; "level 0 =
+absent" dies — absence is the absent row. Authoring keeps the per-level ARRAYS as sugar:
+array index i authors variant i+1; binds write `variant = N`.
+
+**The data u16 is DEF-INTERPRETED** (F7): the def's TOML declares its encoding. Defaults:
+need = the u16 fixed-point value; condition = remaining-at-write; TRAIT = ZERO, reserved
+for per-instance state (active-trait charges are the anticipated first use). A def may
+declare LANES instead (e.g. `2 × i8` bound to authored targets). A consumer meeting an
+encoding it does not know REFUSES loudly and skips the row — never misreads lanes (I10).
+
+**The SIX trait categories; constant is BY CATEGORY** (trait-rows-u32 F2, superseding
+trait-lights F2's per-bind flag): the gameplay palette carries
+`pawn_trait_{constant,active,passive}` + `player_trait_{constant,active,passive}`; the old
+`trait`/`player_trait` categories are RETIRED EMPTY (registry rows remain — append-only —
+but the corpus authors nothing under them and the loader refuses their tables with a
+migration message). A `*_constant` def's binds are constant BY CATEGORY — TOML-only, never
+riding spacetime, derived by readers (zero storage; how lights bake into cold); the per-bind
+`constant = true` flag retires with its ambiguity. `*_passive` defs are the stored stat/
+need/emotion contributors (walks, corpus, biological_lifeform, the tag carriers).
+`*_active` defs are ACTIVATABLE (below). THINGS still accept constant binds only (a
+non-constant trait could not survive a cold save); every reader still sees traits through
+the ONE merged accessor, constant-wins on collision; any trait-writing verb still refuses
+constants (trait-lights I4 — the law survives the flag).
+
+**The ACTIVE law** (trait-rows-u32 F3, user): a carrier binds at most **3** active traits
+(pawns 3; players 3 for now — ONE constant, revisit cheap), refused at LOAD (a 4th authored
+bind) AND at RUN (a 4th concurrent activation) — two doors, both watched (I5). Activation
+is the client-open `ACTIVATE_TRAIT` verb: the WORKER validates the bind, the category, the
+slots, and the def's availability predicate, then executes the def's authored `activate`
+block — a list of condition GRANTS. Sprint is the canon: activation grants `sprinting`
+(short; its `stats` modifier raises `ground_speed` through the ONE combiner) and
+`sprint_cooldown` (long — sprint + recovery — granted the SAME tic: its PRESENCE is the
+re-activation refusal and its own modifiers carry the exhaustion). Two overlapping timers
+express the whole lifecycle; there is no on-expiry chaining machinery.
 
 **The need value is u16 FIXED-POINT on the AUTHORED domain** (F4): `0..65535` maps linearly onto
 the need's authored `min..max` — `q = round((v − min) / (max − min) · 65535)` clamped, exact
