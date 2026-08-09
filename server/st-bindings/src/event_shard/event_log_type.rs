@@ -21,6 +21,7 @@ pub struct EventLog {
     pub orchestrator_reference: u8,
     pub worker_reference: u8,
     pub zones: Vec::<u16>,
+    pub issuer_player_id: u32,
 }
 
 
@@ -41,6 +42,7 @@ pub struct EventLogCols {
     pub orchestrator_reference: __sdk::__query_builder::Col<EventLog, u8>,
     pub worker_reference: __sdk::__query_builder::Col<EventLog, u8>,
     pub zones: __sdk::__query_builder::Col<EventLog, Vec::<u16>>,
+    pub issuer_player_id: __sdk::__query_builder::Col<EventLog, u32>,
 }
 
 impl __sdk::__query_builder::HasCols for EventLog {
@@ -55,6 +57,7 @@ impl __sdk::__query_builder::HasCols for EventLog {
             orchestrator_reference: __sdk::__query_builder::Col::new(table_name, "orchestrator_reference"),
             worker_reference: __sdk::__query_builder::Col::new(table_name, "worker_reference"),
             zones: __sdk::__query_builder::Col::new(table_name, "zones"),
+            issuer_player_id: __sdk::__query_builder::Col::new(table_name, "issuer_player_id"),
 
         }
     }

@@ -686,7 +686,9 @@ fn handle_queue(
         return;
     };
     let out = out_tx.clone();
-    let submit = conn.reducers().queue_then(actions, move |_ctx, res| match res {
+    // npc-host I11: stamp the ISSUING player — the spawn-attribution link.
+    let issuer = session.unwrap_or(0);
+    let submit = conn.reducers().queue_then(actions, issuer, move |_ctx, res| match res {
         Ok(Ok(())) => send(&out, ServerMsg::QueueOk { cid }),
         Ok(Err(error)) => send(&out, ServerMsg::QueueErr { cid, error }),
         Err(e) => send(&out, ServerMsg::QueueErr { cid, error: format!("internal: {e}") }),

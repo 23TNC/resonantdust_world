@@ -14,12 +14,14 @@ use spacetimedb_sdk::__codegen::{
 #[sats(crate = __lib)]
 pub(super) struct QueueArgs {
     pub actions: Vec::<u32>,
+    pub issuer_player_id: u32,
 }
 
 impl From<QueueArgs> for super::Reducer {
     fn from(args: QueueArgs) -> Self {
         Self::Queue {
             actions: args.actions,
+            issuer_player_id: args.issuer_player_id,
 }
 }
 }
@@ -40,8 +42,9 @@ pub trait queue {
     ///  and this method provides no way to listen for its completion status.
     /// /// Use [`queue:queue_then`] to run a callback after the reducer completes.
     fn queue(&self, actions: Vec::<u32>,
+issuer_player_id: u32,
 ) -> __sdk::Result<()> {
-        self.queue_then(actions,  |_, _| {})
+        self.queue_then(actions, issuer_player_id,  |_, _| {})
     }
 
     /// Request that the remote module invoke the reducer `queue` to run as soon as possible,
@@ -53,6 +56,7 @@ pub trait queue {
     fn queue_then(
         &self,
         actions: Vec::<u32>,
+issuer_player_id: u32,
 
         callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
             + Send
@@ -64,12 +68,13 @@ impl queue for super::RemoteReducers {
     fn queue_then(
         &self,
         actions: Vec::<u32>,
+issuer_player_id: u32,
 
         callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
             + Send
             + 'static,
     ) -> __sdk::Result<()> {
-        self.imp.invoke_reducer_with_callback(QueueArgs { actions,  }, callback)
+        self.imp.invoke_reducer_with_callback(QueueArgs { actions, issuer_player_id,  }, callback)
     }
 }
 

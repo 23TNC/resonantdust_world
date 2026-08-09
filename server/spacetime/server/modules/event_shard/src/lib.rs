@@ -126,6 +126,10 @@ pub struct EventLog {
     /// `complete` (it holds the targets' positions), consumed at `settle` to fan `event` out per
     /// zone. Empty until then.
     pub zones: Vec<u16>,
+    /// The ISSUING player (npc-host I11 — the spawn-attribution link): the edge stamps its
+    /// session's `player_id`; worker-internal continuations FORWARD their cause's issuer
+    /// (a SPAWN_REQUEST's CREATE carries the requester); `0` = server-internal, no owner.
+    pub issuer_player_id: u32,
 }
 
 // ── event — the settled, client-visible log ─────────────────────────────────────────
@@ -166,9 +170,9 @@ pub fn init(ctx: &ReducerContext) {
 /// mis-frames the rest with no re-sync point, so reject here rather than hand a worker garbage.
 /// Mints the `event_reference`, stamps `event_tic = master + 3`, latches `PROMOTE` from the program.
 #[reducer]
-pub fn queue(ctx: &ReducerContext, actions: Vec<u32>) -> Result<(), String> {
+pub fn queue(ctx: &ReducerContext, actions: Vec<u32>, issuer_player_id: u32) -> Result<(), String> {
     let event_tic = tic::tic_add(master_tic(ctx), TIC_GAP);
-    queue_common(ctx, actions, event_tic)
+    queue_common(ctx, actions, event_tic, issuer_player_id)
 }
 
 /// Append a program for a **caller-chosen future tic** — the continuation door (`ACTIONS.md`
@@ -176,15 +180,25 @@ pub fn queue(ctx: &ReducerContext, actions: Vec<u32>) -> Result<(), String> {
 /// `event_tic ≥ master + 3` (the completeness barrier is per-tic freezing, not per-queue-time);
 /// anything nearer is rejected — its tic's set may already be frozen.
 #[reducer]
-pub fn queue_at(ctx: &ReducerContext, actions: Vec<u32>, event_tic: u16) -> Result<(), String> {
+pub fn queue_at(
+    ctx: &ReducerContext,
+    actions: Vec<u32>,
+    event_tic: u16,
+    issuer_player_id: u32,
+) -> Result<(), String> {
     let min = tic::tic_add(master_tic(ctx), TIC_GAP);
     if tic::tic_before(event_tic, min) {
         return Err(format!("event_tic {event_tic} is inside the barrier (min {min})"));
     }
-    queue_common(ctx, actions, event_tic)
+    queue_common(ctx, actions, event_tic, issuer_player_id)
 }
 
-fn queue_common(ctx: &ReducerContext, actions: Vec<u32>, event_tic: u16) -> Result<(), String> {
+fn queue_common(
+    ctx: &ReducerContext,
+    actions: Vec<u32>,
+    event_tic: u16,
+    issuer_player_id: u32,
+) -> Result<(), String> {
     for inst in action::program(&actions) {
         inst.map_err(|e| format!("bad program: {e:?}"))?;
     }
@@ -206,6 +220,7 @@ fn queue_common(ctx: &ReducerContext, actions: Vec<u32>, event_tic: u16) -> Resu
         status: pack_status(flags, EVENT_QUEUED),
         actions,
         event_group: event_reference, // singleton until real local grouping
+        issuer_player_id,
         orchestrator_reference: orchestrator,
         worker_reference: SERVER_REF_NONE,
         zones: Vec::new(),

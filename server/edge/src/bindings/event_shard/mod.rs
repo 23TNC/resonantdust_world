@@ -78,10 +78,12 @@ pub enum Reducer {
 }    ,
     Queue {
         actions: Vec::<u32>,
+        issuer_player_id: u32,
 }    ,
     QueueAt {
         actions: Vec::<u32>,
         event_tic: u16,
+        issuer_player_id: u32,
 }    ,
     Running {
         event_reference: u32,
@@ -149,15 +151,19 @@ fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
 }),
             Reducer::Queue{
                 actions,
+                issuer_player_id,
 }             => __sats::bsatn::to_vec(&queue_reducer::QueueArgs {
                 actions: actions.clone(),
+                issuer_player_id: issuer_player_id.clone(),
 }),
             Reducer::QueueAt{
                 actions,
                 event_tic,
+                issuer_player_id,
 }             => __sats::bsatn::to_vec(&queue_at_reducer::QueueAtArgs {
                 actions: actions.clone(),
                 event_tic: event_tic.clone(),
+                issuer_player_id: issuer_player_id.clone(),
 }),
             Reducer::Running{
                 event_reference,

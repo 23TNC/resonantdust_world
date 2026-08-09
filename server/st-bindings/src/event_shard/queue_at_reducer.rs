@@ -15,6 +15,7 @@ use spacetimedb_sdk::__codegen::{
 pub(super) struct QueueAtArgs {
     pub actions: Vec::<u32>,
     pub event_tic: u16,
+    pub issuer_player_id: u32,
 }
 
 impl From<QueueAtArgs> for super::Reducer {
@@ -22,6 +23,7 @@ impl From<QueueAtArgs> for super::Reducer {
         Self::QueueAt {
             actions: args.actions,
             event_tic: args.event_tic,
+            issuer_player_id: args.issuer_player_id,
 }
 }
 }
@@ -43,8 +45,9 @@ pub trait queue_at {
     /// /// Use [`queue_at:queue_at_then`] to run a callback after the reducer completes.
     fn queue_at(&self, actions: Vec::<u32>,
 event_tic: u16,
+issuer_player_id: u32,
 ) -> __sdk::Result<()> {
-        self.queue_at_then(actions, event_tic,  |_, _| {})
+        self.queue_at_then(actions, event_tic, issuer_player_id,  |_, _| {})
     }
 
     /// Request that the remote module invoke the reducer `queue_at` to run as soon as possible,
@@ -57,6 +60,7 @@ event_tic: u16,
         &self,
         actions: Vec::<u32>,
 event_tic: u16,
+issuer_player_id: u32,
 
         callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
             + Send
@@ -69,12 +73,13 @@ impl queue_at for super::RemoteReducers {
         &self,
         actions: Vec::<u32>,
 event_tic: u16,
+issuer_player_id: u32,
 
         callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
             + Send
             + 'static,
     ) -> __sdk::Result<()> {
-        self.imp.invoke_reducer_with_callback(QueueAtArgs { actions, event_tic,  }, callback)
+        self.imp.invoke_reducer_with_callback(QueueAtArgs { actions, event_tic, issuer_player_id,  }, callback)
     }
 }
 

@@ -790,14 +790,14 @@ async fn main() {
                 prog.extend_from_slice(&next.inputs);
                 // The display identity survives the re-queue (intent-queue-ui).
                 q.advancing = Some((next.entry_id, next.interaction_ref));
-                match event.reducers().queue_at(prog, tic_add(master, 4)) {
+                match event.reducers().queue_at(prog, tic_add(master, 4), 0) {
                     Ok(()) => tracing::info!(master, pawn = format!("{p:#010x}"),
                         pending = q.pending.len(), "intent advanced — walk landed, next order queued"),
                     Err(err) => tracing::warn!(%err, pawn = format!("{p:#010x}"),
                         "intent advance queue failed — pending tail dropped"),
                 }
             }
-            let _ = event.reducers().queue_at(q.fan_program(p), tic_add(master, 4));
+            let _ = event.reducers().queue_at(q.fan_program(p), tic_add(master, 4), 0);
             if q.pending.is_empty() && q.running.is_none() && q.advancing.is_none() {
                 intent_queues.remove(&p);
             }
@@ -1295,7 +1295,7 @@ async fn main() {
                                                 u32::from(cell), kr, u32::from(rot),
                                             ];
                                             if let Err(err) =
-                                                event.reducers().queue_at(prog, tic_add(master, 4))
+                                                event.reducers().queue_at(prog, tic_add(master, 4), 0)
                                             {
                                                 tracing::warn!(%err, tic = t, "requested cold spawn queue failed — dropped");
                                             } else {
@@ -1489,7 +1489,7 @@ async fn main() {
                         let mut program =
                             vec![EXECUTE_INTERACTION, iref, INTENT_FRESH, inputs.len() as u32];
                         program.extend_from_slice(&inputs);
-                        match event.reducers().queue_at(program, tic_add(master, 4)) {
+                        match event.reducers().queue_at(program, tic_add(master, 4), 0) {
                             Ok(()) => tracing::info!(tic = t, interaction = %bind.name,
                                 need = %need_name, pawn = format!("{obj:#010x}"),
                                 "need-write trigger fired (food-chain F5)"),
@@ -1553,7 +1553,7 @@ async fn main() {
                         _ => (vec![MOVE_STEP, obj, dest, serial], 8),
                     };
                     let next_tic = tic_add(t, k);
-                    if let Err(err) = event.reducers().queue_at(program, next_tic) {
+                    if let Err(err) = event.reducers().queue_at(program, next_tic, 0) {
                         tracing::warn!(%err, tic = t, obj = format!("{obj:#010x}"), "continuation queue failed — chain ends");
                     }
                 }
@@ -1593,7 +1593,7 @@ async fn main() {
                             let program = vec![
                                 PROMOTE, SET, cold_row, u32::from(TYPE_BIOME_TILE), tile_reference, kind, 0,
                             ];
-                            if let Err(err) = event.reducers().queue_at(program, next_tic) {
+                            if let Err(err) = event.reducers().queue_at(program, next_tic, 0) {
                                 tracing::warn!(%err, tic = t, x, y, "build_wall SET queue failed — tile dropped");
                             } else {
                                 queued += 1;
@@ -1656,7 +1656,7 @@ async fn main() {
                             if earlier {
                                 if event
                                     .reducers()
-                                    .queue_at(vec![RESTAMP_NEED, p, *nref], fire)
+                                    .queue_at(vec![RESTAMP_NEED, p, *nref], fire, 0)
                                     .is_ok()
                                 {
                                     crossing_slots.insert(key, fire);
@@ -1696,7 +1696,7 @@ async fn main() {
                                 "intent cancelled — pending entry removed");
                             let _ = event
                                 .reducers()
-                                .queue_at(q.fan_program(*pawn_ref), tic_add(master, 4));
+                                .queue_at(q.fan_program(*pawn_ref), tic_add(master, 4), 0);
                             if q.pending.is_empty() && q.running.is_none() && q.advancing.is_none()
                             {
                                 intent_queues.remove(pawn_ref);
@@ -1723,7 +1723,7 @@ async fn main() {
                                         "intent cancelled — executing entry; its completion will NO-OP");
                                     let _ = event
                                         .reducers()
-                                        .queue_at(q.fan_program(*pawn_ref), tic_add(master, 4));
+                                        .queue_at(q.fan_program(*pawn_ref), tic_add(master, 4), 0);
                                 } else {
                                     tracing::info!(tic = t, pawn = %plabel, entry_id,
                                         "cancel REFUSED — the interaction is not cancelable while executing");
@@ -1738,7 +1738,7 @@ async fn main() {
                                 let _ = event.reducers().queue_at(
                                     PawnQueue::new().fan_program(*pawn_ref),
                                     tic_add(master, 4),
-                                );
+                                0);
                             }
                             _ => {
                                 tracing::info!(tic = t, pawn = %plabel, entry_id,
@@ -1812,7 +1812,7 @@ async fn main() {
                             "intent queue REPLACED by a fresh order (F3)");
                         let _ = event
                             .reducers()
-                            .queue_at(PawnQueue::new().fan_program(target), tic_add(master, 4));
+                            .queue_at(PawnQueue::new().fan_program(target), tic_add(master, 4), 0);
                     }
                     // A COMPLETION advances the queue ON RECEIPT — the outcome (execute
                     // or no-op) never retries and never blocks the next intent (F1).
@@ -1830,7 +1830,7 @@ async fn main() {
                                     ];
                                     prog.extend_from_slice(&next.inputs);
                                     q.advancing = Some((next.entry_id, next.interaction_ref));
-                                    match event.reducers().queue_at(prog, tic_add(master, 4)) {
+                                    match event.reducers().queue_at(prog, tic_add(master, 4), 0) {
                                         Ok(()) => tracing::info!(tic = t,
                                             pawn = format!("{target:#010x}"),
                                             "intent advanced — completion fired, next order queued"),
@@ -1841,7 +1841,7 @@ async fn main() {
                                 }
                                 let _ = event
                                     .reducers()
-                                    .queue_at(q.fan_program(target), tic_add(master, 4));
+                                    .queue_at(q.fan_program(target), tic_add(master, 4), 0);
                                 if q.pending.is_empty()
                                     && q.running.is_none()
                                     && q.advancing.is_none()
@@ -2183,14 +2183,14 @@ async fn main() {
                             .reducers()
                             // chord-movement F4: the seed fans the INTENT, not the start
                             // position — no PROMOTE prefix on MOVE_TO.
-                            .queue_at(vec![PROMOTE_EVENT, MOVE_TO, target, d], effect_tic)
+                            .queue_at(vec![PROMOTE_EVENT, MOVE_TO, target, d], effect_tic, 0)
                         {
                             tracing::warn!(%err, tic = t, "intent walk seed queue failed — queue dropped");
                             intent_queues.remove(&target);
                         } else {
                             let _ = event
                                 .reducers()
-                                .queue_at(q.fan_program(target), effect_tic);
+                                .queue_at(q.fan_program(target), effect_tic, 0);
                             tracing::info!(tic = t, interaction = %iname,
                                 pawn = format!("{target:#010x}"),
                                 dest = format!("{:?}", position_to_tile(d)),
@@ -2212,7 +2212,7 @@ async fn main() {
                             inputs.len() as u32,
                         ];
                         prog.extend_from_slice(inputs);
-                        if let Err(err) = event.reducers().queue_at(prog, fire_tic) {
+                        if let Err(err) = event.reducers().queue_at(prog, fire_tic, 0) {
                             tracing::warn!(%err, tic = t, "intent completion queue failed — dropped");
                         } else {
                             let q = intent_queues.entry(target).or_insert_with(PawnQueue::new);
@@ -2234,7 +2234,7 @@ async fn main() {
                             });
                             let _ = event
                                 .reducers()
-                                .queue_at(q.fan_program(target), tic_add(master, 4));
+                                .queue_at(q.fan_program(target), tic_add(master, 4), 0);
                             tracing::info!(tic = t, interaction = %iname,
                                 pawn = format!("{target:#010x}"),
                                 duration = params.duration, fire_tic,
@@ -2249,7 +2249,7 @@ async fn main() {
                             q.advancing = None;
                             let _ = event
                                 .reducers()
-                                .queue_at(q.fan_program(target), tic_add(master, 4));
+                                .queue_at(q.fan_program(target), tic_add(master, 4), 0);
                             if q.pending.is_empty() && q.running.is_none() {
                                 intent_queues.remove(&target);
                             }
@@ -2653,7 +2653,7 @@ async fn main() {
                             ]);
                         }
                     }
-                    if let Err(err) = event.reducers().queue_at(program, effect_tic) {
+                    if let Err(err) = event.reducers().queue_at(program, effect_tic, 0) {
                         tracing::warn!(%err, tic = t, "interaction effect queue failed — dropped");
                     } else {
                         // A BARE walk is an active event too (user, 2026-08-07: "move to
@@ -2673,7 +2673,7 @@ async fn main() {
                             });
                             let _ = event
                                 .reducers()
-                                .queue_at(q.fan_program(target), effect_tic);
+                                .queue_at(q.fan_program(target), effect_tic, 0);
                         }
                         // The REMOVE effect (food-chain F5): death's second half — the
                         // pawn shard deletes the entity's rows (StateGone fans, clients
