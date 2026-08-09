@@ -13,10 +13,12 @@ work/2026-08-08-east-pipeline found we had been doing by accident.
   art eval-data --cn 0.35 --lora-strength 0.85     # widen beyond what the seed can give you
   art eval-data --gen-size 0                       # generate at the control's native 512 (the old behaviour)
 
-GENERATION RESOLUTION defaults to 1024. The control image is the i2i latent, so it sets what the
-base draws at; the bank is 512 and SDXL is native at 1024. Measured on wolf-south: at 512 the
-frontal face comes out as a splayed white mask (12/12 rejected by hand), at 1024 it comes out as a
-face. Costs ~4x the compute per image.
+GENERATION RESOLUTION defaults to 768 — the resolution the LoRA was TRAINED at (ns-evaluation F5).
+The control image is the i2i latent, so it sets what the base actually draws at. Measured on
+wolf-south over 3 seeds: **512** gives a splayed white mask (12/12 rejected by hand), **768** gives a
+proper face and stays closest to the corpus proportion, **1024** also gives a face but drifts busier
+— spikier fur, more interior strokes — because 1024 is native for the BASE while 768 is the only
+resolution the LORA has seen. ~2.25x the compute of 512.
 
 Each seed is ONE pipeline call covering every requested direction, so south and north anchor on the
 east hero the way the shipping pipeline does.
@@ -98,8 +100,8 @@ def main():
     ap.add_argument("--cn", type=float, default=0.5, help="ControlNet strength; LOWER to let the shape vary between seeds")
     ap.add_argument("--cn-end", type=float, default=0.9)
     ap.add_argument("--size", type=int, default=512, help="saved sprite size")
-    ap.add_argument("--gen-size", type=int, default=1024,
-                    help="GENERATION resolution (default 1024). The control image becomes the i2i latent, so this is what the base actually draws at. The bank is 512 and SDXL is native at 1024 — measured on wolf-south, 512 produces a mangled frontal face and 1024 does not. Pass 0 to keep the control's own size.")
+    ap.add_argument("--gen-size", type=int, default=768,
+                    help="GENERATION resolution (default 768 — the LoRA's training resolution). The control image becomes the i2i latent, so this is what the base actually draws at. The bank is 512 and SDXL is native at 1024 — measured on wolf-south: 512 mangles the frontal face, 768 fixes it and stays closest to the corpus, 1024 fixes it but drifts busier. Pass 0 to keep the control's own size.")
     ap.add_argument("--frame-fill", type=float, default=0.0,
                     help="crop the control to its subject and re-square it (try 0.06). Measured NOT to help on south, and it drags the source plate's border into frame; off by default.")
     ap.add_argument("--seed-min", type=int, default=1)

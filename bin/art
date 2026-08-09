@@ -3710,6 +3710,14 @@ cmd_eval_data() {
 
 # Score the hand-labelled eval_data buckets and report whether our automatic metrics agree with the
 # human labels — the check that decides whether generation selection can be automated at all.
+# Sort .staging/eval_data/new/ into <label>-<dir> buckets, capturing WHY a sprite was rejected and
+# whether it was a borderline call. The reason rides in labels.json, never the filename, so hand
+# moves do not have to rewrite names. Delegates to lib/eval_sort.py.
+cmd_eval_sort() {
+  command -v python3 >/dev/null || { echo "art eval-sort: python3 not found" >&2; return 1; }
+  RD_REPO_ROOT="$REPO_ROOT" exec python3 "$SCRIPT_DIR/lib/eval_sort.py" "$@"
+}
+
 cmd_eval_agreement() {
   command -v python3 >/dev/null || { echo "art eval-agreement: python3 not found" >&2; return 1; }
   RD_REPO_ROOT="$REPO_ROOT" exec python3 "$SCRIPT_DIR/lib/eval_agreement.py" "$@"
@@ -3770,6 +3778,7 @@ main() {
   case "$cmd" in
     eval-data) cmd_eval_data "$@" ;;
     eval-agreement) cmd_eval_agreement "$@" ;;
+    eval-sort) cmd_eval_sort "$@" ;;
     generate) cmd_generate "$@" ;;
     generate-tile) cmd_generate_tile "$@" ;;
     retile-linked) cmd_retile_linked "$@" ;;

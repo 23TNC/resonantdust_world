@@ -6,9 +6,9 @@ Every table carries the majority-class baseline; at or below it is reported as f
 
 ## P0 — Labels worth fitting to
 
-- [ ] Settle the generation resolution before collecting any new labels. Acceptance: 768 (the LoRA's own) against 1024 and 512 on three fixed seeds; a fork names the winner — south's existing labels were collected at 512 and describe that, not the direction.
-- [ ] Add a reason code to the labelling flow. Acceptance: a reject records one of `background`/`lineart`/`anatomy`/`pose`/`colour`/`other`; a bare good/bad label cannot distinguish a fixable defect from a borderline call.
-- [ ] Add a `borderline` label distinct from `bad`. Acceptance: the user marked 2 of 3 east rejects "would accept if pressed"; scoring those as hard failures penalises a judge for agreeing with them.
+- [x] Settle the generation resolution before collecting any new labels. Acceptance: 768 (the LoRA's own) against 1024 and 512 on three fixed seeds; a fork names the winner — south's existing labels were collected at 512 and describe that, not the direction.
+- [x] Add a reason code to the labelling flow. Acceptance: a reject records one of `background`/`lineart`/`anatomy`/`pose`/`colour`/`other`; a bare good/bad label cannot distinguish a fixable defect from a borderline call.
+- [x] Add a `borderline` label distinct from `bad`. Acceptance: the user marked 2 of 3 east rejects "would accept if pressed"; scoring those as hard failures penalises a judge for agreeing with them.
 - [ ] Grow south to n≥40 labelled at the settled resolution. Acceptance: a count in `issues.md`; 19 cannot separate a real discriminator from a coincidence.
 - [ ] Grow north to n≥40. Acceptance: a count; north is the weakest cell at n=13 and every metric there is currently noise.
 - [ ] Label a second species across both directions. Acceptance: bear or fox at n≥20 per direction — a judge fitted only to wolves is not a judge.

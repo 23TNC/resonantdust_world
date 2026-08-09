@@ -71,3 +71,33 @@ re-tuning east would improve a cell that is not blocking anything.
 **What that costs, recorded:** the judge built here will be validated mostly on north/south, so its
 east behaviour will be under-measured. [P1](todo.md) scores all three directions even though only two
 are the target, so east is a free control rather than a blind spot.
+
+## F5 — Generate at 768: match the LoRA, not the base {#f5}
+_2026-08-08 · resolved at P0.1 · **768, not 1024 and not 512**_
+
+**Chosen.** `--gen-size 768` — the resolution `rd_diremph_anima_r20_g07` was trained at.
+
+Three resolutions were in play and only two had been tested. Same three seeds, wolf south,
+`corpus:Wolf_Timber` control, everything else fixed:
+
+| | result |
+|---|---|
+| **512** (the old default) | all three broken — splayed white masks, no coherent face |
+| **768** (LoRA's training res) | **all three resolve a proper face** — eyes, muzzle, dark nose, ears — and stay closest to the corpus proportion |
+| **1024** (SDXL native) | faces resolve, but the interior drifts busier: spikier fur, more strokes, heads growing against the body |
+
+**Why 768 beats 1024, which was my earlier recommendation.** I proposed 1024 on the reasoning that
+SDXL is native there and 512 is half of it. That reasoning was incomplete: the **LoRA** has only ever
+seen 768, and it is the LoRA that carries the convention. At 1024 the base's own detail prior has
+more room and the sprite gains fur strokes and interior lines the corpus does not have — better than
+512's broken face, worse than 768 on the thing we actually want.
+
+**It is also cheaper.** 768 is ~2.25× the compute of 512; 1024 is ~4×.
+
+**Recorded as a correction, not a discovery.** The user asked "did we use the 1024 scaled-up dataset?"
+while I was recommending 1024, which is what prompted checking `train_run20.sh` — `--resolution="768,768"`,
+latent caches stamped `_0768x0768_sdxl.npz`. The 1024 datasets on the box are from the older
+quad-only era and were never used for run-20. Had that question not been asked, the stream would have
+adopted 1024 on a half-argument.
+
+**Consequence for [P0](todo.md):** the south labels are re-collected at 768, not 1024.
