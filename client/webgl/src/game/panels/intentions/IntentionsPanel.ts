@@ -60,7 +60,13 @@ export class IntentionsPanel extends DomPanel {
       (entryId) => this.onCancelClick(entryId),
     );
     const holder = document.createElement("div");
-    holder.style.cssText = "display:flex;height:100%;box-sizing:border-box;overflow:auto;";
+    // NEVER scroll. The strip is fluid — its circles take `min(100%, cap)`, so
+    // they fit whatever width the panel has, down to one grid cell. A
+    // scrollbar in a one-cell-wide panel would consume most of the panel
+    // (user, 2026-08-09: the icons "need to fit inside of it without creating
+    // scroll bars"). Vertical overflow clips: more queued intents than the
+    // panel is tall is a sizing choice, not something to grow a bar for.
+    holder.style.cssText = "display:flex;height:100%;box-sizing:border-box;overflow:hidden;";
     holder.appendChild(this.strip.el);
     this.setBody(holder);
 

@@ -244,3 +244,38 @@ live value between them (`Min size  ◀ ▶ 2×2 🞃 🞁`).
 **Verified live**: with the default floor, the intentions panel resizes down to `1,1` cells
 (32 × 28px) — the complaint that started this. The stepper walks `1×1 → 2×1 → 2×2`, clamps at
 `1×1` when driven down, and persists `minCols` / `minRows` per panel.
+
+## 2026-08-09 — the intent strip fits a ONE-CELL-WIDE panel
+
+User: _"The intentions panel will be 1 grid wide, so the icons it displays need to fit inside of
+it without creating scroll bars."_ It could not: `IntentStrip` claimed a fixed
+`width: 40px; flex: 0 0 40px` column with a 34px circle box (26px dot + 3px ring + 2), all sized
+for living inside the details panel. A one-cell panel is ~31px of content, so both overflowed and
+the body's `overflow: auto` grew a bar — which in a 31px panel is most of the panel.
+
+**The strip is fluid now.** It takes `width: 100%` instead of a fixed column, and a circle is
+`width: min(100%, calc(var(--ui-row) * 1.2 * size)); aspect-ratio: 1`. The `min()` is the whole
+fix: the circle takes the panel's width when the panel is narrow and its authored size when there
+is room, so it can never exceed its container by construction rather than by a measurement that
+has to be redone on every resize. The TOML's `queue.size` now scales the **cap** rather than an
+absolute pixel count.
+
+Everything inside the circle moved to a fixed **100 × 100 viewBox** scaled by CSS, preserving the
+old proportions exactly (26/34 dot, 3/34 stroke). That keeps the ring's maths resolution-
+independent, and the per-frame driver is untouched — it reads `stroke-dasharray` off the attribute
+and writes `stroke-dashoffset`, both now in viewBox units, so the contract that the ring is
+COMPUTED every frame rather than incremented still holds. `STRIP_W` is deleted.
+
+The panel's holder is `overflow: hidden`, deliberately: vertical overflow (more queued intents
+than the panel is tall) is a sizing choice, not something to grow a bar for.
+
+**Verified live** at 1 cell wide (panel 32px, content 31px): the strip measures 31px, the circle
+20px, and `scrollWidth === clientWidth` on **both** the body and the holder — no scrollbar in
+either axis. At 4 cells (127px strip) the circle stays 20px rather than stretching, so the cap
+still governs when there is room.
+
+**One thing the user will want to decide.** At one cell the title bar is unusable — it reserves
+2.5 rows (70px) on its right for the minimize/close buttons, which is wider than the whole panel.
+The corpus currently authors `titleBarHidden: false` for intentions; at this width it wants
+`true`, with edit mode as the way back (the same arrangement the conditions panel uses, proven at
+P6). Left as authored rather than changed unilaterally.

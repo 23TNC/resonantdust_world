@@ -21,11 +21,19 @@ export interface QueueVisual {
   cancelable: boolean;
 }
 
-/** Base circle diameter at `size = 1.0`, css px. */
-const BASE_D = 26;
-/** The strip's fixed column width — the panel content shifts right by this. */
-export const STRIP_W = 40;
-const RING_STROKE = 3;
+/** The circle's box as a multiple of a grid ROW at `size = 1.0` — the cap it
+ *  grows to in a roomy panel. Reproduces the old fixed 34px box at a ~28px row.
+ *  A circle is `min(100%, this)`, so in a ONE-CELL-WIDE panel it shrinks to the
+ *  panel instead of overflowing it: the strip must never need a scrollbar
+ *  (user, 2026-08-09 — "the icons it displays need to fit inside of it"). */
+const BOX_ROWS = 1.2;
+/** Everything inside the circle is drawn in a fixed 100x100 viewBox and scaled
+ *  by CSS, so the ring maths is resolution-independent and the strip's width
+ *  can be whatever the panel is. Proportions preserved from the old 34px box:
+ *  a 26px dot and a 3px ring stroke. */
+const VB = 100;
+const DOT_PCT = 26 / 34;
+const RING_STROKE = (3 / 34) * VB;
 const NEUTRAL_BG = "#3a3f46";
 const NEUTRAL_RING = "#9aa4b0";
 
@@ -48,9 +56,12 @@ export class IntentStrip {
   ) {
     // column-reverse: the FIRST entry (the active one) renders at the BOTTOM.
     this.el.style.cssText =
-      `width:${STRIP_W}px;flex:0 0 ${STRIP_W}px;display:flex;` +
-      "flex-direction:column-reverse;align-items:center;gap:6px;" +
-      "padding:6px 0;box-sizing:border-box;overflow:hidden;";
+      // Fills the panel rather than claiming a fixed column. The old
+      // `width: 40px` was sized for living inside the details panel; a panel
+      // narrower than that would have scrolled.
+      "width:100%;display:flex;" +
+      "flex-direction:column-reverse;align-items:center;gap:var(--ui-gap);" +
+      "padding:var(--ui-gap) 0;box-sizing:border-box;overflow:hidden;";
     this.tooltip.style.cssText =
       // bug-sweep F1: tooltips are CHROME, one above the pie menu.
       `position:fixed;display:none;z-index:${Z_CHROME_BASE + 11};pointer-events:none;` +
@@ -86,32 +97,39 @@ export class IntentStrip {
   }
 
   private circle(entry: QueueEntry, visual: QueueVisual, active: boolean): HTMLElement {
-    const d = Math.max(10, Math.round(BASE_D * visual.size));
-    const box = d + RING_STROKE * 2 + 2;
+    // `min(100%, cap)` is the whole fix: the circle takes the panel's width
+    // when the panel is narrow and its authored size when there is room. The
+    // TOML's `size` scales the CAP, not an absolute pixel count.
+    const cap = `calc(var(--ui-row) * ${(BOX_ROWS * visual.size).toFixed(3)})`;
     const wrap = document.createElement("div");
     wrap.style.cssText =
-      `position:relative;width:${box}px;height:${box}px;flex:0 0 auto;cursor:pointer;`;
+      `position:relative;width:min(100%, ${cap});aspect-ratio:1;` +
+      "flex:0 0 auto;cursor:pointer;";
     const dot = document.createElement("div");
     dot.style.cssText =
       `position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);` +
-      `width:${d}px;height:${d}px;border-radius:50%;` +
+      `width:${(DOT_PCT * 100).toFixed(1)}%;height:${(DOT_PCT * 100).toFixed(1)}%;` +
+      "border-radius:50%;" +
       `background:${hex(visual.background, NEUTRAL_BG)};` +
       `opacity:${active ? 1 : 0.75};`;
     wrap.appendChild(dot);
     // The ACTIVE entry's ring (executing phase only; `progress = "none"` renders none).
     if (active && entry.phase === 2 && visual.progress !== "none") {
-      const r = (d + RING_STROKE) / 2;
+      // viewBox units, so the ring scales with the CSS box and the dash maths
+      // below stays independent of how wide the panel happens to be.
+      const r = (VB * DOT_PCT + RING_STROKE) / 2;
       const c = 2 * Math.PI * r;
       const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-      svg.setAttribute("width", String(box));
-      svg.setAttribute("height", String(box));
+      svg.setAttribute("viewBox", `0 0 ${VB} ${VB}`);
+      svg.setAttribute("width", "100%");
+      svg.setAttribute("height", "100%");
       // Start at 12 o'clock; "ccw" mirrors the sweep (F5).
       const flip = visual.progress === "ccw" ? "scale(-1,1)" : "";
       svg.style.cssText =
         `position:absolute;inset:0;transform:rotate(-90deg) ${flip};pointer-events:none;`;
       const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-      circle.setAttribute("cx", String(box / 2));
-      circle.setAttribute("cy", String(box / 2));
+      circle.setAttribute("cx", String(VB / 2));
+      circle.setAttribute("cy", String(VB / 2));
       circle.setAttribute("r", String(r));
       circle.setAttribute("fill", "none");
       circle.setAttribute("stroke", hex(visual.progressColor, NEUTRAL_RING));
