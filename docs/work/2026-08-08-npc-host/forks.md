@@ -122,3 +122,20 @@ in as `wolf_pack`); everything else takes the default `player` thing def. One re
 point; the future character-select generalizes it. Brain parameters (group_size,
 area_radius) ride the STAT lane — per-level `stats` contributions on the player traits, read
 through the ONE stat eval (no new parameter machinery). VARIABLES.md §Brains is the paper.
+
+## F11 — the P3 group-module shape (resolved before the build)
+
+ONE `brains/group.rs` replaces the wolves/bunnies pair for HOSTED modules: a `GroupModule`
+parameterized by (pawn kind name, diet) whose state is the OWNED set (fed by
+`Event::OwnedPawn` — never a kind scan; the legacy brains keep kind-scanning only until the
+ambient-wildlife containers retire onto the host, which is when item 2's "adoption deleted"
+box ticks). Tick order per module: (1) BOOKKEEPING — wolf_count/bunny_count = |owned ∩ live|,
+written via SET_NEED on the module's own player-pawn whenever it drifts (F8: mint/death move
+the need); (2) MINT GUARD — while count < group_size (the brain's stat) queue SPAWN_REQUEST
+inside the area (the banded `packless` condition is the OBSERVABLE, the guard reads the same
+number); (3) KEEP-ALIVE per owned pawn (F6) — evaluate lazy needs off the WORLD model's rows,
+banded thirst → nearest in-area water + drink, banded hunger → nearest in-area diet-gated
+food + eat, else wander-in-area (the F3 clamp lives in these helpers; area-starved falls
+through to wander, I6). The host passes (world &Bot, module &mut HostModule) — sense/decide/
+act stays the seam. Positions of owned pawns come from the world model's StateObject events
+(the host keeps a per-entity position map — new harness state, noted once, read by all).
