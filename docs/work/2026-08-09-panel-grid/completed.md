@@ -120,3 +120,53 @@ today's. The ratios reproduce today's numbers exactly at a *32px* row, which is 
 the criterion was written assuming 1080/33 = 32. At the real 1862×917 viewport the row is 28px
 and the base font 10.5px — the chrome is ~13% lighter than before, exactly the consequence
 predicted in [I2](issues.md#i2) and still owed a verdict from the user at P5.
+
+## 2026-08-09 — P3 (core): geometry is four integers
+
+The stream's centre of gravity. `DomPanel` now holds `_cell: CellRect` — the **body's** rect in
+grid cells — and pixels are derived from it on every path. Two methods carry it: `place()`
+projects `outerCell(_cell)` (the body, grown one row upward when a title bar shows) and writes all
+four CSS edges in ONE pass, then re-pins the anchor and fires `rectChange`; `captureCell()` reads
+a finished gesture back by quantizing the outer box and stripping the chrome row. Every mover —
+grid broadcast, drag end, resize end, snap, title toggle, height mode, reset, first open — routes
+through those two, which is what makes `rectChange` trustworthy.
+
+Deleted rather than left lying: `persistPosition` / `persistSize` / `restorePosition` /
+`restoreSize` (the CSS-string pair), and `clampToSafeArea` — with cells there is no "partly under
+a taskbar" state to rescue a panel from, because the field contains no taskbar row. `applyAnchor`
+also stopped calling `persistPosition`, which was quietly re-writing v1 pixel keys on every
+placement. `applyHeight` and `applySnap` are now cell arithmetic (row counts over the field;
+corner presets in cells). Resize floors read `MIN_COLS/MIN_ROWS × rowHeight` live instead of the
+dead 200/100px constants.
+
+`toggleTitleBarHidden` lost the pixel arithmetic P2 gave it — with cells, body-invariance is not
+something to compute but something that cannot fail to happen: the stored rect is the body's, so
+the toggle changes no geometry at all and `place()` re-projects the same body cells with one more
+chrome row on top.
+
+**Verified live** (clean profile, app running at 1862×917):
+
+- **Zero pixel keys** under any panel storage key; every persisted value an integer. The world
+  viewport reads `col 0, row 1, cols 58, rows 31` — exactly the field.
+- **The resize round-trip is identity.** 1862×917 → 1280×720 → back left every panel's four
+  integers byte-identical (and unchanged at the small size too), while the projected pixels
+  genuinely moved and came back exact (`0,28,1862,861` before and after).
+- **On-grid and clear of both bars** at the native viewport: all four open panels have every edge
+  on an edge-table entry, `top ≥ edgeY[1]`, `bottom ≤ edgeY[32]`.
+- **The clamp law is exhaustive**: 72,864 `clampCell` cases across titled/untitled and
+  out-of-range inputs — **zero** landed outside the field. Titled bodies clamp to row ≥ 2,
+  untitled may take row 1, over-wide shrinks into the field, 6×3 minimums applied.
+- Migration stamp `rd.panelLayout.v = 2` written once; superseded keys swept.
+
+**Two deviations logged** (see `deviations.md`): the migration **drops** old pixel rects rather
+than converting them (they were authored against an unrecorded viewport, so a conversion lands
+plausible-but-wrong, which reads as a bug rather than a reset); and grid snap stays **gated** by
+its flag rather than quantizing unconditionally, because F5 asks for an escape hatch and an inert
+toggle lies about what the app does.
+
+**Still open in P3** — implemented but not yet verified to their stated acceptance, so left
+unticked: the one-pass placement's "resize from each corner still pivots on the anchor" (needs a
+real corner drag), `heightMode: auto`'s no-oscillation claim (the code early-returns unless the
+row COUNT changes, but that isn't the same as having watched it under content churn), the
+unconditional-quantize item (deviated), and the minimize decision under the body-rect law (I8),
+which is untouched.

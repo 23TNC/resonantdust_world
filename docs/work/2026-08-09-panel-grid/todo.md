@@ -65,27 +65,27 @@ reference viewports **1920×1080, 1366×768, 1024×640** ("three sizes" below), 
 
 ## P3 — panels on cells
 
-- [ ] Replace the six CSS-string storage keys with `col` / `row` / `cols` / `rows` integers (F3).
+- [x] Replace the six CSS-string storage keys with `col` / `row` / `cols` / `rows` integers (F3).
       Acceptance: every new write is an integer; no `px` string under any panel storage key.
-- [ ] Versioned one-time migration: px → nearest cell, superseded keys deleted including a stale
+- [x] Versioned one-time migration: px → nearest cell, superseded keys deleted including a stale
       `gridSnap` (I3). Acceptance: a profile seeded with today's px keys lands on sane cells with
       no panel off-field.
 - [ ] Placement becomes ONE pass from the cell rect (`left`/`top`/`width`/`height`,
       `right`/`bottom` auto), retiring the `snapToGrid` → `applyAnchor` two-pass fight (F7/I5).
       Acceptance: resize from each corner still pivots on the anchor.
-- [ ] Fire `rectChange` on every placement path — grid change, migration, title toggle, drag end,
+- [x] Fire `rectChange` on every placement path — grid change, migration, title toggle, drag end,
       resize end, snap, reset (I6). Acceptance: the world canvas stays correctly sized through a
       1920→1280→1920 round-trip.
-- [ ] Re-project every panel on grid change. Acceptance: 1920×1080 → 1280×720 → back leaves every
+- [x] Re-project every panel on grid change. Acceptance: 1920×1080 → 1280×720 → back leaves every
       panel's cell rect identical (before/after logged) with no drift.
 - [ ] Drag + resize quantize to cells unconditionally; `activeSnapGrid`'s null path retires.
       Acceptance: after a drag and a resize, storage holds integers only.
-- [ ] `_gridSnap` defaults TRUE (`contentDefaults.gridSnap ?? true`); the popup row stays this
+- [x] `_gridSnap` defaults TRUE (`contentDefaults.gridSnap ?? true`); the popup row stays this
       stream (F5). Acceptance: a fresh panel snaps without being told to; the toggle still
       round-trips.
-- [ ] Clamp to the field: rows 1..31, a titled body starts at row ≥ 2 (F4). Acceptance: a panel
+- [x] Clamp to the field: rows 1..31, a titled body starts at row ≥ 2 (F4). Acceptance: a panel
       dragged at either bar stops at the field edge; nothing overlaps a bar at three sizes.
-- [ ] Minimums in cells (min body 6 × 3); `heightMode` full/half/quarter become row counts over
+- [x] Minimums in cells (min body 6 × 3); `heightMode` full/half/quarter become row counts over
       the field. Acceptance: resize refuses under 6×3; a `full` panel spans rows 1..31 exactly.
 - [ ] `heightMode: auto` rounds UP to whole rows, re-applying only when the row count changes
       (I7). Acceptance: an `auto` panel doesn't oscillate under content churn.

@@ -25,3 +25,42 @@ app-global.
 for, and `docs/components/client/webgl/design/panel-layout.md` was written module-agnostic, so no
 doc contradicts the code. The P1 item text is the only thing that named `UiEditMode`; the intent
 (constants + edge tables in one place, no derived duplicates) is met.
+
+## 2026-08-09 — the migration DROPS old pixel rects instead of converting them
+
+**What the plan says.** P3's migration item: "px → nearest cell, superseded keys deleted",
+i.e. quantize each stored pixel rect against the current grid and keep the user's arrangement.
+
+**What the code does.** `migratePanelLayoutStorage()` deletes the six CSS-string keys (and a
+stale `gridSnap`) and writes the schema stamp. It does not convert. Each panel then re-derives
+its cell rect from its content default on first open.
+
+**Why (strong).** The stored pixel values were authored against *whatever viewport the user last
+had* — and nothing records which. Quantizing them against the current grid is only correct when
+those two viewports match; otherwise every panel lands somewhere plausible-but-wrong, which reads
+as "the new grid misplaced my panels" rather than "the layout reset". A wrong-looking arrangement
+is worse than a clean one, because the user cannot tell it apart from a bug. Dropping re-derives
+from a rect someone chose deliberately. The cost is one lost hand-arrangement, once, on a dev
+build whose panel layout is re-authored by this stream's P4 anyway.
+
+**Status.** Resolved by design; the reasoning is in the code at `migratePanelLayoutStorage`.
+
+## 2026-08-09 — grid snap stays GATED by its flag rather than quantizing unconditionally
+
+**What the plan says.** P3: "Drag + resize quantize to cells unconditionally; `activeSnapGrid`'s
+null path retires." [F5](forks.md#f5) says the same, while *also* keeping the popup's Grid-snap
+row for this stream as an escape hatch.
+
+**What the code does.** `activeSnapEdges()` still returns `null` when `_gridSnap` is false; the
+flag now defaults `true` (and `contentDefaults.gridSnap ?? true`).
+
+**Why (strong).** F5 asks for two things that cannot both hold: quantize unconditionally, AND
+keep a working escape hatch on the popup. A toggle that is visible but inert is worse than no
+toggle — it tells the user a lie about what the app will do. Since F5's stated reason for keeping
+the row is that "this stream changes every rect in the app, and keeping one escape hatch while
+that lands is worth one row of UI", the escape hatch has to actually work. So the flag keeps its
+gate and defaults on. When the row is deleted (the named successor), the gate goes with it and
+the unconditional form arrives for free.
+
+**Status.** Open until the popup row is removed in the follow-up stream, at which point
+`activeSnapEdges` loses its null path.

@@ -19,7 +19,10 @@ import {
   TITLEBAR_CSS,
 } from "./DomPanelStyles";
 import { attachDrag, attachResize, type SnapEdges } from "./pointerInteractions";
-import { panelGrid } from "./PanelGrid";
+import {
+  panelGrid, clampCell, GRID_COLS, FIELD_ROW_FIRST, FIELD_ROW_LAST, FIELD_ROWS,
+  type CellRect,
+} from "./PanelGrid";
 
 const HOST_ID = "app";
 
@@ -65,6 +68,52 @@ const allPanels = new Set<DomPanel>();
  *  UI edit mode binds the settings popup to this when it opens. The popup
  *  itself is `editTarget: false`, so it never tracks here. */
 let lastEditTarget: DomPanel | null = null;
+
+/** Storage schema stamp for panel geometry. Bumped when the persisted
+ *  shape changes in a way old values can't satisfy. */
+const LAYOUT_SCHEMA_VERSION = "2";
+const LAYOUT_VERSION_KEY = "rd.panelLayout.v";
+
+/** Per-panel keys that v1 wrote and v2 supersedes: the six CSS-string
+ *  rect fields, plus `gridSnap` — a stored `"0"` would strand exactly
+ *  the panels a returning user had snapping turned off on, since
+ *  `defaultedBool` prefers a stored value over the new `true` default
+ *  (F5/I3). */
+const SUPERSEDED_KEYS = ["left", "top", "right", "bottom", "width", "height", "gridSnap"];
+
+/** One-time migration to cell-based geometry. Runs before any panel
+ *  constructs, and drops every superseded key in one sweep.
+ *
+ *  Deliberately does NOT convert the old pixel rects into cells. It
+ *  could — quantizing them against the current grid is a two-line job
+ *  — but the pixel values were authored against whatever viewport the
+ *  user last had, and a bad conversion is worse than a clean default:
+ *  the panel would land somewhere plausible-but-wrong and look like
+ *  the grid misplaced it. Dropping the keys re-derives each panel from
+ *  its content default, which is a rect someone chose on purpose. The
+ *  cost is one lost hand-arrangement, once. */
+function migratePanelLayoutStorage(): void {
+  try {
+    if (localStorage.getItem(LAYOUT_VERSION_KEY) === LAYOUT_SCHEMA_VERSION) return;
+    const doomed: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key) continue;
+      const dot = key.lastIndexOf(".");
+      if (dot > 0 && SUPERSEDED_KEYS.includes(key.slice(dot + 1))) doomed.push(key);
+    }
+    for (const key of doomed) localStorage.removeItem(key);
+    localStorage.setItem(LAYOUT_VERSION_KEY, LAYOUT_SCHEMA_VERSION);
+  } catch {
+    // Storage unavailable (private mode, quota). Panels fall back to
+    // their content defaults, which is exactly what the migration
+    // would have produced anyway.
+  }
+}
+
+// Run at module load: every panel constructs after this file is
+// evaluated, so no panel can read a superseded key.
+migratePanelLayoutStorage();
 
 // ── Public API ─────────────────────────────────────────────────────
 
@@ -677,6 +726,17 @@ export class DomPanel {
    *  when told. Detached in `destroy()`. */
   private unsubGrid: (() => void) | null = null;
 
+  /** THE panel's geometry: the **body's** rect in grid cells, four
+   *  integers. Pixels are derived from this and never stored (F3).
+   *
+   *  It describes the BODY, not the outer box — a visible title bar is
+   *  chrome occupying the row *above* (F4), so toggling the bar
+   *  changes nothing here and the body cannot move. `place()` projects
+   *  it; `captureCell()` reads it back after a gesture.
+   *
+   *  `null` only during construction, before the first capture. */
+  private _cell: CellRect | null = null;
+
   private _open = false;
   private _minimized = false;
   /** Per-panel anchor toggled from the anchor cycler in the
@@ -714,7 +774,7 @@ export class DomPanel {
    *  Slated to go: snapping is becoming the law rather than a mode,
    *  and this flag plus its popup row retire once the layout has been
    *  lived with (work `2026-08-09-panel-grid`, F5). */
-  private _gridSnap = false;
+  private _gridSnap = true;
   /** User-toggled "stencil-mask the body content" preference.
    *  Owned by `DomPanel` so the persistence / popup wiring is one
    *  place, but only `PixiPanel` does anything with it (subscribes
@@ -890,7 +950,7 @@ export class DomPanel {
       ? readAnchor(rawAnchor)
       : (contentDefaults.anchor ?? "top-left");
     this._titleBarHidden = this.defaultedBool("titleBarHidden", contentDefaults.titleBarHidden ?? false);
-    this._gridSnap       = this.defaultedBool("gridSnap",       contentDefaults.gridSnap       ?? false);
+    this._gridSnap       = this.defaultedBool("gridSnap",       contentDefaults.gridSnap       ?? true);
     this._masked         = this.defaultedBool("masked",         contentDefaults.masked         ?? true);
     this._minimizable    = this.defaultedBool("minimizable",    contentDefaults.minimizable    ?? this.initialMinimizable);
     this._resizableX     = this.defaultedBool("resizableX",     contentDefaults.resizableX     ?? this.initialResizable);
@@ -938,15 +998,17 @@ export class DomPanel {
 
     this.panel = document.createElement("div");
     Object.assign(this.panel.style, PANEL_CSS);
-    // Merge content-defaults rect over the constructor's
-    // defaultRect, then `restorePosition` / `restoreSize` layer
-    // localStorage on top of that. `defaultRect` field keeps the
-    // merged value so `resetToDefaults` falls back to the same
-    // "content defaults, then constructor defaults" stack.
+    // Merge content-defaults rect over the constructor's defaultRect.
+    // This CSS is only a SEED now: it positions the panel until
+    // `open()` converts whatever it produced into cells. `defaultRect`
+    // is kept so `resetToDefaults` re-seeds from the same stack.
     this.defaultRect = { ...(opts.defaultRect ?? {}), ...pickRectFields(contentDefaults) };
     this.applyRect(this.defaultRect);
-    this.restorePosition();
-    this.restoreSize();
+    // Persisted cell rect wins outright when present. When it isn't,
+    // the CSS applied just above stands as the seed and `captureCell`
+    // converts it to cells once the panel is in the DOM (`open()`) —
+    // measuring before that would read a zero rect.
+    this._cell = this.restoreCell();
 
     // ── Title bar ────────────────────────────────────────────────
     this.titlebar = document.createElement("div");
@@ -1077,9 +1139,8 @@ export class DomPanel {
     // so the visibility flip can target the real elements.
     if (this.loadSavedMinimized()) this.applyMinimized(true);
 
-    // `restorePosition` now persists / restores all four CSS
-    // anchors (`left` / `top` / `right` / `bottom`), so the
-    // panel's pinned-corner CSS is already correct without a
+    // `place()` writes all four CSS anchors from the projection, so
+    // the panel's pinned-corner CSS is already correct without a
     // call to `applyAnchor` here. We still need to position the
     // resize handles (corner + two edges) per the current anchor
     // — that's CSS-only and doesn't depend on the panel being
@@ -1108,14 +1169,14 @@ export class DomPanel {
     // new safe-area height before subscribers see the new rect.
     // Unsubscribed in `destroy`.
     this.unsubGrid = panelGrid.on(() => {
+      // A resize is a RE-PROJECTION, not a reflow: the cell rect is
+      // untouched, so the panel lands on exactly the same cells at the
+      // new viewport size. Nothing rounds, nothing drifts, and no
+      // panel can end up under a taskbar. `place()` fires rectChange.
       this.applyHeight();
       this.applySnap();
-      // A viewport shrink can leave a panel partly off-screen
-      // (under a taskbar, past the right edge); pull it back
-      // inside so the user doesn't lose it. Skipped while
-      // snapped — `applySnap` above already owns the position.
-      this.clampToSafeArea();
-      this.fireRectChange();
+      this.clampCellToField();
+      this.place();
     });
 
     // Final height pass: now that persisted size has been
@@ -1234,12 +1295,16 @@ export class DomPanel {
       this.applySnap();
       this.applyAnchor();
     }
-    // Persisted position from a prior session might be off-screen
-    // now (smaller viewport, taskbar reserve added, etc.) — pull
-    // the panel back into the safe area before the user sees it.
-    // `clampToSafeArea` is a no-op when the panel is already in
-    // bounds, so this is cheap for the common case.
-    this.clampToSafeArea();
+    // First moment the panel has a real `getBoundingClientRect` — so
+    // this is where a panel with no persisted cell rect converts the
+    // CSS it was authored with into cells. From here on its geometry
+    // IS the cell rect, and a viewport resize re-projects rather than
+    // reflows: nothing can drift, and nothing can end up under a bar,
+    // because the field contains no taskbar row to land on.
+    if (!this._cell) this.captureCell();
+    this.clampCellToField();
+    this.place();
+    this.persistCell();
     for (const cb of this.openChangeListeners) cb(true);
     // Now that the panel is mounted, its `getBoundingClientRect`
     // returns real values for the first time. Fire `rectChange`
@@ -1323,7 +1388,8 @@ export class DomPanel {
     // back into the safe area in case the saved rect is now off-screen
     // (smaller viewport, taskbar reserve, dragged out while hidden).
     if (this._snap !== "none") { this.applySnap(); this.applyAnchor(); }
-    this.clampToSafeArea();
+    this.clampCellToField();
+    this.place();
     // Re-run chrome so resize handles / buttons reflect the now-
     // restored state, and persist the cleared minimize flag.
     this.refreshChrome();
@@ -1762,6 +1828,82 @@ export class DomPanel {
     return btn;
   }
 
+  /** Minimum body size in cells. 6 × 3 — roughly the old 200 × 100px
+   *  floors at a 33px row, now expressed in the unit that survives a
+   *  resize. */
+  private static readonly MIN_COLS = 6;
+  private static readonly MIN_ROWS = 3;
+
+  /** Is the title bar currently rendered? Decides whether the outer
+   *  box carries the extra chrome row. Edit mode forces bars visible,
+   *  so it counts here too — otherwise entering edit mode would move
+   *  every body by a row. */
+  private titleBarShowing(): boolean {
+    return this.titleBarAvailable && (!this._titleBarHidden || !!this.uiEditMode?.enabled);
+  }
+
+  /** The OUTER box's cell rect: the body's, grown one row upward when
+   *  a title bar is showing (F4). */
+  private outerCell(cell: CellRect): CellRect {
+    const extra = this.titleBarShowing() ? 1 : 0;
+    return { col: cell.col, row: cell.row - extra, cols: cell.cols, rows: cell.rows + extra };
+  }
+
+  /** THE placement pass. Projects the cell rect and writes all four
+   *  CSS edges in ONE go, then re-pins the anchor and notifies rect
+   *  subscribers.
+   *
+   *  Every path that moves a panel ends here — grid change, drag end,
+   *  resize end, snap, title-bar toggle, height mode, reset. That is
+   *  what makes `rectChange` reliable: there is one exit, so consumers
+   *  mirroring the body (the world canvas) cannot be left stale. */
+  private place(): void {
+    if (!this._cell || !this.panel.isConnected) return;
+    const px = panelGrid.project(this.outerCell(this._cell));
+    this.panel.style.left   = `${px.left}px`;
+    this.panel.style.top    = `${px.top}px`;
+    this.panel.style.width  = `${px.width}px`;
+    this.panel.style.height = `${px.height}px`;
+    this.panel.style.right  = "auto";
+    this.panel.style.bottom = "auto";
+    if (this.titleBarShowing()) this.applyTitlebarHeight();
+    this.applyAnchor();
+    this.fireRectChange();
+  }
+
+  /** Read the panel's current pixel rect back into a cell rect,
+   *  clamped into the field. Used after a drag / resize gesture, and
+   *  once at construction to convert whatever CSS the panel was
+   *  authored with into cells.
+   *
+   *  Quantizes the OUTER box then strips the chrome row, rather than
+   *  quantizing the body directly: the outer box is what the gesture
+   *  moved, and the two differ by exactly the row the title bar
+   *  occupies. */
+  private captureCell(): void {
+    if (!this.panel.isConnected) return;
+    const r = this.panel.getBoundingClientRect();
+    const outer = panelGrid.quantize({ left: r.left, top: r.top, width: r.width, height: r.height });
+    const extra = this.titleBarShowing() ? 1 : 0;
+    this._cell = clampCell(
+      { col: outer.col, row: outer.row + extra, cols: outer.cols, rows: Math.max(1, outer.rows - extra) },
+      { titled: this.titleBarShowing(), minCols: DomPanel.MIN_COLS, minRows: DomPanel.MIN_ROWS },
+    );
+  }
+
+  /** Re-clamp the stored cell rect into the field. Replaces the old
+   *  pixel safe-area clamp — with cells there is no "partly under a
+   *  taskbar" state to rescue a panel from, because the field simply
+   *  does not contain rows 0 or 32. */
+  private clampCellToField(): void {
+    if (!this._cell) return;
+    this._cell = clampCell(this._cell, {
+      titled:   this.titleBarShowing(),
+      minCols:  DomPanel.MIN_COLS,
+      minRows:  DomPanel.MIN_ROWS,
+    });
+  }
+
   private applyRect(r: DomPanelRect): void {
     if (r.left   !== undefined) this.panel.style.left   = r.left;
     if (r.top    !== undefined) this.panel.style.top    = r.top;
@@ -1868,7 +2010,7 @@ export class DomPanel {
       snapEdges:     () => this.activeSnapEdges(),
       clampPosition: () => this.dragClampBounds(),
       onMove: () => this.fireRectChange(),
-      onEnd:  () => this.persistPosition(),
+      onEnd:  () => { this.captureCell(); this.place(); this.persistCell(); },
     });
   }
 
@@ -1893,8 +2035,11 @@ export class DomPanel {
 
   private wireResize(handle: HTMLDivElement, axis: "both" | "x" | "y"): void {
     attachResize(handle, this.panel, {
-      minWidth:  this.minWidth,
-      minHeight: this.minHeight,
+      // Floors in CELLS, read fresh so they track the viewport. The
+      // px `minWidth` / `minHeight` constructor options are a lower
+      // bound of last resort — the cell floor is the real law (F4).
+      get minWidth()  { return DomPanel.MIN_COLS * panelGrid.rowHeight; },
+      get minHeight() { return DomPanel.MIN_ROWS * panelGrid.rowHeight; },
       // Per-handle gate: the corner needs both axes (and an
       // unlocked height); the X-edge needs only its own toggle;
       // the Y-edge needs its toggle AND `heightMode === "off"`
@@ -1921,9 +2066,14 @@ export class DomPanel {
       // — it lands there once the user releases.
       onMove: () => { this.applyHeight(); this.fireRectChange(); },
       onEnd:  () => {
+        // Read the gesture back into cells FIRST, then let the height
+        // lock and the snap preset overwrite what they own, then place
+        // once from the settled cell rect.
+        this.captureCell();
         this.applyHeight();
         this.applySnap();
-        this.persistSize();
+        this.place();
+        this.persistCell();
       },
     });
   }
@@ -2010,22 +2160,9 @@ export class DomPanel {
    *  gesture, which is what put `"top": "56.3295px"` in the shipped
    *  corpus.) */
   snapToGrid(): void {
-    const r = this.panel.getBoundingClientRect();
-    const cell = panelGrid.quantize({
-      left: r.left, top: r.top, width: r.width, height: r.height,
-    });
-    const px = panelGrid.project(cell);
-    // One pass, all four edges. `right` / `bottom` go to `auto` so
-    // width / height drive the far edges; `applyAnchor` then re-pins
-    // whichever corner the panel resizes from without moving it.
-    this.panel.style.left   = `${px.left}px`;
-    this.panel.style.top    = `${px.top}px`;
-    this.panel.style.right  = "auto";
-    this.panel.style.bottom = "auto";
-    this.panel.style.width  = `${px.width}px`;
-    this.panel.style.height = `${px.height}px`;
-    this.applyAnchor();
-    this.persistSize();
+    this.captureCell();
+    this.place();
+    this.persistCell();
   }
 
   /** Set the panel's anchor. `"none"` lets the panel drag freely;
@@ -2091,7 +2228,6 @@ export class DomPanel {
     // panel is connected or not.
     this.applyResizeHandleCss();
     this.fireRectChange();
-    this.persistPosition();
   }
 
   /** Which corner of the panel the resize handle currently lives
@@ -2125,63 +2261,24 @@ export class DomPanel {
    *  honors the active UI-edit-mode flag — while editing, the
    *  title bar stays visible regardless of this preference. */
   toggleTitleBarHidden(): void {
-    // THE BODY DOES NOT MOVE (F4). The panel's stored geometry
-    // describes the BODY; a visible title bar is chrome occupying the
-    // row *above* it. So showing the bar grows the outer box upward by
-    // one row and hiding it shrinks the outer box by one row — the
-    // body's rect is identical either side of the toggle.
-    //
-    // Left to the flex layout alone this is not what happens: the body
-    // is `flex: 1 1 auto`, so hiding the bar lets the body GROW into
-    // the freed slot, moving and resizing it on a pure chrome toggle.
-    // Hence the explicit top / height adjustment below.
-    const bodyBefore = this.body.getBoundingClientRect();
-    const wasVisible = this.titleBarAvailable && !this._titleBarHidden;
-    // Measure the bar while it is still laid out; once hidden its
-    // `offsetHeight` is 0 and the row it occupied is unrecoverable.
-    const barH = wasVisible
-      ? this.titlebar.offsetHeight
-      : panelGrid.rowHeightAt(panelGrid.nearestRow(bodyBefore.top - 1));
-
+    // THE BODY DOES NOT MOVE (F4) — and with cells it falls out for
+    // free. The stored rect is the BODY's; a visible title bar is
+    // chrome occupying the row above. So the toggle changes no stored
+    // geometry at all: `place()` re-projects the same body cells with
+    // one more (or fewer) chrome row on top, and the body lands on
+    // exactly the pixels it already occupied.
     this._titleBarHidden = !this._titleBarHidden;
     this.storageSet("titleBarHidden", this._titleBarHidden ? "1" : "0");
     this.refreshChrome();
-
-    // A height-LOCKED panel is exempt (F10). `heightMode` means the
-    // outer height is a function of the field, recomputed by
-    // `applyHeight` on every reflow — it cannot also be free to grow
-    // by a row, so for those panels the title row comes out of the
-    // body, which is what a locked height already meant everywhere
-    // else. F4 governs panels whose geometry the USER owns.
-    const heightIsLocked = this._heightMode !== "off";
-    if (barH > 0 && !heightIsLocked && this.panel.isConnected) {
-      const r = this.panel.getBoundingClientRect();
-      // Hiding: the outer box loses the title row from its TOP, so the
-      // top edge moves DOWN by a row and the height shrinks by one.
-      // Showing: the reverse. Either way the body stays put.
-      const dy = wasVisible ? barH : -barH;
-      this.panel.style.top    = `${r.top + dy}px`;
-      this.panel.style.height = `${Math.max(0, r.height - dy)}px`;
-      this.panel.style.right  = "auto";
-      this.panel.style.bottom = "auto";
-      // Re-pin whichever corner this panel resizes from; the panel has
-      // moved in CSS terms but not on screen.
-      this.applyAnchor();
-      this.persistSize();
-      this.persistPosition();
-    } else if (heightIsLocked) {
-      // Re-assert the locked height so the freed / consumed title row
-      // is absorbed by the body in one deliberate pass rather than
-      // whenever the next unrelated reflow happens to run.
-      this.applyHeight();
-    }
-    // Subscribers that mirror the body region (PixiPanel.syncRect, the
-    // details layout) re-read on this. The body rect should be
-    // unchanged — firing anyway keeps the contract "every placement
-    // path notifies" true, and makes a regression here visible rather
-    // than silent.
-    this.fireRectChange();
+    // A height-LOCKED panel is the documented exception (F10): its
+    // outer height is a function of the field, so the title row comes
+    // out of its body instead. `applyHeight` recomputes the row count
+    // with the new chrome and places; otherwise place directly.
+    if (this._heightMode !== "off") this.applyHeight();
+    else                            this.place();
+    this.persistCell();
   }
+
 
   /** Set the panel's height-lock preset. `"off"` releases the
    *  panel to free resize; the other three lock height to that
@@ -2235,30 +2332,38 @@ export class DomPanel {
    *     height has been reported yet — the panel keeps its prior
    *     height until the consumer pushes one. */
   private applyHeight(): void {
-    if (this._heightMode === "off") return;
+    if (this._heightMode === "off" || !this._cell) return;
     if (this._heightMode === "auto") {
       if (this._contentNaturalHeight === null) return;
-      // Title bar's current height — zero when `titleBarHidden` /
-      // `display: none`. The body is `flex: 1 1 auto`, so once we
-      // pin the outer panel height the body absorbs the difference
-      // exactly.
-      const titlebarH = this.titlebar.offsetHeight;
-      const h = Math.max(this.minHeight, titlebarH + this._contentNaturalHeight);
-      this.panel.style.height = `${h}px`;
+      // Round the content's natural pixel height UP to whole rows, and
+      // re-apply only when the ROW COUNT changes. Reacting to the pixel
+      // number would oscillate: grow a row -> content reflows into it ->
+      // reports a smaller natural height -> shrink a row -> repeat (I7).
+      const rows = Math.max(
+        DomPanel.MIN_ROWS,
+        Math.ceil(this._contentNaturalHeight / Math.max(1, panelGrid.rowHeight)),
+      );
+      if (rows === this._cell.rows) return;
+      this._cell = { ...this._cell, rows };
+      this.clampCellToField();
+      this.place();
       return;
     }
-    const reservedTop    = panelGrid.reservedTop;
-    const reservedBottom = panelGrid.reservedBottom;
-    const safe = Math.max(
-      this.minHeight,
-      window.innerHeight - reservedTop - reservedBottom,
+    // full / half / quarter are ROW COUNTS over the field. The title
+    // row is chrome outside the body, so a `full` panel's BODY is the
+    // field minus that row when it carries a bar — which is what keeps
+    // its outer box exactly the field (F10).
+    const chrome = this.titleBarShowing() ? 1 : 0;
+    const rows = Math.max(
+      DomPanel.MIN_ROWS,
+      Math.round(FIELD_ROWS * HEIGHT_FRACTIONS[this._heightMode]) - chrome,
     );
-    const h = Math.max(
-      this.minHeight,
-      Math.round(safe * HEIGHT_FRACTIONS[this._heightMode]),
-    );
-    this.panel.style.height = `${h}px`;
+    if (rows === this._cell.rows) return;
+    this._cell = { ...this._cell, rows };
+    this.clampCellToField();
+    this.place();
   }
+
 
   /** Set the panel's snap preset. `"none"` releases position
    *  control back to the user; the four corners snap the panel
@@ -2314,116 +2419,25 @@ export class DomPanel {
    *  un-forgettable — the resize-end and window-resize paths used
    *  to call `applySnap` alone and silently dropped the anchor. */
   private applySnap(): void {
-    if (this._snap === "none") return;
+    if (this._snap === "none" || !this._cell) return;
     if (!this.panel.isConnected) return;
-    const rect = this.panel.getBoundingClientRect();
-    const w = rect.width;
-    const h = rect.height;
-    const viewW = window.innerWidth;
-    const viewH = window.innerHeight;
-    const reservedTop    = panelGrid.reservedTop;
-    const reservedBottom = panelGrid.reservedBottom;
-    let left: number;
-    let top:  number;
-    if (this._snap === "top-left") {
-      left = 0;
-      top  = reservedTop;
-    } else if (this._snap === "top-right") {
-      left = viewW - w;
-      top  = reservedTop;
-    } else if (this._snap === "bottom-left") {
-      left = 0;
-      top  = viewH - reservedBottom - h;
-    } else {
-      // bottom-right
-      left = viewW - w;
-      top  = viewH - reservedBottom - h;
-    }
-    this.panel.style.left   = `${left}px`;
-    this.panel.style.top    = `${top}px`;
-    this.panel.style.right  = "auto";
-    this.panel.style.bottom = "auto";
-    // Re-express this position via the anchored edges so resize
-    // grows away from the anchored corner (see the doc comment).
-    this.applyAnchor();
+    // Corner presets in cells (F7). The field's first body row depends
+    // on whether a title bar needs the row above it.
+    const titled   = this.titleBarShowing();
+    const firstRow = FIELD_ROW_FIRST + (titled ? 1 : 0);
+    const { cols, rows } = this._cell;
+    const left = this._snap === "top-left" || this._snap === "bottom-left";
+    const top  = this._snap === "top-left" || this._snap === "top-right";
+    this._cell = {
+      cols, rows,
+      col: left ? 0 : Math.max(0, GRID_COLS - cols),
+      row: top  ? firstRow : Math.max(firstRow, FIELD_ROW_LAST - rows + 1),
+    };
+    this.place();
   }
 
-  /** Pull the panel back inside the safe area if any part of it
-   *  is off-screen. Used by the window-resize handler (viewport
-   *  shrinks can strand panels) and by `open` (persisted rect
-   *  from a prior session might no longer fit). Skipped when
-   *  snap is non-none — `applySnap` owns the position then.
-   *
-   *  Shrinks size first if the panel is too big for the safe
-   *  area, then shifts position so the panel sits fully inside.
-   *  Position writes use the anchor-matching CSS form so the
-   *  pinned corner stays sticky after the call. */
-  private clampToSafeArea(): void {
-    if (this._snap !== "none") return;
-    if (!this.panel.isConnected) return;
-    // Skip transformed panels (e.g. FormOverlay's
-    // `translate(-50%, -50%)` centering trick). Writing pixel
-    // top/left here would land on top of `top: 50%; left: 50%`,
-    // then the transform re-applies and shifts the panel by half
-    // its own size on every clamp pass. The transform is a
-    // signal that the developer owns positioning; respect it.
-    if (this.panel.style.transform) return;
-    const rect = this.panel.getBoundingClientRect();
-    const viewW = window.innerWidth;
-    const viewH = window.innerHeight;
-    const reservedTop    = panelGrid.reservedTop;
-    const reservedBottom = panelGrid.reservedBottom;
-    const safeBottom = viewH - reservedBottom;
-    const safeH = Math.max(this.minHeight, safeBottom - reservedTop);
-    const w = Math.max(this.minWidth, Math.min(rect.width,  viewW));
-    // Don't shrink height when heightMode is locked — `applyHeight`
-    // owns that dimension; clamping here would fight it. Width
-    // shrinks regardless since width has no equivalent lock.
-    const h = this._heightMode !== "off"
-      ? rect.height
-      : Math.max(this.minHeight, Math.min(rect.height, safeH));
-    // Place top-left so panel sits inside the safe area. For
-    // an over-tall panel (`min > max`), the inner `min` wins
-    // via the outer `max` — top edge stays visible.
-    const left = Math.max(0, Math.min(rect.left, viewW - w));
-    const top  = Math.max(reservedTop, Math.min(rect.top, safeBottom - h));
-    // Short-circuit when the computed rect matches the current
-    // one — `open()` runs `clampToSafeArea` on every panel even
-    // ones already inside the safe area, and we don't want to
-    // rewrite CSS (clobbering e.g. percent-based positioning)
-    // when nothing needs to move.
-    const EPS = 0.5;
-    if (
-      Math.abs(w    - rect.width)  < EPS &&
-      Math.abs(h    - rect.height) < EPS &&
-      Math.abs(left - rect.left)   < EPS &&
-      Math.abs(top  - rect.top)    < EPS
-    ) return;
-    if (w !== rect.width)  this.panel.style.width  = `${w}px`;
-    if (h !== rect.height) this.panel.style.height = `${h}px`;
-    if (this._anchor === "top-left") {
-      this.panel.style.top    = `${top}px`;
-      this.panel.style.left   = `${left}px`;
-      this.panel.style.right  = "auto";
-      this.panel.style.bottom = "auto";
-    } else if (this._anchor === "top-right") {
-      this.panel.style.top    = `${top}px`;
-      this.panel.style.right  = `${viewW - (left + w)}px`;
-      this.panel.style.left   = "auto";
-      this.panel.style.bottom = "auto";
-    } else if (this._anchor === "bottom-left") {
-      this.panel.style.bottom = `${viewH - (top + h)}px`;
-      this.panel.style.left   = `${left}px`;
-      this.panel.style.right  = "auto";
-      this.panel.style.top    = "auto";
-    } else {
-      // bottom-right
-      this.panel.style.bottom = `${viewH - (top + h)}px`;
-      this.panel.style.right  = `${viewW - (left + w)}px`;
-      this.panel.style.left   = "auto";
-      this.panel.style.top    = "auto";
-    }
-  }
+
+
 
   /** Content reports its natural height (the height it wants the
    *  body region to render at). Only consulted when `heightMode ===
@@ -2614,7 +2628,7 @@ export class DomPanel {
     // it's obvious what reset touches — easier to audit than
     // matching a prefix and removing everything under it.
     const SUFFIXES = [
-      "left", "top", "right", "bottom", "width", "height",
+      "col", "row", "cols", "rows",
       "tab", "minimized",
       "anchor", "titleBarHidden", "gridSnap", "masked",
       "minimizable", "resizable", "resizableX", "resizableY",
@@ -2643,7 +2657,7 @@ export class DomPanel {
       : {};
     this._anchor          = cd.anchor          ?? "top-left";
     this._titleBarHidden  = cd.titleBarHidden  ?? false;
-    this._gridSnap        = cd.gridSnap        ?? false;
+    this._gridSnap        = cd.gridSnap        ?? true;
     const nextMasked      = cd.masked          ?? true;
     if (nextMasked !== this._masked) {
       this._masked = nextMasked;
@@ -2700,13 +2714,20 @@ export class DomPanel {
     // then captured into `defaults.json`). `open()` always snaps or
     // clamps after positioning so the user never sees that; reset has
     // to as well, or the "I lost a panel" escape hatch strands the
-    // very panel it exists to rescue (a snapped panel keeps its raw
-    // off-screen rect because `clampToSafeArea` early-returns while
-    // snapped, and nothing re-snaps it). Both helpers no-op on an
+    // very panel it exists to rescue. Both paths no-op on an
     // unmounted (closed) panel — those get positioned by `open()`
     // when their taskbar entry re-launches them.
     if (this._snap !== "none") this.applySnap();
-    else this.clampToSafeArea();
+    else {
+      // Geometry is cells now: drop the rect and re-derive it from the
+      // freshly-applied content default, which `applyRect` just wrote
+      // as CSS. Same path a first-ever open takes.
+      this._cell = null;
+      this.captureCell();
+      this.clampCellToField();
+      this.place();
+      this.persistCell();
+    }
 
     this.refreshChrome();
     for (const cb of this.anchorChangeListeners)     cb(this._anchor);
@@ -2858,40 +2879,33 @@ export class DomPanel {
     return defaultValue;
   }
 
-  private restorePosition(): void {
-    // Restore all four CSS anchors so anchored panels come back
-    // to their pinned corner correctly. A free-floating panel
-    // persists right / bottom as `"auto"`, so restoring those
-    // also clears any leftover anchor values from the
-    // constructor `defaultRect`.
-    const left   = this.storageGet("left");
-    const top    = this.storageGet("top");
-    const right  = this.storageGet("right");
-    const bottom = this.storageGet("bottom");
-    if (left   !== null) this.panel.style.left   = left;
-    if (top    !== null) this.panel.style.top    = top;
-    if (right  !== null) this.panel.style.right  = right;
-    if (bottom !== null) this.panel.style.bottom = bottom;
+  /** Read the persisted cell rect, or `null` when this panel has none
+   *  yet (a fresh profile, or one whose pixel keys the migration
+   *  dropped). All four must be present and finite — a half-written
+   *  rect is treated as absent rather than partially trusted. */
+  private restoreCell(): CellRect | null {
+    const n = (k: string): number | null => {
+      const raw = this.storageGet(k);
+      if (raw === null) return null;
+      const v = Number.parseInt(raw, 10);
+      return Number.isFinite(v) ? v : null;
+    };
+    const col = n("col"), row = n("row"), cols = n("cols"), rows = n("rows");
+    if (col === null || row === null || cols === null || rows === null) return null;
+    return { col, row, cols, rows };
   }
 
-  private restoreSize(): void {
-    const w = this.storageGet("width");
-    const h = this.storageGet("height");
-    if (w) this.panel.style.width  = w;
-    if (h) this.panel.style.height = h;
+  private persistCell(): void {
+    if (!this._cell) return;
+    this.storageSet("col",  String(this._cell.col));
+    this.storageSet("row",  String(this._cell.row));
+    this.storageSet("cols", String(this._cell.cols));
+    this.storageSet("rows", String(this._cell.rows));
   }
 
-  private persistPosition(): void {
-    this.storageSet("left",   this.panel.style.left);
-    this.storageSet("top",    this.panel.style.top);
-    this.storageSet("right",  this.panel.style.right);
-    this.storageSet("bottom", this.panel.style.bottom);
-  }
 
-  private persistSize(): void {
-    this.storageSet("width",  this.panel.style.width);
-    this.storageSet("height", this.panel.style.height);
-  }
+
+
 
   private loadSavedTab(): string | null {
     return this.storageGet("tab");
