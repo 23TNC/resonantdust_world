@@ -99,3 +99,18 @@ popup is 260px (8 cols) with a two-column row layout, the menu 200px (6 cols). T
 place I2 bites, and the popup is *how the user fixes a broken layout* — if it clips or overflows,
 the recovery path is gone. Verify these two at the smallest viewport we care about before
 declaring P3 done; `DomPanel.resetAllToDefaults()` is the backstop if they do wedge.
+
+## I11 — `npm run typecheck` is ALREADY RED at HEAD; "typecheck green" is not a usable gate
+
+_Found 2026-08-09 at P1, verified by stashing this stream's changes and re-running._ The client
+carries **7 pre-existing type errors** — 1 in `game/world/MoverLayer.ts`, 6 in
+`scenes/world/WorldScene.ts` — all the same shape: a `Uint32Array` passed where a `Float64Array`
+is expected. They are the residue of the trait-rows-u32 u64→f64 transport change and have nothing
+to do with panel placement. `npm run build` is green regardless, because Vite does not typecheck.
+
+Several of this stream's items say "Acceptance: typecheck green". That criterion cannot be met
+and never could have been. **Re-read every such item as "no NEW type errors against the 7-error
+baseline"**, measured by comparing the error count and file set before and after. Not fixed here:
+the errors sit in the renderer's mover data path, and repairing another stream's regression from
+inside this one risks a silent rendering break for no gain to the work in hand. Raised to the user
+and spun out as its own task.

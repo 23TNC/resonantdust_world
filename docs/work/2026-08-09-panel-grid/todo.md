@@ -19,15 +19,15 @@ reference viewports **1920×1080, 1366×768, 1024×640** ("three sizes" below), 
 
 ## P1 — the grid
 
-- [ ] `UiEditMode`: `GRID_COLS = 58` / `GRID_ROWS = 33` + integer `edgeX[0..58]` / `edgeY[0..33]`
+- [x] `UiEditMode`: `GRID_COLS = 58` / `GRID_ROWS = 33` + integer `edgeX[0..58]` / `edgeY[0..33]`
       tables rebuilt from the live viewport (F2). Acceptance: `edgeX[58] === innerWidth` and
       `edgeY[33] === innerHeight` at three sizes.
-- [ ] Add `project(cellRect) → px` and `nearestCell(px) → cellRect`. Acceptance:
+- [x] Add `project(cellRect) → px` and `nearestCell(px) → cellRect`. Acceptance:
       `nearestCell(project(r))` equals `r` for every cell rect in the field, at three sizes.
-- [ ] Derive `rowHeight` + `reservedTop` / `reservedBottom` (one row each) as getters; DELETE
+- [x] Derive `rowHeight` + `reservedTop` / `reservedBottom` (one row each) as getters; DELETE
       `gridSize` and the float-step `getGrid` (F6). Acceptance: typecheck green, zero `gridSize`
       references remain.
-- [ ] ONE resize broadcaster on the grid; `DomPanel` drops its per-panel `resize` listener.
+- [x] ONE resize broadcaster on the grid; `DomPanel` drops its per-panel `resize` listener.
       Acceptance: with N panels open, one recompute per resize event (counter logged).
 
 ## P2 — the chrome on rows

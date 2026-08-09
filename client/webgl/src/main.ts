@@ -79,12 +79,12 @@ async function main(): Promise<void> {
   const scenes = new SceneManager(app);
 
   // Panel framework: a bottom + top taskbar and the UI layout-edit toggle.
+  // No grid wiring here — the taskbars ARE rows 0 and 32 of the app grid and
+  // derive their own height from it (`PanelGrid`), so there is no height
+  // constant to keep in sync. Edit mode is only the chrome toggle.
   const taskbar = new PanelTaskbar({ position: "bottom" });
   const topTaskbar = new PanelTaskbar({ position: "top" });
-  const uiEditMode = new UiEditMode({
-    reservedTop: PanelTaskbar.HEIGHT,
-    reservedBottom: PanelTaskbar.HEIGHT,
-  });
+  const uiEditMode = new UiEditMode();
   // The per-panel settings popup (UI-edit-mode flyout) is app-global so every
   // scene's panels are editable.
   const settingsPopup = new PanelSettingsPopup();

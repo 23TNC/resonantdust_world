@@ -18,7 +18,8 @@ import {
   TITLE_CSS,
   TITLEBAR_CSS,
 } from "./DomPanelStyles";
-import { attachDrag, attachResize, type SnapGrid } from "./pointerInteractions";
+import { attachDrag, attachResize, type SnapEdges } from "./pointerInteractions";
+import { panelGrid } from "./PanelGrid";
 
 const HOST_ID = "app";
 
@@ -671,10 +672,10 @@ export class DomPanel {
   /** Cleanup for the `UiEditMode.on` subscription, or null when
    *  edit mode wasn't wired. Called from `destroy()`. */
   private unsubUiEditMode: (() => void) | null = null;
-  /** Window-resize handler that fires `rectChange` so consumers
-   *  re-sync after a viewport reflow. Stored as a field so
-   *  `destroy()` can detach it. */
-  private readonly onWindowResize: () => void;
+  /** Unsubscribe from the grid's change broadcast. The grid owns the
+   *  app's single `resize` listener; this panel just re-places itself
+   *  when told. Detached in `destroy()`. */
+  private unsubGrid: (() => void) | null = null;
 
   private _open = false;
   private _minimized = false;
@@ -705,10 +706,14 @@ export class DomPanel {
    *  `<storageKey>.titleBarHidden`. */
   private _titleBarHidden = false;
   /** Per-panel grid-snap toggle. While on, every drag and resize
-   *  rounds to `uiEditMode.gridSize`. Persisted under
+   *  lands on a `panelGrid` edge. Persisted under
    *  `<storageKey>.gridSnap`. Read inside the pointer helpers'
-   *  `snapStep` hooks so flipping the flag takes effect on the
-   *  next pointermove without re-attaching listeners. */
+   *  `snapEdges` hooks so flipping the flag takes effect on the
+   *  next pointermove without re-attaching listeners.
+   *
+   *  Slated to go: snapping is becoming the law rather than a mode,
+   *  and this flag plus its popup row retire once the layout has been
+   *  lived with (work `2026-08-09-panel-grid`, F5). */
   private _gridSnap = false;
   /** User-toggled "stencil-mask the body content" preference.
    *  Owned by `DomPanel` so the persistence / popup wiring is one
@@ -1091,16 +1096,18 @@ export class DomPanel {
       initialBar.register(this);
     }
 
-    // Window-resize wiring — CSS-anchored panels (right: 0 etc.)
-    // and viewport-relative ones (calc(100vh - …)) reflow on
-    // window resize, but neither the browser nor any other code
-    // notifies rect-change subscribers. Fire `rectChange` so
-    // `PixiPanel.syncRect` and external consumers (layouts that
-    // reflow against the panel's rect) catch up. Reapply
-    // `heightMode` first so a locked panel tracks the new
-    // safe-area height before subscribers see the new rect.
-    // Removed in `destroy`.
-    this.onWindowResize = () => {
+    // Grid wiring. The panel does NOT listen to `resize` itself —
+    // the grid owns the app's single resize listener, rebuilds its
+    // edge tables once, and broadcasts. N panels used to mean N
+    // listeners each independently re-reading the viewport.
+    //
+    // Neither the browser nor anything else notifies rect-change
+    // subscribers when a panel reflows, so `fireRectChange` here is
+    // what keeps `PixiPanel.syncRect` and rect-mirroring layouts in
+    // step. `applyHeight` runs first so a locked panel tracks the
+    // new safe-area height before subscribers see the new rect.
+    // Unsubscribed in `destroy`.
+    this.unsubGrid = panelGrid.on(() => {
       this.applyHeight();
       this.applySnap();
       // A viewport shrink can leave a panel partly off-screen
@@ -1109,8 +1116,7 @@ export class DomPanel {
       // snapped — `applySnap` above already owns the position.
       this.clampToSafeArea();
       this.fireRectChange();
-    };
-    window.addEventListener("resize", this.onWindowResize);
+    });
 
     // Final height pass: now that persisted size has been
     // restored, reapply `heightMode` so a locked panel overrides
@@ -1453,7 +1459,8 @@ export class DomPanel {
     if (bar && !bar.destroyed) bar.unregister(this);
     this.unsubUiEditMode?.();
     this.unsubUiEditMode = null;
-    window.removeEventListener("resize", this.onWindowResize);
+    this.unsubGrid?.();
+    this.unsubGrid = null;
     // Fire destroy listeners before clearing them so PanelManager
     // (and any other observer) can unregister this panel from its
     // own bookkeeping. Snapshot first so a listener that mutates the
@@ -1858,7 +1865,7 @@ export class DomPanel {
         if (target && this.actionsEl.contains(target)) return false;
         return true;
       },
-      snapGrid:      () => this.activeSnapGrid(),
+      snapEdges:     () => this.activeSnapEdges(),
       clampPosition: () => this.dragClampBounds(),
       onMove: () => this.fireRectChange(),
       onEnd:  () => this.persistPosition(),
@@ -1873,8 +1880,8 @@ export class DomPanel {
    *  viewport size. */
   private dragClampBounds(): { minLeft: number; minTop: number; maxLeft: number; maxTop: number } {
     const rect = this.panel.getBoundingClientRect();
-    const reservedTop    = this.uiEditMode?.reservedTop    ?? 0;
-    const reservedBottom = this.uiEditMode?.reservedBottom ?? 0;
+    const reservedTop    = panelGrid.reservedTop;
+    const reservedBottom = panelGrid.reservedBottom;
     const safeBottom = window.innerHeight - reservedBottom;
     return {
       minLeft: 0,
@@ -1897,7 +1904,7 @@ export class DomPanel {
         axis === "x" ? this._resizableX
       : axis === "y" ? this.effectiveResizeY()
       :                this.isResizable,
-      snapGrid:    () => this.activeSnapGrid(),
+      snapEdges:   () => this.activeSnapEdges(),
       // Edge handles share the corner's sign mapping — the X-edge
       // sits on the same side as the corner, so `endsWith("r")` /
       // `startsWith("b")` give the right cursor-delta direction for
@@ -1931,8 +1938,8 @@ export class DomPanel {
    *  pointermove so a mid-resize viewport reflow takes effect. */
   private resizeClampSize(): { maxWidth: number; maxHeight: number } {
     const rect = this.panel.getBoundingClientRect();
-    const reservedTop    = this.uiEditMode?.reservedTop    ?? 0;
-    const reservedBottom = this.uiEditMode?.reservedBottom ?? 0;
+    const reservedTop    = panelGrid.reservedTop;
+    const reservedBottom = panelGrid.reservedBottom;
     const safeBottom = window.innerHeight - reservedBottom;
     const growsRight = this._anchor === "top-left"   || this._anchor === "bottom-left";
     const growsDown  = this._anchor === "top-left"   || this._anchor === "top-right";
@@ -1947,9 +1954,9 @@ export class DomPanel {
    *  next move without re-attaching anything. The grid is read
    *  fresh from `UiEditMode` each time, so window resizes reshape
    *  it automatically. */
-  private activeSnapGrid(): SnapGrid | null {
-    if (!this._gridSnap || !this.uiEditMode) return null;
-    return this.uiEditMode.getGrid();
+  private activeSnapEdges(): SnapEdges | null {
+    if (!this._gridSnap) return null;
+    return { x: panelGrid.edgesX, y: panelGrid.edgesY };
   }
 
   // ── Edit-mode actions ───────────────────────────────────────────
@@ -1993,37 +2000,30 @@ export class DomPanel {
     return () => this.maskedChangeListeners.delete(cb);
   }
 
-  /** Round the panel's `left` / `top` / `width` / `height` to the
-   *  current grid step in one pass. Used internally by
-   *  `toggleGridSnap` to align on activation; safe to call
-   *  directly if a caller ever needs a one-shot snap. No-op when
-   *  the panel isn't wired to a `UiEditMode`. */
+  /** Quantize the panel's current pixel rect to the nearest cell rect
+   *  and place it back through the grid's projection, in one pass.
+   *
+   *  Quantize-then-project is the whole discipline: the panel's
+   *  pixels always come from the edge tables, so abutting panels
+   *  share one integer boundary and a resize can never accumulate a
+   *  rounding error. (The pre-grid form rounded to a float step per
+   *  gesture, which is what put `"top": "56.3295px"` in the shipped
+   *  corpus.) */
   snapToGrid(): void {
-    if (!this.uiEditMode) return;
-    const grid = this.uiEditMode.getGrid();
-    if (grid.stepX <= 0 || grid.stepY <= 0) return;
     const r = this.panel.getBoundingClientRect();
-    const left = grid.originX +
-      Math.round((r.left - grid.originX) / grid.stepX) * grid.stepX;
-    const top  = grid.originY +
-      Math.round((r.top  - grid.originY) / grid.stepY) * grid.stepY;
-    const width  = Math.max(this.minWidth,  Math.round(r.width  / grid.stepX) * grid.stepX);
-    const height = Math.max(this.minHeight, Math.round(r.height / grid.stepY) * grid.stepY);
-    // Write the snapped rect via the top-left + width/height
-    // anchors first. For an anchored panel this momentarily
-    // clobbers the corner-pinning CSS (e.g. a top-right anchor's
-    // `right: Xpx` flips to `auto`) — `applyAnchor` immediately
-    // below reads the post-snap rect and re-pins the chosen
-    // corner with the right CSS, so the panel ends up snapped to
-    // the grid *and* still anchored. Without the re-anchor pass
-    // the resize-corner math would fight the CSS and resize
-    // would visually go the wrong way.
-    this.panel.style.left   = `${left}px`;
-    this.panel.style.top    = `${top}px`;
+    const cell = panelGrid.quantize({
+      left: r.left, top: r.top, width: r.width, height: r.height,
+    });
+    const px = panelGrid.project(cell);
+    // One pass, all four edges. `right` / `bottom` go to `auto` so
+    // width / height drive the far edges; `applyAnchor` then re-pins
+    // whichever corner the panel resizes from without moving it.
+    this.panel.style.left   = `${px.left}px`;
+    this.panel.style.top    = `${px.top}px`;
     this.panel.style.right  = "auto";
     this.panel.style.bottom = "auto";
-    this.panel.style.width  = `${width}px`;
-    this.panel.style.height = `${height}px`;
+    this.panel.style.width  = `${px.width}px`;
+    this.panel.style.height = `${px.height}px`;
     this.applyAnchor();
     this.persistSize();
   }
@@ -2199,8 +2199,8 @@ export class DomPanel {
       this.panel.style.height = `${h}px`;
       return;
     }
-    const reservedTop    = this.uiEditMode?.reservedTop    ?? 0;
-    const reservedBottom = this.uiEditMode?.reservedBottom ?? 0;
+    const reservedTop    = panelGrid.reservedTop;
+    const reservedBottom = panelGrid.reservedBottom;
     const safe = Math.max(
       this.minHeight,
       window.innerHeight - reservedTop - reservedBottom,
@@ -2273,8 +2273,8 @@ export class DomPanel {
     const h = rect.height;
     const viewW = window.innerWidth;
     const viewH = window.innerHeight;
-    const reservedTop    = this.uiEditMode?.reservedTop    ?? 0;
-    const reservedBottom = this.uiEditMode?.reservedBottom ?? 0;
+    const reservedTop    = panelGrid.reservedTop;
+    const reservedBottom = panelGrid.reservedBottom;
     let left: number;
     let top:  number;
     if (this._snap === "top-left") {
@@ -2323,8 +2323,8 @@ export class DomPanel {
     const rect = this.panel.getBoundingClientRect();
     const viewW = window.innerWidth;
     const viewH = window.innerHeight;
-    const reservedTop    = this.uiEditMode?.reservedTop    ?? 0;
-    const reservedBottom = this.uiEditMode?.reservedBottom ?? 0;
+    const reservedTop    = panelGrid.reservedTop;
+    const reservedBottom = panelGrid.reservedBottom;
     const safeBottom = viewH - reservedBottom;
     const safeH = Math.max(this.minHeight, safeBottom - reservedTop);
     const w = Math.max(this.minWidth, Math.min(rect.width,  viewW));

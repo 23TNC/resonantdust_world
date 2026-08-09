@@ -18,15 +18,33 @@
  * disable drag / resize on a per-instance basis after attach.
  */
 
-/** Snap-grid info read by the drag / resize helpers on every
- *  pointermove. Steps are the cell sizes; origins are the
- *  position of the (0, 0) grid cell in viewport pixels. Returning
- *  `null` from the hook keeps motion pixel-perfect. */
-export interface SnapGrid {
-  stepX: number;
-  stepY: number;
-  originX: number;
-  originY: number;
+/** The grid's edge tables, read by the drag / resize helpers on every
+ *  pointermove. Motion lands on a table entry rather than on a
+ *  multiple of a step — the two are NOT equivalent: a float step
+ *  re-rounds per gesture and drifts, while an edge is one shared
+ *  integer both neighbours agree on. See
+ *  `docs/components/client/webgl/design/panel-layout.md`.
+ *
+ *  Returning `null` from the hook keeps motion pixel-perfect. */
+export interface SnapEdges {
+  /** Column edges, `GRID_COLS + 1` ascending integers. */
+  x: readonly number[];
+  /** Row edges, `GRID_ROWS + 1` ascending integers. */
+  y: readonly number[];
+}
+
+/** Value of the table entry nearest `px`. Mirrors `PanelGrid`'s
+ *  `nearestEdge` but returns the pixel rather than the index — the
+ *  gesture helpers work in pixels and hand the final rect to the
+ *  panel, which quantizes it once on `onEnd`. */
+function snapToEdge(edges: readonly number[], px: number): number {
+  let best = edges[0];
+  let bestDist = Math.abs(edges[0] - px);
+  for (let i = 1; i < edges.length; i++) {
+    const dist = Math.abs(edges[i] - px);
+    if (dist < bestDist) { best = edges[i]; bestDist = dist; }
+  }
+  return best;
 }
 
 export interface DragHooks {
@@ -37,11 +55,10 @@ export interface DragHooks {
    *  false the drag never starts. */
   shouldStart?: (e: PointerEvent) => boolean;
   /** Read on every `pointermove`. When non-null the `left` / `top`
-   *  updates round to the nearest grid cell relative to the
-   *  grid's origin. Use to gate grid-snap behavior without re-
-   *  attaching the drag listener; flip the underlying flag and
-   *  the next move snaps. */
-  snapGrid?: () => SnapGrid | null;
+   *  updates land on the nearest column / row edge. Read fresh each
+   *  move so a viewport resize mid-drag picks up the new tables
+   *  without re-attaching the listener. */
+  snapEdges?: () => SnapEdges | null;
   /** Optional position clamp consulted on every `pointermove`
    *  after grid snap. Returns the inclusive `left` / `top`
    *  bounds the target may sit at — the helper clamps the
@@ -75,10 +92,10 @@ export function attachDrag(
   const onMove = (e: PointerEvent): void => {
     let x = e.clientX - offsetX;
     let y = e.clientY - offsetY;
-    const grid = hooks.snapGrid?.() ?? null;
-    if (grid && grid.stepX > 0 && grid.stepY > 0) {
-      x = grid.originX + Math.round((x - grid.originX) / grid.stepX) * grid.stepX;
-      y = grid.originY + Math.round((y - grid.originY) / grid.stepY) * grid.stepY;
+    const edges = hooks.snapEdges?.() ?? null;
+    if (edges) {
+      x = snapToEdge(edges.x, x);
+      y = snapToEdge(edges.y, y);
     }
     const clamp = hooks.clampPosition?.();
     if (clamp) {
@@ -132,10 +149,12 @@ export interface ResizeOptions {
    *  returns false the resize never starts — locks the target
    *  without unwiring the corner. */
   shouldStart?: () => boolean;
-  /** Read on every `pointermove`. When non-null the `width` /
-   *  `height` updates round to multiples of `stepX` / `stepY`
-   *  (origin doesn't matter for sizes). */
-  snapGrid?: () => SnapGrid | null;
+  /** Read on every `pointermove`. When non-null the size is chosen
+   *  so the *moving* edge lands on a grid line — computed from the
+   *  anchored edge, which stays put for the whole gesture. Sizes
+   *  cannot be snapped on their own: a width is only on-grid
+   *  relative to where the panel starts. */
+  snapEdges?: () => SnapEdges | null;
   /** Which corner is being grabbed. Read on every `pointermove`
    *  so the caller can move the grab corner around at runtime
    *  (e.g., flipping it based on an anchor) without re-attaching
@@ -187,6 +206,13 @@ export function attachResize(
   let startY = 0;
   let startW = 0;
   let startH = 0;
+  // The target's edges at gesture start. Whichever corner is grabbed,
+  // the OPPOSITE edges are anchored and hold still for the whole
+  // gesture — they're what a snapped size is measured from.
+  let startLeft   = 0;
+  let startTop    = 0;
+  let startRight  = 0;
+  let startBottom = 0;
 
   const onMove = (e: PointerEvent): void => {
     // Sign of the cursor-delta-to-size mapping depends on which
@@ -201,10 +227,19 @@ export function attachResize(
     const dy = (e.clientY - startY) * sy;
     let w = Math.max(opts.minWidth,  startW + dx);
     let h = Math.max(opts.minHeight, startH + dy);
-    const grid = opts.snapGrid?.() ?? null;
-    if (grid && grid.stepX > 0 && grid.stepY > 0) {
-      w = Math.max(opts.minWidth,  Math.round(w / grid.stepX) * grid.stepX);
-      h = Math.max(opts.minHeight, Math.round(h / grid.stepY) * grid.stepY);
+    const edges = opts.snapEdges?.() ?? null;
+    if (edges) {
+      // Snap the moving edge, then read the size back off the
+      // anchored one. Snapping `w` directly would put the size on a
+      // grid multiple while leaving the moving edge between lines.
+      w = sx > 0
+        ? snapToEdge(edges.x, startLeft + w) - startLeft
+        : startRight - snapToEdge(edges.x, startRight - w);
+      h = sy > 0
+        ? snapToEdge(edges.y, startTop + h) - startTop
+        : startBottom - snapToEdge(edges.y, startBottom - h);
+      w = Math.max(opts.minWidth,  w);
+      h = Math.max(opts.minHeight, h);
     }
     const clamp = opts.clampSize?.();
     if (clamp) {
@@ -230,6 +265,10 @@ export function attachResize(
     startH = rect.height;
     startX = e.clientX;
     startY = e.clientY;
+    startLeft   = rect.left;
+    startTop    = rect.top;
+    startRight  = rect.right;
+    startBottom = rect.bottom;
     document.addEventListener("pointermove", onMove);
     document.addEventListener("pointerup",   onUp);
   });
