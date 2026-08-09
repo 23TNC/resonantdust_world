@@ -16,7 +16,7 @@ pub(super) struct GrantConditionArgs {
     pub worker: u8,
     pub tic: u16,
     pub entity_reference: u32,
-    pub row: u32,
+    pub row: u64,
 }
 
 impl From<GrantConditionArgs> for super::Reducer {
@@ -48,7 +48,7 @@ pub trait grant_condition {
     fn grant_condition(&self, worker: u8,
 tic: u16,
 entity_reference: u32,
-row: u32,
+row: u64,
 ) -> __sdk::Result<()> {
         self.grant_condition_then(worker, tic, entity_reference, row,  |_, _| {})
     }
@@ -64,7 +64,7 @@ row: u32,
         worker: u8,
 tic: u16,
 entity_reference: u32,
-row: u32,
+row: u64,
 
         callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
             + Send
@@ -78,7 +78,7 @@ impl grant_condition for super::RemoteReducers {
         worker: u8,
 tic: u16,
 entity_reference: u32,
-row: u32,
+row: u64,
 
         callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
             + Send

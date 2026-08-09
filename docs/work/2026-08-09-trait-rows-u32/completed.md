@@ -1,5 +1,18 @@
 # Completed — trait-rows-u32
 
+## 2026-08-09 — P1 (second piece, IN FLIGHT): the module lanes
+
+Both shards' `needs.need` columns are u64 (set_need/grant_condition/spawn take u64 rows;
+the uid still keys the low 16); published as in-place updates — the column change WIPED the
+needs rows (I2's posture; the sweep's restarts re-mint). st-bindings + edge bindings carry
+`need: u64`. THE STACK IS MID-MIGRATION: the running worker/edge binaries still speak u32
+rows and their reducer calls will FAIL against the new modules until the P2 sweep rebuilds
+every consumer — the item's hand-SET_NEED drill runs AFTER the worker converts. NEXT (the
+P2 sweep, in order): shared/content (the ONE eval on u64 rows; the loader's six category
+tables + level→variant per F6; the encoding seam per F7) → worker → npc → wasm/webgl →
+edge → content re-authored under the six categories → goldens/pins re-blessed → restarts →
+the drill.
+
 ## 2026-08-09 — P1 (first piece): the codec core
 
 `pack_row(reference, data) → u64` + `row_reference`/`row_data`/`row_lanes_i8x2` (F7's 2×i8

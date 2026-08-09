@@ -92,7 +92,7 @@ pub enum Reducer {
         worker: u8,
         tic: u16,
         entity_reference: u32,
-        row: u32,
+        row: u64,
 }    ,
     InvAdd {
         worker: u8,
@@ -115,7 +115,7 @@ pub enum Reducer {
         worker: u8,
         tic: u16,
         entity_reference: u32,
-        row: u32,
+        row: u64,
 }    ,
     Spawn {
         worker: u8,
@@ -125,7 +125,7 @@ pub enum Reducer {
         definition_reference: u32,
         position_reference: u32,
         payload: Vec::<u32>,
-        needs: Vec::<u32>,
+        needs: Vec::<u64>,
         data: u8,
         promote: bool,
         issuer_player_id: u32,
