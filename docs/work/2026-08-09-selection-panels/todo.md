@@ -38,13 +38,13 @@ survive a reset or a corpus export.
 
 ## P2 — the conditions panel
 
-- [ ] New `ConditionsPanel` owning `ConditionCards`, subscribing to `SelectionModel` directly with
+- [x] New `ConditionsPanel` owning `ConditionCards`, subscribing to `SelectionModel` directly with
       its own refresh cadence and `sameCards` identity check (F5/I8). Acceptance: selecting a pawn
       fills it; selecting a tile clears it.
-- [ ] `ConditionCards` becomes a CHILD: delete the host-append, the rect/focus/minimize/open
+- [x] `ConditionCards` becomes a CHILD: delete the host-append, the rect/focus/minimize/open
       subscriptions, the mirrored z-index and the hand-rolled visibility predicate (F3).
       Acceptance: no reference to another panel's rect remains in the file.
-- [ ] Cards set `pointer-events: auto` so they stay live inside a click-through panel (I1).
+- [x] Cards set `pointer-events: auto` so they stay live inside a click-through panel (I1).
       Acceptance: with click-through on, a card click still expands and a world click still passes.
 - [ ] The tooltip renders outside the panel's clip (I2). Acceptance: hovering a card in a
       one-row-tall panel shows the full tooltip, unclipped.
@@ -54,7 +54,7 @@ survive a reset or a corpus export.
 
 ## P3 — the intentions panel
 
-- [ ] New `IntentionsPanel` owning `IntentStrip` unchanged, subscribing to `SelectionModel` +
+- [x] New `IntentionsPanel` owning `IntentStrip` unchanged, subscribing to `SelectionModel` +
       `IntentQueues` directly, carrying the `CANCEL_INTENT` sender (F4/F5). Acceptance: the
       selected pawn's queue renders; a circle click still cancels.
 - [ ] The progress ring still computes per frame from the tic estimate after the move (F4).
@@ -62,7 +62,7 @@ survive a reset or a corpus export.
 
 ## P4 — details slims down
 
-- [ ] Remove the strip and the cards from `DetailsPanel`, INCLUDING both reserves — the
+- [x] Remove the strip and the cards from `DetailsPanel`, INCLUDING both reserves — the
       `CARD_H + PAD_BOTTOM * 2` bottom band and the `STRIP_W` left shift (I7). Acceptance: no
       empty margin; details is name + tile + button + wash.
 - [ ] Re-read details' min size now it holds two text rows and a button (I7). Acceptance: it
@@ -72,12 +72,12 @@ survive a reset or a corpus export.
 
 ## P5 — the corpus
 
-- [ ] `defaultCell` + `defaults.json` entries for both new panels (I6). Acceptance: cleared
+- [x] `defaultCell` + `defaults.json` entries for both new panels (I6). Acceptance: cleared
       storage → both open on-grid at their authored cells.
-- [ ] Conditions authored full-width bottom with `background: none`, `clickThrough: true`,
+- [x] Conditions authored full-width bottom with `background: none`, `clickThrough: true`,
       `titleBarHidden: true` (F3). Acceptance: a cleared profile opens it transparent and
       click-through with no bar.
-- [ ] Pick both panels' z-tiers deliberately against bug-sweep F1's table (I5). Acceptance:
+- [x] Pick both panels' z-tiers deliberately against bug-sweep F1's table (I5). Acceptance:
       neither covers a panel the user reads; conditions sits over the world.
 - [ ] Taskbar entries + icons for both, so a closed panel can be reopened. Acceptance: closing and
       re-opening each from the taskbar restores it in place.

@@ -68,3 +68,50 @@ The ten references in `DomPanelStyles.ts` were rewritten to describe the **optio
 are the standing justification for the `pointer-events: auto` this stream depends on and leaving
 them is how the next session repeats the mistake. Comment text only. The remaining references in
 `DomPanel.ts`, `PanelManager.ts` and `PanelSettingsPopup.ts` are flagged for a separate sweep.
+
+## 2026-08-09 — P2/P3/P4/P5: the split lands
+
+These four phases are one commit because the file moves make them inseparable: once
+`ConditionCards` and `IntentStrip` move out of `details/`, details cannot compile until it stops
+importing them.
+
+**Folders follow the split.** `git mv` put `ConditionCards` under `panels/conditions/` and
+`IntentStrip` under `panels/intentions/`, beside their new owners. Leaving them in `details/`
+would have kept the hijack in the directory tree after removing it from the code.
+
+**`ConditionCards` is a child.** Its `CardsHost` contract went from eight members to **one**
+(`storageKey`, for the expanded flag). Deleted: the rect / focus / minimize / open subscription
+quartet, the window-resize listener, the mirrored z-index, the visibility predicate, the
+`position: fixed` placement, `INTENT_STRIP_W`, `EDGE_MARGIN`, and a 45-line `reflow` that chose
+between "slide left so the strip still fits" and "become a viewport-wide scroller". `reflow` is
+now one line — a visibility flip — because a child is laid out by its parent.
+
+**`ConditionsPanel`** subscribes to the selection model itself, polls at the same 500 ms details
+always used, and guards the rebuild with an identity key over `(id, remaining, magnitudeSum)` so
+a poll that changes nothing cannot tear down a tooltip mid-read (I8). **`IntentionsPanel`** takes
+`IntentStrip` unchanged and carries the `CANCEL_INTENT` sender.
+
+**`DetailsPanel` is identity only**, and both reserves went with their tenants (I7) — the
+`CARD_H + PAD_BOTTOM * 2` bottom band and the `STRIP_W` left shift. The scene builds ONE
+`selectionProviders` object shared by details and conditions; that is the scene's data access,
+not a panel feeding a panel.
+
+**Verified live**, clean profile, five real pawns in the world:
+
+- Selecting a pawn fills all three: details `bunny tile 123, 79`, conditions **4 cards** at
+  34×34 running left-to-right (x = 8, 48, 88, 128), intentions showing its queue circle.
+- The conditions panel measures `0,778,1862,83` — **full width**, `pointer-events: none`,
+  body background `rgba(0, 0, 0, 0)`, no title bar.
+- **The decisive pair holds**: a click on a card resolves inside the panel
+  (`CARD_IS_CLICKABLE: true`, hit stack `DIV(in conditions)` → `CANVAS`), while a click on the
+  empty area beside the cards reaches the world (`gapHitIs: "CANVAS"`). Transparent and
+  click-through with live cards — the thing F2 argued could not be expressed by one flag.
+- Card counts track the pawn: 4, 2, 2 and 0 across the five movers. The zero is a real pawn with
+  no active conditions, not a wiring failure.
+
+**Two smaller things found by running it.** The panel-strings schema keys the title-bar text as
+`label`, not `title`; my first locale entries used `title` and the panels rendered their raw keys
+(`conditionsPane…`) until corrected. And a card-click probe first read as a failure because the
+**Build** panel (z 480001, spanning x 0–289) covers the left end of the card band — panels are
+allowed to overlap (panel-grid F11), and conditions sits on `Z_TIER_INFO` beneath the tool tier,
+so where they overlap the cards are hidden. Worth the user's eye when they position it.

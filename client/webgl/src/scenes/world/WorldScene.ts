@@ -14,9 +14,12 @@ import { MoverLayer } from "../../game/world/MoverLayer";
 import { IntentQueues } from "../../game/world/IntentQueues";
 import { ChatPanel } from "../../game/panels/chat/ChatPanel";
 import { DetailsPanel } from "../../game/panels/details/DetailsPanel";
+import type { DetailsProviders } from "../../game/panels/details/DetailsPanel";
+import { ConditionsPanel } from "../../game/panels/conditions/ConditionsPanel";
+import { IntentionsPanel } from "../../game/panels/intentions/IntentionsPanel";
 import { InventoryPanel } from "../../game/panels/InventoryPanel";
 import { InventoryStore } from "../../game/world/InventoryStore";
-import type { ConditionCard, EmotionSlice } from "../../game/panels/details/ConditionCards";
+import type { ConditionCard, EmotionSlice } from "../../game/panels/conditions/ConditionCards";
 import { BuildPanel } from "../../game/panels/build/BuildPanel";
 import { buildMenuEntries, blueprintStemFor, type BuildEntry } from "../../game/world/buildMenu";
 import { linkedCell, N as MASK_N, E as MASK_E, S as MASK_S, W as MASK_W } from "../../game/world/linkedCell";
@@ -57,6 +60,8 @@ export class WorldScene extends Scene {
   private intentQueues!: IntentQueues;
   private chat!: ChatPanel;
   private details: DetailsPanel | null = null;
+  private conditionsPanel: ConditionsPanel | null = null;
+  private intentionsPanel: IntentionsPanel | null = null;
   /** The inventory surface (inventory F7): the PawnInventory mirror + the slot-grid panel. */
   private inventoryStore: InventoryStore | null = null;
   private inventoryPanel: InventoryPanel | null = null;
@@ -135,7 +140,7 @@ export class WorldScene extends Scene {
     });
     this.selection.subscribe(() => this.panel.refreshTitleSuffix());
     // ui-select P2: the details panel — reads the SelectionModel + live world providers.
-    this.details = new DetailsPanel(ctx, this.selection, {
+    const selectionProviders: DetailsProviders = {
       pawn: (e) => {
         const info = this.moverLayer.pawnInfo(e);
         if (!info) return null;
@@ -233,13 +238,23 @@ export class WorldScene extends Scene {
           return null;
         }
       },
-    }, this.intentQueues);
+    };
+    // THREE selection surfaces (selection-panels F3/F5), each subscribing to the model
+    // itself — none is fed by another. They share this providers object because it is the
+    // scene's data access, not a panel feeding a panel: the pawn eval runs once per reader
+    // call regardless of who asks.
+    this.details = new DetailsPanel(ctx, this.selection, selectionProviders);
+    this.details.open();
+    this.conditionsPanel = new ConditionsPanel(ctx, this.selection, selectionProviders);
+    this.conditionsPanel.open();
+    this.intentionsPanel = new IntentionsPanel(ctx, this.selection, this.intentQueues);
     // intent-queue-ui F3/F4: a strip-circle click sends the cancel by entry_id.
-    this.details.cancelSender = (pawn, entryId) => {
+    this.intentionsPanel.cancelSender = (pawn, entryId) => {
       this.ctx.client.queue(new Uint32Array([CANCEL_INTENT_ACTION, pawn, entryId]));
     };
-    this.details.open();
-    // DEBUG: `__details` — the strip's ring-percentage probe (intent-queue-ui I5).
+    this.intentionsPanel.open();
+    // DEBUG: the strip's ring-percentage probe (intent-queue-ui I5) — on its own panel now.
+    (globalThis as unknown as { __intentions: IntentionsPanel }).__intentions = this.intentionsPanel;
     (globalThis as unknown as { __details: DetailsPanel }).__details = this.details;
 
     // ── the inventory surface (inventory F7) ── the store mirrors PawnInventory

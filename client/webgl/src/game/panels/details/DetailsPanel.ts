@@ -5,18 +5,20 @@
 //! A top BUTTON ROW (I11) opens sibling panels — [Inventory] renders only when the
 //! selected kind carries the inventory need. Consumes the model's change event only
 //! (D1) — it never touches input, so drag-box multi-select lands as "N selected".
+//!
+//! **Identity ONLY** (`2026-08-09-selection-panels`): the condition cards and the intent strip
+//! moved to panels of their own, and BOTH of this panel's reserves went with them — the bottom
+//! band it held for cards that were never its children, and the left shift it made for the
+//! intent column. What remains is the name, the tile, the [Inventory] button and the emotion
+//! wash, which stays because it is the ACTIVE emotion — a property of the selected object
+//! rather than of its condition list (F6).
 
 import { DomPanel, Z_TIER_INFO } from "../../../ui/dom/DomPanel";
-import { ConditionCards, CARD_H, PAD_BOTTOM } from "./ConditionCards";
-import type { ConditionCard } from "./ConditionCards";
-import { IntentStrip } from "./IntentStrip";
-import type { QueueVisual } from "./IntentStrip";
+import type { ConditionCard } from "../conditions/ConditionCards";
 import { panelTitle, panelText } from "../panelStrings";
 import type { GameContext } from "../../../GameContext";
 import type { SelectionModel } from "../../world/SelectionModel";
-import type { IntentQueues } from "../../world/IntentQueues";
 import { SQUARE } from "../../viewport/squareMath";
-import { getContent } from "../../definitions/contentBoot";
 
 /** The world-scene data the panel reads — injected so the panel stays input- and
  *  engine-agnostic (testable, and reusable when souls/items become selectable). */
@@ -52,8 +54,7 @@ export interface DetailsProviders {
 const PANEL_KEY = "gameDetailsPanel";
 
 export class DetailsPanel extends DomPanel {
-  /** The flex ROW (intent-queue-ui F5): the strip pinned LEFT, the text content
-   *  SHIFTED RIGHT beside it. */
+  /** The panel's content root. Still a row so the emotion wash has one element to tint. */
   private readonly rowEl = document.createElement("div");
   private readonly bodyEl = document.createElement("div");
   /** The top BUTTON ROW (inventory F7/I11) — panel-opening buttons land here;
@@ -62,17 +63,10 @@ export class DetailsPanel extends DomPanel {
   private readonly inventoryBtn = document.createElement("button");
   private readonly textEl = document.createElement("div");
   private readonly unsubSel: () => void;
-  private readonly unsubQueues: () => void;
   private readonly timer: number;
-  /** The condition strip — a SIBLING of this panel, not a child, so it can draw past the
-   *  panel's right edge (conditions F7 / B1). Owned here, destroyed here. */
-  private readonly cards: ConditionCards;
-  /** The intent-queue strip (intent-queue-ui F5) — circles from the TOML visuals. */
-  private readonly strip: IntentStrip;
 
   constructor(ctx: GameContext, private readonly selection: SelectionModel,
-              private readonly providers: DetailsProviders,
-              private readonly queues: IntentQueues) {
+              private readonly providers: DetailsProviders) {
     super({
       title: panelTitle(PANEL_KEY),
       storageKey: "details",
@@ -83,13 +77,13 @@ export class DetailsPanel extends DomPanel {
       pinned: true,
       uiEditMode: ctx.uiEditMode,
     });
-    // The body reserves the strip's band at the bottom so a long text block scrolls to a stop
-    // ABOVE the cards instead of underneath them — the strip floats over the panel, so without
-    // the reserve the last row would hide behind it.
+    // No reserves. The bottom band (for cards that were never children) and the left shift
+    // (for the intent column) both went with their tenants — leaving either behind would give
+    // this panel a permanent empty margin that reads as a layout bug (I7).
     this.rowEl.style.cssText = "display:flex;height:100%;box-sizing:border-box;";
     this.bodyEl.style.cssText =
-      "padding:8px 12px;overflow:auto;height:100%;display:flex;flex-direction:column;" +
-      `box-sizing:border-box;flex:1 1 auto;padding-bottom:${CARD_H + PAD_BOTTOM * 2}px;`;
+      "padding:var(--ui-pad) var(--ui-pad);overflow:auto;height:100%;display:flex;" +
+      "flex-direction:column;box-sizing:border-box;flex:1 1 auto;";
     // The button row (inventory I11): a named ROW, not "the inventory button" — the
     // next panel button (character sheet…) lands beside it without rewiring.
     this.buttonRowEl.style.cssText = "display:flex;gap:6px;margin-bottom:6px;flex:0 0 auto;";
@@ -105,40 +99,9 @@ export class DetailsPanel extends DomPanel {
     this.textEl.style.cssText = "font:12px/1.7 monospace;white-space:pre;flex:1 1 auto;";
     this.bodyEl.appendChild(this.buttonRowEl);
     this.bodyEl.appendChild(this.textEl);
-    this.strip = new IntentStrip(
-      (ref) => {
-        try {
-          return getContent().queueVisual(ref) as QueueVisual | null;
-        } catch {
-          return null;
-        }
-      },
-      () => {
-        const d = ctx.client.ticDelta(0);
-        if (d === null) return null;
-        return ((Math.floor(d) % 0x10000) + 0x10000) % 0x10000;
-      },
-      (entryId) => this.onCancelClick(entryId),
-    );
-    this.rowEl.appendChild(this.strip.el);
     this.rowEl.appendChild(this.bodyEl);
     this.setBody(this.rowEl);
-    this.cards = new ConditionCards({
-      storageKey: "details",
-      rect: () => this.panel.getBoundingClientRect(),
-      zIndex: () => Number.parseInt(this.panel.style.zIndex, 10) || 0,
-      // `display: none` covers the taskbar-hide path, which has no public flag of its own.
-      visible: () => this.isOpen && !this.isMinimized && this.panel.style.display !== "none",
-      onRectChange: (cb) => this.onRectChange(() => cb()),
-      onFocus: (cb) => this.onFocus(cb),
-      onMinimizeChange: (cb) => this.onMinimizeChange(() => cb()),
-      onOpenChange: (cb) => this.onOpenChange(() => cb()),
-    });
     this.unsubSel = selection.subscribe(() => this.render());
-    // The strip re-renders on every queue fan for the selected pawn.
-    this.unsubQueues = queues.subscribe(() => {
-      if (this.selection.primary?.kind === "pawn") this.render();
-    });
     // Pawns move while selected — refresh the live rows on a slow tick (the selection event
     // only fires on selection CHANGES, not on the pawn's motion).
     this.timer = window.setInterval(() => {
@@ -147,27 +110,12 @@ export class DetailsPanel extends DomPanel {
     this.render();
   }
 
-  /** A strip-circle click attempts a cancel (intent-queue-ui F3/F4 — P4 wires the
-   *  verb; the strip already reports the worker-minted entry id). */
-  private onCancelClick(entryId: number): void {
-    const p = this.selection.primary;
-    if (p?.kind !== "pawn") return;
-    this.cancelSender?.(p.entity, entryId);
-  }
-
-  /** Injected by the scene (P4) — sends `CANCEL_INTENT pawn entry_id`. */
-  cancelSender: ((pawn: number, entryId: number) => void) | null = null;
-
   /** Injected by the scene (inventory F7) — opens the inventory panel for the
    *  active pawn. The button only renders when the selection HAS an inventory. */
   onInventoryClick: (() => void) | null = null;
 
   private render(): void {
     const rows: string[] = [];
-    /** The conditions this render resolved — empty for every non-pawn selection, which is what
-     *  clears the strip. Collected here and pushed ONCE at the end so there is exactly one
-     *  place the strip can be set from. */
-    let cards: ConditionCard[] = [];
     /** The panel wash (emotions F7): the active emotion's color, alpha-dimmed over the
      *  panel's dark base. `""` (no wash) for every non-pawn selection. */
     let wash = "";
@@ -180,21 +128,18 @@ export class DetailsPanel extends DomPanel {
       this.textEl.textContent = panelText(PANEL_KEY, "empty");
       this.inventoryBtn.style.display = "none";
       this.rowEl.style.background = "";
-      this.cards.setCards([]);
-      this.strip.setEntries([]);
       return;
     }
     if (all.length > 1) rows.push(`${all.length} selected — primary:`);
     // The panel's whole job is IDENTIFICATION (inventory F7, the user at plan review:
     // "I just need to know what something is" — `thing #26335, texture (geo)` hid that
     // a green square was a shrub). NAME from the TOML + the TILE; everything else lives
-    // in the cards, the strip, and the wash.
+    // in its sibling panels and the wash.
     if (p.kind === "pawn") {
       const info = this.providers.pawn(p.entity);
       if (info) {
         rows.push(info.name, `tile  ${info.tileX}, ${info.tileY}`);
         showInventory = info.hasInventory;
-        cards = info.conditions;
         const c = info.emotion.color;
         wash = `rgba(${(c >> 16) & 0xff}, ${(c >> 8) & 0xff}, ${c & 0xff}, 0.16)`;
       } else {
@@ -215,22 +160,11 @@ export class DetailsPanel extends DomPanel {
     this.textEl.textContent = rows.join("\n");
     this.inventoryBtn.style.display = showInventory ? "" : "none";
     this.rowEl.style.background = wash;
-    this.cards.setCards(cards);
-    // The strip shows the SELECTED pawn's queue only; anything else clears it.
-    this.strip.setEntries(p.kind === "pawn" ? this.queues.entriesOf(p.entity) : []);
-  }
-
-  /** The strip's computed ring percentage (drill probe — intent-queue-ui I5). */
-  ringPercent(): number | null {
-    return this.strip.ringPercent();
   }
 
   destroy(): void {
     this.unsubSel();
-    this.unsubQueues();
     clearInterval(this.timer);
-    this.cards.destroy();
-    this.strip.destroy();
     super.destroy();
   }
 }

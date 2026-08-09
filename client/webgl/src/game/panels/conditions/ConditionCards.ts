@@ -1,18 +1,22 @@
-//! The details panel's CONDITION CARDS — a horizontal strip along the bottom of the panel,
-//! showing what a selected pawn is currently feeling / suffering (`2026-08-04-conditions` P4,
-//! rebuilt as EMOTION PIE SQUARES by `2026-08-07-emotions` F5/F6).
+//! The CONDITION CARDS — what a selected pawn is currently feeling / suffering
+//! (`2026-08-04-conditions` P4, rebuilt as EMOTION PIE SQUARES by `2026-08-07-emotions` F5/F6).
 //!
-//! **The strip is a SIBLING of the panel, not a child** ([F7]). `PANEL_CSS` sets
-//! `overflow: hidden` on the panel root, so anything parented inside `DetailsPanel` is clipped
-//! at the panel border and a strip wider than the panel would merely scroll inside it. The user
-//! asked for cards that "actually draw past the details", so this element is appended to the
-//! panel's HOST and positioned against the panel's rect — outside the clip, free to extend right
-//! across the world.
+//! **This is an ordinary CHILD of the conditions panel** (`2026-08-09-selection-panels` F3). It
+//! used to be a SIBLING of the details panel — appended to the host and positioned against
+//! another panel's rect — because `PANEL_CSS` sets `overflow: hidden` and a strip wider than
+//! details would have been clipped. Giving the cards a panel of their own, as wide as the
+//! screen, removed the reason: cards flow left-to-right *inside* their panel and never need to
+//! escape a clip. That deleted the whole apparatus — the rect / focus / minimize / open
+//! subscription quartet, the mirrored z-index, the hand-rolled visibility predicate and a
+//! 45-line viewport clamp — all of which was re-deriving by hand what a panel already knows
+//! about itself.
 //!
-//! It lives in the overlay in BOTH states — collapsed (top 4 maximized, the rest minimized) and
-//! expanded (all maximized). One layout, one code path, and no reparent at the moment the user
-//! clicks; a strip that lived in the body until expansion would also inherit the body's scroll
-//! and slide away from the bottom edge as the text rows scrolled.
+//! The container stays `pointer-events: none` with only the CARDS taking events. That was
+//! always true (so gaps never swallowed a world click) and it is now what lets the whole panel
+//! be click-through while its cards stay live (selection-panels F2 / design invariant 9).
+//!
+//! The ONE thing that still escapes the panel is the TOOLTIP: the card carries no text, so the
+//! tooltip is the entire read surface, and a panel docked a few rows tall would clip it.
 //!
 //! Ordering is NOT decided here. `needs_eval::active_conditions` has already sorted by
 //! `priority` desc, Σ emotion magnitude desc, `condition_id` asc (conditions F3, emotions F4) —
@@ -67,10 +71,6 @@ export const CARD_H = CARD_W;
 export const CARD_GAP = 6;
 /** Inset from the panel's LEFT edge, px. */
 export const PAD_LEFT = 8;
-/** The intent strip's column width (intent-queue-ui) — the cards' origin clears it so
- *  the bottom-most circle and the first card never overlap. Mirrors `IntentStrip`'s
- *  `STRIP_W` (kept as a literal to avoid a layout import cycle). */
-const INTENT_STRIP_W = 40;
 /** Inset from the panel's BOTTOM edge, px. */
 export const PAD_BOTTOM = 8;
 /** How many cards show maximized before the rest minimize (the user's number). */
@@ -79,34 +79,20 @@ export const MAXIMIZED = 4;
 export const MINIMIZED_FRACTION = 0.55;
 /** Minimized card side, px (derived; kept as a constant so tests and CSS agree). */
 export const CARD_W_MIN = Math.round(CARD_W * MINIMIZED_FRACTION);
-/** Gap kept between the strip and the viewport edges when it has to be clamped, px. */
-export const EDGE_MARGIN = 8;
 
 const CARD_BORDER = "#3a3a4a";
 const CARD_BORDER_HOVER = "#b8bfd0";
 /** The modifier-free fallback if the provider ever fails to synthesize `Fine +0` (F5). */
 const FINE_GRAY = 0x9aa4b0;
 
-/** What `ConditionCards` needs from the panel it hangs off — passed in rather than reached for,
- *  so this file never imports `DomPanel` and stays testable in isolation. */
+/** What `ConditionCards` still needs from its panel. One field: the cards are a child now, so
+ *  everything else the old overlay asked for (rect, z-index, visibility, four subscriptions) is
+ *  the panel's own business. Passed in rather than reached for, so this file never imports
+ *  `DomPanel` and stays testable in isolation. */
 export interface CardsHost {
   /** The panel's `storageKey`, so the expanded flag persists beside its other prefs
    *  (`<key>.conditionsExpanded`). `null` disables persistence, as it does on the panel. */
   storageKey: string | null;
-  /** The panel root's CURRENT viewport rect. */
-  rect(): DOMRect;
-  /** The panel root's current z-index, so the strip can sit exactly one above it. */
-  zIndex(): number;
-  /** Whether the panel is presently on screen (open, not minimized, not taskbar-hidden). */
-  visible(): boolean;
-  /** Panel rect changed — drag, resize, snap flip, window resize, minimize toggle. */
-  onRectChange(cb: () => void): () => void;
-  /** Panel focus changed (its z-index may have moved within its band). */
-  onFocus(cb: () => void): () => void;
-  /** Panel minimized / restored. */
-  onMinimizeChange(cb: () => void): () => void;
-  /** Panel opened / closed. */
-  onOpenChange(cb: () => void): () => void;
 }
 
 export class ConditionCards {
@@ -129,8 +115,10 @@ export class ConditionCards {
     this.expanded = this.loadExpanded();
     this.el.dataset.rdConditionStrip = "1";
     this.el.style.cssText = [
-      "position:fixed",
-      "display:none",
+      // An in-flow child of the panel body. Was `position: fixed` while it
+      // lived outside its panel; the panel owns placement now.
+      "display:flex",
+      "flex-wrap:wrap",
       `gap:${CARD_GAP}px`,
       "align-items:flex-end",
       "font:12px/1.35 ui-monospace, monospace",
@@ -158,16 +146,14 @@ export class ConditionCards {
       return this.cards.length;
     };
 
-    const reflow = () => this.reflow();
-    this.unsubs.push(
-      this.host.onRectChange(reflow),
-      this.host.onFocus(reflow),
-      this.host.onMinimizeChange(reflow),
-      this.host.onOpenChange(reflow),
-    );
-    window.addEventListener("resize", reflow);
-    this.unsubs.push(() => window.removeEventListener("resize", reflow));
+    // No subscriptions. The old overlay had to re-derive its own visibility and position
+    // from four panel events plus a window resize listener; a child is laid out by its parent
+    // and hidden with it.
+    this.reflow();
   }
+
+  /** The cards element, for the panel to mount into its body. */
+  get element(): HTMLElement { return this.el; }
 
   /** Replace the displayed set. Pass `[]` (or a non-pawn selection) to clear the strip. */
   setCards(cards: ConditionCard[]): void {
@@ -292,46 +278,12 @@ export class ConditionCards {
   /** Re-anchor to the panel's bottom-left, clamp at the SCREEN edge, and mirror the panel's
    *  visibility. Cheap enough to run on every drag frame — one rect read, a few style writes,
    *  and the natural width computed arithmetically rather than measured (no layout thrash). */
+  /** Show / hide against the card count. Everything the old `reflow` did — reading another
+   *  panel's rect, mirroring its z-index, clamping to the viewport, choosing between
+   *  slide-left and become-a-scroller — belongs to the panel now. Over-width is the panel
+   *  body's `overflow-x`, not this file's problem (F3/I3). */
   private reflow(): void {
-    if (!this.cards.length || !this.host.visible()) {
-      this.el.style.display = "none";
-      return;
-    }
-    const r = this.host.rect();
-    this.el.style.display = "flex";
-    this.el.style.top = `${r.bottom - PAD_BOTTOM - CARD_H}px`;
-    // One above the panel it belongs to, so it draws over the panel's own bottom edge but does
-    // not leapfrog whatever the user focuses next.
-    this.el.style.zIndex = String(this.host.zIndex() + 1);
-
-    // The clamp is the VIEWPORT, not the panel (B1 #4 with #1 as the inner fallback). Two
-    // distinct cases, and conflating them is what makes a right-anchored panel feel broken:
-    const natural = this.naturalWidth();
-    const room = window.innerWidth - EDGE_MARGIN * 2;
-    if (natural <= room) {
-      // 1. The strip FITS on screen but its natural origin would push it off the right — e.g.
-      //    the panel is snapped to the right edge. Slide the origin left instead of scrolling:
-      //    every card stays visible and the strip still hugs the panel's bottom.
-      //    intent-queue-ui: the origin clears the INTENT strip's column (user call,
-      //    2026-08-07 — the cards must not overlap the intentions).
-      const wanted = r.left + PAD_LEFT + INTENT_STRIP_W;
-      const maxLeft = window.innerWidth - EDGE_MARGIN - natural;
-      this.el.style.left = `${Math.max(EDGE_MARGIN, Math.min(wanted, maxLeft))}px`;
-      this.el.style.width = "";
-      this.el.style.overflowX = "";
-      // Fits ⇒ stay fully pass-through: only the cards take pointer events, so the gaps and
-      // the strip's tail never swallow a click meant for the world.
-      this.el.style.pointerEvents = "none";
-    } else {
-      // 2. The strip is wider than the SCREEN — no placement helps, so it becomes a scroller
-      //    (B1 method #1, applied at the screen edge instead of the panel edge). It has to take
-      //    pointer events to be scrollable at all; acceptable here because at this width it
-      //    already spans the viewport, so the world it covers is a thin band at the bottom.
-      this.el.style.left = `${EDGE_MARGIN}px`;
-      this.el.style.width = `${room}px`;
-      this.el.style.overflowX = "auto";
-      this.el.style.pointerEvents = "auto";
-    }
+    this.el.style.display = this.cards.length ? "flex" : "none";
   }
 
   /** The width the strip WANTS, from the card counts — no DOM measurement, so this is safe to
