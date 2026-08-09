@@ -44,22 +44,36 @@ const ROW_CSS: Partial<CSSStyleDeclaration> = {
   display: "flex",
   alignItems: "center",
   justifyContent: "space-between",
-  padding: "6px 12px",
+  padding: "var(--ui-pad-sm) var(--ui-pad)",
   borderBottom: "1px solid #23252e",
-  gap: "8px",
+  gap: "var(--ui-gap)",
+  // Never let a row push its controls past the popup's edge: this
+  // popup is HOW a user fixes a broken layout, so an unreachable
+  // control here costs them the recovery path itself.
+  minWidth: "0",
+  overflow: "hidden",
 };
 
 const LABEL_CSS: Partial<CSSStyleDeclaration> = {
   color: "#a0a0b0",
   fontFamily: "sans-serif",
   fontSize: "var(--ui-font-md)",
-  flex: "0 0 auto",
+  // The LABEL absorbs the squeeze — `0 0 auto` meant a narrow popup
+  // overflowed its controls off the right edge instead (measured at
+  // 1024x640: five cycling rows hanging 56-109px past the edge).
+  // `min-width: 0` is required for a flex child to shrink below its
+  // content width at all.
+  flex: "1 1 auto",
+  minWidth: "0",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
 };
 
 const BUTTON_GROUP_CSS: Partial<CSSStyleDeclaration> = {
   display: "flex",
   alignItems: "center",
-  gap: "4px",
+  gap: "var(--ui-gap)",
   flex: "0 0 auto",
 };
 
@@ -71,9 +85,9 @@ const BUTTON_CSS: Partial<CSSStyleDeclaration> = {
   cursor: "pointer",
   fontFamily: NOTO_EMOJI_FAMILY,
   fontSize: "var(--ui-font-lg)",
-  padding: "2px 8px",
+  padding: "0 var(--ui-pad-sm)",
   lineHeight: "1",
-  minWidth: "32px",
+  minWidth: "var(--ui-btn)",
 };
 
 /** Glyph colour for a toggle whose value is currently forced by

@@ -106,9 +106,9 @@ reference viewports **1920×1080, 1366×768, 1024×640** ("three sizes" below), 
 
 ## P5 — the truth
 
-- [ ] Verify the settings popup + settings menu stay usable at 1024×640 (I10). Acceptance: no
+- [x] Verify the settings popup + settings menu stay usable at 1024×640 (I10). Acceptance: no
       clipped label, no unreachable row; capture.
-- [ ] Eyeball the scale's two known consequences (I2): the ~13% lighter chrome on a maximized
+- [x] Eyeball the scale's two known consequences (I2): the ~13% lighter chrome on a maximized
       1080p browser, and the 9px floor engaging below ~1366×768. Acceptance: captures at both,
       plus the ratio constant's value if the user wants today's weight back.
 - [ ] The full exit on camera: three sizes, a resize round-trip, a title-bar toggle, a fresh

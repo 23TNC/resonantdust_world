@@ -249,3 +249,32 @@ pre-existing behaviour, unrelated to the grid, and changing a panel's `snap` is 
 rather than a units decision. What was fixed is the corpus *lying* about it: those three entries
 now record the cells snap actually produces, so the file describes the layout the app builds.
 Whether they should stop sharing a corner is the user's call.
+
+## 2026-08-09 — P5 (part): the recovery surface, and the scale's verdict
+
+**I10 found a real regression, in the worst possible place.** At 1024×640 the settings popup is 8
+cols = 141px, and five cycling-select rows had their `▶` hanging **56–109px past the popup's right
+edge** — unreachable. Before this stream the popup was a fixed 260px at every viewport, so the
+rows always fit; making its width a cell count is what exposed it. This is exactly the surface I10
+flagged: the popup is *how a user fixes a broken layout*, so an unreachable control there costs
+them the recovery path itself.
+
+Cause: `LABEL_CSS` was `flex: 0 0 auto` in both the popup rows and `CyclingSelect`, so nothing in
+the row could shrink and the overflow went to the controls. Fixed structurally — labels are
+`flex: 1 1 auto` with `min-width: 0` (required for a flex child to shrink below content width at
+all) and ellipsis, rows carry `min-width: 0; overflow: hidden`, and the leftover pixel metrics in
+both files moved onto the scale. Re-measured: **zero escaping controls** at 1862×917, 1366×768
+and 1024×640, worst overhang 0px, all 21 controls present and reachable at 141px wide. No label
+overflowed at any size, before or after.
+
+**The scale's two predicted consequences, now measured** ([I2](issues.md#i2)):
+
+- The chrome is **lighter than before**. At the real maximized viewport (1862×917) the row is
+  28px and the base font resolves to **10.5px**, against the old fixed 12px — about 13% smaller,
+  exactly as predicted at planning. Everything is proportionate and legible; whether it reads too
+  light is the user's call, and `0.375` in `index.html`'s `:root` is the one-line knob. Per the
+  user's standing note, `GRID_ROWS` is the other lever — fewer rows means a taller row and a
+  larger everything.
+- The **9px floor engages below ~1366×768**, as predicted: the base font is 9px at both 1366×768
+  (row 23px, unfloored 8.6) and 1024×640 (row 19px, unfloored 7.1). Text stays legible and the
+  rows still hold it; nothing clipped at either size.

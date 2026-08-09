@@ -17,11 +17,18 @@
 const ROW_CSS: Partial<CSSStyleDeclaration> = {
   display: "flex",
   alignItems: "center",
-  gap: "4px",
+  gap: "var(--ui-gap)",
+  minWidth: "0",
 };
 
 const LABEL_CSS: Partial<CSSStyleDeclaration> = {
   flex: "1 1 auto",
+  // Shrink below content width rather than pushing the next arrow out
+  // of the popup — see the note in PanelSettingsPopup's LABEL_CSS.
+  minWidth: "0",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
   textAlign: "center",
   fontFamily: "sans-serif",
   fontSize: "var(--ui-font-md)",
@@ -35,9 +42,10 @@ const ARROW_BTN_CSS: Partial<CSSStyleDeclaration> = {
   color: "#ecd6aa",
   cursor: "pointer",
   fontSize: "var(--ui-font-sm)",
-  padding: "2px 6px",
+  padding: "0 var(--ui-pad-sm)",
   lineHeight: "1",
-  minWidth: "24px",
+  minWidth: "var(--ui-pad)",
+  flex: "0 0 auto",
 };
 
 export interface CyclingSelectOption<T> {
