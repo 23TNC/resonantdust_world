@@ -20,23 +20,33 @@ corpus bundle, nearest-water/nearest-food scans, eat/drink interactions) — the
 stage 1, currently copy-adjacent per brain. There is NO multi-module host, NO per-module
 position/area concept, and NO moving anchor.
 
-## The stance
+## The stance (revised at review, 2026-08-08 — the user's model)
 
-- **One host, one engine** (F1): the host owns ONE `Bot` (one login, one event pump, one world
-  model); modules are registered on it and receive the shared view. N hosts per realm = N
-  containers, each a distinct automated player (NPC_NAME), disjoint areas in v1 (I8).
-- **A module's position IS a named client anchor** (F2): the anchor system already does
-  "viewport-like position with radii" — each module opens its OWN named anchor at its position;
-  moving the module = re-sending its anchor. No parallel position machinery.
-- **The operational area** (F3): a tile radius around the module's position. Scans, wanders, and
-  mint sites clamp to it; the group MIGRATES after an anchor move because every next command
-  targets the new area — no teleporting, no herding verb.
-- **Modules own their pawns** (F4): mint-tracking + adoption scoped to the module's area and
-  kind, so two modules of the same kind (or two hosts) don't fight over pawns (I2).
-- **Stage-1 AI = the keep-alive policy, shared** (F5): one needs-policy helper (drink when
+- **Modules ARE players** (F1/F4): each npc module is a player — its own identity, its anchor
+  as its position, its mints as its pawns (ownership = spawn attribution; the spawn log already
+  records the minter). Two same-kind modules co-locate fine — each commands only its own mints;
+  kind-global adoption dies. The HOST is one process with ONE shared world model that all
+  brains read; N hosts per realm = N containers.
+- **A module's position IS its player's anchor** (F2): players already have anchors — the
+  module-player anchors at its position; moving the module = re-sending the anchor. No parallel
+  position machinery.
+- **Brains are CONTENT** (F5): a new object type `brain` (own type/subtype/kind/variant,
+  TOML-authored, registry-numbered) — the entry point holding a brain's constants as CONSTANT
+  trait binds. Host env shrinks to which-brain-where.
+- **Players carry traits** (F7): `wolf_pack` / `bunny_fluffle` (per-level group size) and
+  `area_of_influence` (per-level radius — wider or smaller areas by level) as `player`-tagged
+  traits with per-level parameters, the delivered trait machinery. Human players carrying
+  traits is the same door.
+- **Players carry needs; the group's state is a need** (F8): the `wolf_pack` trait GRANTS a
+  `wolf_pawn` need tracking the player's live owned pawns — "ran out of pawns" bands like any
+  need and the existing bands→conditions→triggers machinery reacts; the mint guard becomes a
+  banded-need response, not an ad-hoc counter.
+- **The operational area** (F3): the radius from `area_of_influence`. Scans, wanders, and mint
+  sites clamp to it; the group MIGRATES after an anchor move because every next command targets
+  the new area — no teleporting, no herding verb.
+- **Stage-1 AI = the keep-alive policy, shared** (F6): one needs-policy helper (drink when
   thirst bands, eat when hunger bands, else wander-in-area) that wolves and bunnies modules both
-  call — consolidating what the two brains half-share today. Survival's drains now KILL, so the
-  standing acceptance is population stability (I7).
+  call. Survival's drains now KILL, so the standing acceptance is population stability (I7).
 
 ## The AI roadmap (future intent — successor streams, recorded here so it survives)
 
@@ -53,6 +63,11 @@ position/area concept, and NO moving anchor.
 Stages 2–5 are NOT planned here; they constrain shape: the module API keeps a clean seam between
 "sense" (bot view, scoped to area), "decide" (the policy — swappable per stage), and "act"
 (commands on owned pawns), so later stages replace DECIDE without touching the host.
+
+Adjacent intent (user, 2026-08-08): brain-players eventually carry the FULL gameplay stack —
+with needs (F8) come conditions and EMOTIONS, altering how a brain evaluates and handles its
+pawns (a scared brain plays differently from a content one). The ONE eval already computes all
+three for any row-carrier; the brain reading its own emotion is a stage-3/4 decision input.
 
 ## Exit
 

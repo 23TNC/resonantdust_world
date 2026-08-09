@@ -1,15 +1,17 @@
 # Forks — npc-host
 
-## F1 — one host process, ONE client engine, N modules
+## F1 — one host process, ONE world model, modules ARE players (user, 2026-08-08)
 
-The user's shape verbatim: "the one npc client will handle the client/server communication and
-world handling etc, and each module will act as a brain for a group." So the host owns ONE `Bot`
-(one login, one event pump, one world model — tiles/things/tic anchor stay harness state);
-modules register on the host and share the view read-only, acting only on pawns they own.
-Rejected: N logins in one process (defeats the point — the world model would be duplicated per
-module, and the edge sees N players); threads-per-module (the tick loop is cheap; one async loop
-fanning events in registration order is simpler and deterministic — I4 watches starvation).
-"N npc clients per realm" = N host CONTAINERS, each its own automated player.
+"The one npc client will handle the client/server communication and world handling etc" + the
+revision: "every npc module is a player." So: the HOST is one process owning ONE shared world
+model (tiles/things/tic estimate parsed once, read by every brain); each MODULE is a PLAYER —
+its own login/identity, whose anchor is its position and whose mints are its pawns. The edge
+fans zones per session, so when two modules' areas overlap the same zone rides two sessions on
+the wire — accepted at v1 (localhost, bounded by overlap; the shared model dedupes in memory);
+edge session-multiplexing is the named successor if it ever measures as a cost. Rejected:
+one login for all modules (ownership and traits would need a parallel host-side concept the
+PLAYER already provides); threads-per-module (one async loop over modules is deterministic —
+I4 watches starvation). "N npc clients per realm" = N host containers.
 
 ## F2 — a module's position IS a named client anchor
 
@@ -33,21 +35,59 @@ anchor move is emergent — exactly the user's "eventually operate in the new ar
 how the brain will issue commands". Rejected: server-side territory (nothing in the sim knows
 about modules; the npc is just a player).
 
-## F4 — pawn ownership = minted-by + in-area adoption, per module
+## F4 — ownership is PLAYER ownership via spawn attribution (user, 2026-08-08)
 
-Each module tracks the pawns it minted (the bunnies re-mint guard generalizes); adoption of
-pre-existing pawns of its kind is claimed ONLY inside its area, first-module-wins within a host.
-Cross-host arbitration is out of scope (I8): v1 runs hosts with disjoint areas. Rejected:
-kind-global adoption (today's shape — two same-kind modules would fight).
+"We shouldn't have issues fighting over pawns. Every npc module is a player… as every npc module
+spawns its npcs we shouldn't have an issue." Ownership = the pawn's minting player
+(spawn-authority already routes every mint through SPAWN_REQUEST and its spawn log — the
+attribution exists server-side). A brain commands ONLY pawns its player minted; on restart it
+re-attaches to them through that attribution instead of kind-scanning. Two wolf-pack modules in
+the SAME area function fine — each herds its own mints. Kind-global adoption (today's bunnies
+shape) DIES. Cross-host needs nothing special: a player is a player.
 
-## F5 — the config is an env spec string parsed by the host
+## F5 — brains are CONTENT: a new `brain` object type + player traits (user, 2026-08-08)
 
-`NPC_MODULES="wolves@112,68,r8;bunnies@120,75,r10"` — `<module>@<x>,<y>,r<radius>` semicolon-
-separated, position/radius optional with per-module defaults. The existing single-brain envs
-(`NPC_BRAIN`/`NPC_KIND`/`NPC_COUNT`) stay as the one-module fallback so THE debug measurement
-harness (mover-perf) keeps working unchanged. Rejected: a config TOML file (another authored
-surface + serving question for three knobs; revisit when hosts multiply); CLI args (the
-container runner passes env).
+REVISED from an env spec at review. A new object TYPE `brain` with its own
+type/subtype/kind/variant, authored in TOML (`content/brains.toml`, registry-numbered like
+everything else) — "more entry points… a place to stuff constants for our brains." A brain def
+carries CONSTANT trait binds (the trait-lights law: TOML-only, zero-storage, derived): its
+group trait and its area trait. The host env shrinks to WHICH brain def and WHERE:
+`NPC_MODULES="wolf_pack@112,68;bunny_fluffle@120,75"` — name + anchor position only; radius and
+group size come from the def's traits. The single-brain envs (`NPC_BRAIN`/`NPC_KIND`/
+`NPC_COUNT`) stay as the debug-harness fallback (I5).
+
+## F7 — player traits ride the delivered trait machinery
+
+"Add a new trait type, player traits… this also allows us to give players traits too." The
+classification is the delivered TAG machinery (attack stream): traits tagged `player`. The
+numbers are per-level PARAMETER arrays (the shape emit_light proved, trait-lights F4):
+- `wolf_pack` / `bunny_fluffle` — per-level group size ("the number of wolfs/bunnies the
+  player has"); the brain's mint guard reads it.
+- `area_of_influence` — per-level radius, "wider or smaller areas"; the operational-area clamp
+  (F3) reads it.
+An npc module-player derives its traits from its brain def's constant binds. HUMAN players
+carrying traits is the door this opens — recorded as intent, not planned here.
+
+## F8 — players get NEEDS; the group's state IS a need (user, 2026-08-08)
+
+"Players can get needs too. This then allows us to assign a wolf_pawn need to our wolf brain
+via a wolf_pack trait. That need can then track the number of active wolfs." So the
+`wolf_pack` trait GRANTS a `wolf_pawn` need on the brain-player (a trait granting a need is
+the new capability; modifiers on needs already exist), and its value counts the player's LIVE
+owned pawns — written at mint and at death, the way the inventory need tracks free slots.
+"Running out of pawns" then stops being bespoke brain state: the need bands, a condition
+activates, and the existing needs machinery (bands → conditions → need-write triggers) drives
+the response — the mint guard becomes a banded-need reaction instead of an ad-hoc counter.
+Where player need ROWS live (players are not pawn-shard entities today) is the P0 paper's
+first question — the needs sub-table shape generalizes, the storage address is the decision.
+
+The full stack follows (user, 2026-08-08): with needs come CONDITIONS, and with conditions
+EMOTIONS — a brain-player whose group is dying bands its `wolf_pawn` need, activates a
+condition, and shifts emotion, "which could alter how the npc brains evaluate and handle their
+pawns" (a scared brain hoards its pack near water; a content one ranges wide). Nothing new to
+build — the ONE eval already computes all three for any row-carrier; the brain reading its OWN
+emotion as a decision input is the seam stage 3's autonomy scoring and stage 4's per-module
+network plug into. Recorded as intent; stage-1 plans only the need.
 
 ## F6 — stage-1 AI is ONE shared keep-alive policy, not per-brain copies
 

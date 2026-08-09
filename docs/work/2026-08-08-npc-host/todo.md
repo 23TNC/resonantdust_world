@@ -5,36 +5,40 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P0 — the paper
 
-- [ ] docs/components/client/npc: the host/module/anchor design (F1–F4), the sense/decide/act
-      seam, and the five-stage AI roadmap recorded as future intent; the work index row.
-      Acceptance: docs-check green.
+- [ ] docs: the module-IS-a-player design (F1/F4), the `brain` object type + player traits +
+      player needs (F5/F7/F8) in VARIABLES.md/object-model, the wild-pawn fate stated (I8),
+      the five-stage roadmap + emotion intent recorded. Acceptance: docs-check green.
+- [ ] The I10 spikes, live: (a) where player need rows can live; (b) whether a module-player's
+      mint/intent commands validate without own-session subscriptions. Acceptance: both
+      answers written into forks.md with the probe evidence.
 
-## P1 — the host
+## P1 — brains as content
 
-- [ ] lib: `Host` owns the ONE `Bot` + a module registry; events noted once then fanned
-      read-only to each module; one tick loop over modules (I1/I4). The `Brain` trait becomes
-      the module API (sense/decide/act seam, F6). Acceptance: cargo build green.
-- [ ] main.rs: parse `NPC_MODULES` (`<module>@<x>,<y>,r<n>`; F5) into registered modules; the
-      single-brain envs (`NPC_BRAIN`/`NPC_KIND`/`NPC_COUNT`) keep working as a one-module
-      fallback (I5). Acceptance: both spellings boot in the container.
-- [ ] Wolves + bunnies + debug become modules of the host (ownership: minted-by + in-area
-      adoption, F4/I2). Acceptance: a two-module host (wolves + bunnies) runs both groups over
-      ONE login, worker log shows both minting/moving.
+- [ ] content: the `brain` type (`content/brains.toml`, F5) — `wolf_pack` + `bunny_fluffle`
+      brain defs with constant trait binds; loader/registry/goldens extended. Acceptance:
+      content tests green; the defs registry-number.
+- [ ] content: the `player`-tagged traits (F7) — `wolf_pack`/`bunny_fluffle` (per-level group
+      size) + `area_of_influence` (per-level radius); the `wolf_pawn`-style granted need
+      authored (F8). Acceptance: unit — trait params resolve per level; load green.
 
-## P2 — position, area, migration
+## P2 — the host of module-players
 
-- [ ] Each module opens its OWN named anchor (`npc:<module>`) at its configured position (F2);
-      zones stream per anchor. Acceptance: a host with two far-apart modules streams BOTH
-      neighborhoods (log: zone counts per anchor, I3 recorded).
-- [ ] The area clamp in the module helpers: scans, wander targets, and mint sites stay within
-      `(center, radius)` (F3), wandering when the area starves (I6). Acceptance: a soaked
-      group's positions stay in-area (log sample).
-- [ ] The anchor-move API: a module re-anchors to a new center; the group MIGRATES by successive
-      commands (I9 churn watched). Acceptance: on camera — move the bunny module's anchor
-      ~12 tiles; the warren re-forms near the new center.
+- [ ] lib: `Host` runs N modules, each a PLAYER (own login, F1); ONE shared world model read
+      by all brains; one tick loop (I1/I4); env = which-brain-where (`NPC_MODULES=
+      "wolf_pack@112,68;…"`), single-brain envs kept for the debug harness (I5). Acceptance:
+      a two-module host boots; both players visible server-side.
+- [ ] Ownership from spawn attribution (F4/I2): a brain commands only its mints and
+      RE-ATTACHES to them on restart via the spawn log; kind-global adoption deleted.
+      Acceptance: restart drill — the re-attached set equals the minted set exactly.
+- [ ] Position + area: each module-player anchors at its position (F2); scans/wander/mints
+      clamp to the `area_of_influence` radius (F3/I6). Acceptance: a soaked group stays
+      in-area (log sample); an anchor move ~12 tiles migrates the group on camera (I9).
 
 ## P3 — stage-1 needs AI
 
+- [ ] The `wolf_pawn` group need live (F8): written at mint/death on the brain-player; the
+      banded low state drives re-minting through the needs machinery. Acceptance: kill a
+      wolf — the need drops, the band fires, the brain re-mints to its trait's group size.
 - [ ] The shared keep-alive policy (F6): banded thirst/hunger → nearest in-area water/food +
       drink/eat, else wander; wolves AND bunnies call it, per-brain copies die. Acceptance:
       both modules' pawns drink and eat via the ONE policy path (worker log).
