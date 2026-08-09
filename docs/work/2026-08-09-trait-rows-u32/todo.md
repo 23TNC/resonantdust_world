@@ -11,7 +11,7 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P1 — the row shape
 
-- [ ] codec: the ONE u64 row helper set (48-bit law) + the encoding decoder seam (F7,
+- [x] codec: the ONE u64 row helper set (48-bit law) + the encoding decoder seam (F7,
       unknown refuses — I10); ALL payload entries grow a word; the six categories (F2).
       Acceptance: unit round-trips + 2×i8 lanes; level helpers DELETED.
 - [ ] Modules: the `needs` column u64 in pawn + player_pawn; republished (WIPING, I2);

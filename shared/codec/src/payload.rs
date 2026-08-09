@@ -43,14 +43,18 @@ pub fn part_entry(slot: u8, definition_reference: u32) -> [u32; 3] {
     [payload_header(PAYLOAD_OP_PART, 2), slot as u32, definition_reference]
 }
 
-/// One `CONDITION` entry: `[header(2), packed_row, written_tic]`.
-pub fn condition_entry(row: u32, written_tic: u16) -> [u32; 3] {
-    [payload_header(PAYLOAD_OP_CONDITION, 2), row, written_tic as u32]
+/// One `CONDITION` entry (trait-rows-u32 F1): `[header(3), reference, data, written_tic]` —
+/// the u64 row rides the u32-word stream SPLIT (the word-lane law); `data`'s low u16 is the
+/// def-interpreted lane (remaining-at-write by default), high u16 dead.
+pub fn condition_entry(reference: u32, data: u16, written_tic: u16) -> [u32; 4] {
+    [payload_header(PAYLOAD_OP_CONDITION, 3), reference, data as u32, written_tic as u32]
 }
 
-/// One `TRAIT` entry: `[header(1), packed_row]`.
-pub fn trait_entry(row: u32) -> [u32; 2] {
-    [payload_header(PAYLOAD_OP_TRAIT, 1), row]
+/// One `TRAIT` entry (trait-rows-u32 F1): `[header(2), reference, data]` — the FULL u32
+/// reference (subtype = category, variant = TIER; level is DELETED — F6); `data` is ZERO
+/// today, reserved for per-instance state.
+pub fn trait_entry(reference: u32, data: u16) -> [u32; 3] {
+    [payload_header(PAYLOAD_OP_TRAIT, 2), reference, data as u32]
 }
 
 /// Decode a payload stream's `PART` entries → `(slot, definition_reference)` pairs, in stream
@@ -64,24 +68,34 @@ pub fn payload_parts(payload: &[u32]) -> Vec<(u8, u32)> {
 /// Tolerant like [`payload_parts`]: unknown opcodes skip by count, a malformed tail stops,
 /// and an entry whose count is not this layout's is IGNORED (an old-shape row reads as "no
 /// row", never as garbage — the re-mint posture, stat-model I1).
-pub fn payload_conditions(payload: &[u32]) -> Vec<(u32, u16)> {
-    entries(payload, PAYLOAD_OP_CONDITION, 2).map(|ops| (ops[0], ops[1] as u16)).collect()
+pub fn payload_conditions(payload: &[u32]) -> Vec<(u64, u16)> {
+    entries(payload, PAYLOAD_OP_CONDITION, 3)
+        .map(|ops| (crate::object::pack_row(ops[0], ops[1] as u16), ops[2] as u16))
+        .collect()
 }
 
-/// Decode a payload's `TRAIT` entries → packed rows, stream order.
-pub fn payload_traits(payload: &[u32]) -> Vec<u32> {
-    entries(payload, PAYLOAD_OP_TRAIT, 1).map(|ops| ops[0]).collect()
+/// Decode a payload's `TRAIT` entries → u64 rows, stream order (trait-rows-u32 F1).
+pub fn payload_traits(payload: &[u32]) -> Vec<u64> {
+    entries(payload, PAYLOAD_OP_TRAIT, 2)
+        .map(|ops| crate::object::pack_row(ops[0], ops[1] as u16))
+        .collect()
 }
 
-/// Upsert one stored-condition row: identity is the row's LOW 16 (kind|variant), so a
-/// re-grant with a different `remaining_at_write` still refreshes the same entry.
-pub fn upsert_condition(payload: &mut Vec<u32>, row: u32, written_tic: u16) {
-    upsert(payload, PAYLOAD_OP_CONDITION, row & 0xFFFF, 0xFFFF, &condition_entry(row, written_tic));
+/// Upsert one stored-condition row: identity is the FULL reference (trait-rows-u32 F1 —
+/// the first operand word), so a re-grant with different data still refreshes its entry.
+pub fn upsert_condition(payload: &mut Vec<u32>, row: u64, written_tic: u16) {
+    let reference = crate::object::row_reference(row);
+    let data = crate::object::row_data(row);
+    upsert(payload, PAYLOAD_OP_CONDITION, reference, 0xFFFF_FFFF, &condition_entry(reference, data, written_tic));
 }
 
-/// Upsert one trait row by its LOW 16 — a level change rewrites the same entry.
-pub fn upsert_trait(payload: &mut Vec<u32>, row: u32) {
-    upsert(payload, PAYLOAD_OP_TRAIT, row & 0xFFFF, 0xFFFF, &trait_entry(row));
+/// Upsert one trait row by its FULL reference (trait-rows-u32 F1) — a data change (the
+/// reserved per-instance lane) rewrites the same entry; the TIER is part of the identity
+/// (walks variant 1 and variant 2 are different defs — a tier change is remove + add).
+pub fn upsert_trait(payload: &mut Vec<u32>, row: u64) {
+    let reference = crate::object::row_reference(row);
+    let data = crate::object::row_data(row);
+    upsert(payload, PAYLOAD_OP_TRAIT, reference, 0xFFFF_FFFF, &trait_entry(reference, data));
 }
 
 /// Iterate the OPERAND SLICES of every `opcode` entry with exactly `count` operands. Entries
@@ -129,7 +143,7 @@ fn upsert(payload: &mut Vec<u32>, opcode: u32, key: u32, mask: u32, entry: &[u32
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::object::pack_gameplay_row;
+    use crate::object::pack_row;
 
     const QUENCHED: u32 = 0x8002_0030; // gameplay/condition/quenched — a registry ref
     const THIRSTY: u32 = 0x8002_0010;
@@ -140,23 +154,28 @@ mod tests {
         // stat-model F3: identity is kind|variant — a re-grant carries a DIFFERENT
         // remaining_at_write in the same word and must still rewrite the same entry.
         let mut p = Vec::new();
-        upsert_condition(&mut p, pack_gameplay_row(QUENCHED, 3600), 500);
+        upsert_condition(&mut p, pack_row(QUENCHED, 3600), 500);
         let len_once = p.len();
-        upsert_condition(&mut p, pack_gameplay_row(QUENCHED, 3600), 800);
+        upsert_condition(&mut p, pack_row(QUENCHED, 3600), 800);
         assert_eq!(p.len(), len_once, "a re-grant rewrites in place");
-        upsert_condition(&mut p, pack_gameplay_row(THIRSTY, 100), 810);
+        upsert_condition(&mut p, pack_row(THIRSTY, 100), 810);
         assert_eq!(
             payload_conditions(&p),
-            vec![(pack_gameplay_row(QUENCHED, 3600), 800), (pack_gameplay_row(THIRSTY, 100), 810)]
+            vec![(pack_row(QUENCHED, 3600), 800), (pack_row(THIRSTY, 100), 810)]
         );
     }
 
     #[test]
-    fn trait_rows_upsert_by_key_so_a_level_change_rewrites() {
+    fn trait_rows_upsert_by_reference_so_a_data_change_rewrites() {
+        // trait-rows-u32 F1/F6: identity is the FULL reference (tier = the variant nibble);
+        // the data lane (reserved per-instance state) rewrites in place.
         let mut p = Vec::from(part_entry(0, 0x3001_0027));
-        upsert_trait(&mut p, pack_gameplay_row(WALKS, 1));
-        upsert_trait(&mut p, pack_gameplay_row(WALKS, 2)); // the skill levels up
-        assert_eq!(payload_traits(&p), vec![pack_gameplay_row(WALKS, 2)]);
+        upsert_trait(&mut p, pack_row(WALKS, 0));
+        upsert_trait(&mut p, pack_row(WALKS, 7)); // per-instance data changes
+        assert_eq!(payload_traits(&p), vec![pack_row(WALKS, 7)]);
+        let walks_t2 = WALKS | 2; // variant 2 = a DIFFERENT def — a second entry
+        upsert_trait(&mut p, pack_row(walks_t2, 0));
+        assert_eq!(payload_traits(&p), vec![pack_row(WALKS, 7), pack_row(walks_t2, 0)]);
         assert_eq!(payload_parts(&p), vec![(0, 0x3001_0027)], "PART entries survive");
     }
 
@@ -168,11 +187,11 @@ mod tests {
             payload_header(2, 3), 0x8001_0010, 42.5f32.to_bits(), 900, // old NEED
             payload_header(3, 2), QUENCHED, 500,                       // old CONDITION
         ];
-        assert_eq!(payload_conditions(&p), Vec::<(u32, u16)>::new());
-        assert_eq!(payload_traits(&p), Vec::<u32>::new());
+        assert_eq!(payload_conditions(&p), Vec::<(u64, u16)>::new());
+        assert_eq!(payload_traits(&p), Vec::<u64>::new());
         // ... and fresh entries land beside them untouched.
-        upsert_condition(&mut p, pack_gameplay_row(QUENCHED, 3600), 700);
-        assert_eq!(payload_conditions(&p), vec![(pack_gameplay_row(QUENCHED, 3600), 700)]);
+        upsert_condition(&mut p, pack_row(QUENCHED, 3600), 700);
+        assert_eq!(payload_conditions(&p), vec![(pack_row(QUENCHED, 3600), 700)]);
         assert_eq!(p[0], payload_header(2, 3), "the old entries are untouched");
     }
 

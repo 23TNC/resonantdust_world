@@ -1,5 +1,19 @@
 # Completed — trait-rows-u32
 
+## 2026-08-09 — P1 (first piece): the codec core
+
+`pack_row(reference, data) → u64` + `row_reference`/`row_data`/`row_lanes_i8x2` (F7's 2×i8
+read) + `row_law_ok` (the dead-16 assert); `pack_gameplay_row`/`gameplay_row_key`/
+`gameplay_row_data`/`gameplay_row_reference` DELETED (the reconstruction is obsolete — the
+row carries its full reference). Payload TRAIT entries = `[header(2), reference, data]`,
+CONDITION = `[header(3), reference, data, written_tic]` — u64 rows ride the u32-word stream
+SPLIT (the word-lane law); upserts key on the FULL reference (a TIER change is a different
+def — remove+add; the data lane rewrites in place). The six categories appended (palette
+13, the frozen-order test extended); `trait`(3)/`player_trait`(7) marked RETIRED EMPTY.
+Verified: 72 codec tests green, including the new round-trip-under-the-law pin (lanes
+(-2,5) from 0x05FE; a row daring the dead 16 fails) and the retired-opcode guard skipping
+old-shape entries whole (count mismatch = no row — the wipe posture's last line).
+
 ## 2026-08-09 — P0: the paper
 
 VARIABLES.md rewritten at the three seats: **the ONE u64 row** (dead:16 | data:16 |

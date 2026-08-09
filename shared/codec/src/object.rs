@@ -99,10 +99,19 @@ pub const GAMEPLAY_INTERACTION: u16 = 4;
 pub const GAMEPLAY_AFFORDANCE: u16 = 5;
 /// `subtype_id` of `gameplay/stat` (stat-model F5/F8 — the derived family).
 pub const GAMEPLAY_STAT: u16 = 6;
-/// `subtype_id` of `gameplay/player_trait` (player-pawns F4 — the PLAYER-facing trait lane,
-/// the trait schema classified apart; v1 binds are CONSTANT-only, so no stored row ever
-/// carries this subtype — the payload-opcode successor lifts that).
+/// `subtype_id` of `gameplay/player_trait` (player-pawns F4) — RETIRED EMPTY by
+/// trait-rows-u32 F2 (the id is frozen forever; the corpus authors nothing under it).
 pub const GAMEPLAY_PLAYER_TRAIT: u16 = 7;
+// The SIX trait categories (trait-rows-u32 F2): `[pawn, player]-trait-[constant, active,
+// passive]`. `*_constant` binds are constant BY CATEGORY (TOML-only, zero storage);
+// `*_passive` are the stored contributors; `*_active` are ACTIVATABLE (the 3-slot law).
+// `trait` (3) and `player_trait` (7) are RETIRED EMPTY — frozen ids, no authored defs.
+pub const GAMEPLAY_PAWN_TRAIT_CONSTANT: u16 = 8;
+pub const GAMEPLAY_PAWN_TRAIT_ACTIVE: u16 = 9;
+pub const GAMEPLAY_PAWN_TRAIT_PASSIVE: u16 = 10;
+pub const GAMEPLAY_PLAYER_TRAIT_CONSTANT: u16 = 11;
+pub const GAMEPLAY_PLAYER_TRAIT_ACTIVE: u16 = 12;
+pub const GAMEPLAY_PLAYER_TRAIT_PASSIVE: u16 = 13;
 
 /// The gameplay category names in `subtype_id` order (index 0 → id 1) — ONE spelling of the
 /// palette, shared by the loader's derived taxonomy (interactions F9) and the master's
@@ -110,8 +119,21 @@ pub const GAMEPLAY_PLAYER_TRAIT: u16 = 7;
 /// the ORDER also seeds the corpus-position fallback packing, so inserting or reordering
 /// silently renumbers every seed ref on a registry-less boot (stat-model I5). New categories
 /// go at the END.
-pub const GAMEPLAY_CATEGORIES: [&str; 7] =
-    ["need", "condition", "trait", "interaction", "affordance", "stat", "player_trait"];
+pub const GAMEPLAY_CATEGORIES: [&str; 13] = [
+    "need",
+    "condition",
+    "trait",
+    "interaction",
+    "affordance",
+    "stat",
+    "player_trait",
+    "pawn_trait_constant",
+    "pawn_trait_active",
+    "pawn_trait_passive",
+    "player_trait_constant",
+    "player_trait_active",
+    "player_trait_passive",
+];
 
 /// A gameplay category name's `subtype_id`, or `None` for a name outside the palette.
 pub fn gameplay_subtype_id(category: &str) -> Option<u16> {
@@ -130,26 +152,34 @@ pub fn gameplay_category(subtype_id: u16) -> Option<&'static str> {
 // bits on identity and gives the high 16 to the family's payload: trait `level`, condition
 // `remaining_at_write`, need `value` (u16 fixed-point, [`crate::value`]).
 
-/// Pack a stored gameplay row: `data:16 | kind:12 | variant:4`. The low 16 bits are EXACTLY
-/// the `definition_reference`'s low 16 (kind/variant in place).
-pub fn pack_gameplay_row(reference: u32, data: u16) -> u32 {
-    ((data as u32) << 16) | (reference & 0xFFFF)
+/// Pack the ONE u64 gameplay row (trait-rows-u32 F1): `dead:16 | data:16 | reference:32`.
+/// The reference is the FULL `definition_reference` — subtype names the category, VARIANT
+/// names the tier (level is DELETED, F6). THE 48-BIT TRANSPORT LAW: the dead 16 stay ZERO
+/// so a row rides every JS boundary as one lossless f64.
+pub fn pack_row(reference: u32, data: u16) -> u64 {
+    ((data as u64) << 32) | reference as u64
 }
 
-/// A row's identity half — the def reference's low 16 (`kind:12 | variant:4`).
-pub fn gameplay_row_key(row: u32) -> u16 {
-    row as u16
+/// A row's FULL definition reference (the low 32).
+pub fn row_reference(row: u64) -> u32 {
+    row as u32
 }
 
-/// A row's data half — trait level / condition remaining-at-write / need value.
-pub fn gameplay_row_data(row: u32) -> u16 {
-    (row >> 16) as u16
+/// A row's def-interpreted data u16 (bits 32–47): need value / condition remaining /
+/// trait ZERO-reserved (F7).
+pub fn row_data(row: u64) -> u16 {
+    (row >> 32) as u16
 }
 
-/// Reconstruct the full `definition_reference` from a stored row + its family's category:
-/// `TYPE_GAMEPLAY<<28 | subtype<<16 | key`.
-pub fn gameplay_row_reference(subtype_id: u16, row: u32) -> u32 {
-    pack_definition_reference(pack_type_reference(TYPE_GAMEPLAY, subtype_id), row as u16)
+/// The data u16 read as the declared `2 × i8` LANES (F7's lane encoding).
+pub fn row_lanes_i8x2(row: u64) -> (i8, i8) {
+    let d = row_data(row);
+    ((d & 0xFF) as u8 as i8, (d >> 8) as u8 as i8)
+}
+
+/// THE 48-BIT LAW's check: the dead 16 are zero. Assert at every boundary a row crosses.
+pub fn row_law_ok(row: u64) -> bool {
+    row >> 48 == 0
 }
 
 /// Compose a `definition_reference` from its two `u16` halves: `type_reference | kind_reference`.
@@ -637,7 +667,7 @@ mod tests {
         // stat-model I5: these ids seed the corpus-position fallback packing — a reorder or
         // an insertion silently renumbers every seed ref. `stat` APPENDED at 6; the first
         // five are FROZEN. A new category extends this list and this test.
-        let frozen: [(&str, u16); 7] = [
+        let frozen: [(&str, u16); 13] = [
             ("need", GAMEPLAY_NEED),
             ("condition", GAMEPLAY_CONDITION),
             ("trait", GAMEPLAY_TRAIT),
@@ -645,6 +675,12 @@ mod tests {
             ("affordance", GAMEPLAY_AFFORDANCE),
             ("stat", GAMEPLAY_STAT),
             ("player_trait", GAMEPLAY_PLAYER_TRAIT),
+            ("pawn_trait_constant", GAMEPLAY_PAWN_TRAIT_CONSTANT),
+            ("pawn_trait_active", GAMEPLAY_PAWN_TRAIT_ACTIVE),
+            ("pawn_trait_passive", GAMEPLAY_PAWN_TRAIT_PASSIVE),
+            ("player_trait_constant", GAMEPLAY_PLAYER_TRAIT_CONSTANT),
+            ("player_trait_active", GAMEPLAY_PLAYER_TRAIT_ACTIVE),
+            ("player_trait_passive", GAMEPLAY_PLAYER_TRAIT_PASSIVE),
         ];
         assert_eq!(GAMEPLAY_CATEGORIES.len(), frozen.len());
         for (i, (name, id)) in frozen.iter().enumerate() {
@@ -655,13 +691,19 @@ mod tests {
     }
 
     #[test]
-    fn a_gameplay_row_round_trips_and_rebuilds_its_reference() {
-        // stat-model F1: the row's low 16 ≡ the def ref's low 16, data rides the high 16.
+    fn the_one_u64_row_round_trips_under_the_law() {
+        // trait-rows-u32 F1: the FULL reference in the low 32 (category self-described),
+        // the def-interpreted data in bits 32–47, the dead 16 ZERO.
         let quenched = 0x8002_0030u32; // gameplay/condition/quenched
-        let row = pack_gameplay_row(quenched, 3600);
-        assert_eq!(gameplay_row_key(row), 0x0030);
-        assert_eq!(gameplay_row_data(row), 3600);
-        assert_eq!(gameplay_row_reference(GAMEPLAY_CONDITION, row), quenched);
+        let row = pack_row(quenched, 3600);
+        assert_eq!(row_reference(row), quenched);
+        assert_eq!(row_data(row), 3600);
+        assert!(row_law_ok(row));
+        // F7's 2×i8 lanes: data 0x05FE = lanes (-2, 5).
+        let lanes = pack_row(quenched, 0x05FE);
+        assert_eq!(row_lanes_i8x2(lanes), (-2i8, 5i8));
+        // A row that dares the dead 16 fails the law.
+        assert!(!row_law_ok(row | (1u64 << 60)));
     }
 
     #[test]
