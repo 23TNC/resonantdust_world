@@ -58,9 +58,11 @@ group size come from the def's traits. The single-brain envs (`NPC_BRAIN`/`NPC_K
 
 ## F7 — player traits ride the delivered trait machinery
 
-"Add a new trait type, player traits… this also allows us to give players traits too." The
-classification is the delivered TAG machinery (attack stream): traits tagged `player`. The
-numbers are per-level PARAMETER arrays (the shape emit_light proved, trait-lights F4):
+"Add a new trait type, player traits… this also allows us to give players traits too."
+CLASSIFICATION SUPERSEDED by [2026-08-08-player-pawns](../2026-08-08-player-pawns/README.md)
+F4 (user, later same day): player traits/emotions/needs are gameplay SUBTYPES (`player` lane),
+not tags — tags stay for behavior checks. The numbers remain per-level PARAMETER arrays (the
+shape emit_light proved, trait-lights F4):
 - `wolf_pack` / `bunny_fluffle` — per-level group size ("the number of wolfs/bunnies the
   player has"); the brain's mint guard reads it.
 - `area_of_influence` — per-level radius, "wider or smaller areas"; the operational-area clamp
@@ -78,8 +80,9 @@ owned pawns — written at mint and at death, the way the inventory need tracks 
 "Running out of pawns" then stops being bespoke brain state: the need bands, a condition
 activates, and the existing needs machinery (bands → conditions → need-write triggers) drives
 the response — the mint guard becomes a banded-need reaction instead of an ad-hoc counter.
-Where player need ROWS live (players are not pawn-shard entities today) is the P0 paper's
-first question — the needs sub-table shape generalizes, the storage address is the decision.
+Where player need ROWS live is ANSWERED by the preempting
+[2026-08-08-player-pawns](../2026-08-08-player-pawns/README.md) stream: on the player's
+PLAYER-PAWN (the need there named `wolf_count`) — this stream consumes that machinery.
 
 The full stack follows (user, 2026-08-08): with needs come CONDITIONS, and with conditions
 EMOTIONS — a brain-player whose group is dying bands its `wolf_pawn` need, activates a

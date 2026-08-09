@@ -56,12 +56,13 @@ if the fate should be rescue instead.
 
 ## I10 — player needs storage + the login/session shape must be verified live
 
-Two spike-first facts for P1: (a) WHERE player need rows live — players are not pawn-shard
-entities; the needs sub-table shape generalizes but the address (which shard, keyed how) is new
-(F8). (b) Whether a module-player's commands validate without its own anchors/subscriptions —
-the host's shared world model wants ONE subscription set, but mint/intent paths may require the
-SENDER's session to be zone-connected. Both get a live probe before the host architecture
-hardens around an assumption.
+Two spike-first facts for P1: (a) WHERE player need rows live — **ANSWERED by the preempting
+[2026-08-08-player-pawns](../2026-08-08-player-pawns/README.md) stream**: on the player's
+PLAYER-PAWN in the new playerpawn shard; every npc module plays as its player-pawn (that
+stream's F5), and the group need is `wolf_count` there. (b) Whether a module-player's commands
+validate without its own anchors/subscriptions — the host's shared world model wants ONE
+subscription set, but mint/intent paths may require the SENDER's session to be zone-connected.
+(b) still gets a live probe before the host architecture hardens around an assumption.
 
 ## I9 — anchor moves race in-flight intents
 
