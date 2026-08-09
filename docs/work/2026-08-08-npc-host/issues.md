@@ -12,11 +12,12 @@ Today adoption is kind-global (bunnies adopt any bunny). Two bunny modules — o
 pre-existing wild bunny population — need minted-by tracking + in-area claims (F4). The failure
 smell: one pawn receiving interleaved commands from two minds, oscillating between wander goals.
 
-## I3 — N anchors on one client = N subscription sets
+## I3 — distant modules grow the UNION of subscribed zones
 
-Each module anchor subscribes its zone neighborhood; the anchor system's cost-based release and
-the edge's shard connects both scale with it. Watch subscription volume at 2–3 modules; distant
-modules double the zone stream. Not a blocker at v1 scale — record the count in the drills.
+The one client subscribes the UNION of all module neighborhoods, each zone once (F2 — no
+per-module replication). But modules in distant corners necessarily enlarge that union: the
+client must stream both areas to see them at all, and the edge's shard connects scale with it.
+Not a blocker at v1 scale — record the zone count per configuration in the drills.
 
 ## I4 — one tick loop serves all modules
 

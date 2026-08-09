@@ -15,7 +15,11 @@ fanning events in registration order is simpler and deterministic — I4 watches
 
 `Command::SetAnchor` already takes a NAME and the anchor system already models "a position with
 nested radii, cost-based release" (client-anchor-zones). Each module opens `npc:<module-name>`
-at its position; MOVING the module = re-sending the same named anchor at the new tiles. Rejected:
+at its position; MOVING the module = re-sending the same named anchor at the new tiles. This is
+NOT a per-module subscription stack (user asked, 2026-08-08): the ONE client engine merges all
+anchors into a SINGLE zone set — each zone subscribed once, at the tier owed to the nearest
+anchor — so overlapping module neighborhoods share their zones and nothing streams twice; the
+anchor is only how the one client is told WHERE to look. Rejected:
 a parallel module-position concept beside anchors (two notions of "where the npc looks" that
 would drift); one shared anchor for all modules (modules must be placeable independently — a
 warren and a pack in different corners of the realm).
