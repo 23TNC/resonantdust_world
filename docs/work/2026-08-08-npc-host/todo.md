@@ -26,19 +26,18 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 - [ ] Each module opens its OWN named anchor (`npc:<module>`) at its configured position (F2);
       zones stream per anchor. Acceptance: a host with two far-apart modules streams BOTH
       neighborhoods (log: zone counts per anchor, I3 recorded).
-- [ ] The operational-area clamp in the module helpers: scans, wander targets, and mint sites
-      stay within `(center, radius)` (F3), falling through to wander when the area starves (I6).
-      Acceptance: a soaked group's positions stay within the area (log sample).
+- [ ] The area clamp in the module helpers: scans, wander targets, and mint sites stay within
+      `(center, radius)` (F3), wandering when the area starves (I6). Acceptance: a soaked
+      group's positions stay in-area (log sample).
 - [ ] The anchor-move API: a module re-anchors to a new center; the group MIGRATES by successive
       commands (I9 churn watched). Acceptance: on camera — move the bunny module's anchor
       ~12 tiles; the warren re-forms near the new center.
 
 ## P3 — stage-1 needs AI
 
-- [ ] The shared keep-alive policy (F6): banded thirst → nearest in-area water + drink; banded
-      hunger → nearest in-area diet-gated food + eat; else wander-in-area. Wolves AND bunnies
-      modules call it; per-brain copies die. Acceptance: both modules' pawns seen drinking and
-      eating in the worker log, driven by the ONE policy path.
+- [ ] The shared keep-alive policy (F6): banded thirst/hunger → nearest in-area water/food +
+      drink/eat, else wander; wolves AND bunnies call it, per-brain copies die. Acceptance:
+      both modules' pawns drink and eat via the ONE policy path (worker log).
 
 ## P4 — the drills
 
