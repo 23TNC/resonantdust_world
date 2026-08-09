@@ -155,3 +155,36 @@ in the world right now is a walking NPC's `move_to`, and none carries an authore
 `ringPercent()` returned `null` for all five and no `<svg>` was emitted. So the per-frame ring
 maths could not be exercised. Recorded as inspection, not observation — the same treatment
 panel-grid's I7 got — and it wants a look the next time a pawn runs a duration interaction.
+
+## 2026-08-09 — P6: the exit
+
+**I4 answered YES — the panel ships bar-less.** Entering edit mode on the conditions panel
+reveals its title bar (`display: flex`, `pointer-events: auto`) AND grows the outer box upward by
+a row (`0,778,1862,83` → `0,750,1862,111`) so the body holds still — the panel-grid body-invariant
+law doing its job on a panel that did not exist when it was written. Dragging by that revealed bar
+moved the panel from `0,750` to `0,528` and persisted `col=0 row=20 cols=58 rows=3`. So a
+transparent, click-through, bar-less panel is reachable and movable, and the default authored in
+the corpus is safe.
+
+Worth knowing: the bar is only hittable where no *other* panel covers it. The first probe landed
+under Chat (z 480002, spanning x 0–514) and read as a failure. Which is the second half of the
+same observation recorded at P2 — see below.
+
+**The full exit, on camera** (capture in this session; clean profile, defaults reset):
+
+- Selecting a wolf fills three panels: **details** shows `wolf` / `tile 116, 59` with the active
+  emotion wash tinting it purple, **intentions** shows its queue circle in its own titled panel,
+  and **conditions** shows four emotion-pie cards along the bottom with the forest visible
+  between and around them — no background at all.
+- Both new taskbar entries (☯ ⚙) present; the conditions panel restores to `0,778,1862,83` after
+  a taskbar cycle.
+- World clicks pass through the conditions panel's empty area to the canvas while its cards stay
+  clickable and their tooltips render outside the panel's clip.
+
+**One thing left for the user's judgement, not fixed here.** Conditions sits on `Z_TIER_INFO`
+(40), below the tool tier (48) that Chat and Build occupy — and both of those default to the
+bottom-left, directly over the left end of the full-width condition band. Where they overlap, the
+cards are hidden behind an opaque panel. Overlap is explicitly allowed (panel-grid F11) and the
+user said they would position the conditions panel themselves, so this was left as authored
+rather than silently re-tiered. If it wants changing, the question is whether a full-width bottom
+HUD belongs *above* the tool panels — a one-line `zOrder` change in `ConditionsPanel`.

@@ -84,9 +84,9 @@ survive a reset or a corpus export.
 
 ## P6 — the truth
 
-- [ ] Verify the conditions panel can be moved and restored from EDIT MODE while bar-less and
+- [x] Verify the conditions panel can be moved and restored from EDIT MODE while bar-less and
       click-through (I4) — if it can't, it ships with its bar. Acceptance: capture of the move.
-- [ ] The full exit on camera: select a pawn, three panels populate, world clicks pass through the
+- [x] The full exit on camera: select a pawn, three panels populate, world clicks pass through the
       conditions panel, cards and tooltips live. Acceptance: captures in completed.md.
 - [ ] Docs + memory truth pass; **the user's eyes close the stream**. Acceptance: docs-check
       green; the memory line written.
