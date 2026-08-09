@@ -16,10 +16,10 @@ survive a reset or a corpus export.
 
 ## P0 — the paper
 
-- [ ] Extend `docs/components/client/webgl/design/panel-layout.md` with the two new per-panel
+- [x] Extend `docs/components/client/webgl/design/panel-layout.md` with the two new per-panel
       options (background values incl. `none`, click-through) and the layout/scale/interaction
       split they join (F1/F2). Acceptance: docs-check green.
-- [ ] Record the selection-surface split in the same design doc or a sibling: details = identity,
+- [x] Record the selection-surface split in the same design doc or a sibling: details = identity,
       intentions = queue, conditions = cards (F3–F6). Acceptance: docs-check green; work index row.
 
 ## P1 — the two options

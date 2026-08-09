@@ -124,6 +124,61 @@ larger and eventually tight in its row. Legible-and-tight beats unreadable-and-p
 There is no upper clamp: a 4K viewport gets a 65px row and 24px text, which is the UI scaling
 correctly.
 
+## Appearance and interaction are per-panel options
+
+Two axes the grid deliberately does **not** own, added by work
+[`2026-08-09-selection-panels`](../../../../work/2026-08-09-selection-panels/README.md) (F1/F2).
+They join the layout/scale split above as a third category: *layout* comes from the projection,
+*scale* from `--ui-row`, and **appearance/interaction from per-panel options**.
+
+- **`background`** — a named value, not a colour literal: `chrome` (the default
+  `rgba(20,22,30,0.96)`), `dim`, `none`. It reaches **all three** chrome surfaces — title bar,
+  body and footer — because a panel whose body alone goes transparent keeps an opaque bar floating
+  over nothing, which reads as a rendering fault rather than a setting. `none` means genuinely
+  transparent; it is what lets a panel sit over the world without occluding it.
+
+  Named rather than free because the settings popup speaks toggles and cycling selects, and the
+  corpus is hand-edited JSON where `"background": "none"` survives review. The value is a
+  **string**, so an arbitrary `#rrggbb` remains an additive change to one resolver if it is ever
+  wanted.
+
+- **`clickThrough`** — `pointer-events: none` on the panel root, so the body passes clicks to
+  whatever is beneath (the world canvas). Chrome keeps `pointer-events: auto`, and so must any
+  interactive content: **children inherit `none`**, so a click-through panel's own controls have
+  to opt back in explicitly.
+
+**These two are independent, and must stay so.** Transparency is not click-through: a panel can be
+transparent and interactive, or opaque and click-through, and both are coherent. The proof lives
+in the conditions panel, which is transparent AND click-through AND has clickable cards inside it
+— one flag could not express that. This pattern is not new; `PixiPanel` has always set
+`pointer-events: none` on its root with `auto` on the title bar, tabs and action buttons. The
+options make a private arrangement into a declared one.
+
+**Consequence worth knowing before you ship a panel with both.** A click-through panel with no
+title bar has **no grab handle at all** — its body passes clicks through and there is no chrome to
+drag. The way back is UI edit mode, which forces title bars visible (see the title-bar section).
+Any panel authored bar-less *and* click-through depends on that being true.
+
+## The three selection surfaces
+
+A selected object is described by three sibling panels, not one. This is a division of labour, and
+the reason it exists is that the previous single panel could not hold them:
+
+| panel | shows | why separate |
+|---|---|---|
+| **details** | identity — the object's TOML name and tile, plus the active emotion wash | the user's standing rule: "I just need to know what something is" |
+| **intentions** | the intent QUEUE — the pending/active entries with the active one's progress ring | a queue is a list that grows; it was a column squeezed against details' left edge |
+| **conditions** | the condition CARDS — one emotion-pie square per active condition | cards run left-to-right and need the full width, which is why they used to escape their panel |
+
+**Each subscribes to the selection model directly.** None is fed by another. The conditions strip
+previously lived *outside* the details panel — appended to the host and positioned against
+details' rect, because `overflow: hidden` clipped anything wider than its parent — and that cost a
+rect/focus/minimize/open subscription quartet plus a mirrored z-index to re-derive what a panel
+already knows about itself. A full-width panel removes the reason for all of it.
+
+The one thing that still escapes its panel is the **condition tooltip**: the card carries no text,
+so the tooltip is the entire read surface, and a panel docked one row tall would clip it.
+
 ## Invariants a change must not break
 
 1. `edgeX[58] === innerWidth` and `edgeY[33] === innerHeight` — the tables tile exactly.
@@ -135,3 +190,8 @@ correctly.
    grid change, migration, title toggle, drag end, resize end, snap, reset. Consumers that
    mirror a panel's rect (the world canvas) have no other notification.
 7. No stored panel geometry is a pixel string, and no component hardcodes a pixel font size.
+8. `background` reaches title bar, body and footer together — never one surface alone.
+9. A click-through panel's interactive children set `pointer-events: auto` explicitly; they
+   inherit `none` from the root and go silently dead otherwise.
+10. Each selection surface subscribes to the selection model itself. No selection panel feeds
+    another.
