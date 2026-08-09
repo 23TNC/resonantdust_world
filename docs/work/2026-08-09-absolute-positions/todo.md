@@ -14,10 +14,9 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P1 — the spike (load-bearing, before anything hardens)
 
-- [ ] A scratch spacetime table (realm/x/y btree + mover churn): live 2D band subs
-      measured — latency at viewport counts, UPDATEs crossing band edges (I2) — beside a
-      per-zone baseline. Acceptance: numbers + the verdict (columns vs row-band fallback)
-      in completed.md.
+- [ ] A scratch table (realm/x/y btree + mover churn): live 2D band subs measured —
+      latency at viewport counts, UPDATEs crossing edges (I2) — beside a per-zone
+      baseline. Acceptance: numbers + the verdict (columns vs row-band) in completed.md.
 
 ## P2 — the codec core
 
