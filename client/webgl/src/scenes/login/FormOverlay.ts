@@ -17,7 +17,7 @@ const LABEL_CSS: Partial<CSSStyleDeclaration> = {
   display: "flex",
   flexDirection: "column",
   gap: "4px",
-  fontSize: "12px",
+  fontSize: "var(--ui-font)",
   color: "#a0a0b0",
 };
 
@@ -28,7 +28,7 @@ const INPUT_CSS: Partial<CSSStyleDeclaration> = {
   borderRadius: "3px",
   color: "#ecd6aa",
   fontFamily: "sans-serif",
-  fontSize: "14px",
+  fontSize: "var(--ui-font-lg)",
   outline: "none",
 };
 
@@ -39,12 +39,12 @@ const BUTTON_CSS: Partial<CSSStyleDeclaration> = {
   borderRadius: "3px",
   color: "#ecd6aa",
   fontFamily: "sans-serif",
-  fontSize: "14px",
+  fontSize: "var(--ui-font-lg)",
   cursor: "pointer",
 };
 
 const STATUS_CSS: Partial<CSSStyleDeclaration> = {
-  fontSize: "12px",
+  fontSize: "var(--ui-font)",
   color: "#a0a0b0",
   minHeight: "16px",
 };

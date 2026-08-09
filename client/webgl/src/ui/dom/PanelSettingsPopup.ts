@@ -52,7 +52,7 @@ const ROW_CSS: Partial<CSSStyleDeclaration> = {
 const LABEL_CSS: Partial<CSSStyleDeclaration> = {
   color: "#a0a0b0",
   fontFamily: "sans-serif",
-  fontSize: "13px",
+  fontSize: "var(--ui-font-md)",
   flex: "0 0 auto",
 };
 
@@ -70,7 +70,7 @@ const BUTTON_CSS: Partial<CSSStyleDeclaration> = {
   color: "#ecd6aa",
   cursor: "pointer",
   fontFamily: NOTO_EMOJI_FAMILY,
-  fontSize: "14px",
+  fontSize: "var(--ui-font-lg)",
   padding: "2px 8px",
   lineHeight: "1",
   minWidth: "32px",
@@ -800,7 +800,7 @@ export class PanelSettingsPopup {
       borderRadius: "3px",
       color: "#ecd6aa",
       fontFamily: NOTO_EMOJI_FAMILY,
-      fontSize: "14px",
+      fontSize: "var(--ui-font-lg)",
       padding: "2px 6px",
       width: "60px",
       textAlign: "center",

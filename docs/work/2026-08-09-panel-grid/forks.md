@@ -182,3 +182,29 @@ times the write, and the ratios end up buried in TS instead of legible in one `:
 a `rem`-based scale off `html { font-size }` (would rescale anything using rem for *layout*, and
 the layout is cells now — the two must not share a knob); scaling by cell *area* or by a
 viewport diagonal (neither is what a line of text sits in).
+
+## F10 — the body-invariant law applies to FREE-height panels; a height-locked panel spends the row from its body
+
+2026-08-09, found at P2 by testing the toggle on the world viewport (`heightMode: "full"`,
+`titleBarHidden: true` — the one panel where the two rules meet).
+
+[F4](#f4) says toggling the title bar must leave the body's rect untouched, which means the
+OUTER box grows or shrinks by a row. `heightMode` says the opposite: the outer height is a
+function of the field (`full` / `half` / `quarter`), recomputed by `applyHeight` on every
+reflow. Both cannot hold. A panel that has declared "my height IS the field" has already said
+its outer box is not free to grow by a row.
+
+**Resolved: height-locked panels are exempt.** For `heightMode !== "off"` the outer height stays
+the locked value and the title row comes out of the BODY — which is what "locked height" already
+meant everywhere else. `toggleTitleBarHidden` skips its top/height adjustment for those panels
+and lets `applyHeight` own the geometry, as it does on every other path. For the default
+`heightMode: "off"` panels — every user-arranged panel — F4 holds exactly.
+
+This is not a weakening of F4 so much as naming where it applies: F4 governs panels whose
+geometry the USER owns. `heightMode` is the user handing that geometry to the layout, and the
+handover is the whole point of the setting.
+
+Rejected: making `full` mean "the BODY spans the field" (the outer box would then overflow one
+row upward into the taskbar whenever the bar is shown — a panel that provably cannot be placed);
+force-hiding the title bar on height-locked panels (silently overrides a user preference, and
+`full` panels are exactly the ones a user may want a bar on to drag by).

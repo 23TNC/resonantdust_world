@@ -61,3 +61,62 @@ see [I11](issues.md#i11): 7 pre-existing `Uint32Array`/`Float64Array` errors in 
 `WorldScene` from the trait-rows-u32 transport change. Measured before and after by stashing this
 stream's diff: identical 7, same files. This stream's "typecheck green" criteria are therefore
 read as "no new errors against that baseline". `npm run build` is green.
+
+## 2026-08-09 — P2 + P2b: the chrome on rows, and the UI scale
+
+Taken together and slightly out of plan order: P2b's foundation (`--ui-row` + the `:root` block)
+landed **before** P2's chrome items, because the dependency runs that way — the chrome is
+expressed in the scale, not the reverse. Same items, reversed order, nothing added.
+
+**The layout/scale split**, which the code now leans on everywhere: *layout* (position, size)
+comes from the projection; *scale* (fonts, padding, gaps, glyph boxes) comes from `--ui-row`.
+The taskbars are grid rows, so they are **projected** (`project({row: 0|32, rows: 1})`), not
+styled with `height: var(--ui-row)` — that would be nearly right and wrong by up to a pixel,
+since integer edge rounding lets row 32 differ from row 0. Same reasoning gave title bars
+`panelGrid.rowHeightAt(nearestRow(outerTop))` rather than the published row height, and added
+`nearestRow` to the grid for it.
+
+`PanelTaskbar.HEIGHT` / the `HEIGHT` const are deleted. `index.html` carries the whole derived
+scale as `calc()` in one `:root` block: `--ui-font` (3/8 row, `max(9px, …)`), then `-sm/-md/-lg/
+-xl` as multiples of the **floored** base — deriving those from the row independently would let
+the ladder INVERT once the floor engages (at a 19px row an unfloored "large" is 8.3px, under the
+9px base). Every `fontSize` px literal under `client/webgl/src` is gone (0 remain), along with
+the fixed paddings, gaps and button widths in `DomPanelStyles` + `PanelTaskbar`.
+
+**Two real defects found by measuring rather than assuming:**
+
+1. **`PANEL_CSS` was `content-box` with a 1px border.** `project()` returns border-box pixels,
+   and placement writes them straight to `style.width`/`height` — so every panel would have sat
+   2px larger than its cell rect, and each title-bar toggle grew the panel by 2px, compounding
+   (observed: body height creeping 253 → 254 → 256 across toggles). Fixed with
+   `boxSizing: "border-box"`, which the cell law requires independently of this bug. The world
+   viewport's height went 862 → **861**, exactly the safe area (917−28−28).
+2. **`heightMode` and F4 are contradictory** — resolved as [F10](forks.md#f10). A panel whose
+   height is locked to the field cannot also be free to grow a row for its title bar, so
+   height-locked panels are exempt and the title row comes out of their body. Found by testing
+   the toggle on the world viewport, the one panel where both rules meet.
+
+**Verified live** (app running, viewport 1862×917, measured through real click paths — entering
+UI edit mode via the settings menu and clicking the popup's Title-bar row):
+
+- **Both bars are exactly one row** at 1862×917, 1920×1080, 1366×768, 1024×640, 3840×2160 —
+  measured heights 28/33/23/19/65 against independently computed `edgeY` differences, all match,
+  and the bottom bar's top edge sits exactly on `edgeY[32]` (889 at the native viewport).
+- **Title bar = its own exact row**: the Details panel's bar measured 28px against
+  `rowHeightAt(nearestRow(top))` = 28.
+- **THE BODY DOES NOT MOVE.** On a free-height panel, six consecutive title-bar toggles left the
+  body at `57,1,1861,832` — bit-identical every time — while the outer box alternated
+  `56,833` ↔ `29,860`, one row apart in both top and height. On a height-locked panel the mirror
+  image held: outer pinned at `28,861` while the body took the row (`29,…,860` ↔ `57,…,832`),
+  round-tripping exactly with zero drift.
+- **One `--ui-row` write per resize event**, counted by wrapping `setProperty`: exactly 1 at each
+  of four viewports. Entries stay inside the bar at every size (14px entry in a 19px bar at
+  1024×640).
+
+**Where the acceptance wording was looser than reality.** Two items said the scale "resolves to
+12px" / is "pixel-identical to today's" at a 1080-tall viewport. Measured: a 1080-tall viewport
+gives a **33px** row (not 32), so the base font is 12.375px and each derived metric is ~3% above
+today's. The ratios reproduce today's numbers exactly at a *32px* row, which is what F9 claims;
+the criterion was written assuming 1080/33 = 32. At the real 1862×917 viewport the row is 28px
+and the base font 10.5px — the chrome is ~13% lighter than before, exactly the consequence
+predicted in [I2](issues.md#i2) and still owed a verdict from the user at P5.

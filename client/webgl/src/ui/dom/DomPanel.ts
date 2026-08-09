@@ -2125,13 +2125,61 @@ export class DomPanel {
    *  honors the active UI-edit-mode flag — while editing, the
    *  title bar stays visible regardless of this preference. */
   toggleTitleBarHidden(): void {
+    // THE BODY DOES NOT MOVE (F4). The panel's stored geometry
+    // describes the BODY; a visible title bar is chrome occupying the
+    // row *above* it. So showing the bar grows the outer box upward by
+    // one row and hiding it shrinks the outer box by one row — the
+    // body's rect is identical either side of the toggle.
+    //
+    // Left to the flex layout alone this is not what happens: the body
+    // is `flex: 1 1 auto`, so hiding the bar lets the body GROW into
+    // the freed slot, moving and resizing it on a pure chrome toggle.
+    // Hence the explicit top / height adjustment below.
+    const bodyBefore = this.body.getBoundingClientRect();
+    const wasVisible = this.titleBarAvailable && !this._titleBarHidden;
+    // Measure the bar while it is still laid out; once hidden its
+    // `offsetHeight` is 0 and the row it occupied is unrecoverable.
+    const barH = wasVisible
+      ? this.titlebar.offsetHeight
+      : panelGrid.rowHeightAt(panelGrid.nearestRow(bodyBefore.top - 1));
+
     this._titleBarHidden = !this._titleBarHidden;
     this.storageSet("titleBarHidden", this._titleBarHidden ? "1" : "0");
     this.refreshChrome();
-    // Hiding the title bar lets the flex body grow into its
-    // slot — the body's bounding rect changes, so PixiPanel
-    // (and any other rectChange subscriber that mirrors body
-    // bounds) needs to re-sync.
+
+    // A height-LOCKED panel is exempt (F10). `heightMode` means the
+    // outer height is a function of the field, recomputed by
+    // `applyHeight` on every reflow — it cannot also be free to grow
+    // by a row, so for those panels the title row comes out of the
+    // body, which is what a locked height already meant everywhere
+    // else. F4 governs panels whose geometry the USER owns.
+    const heightIsLocked = this._heightMode !== "off";
+    if (barH > 0 && !heightIsLocked && this.panel.isConnected) {
+      const r = this.panel.getBoundingClientRect();
+      // Hiding: the outer box loses the title row from its TOP, so the
+      // top edge moves DOWN by a row and the height shrinks by one.
+      // Showing: the reverse. Either way the body stays put.
+      const dy = wasVisible ? barH : -barH;
+      this.panel.style.top    = `${r.top + dy}px`;
+      this.panel.style.height = `${Math.max(0, r.height - dy)}px`;
+      this.panel.style.right  = "auto";
+      this.panel.style.bottom = "auto";
+      // Re-pin whichever corner this panel resizes from; the panel has
+      // moved in CSS terms but not on screen.
+      this.applyAnchor();
+      this.persistSize();
+      this.persistPosition();
+    } else if (heightIsLocked) {
+      // Re-assert the locked height so the freed / consumed title row
+      // is absorbed by the body in one deliberate pass rather than
+      // whenever the next unrelated reflow happens to run.
+      this.applyHeight();
+    }
+    // Subscribers that mirror the body region (PixiPanel.syncRect, the
+    // details layout) re-read on this. The body rect should be
+    // unchanged — firing anyway keeps the contract "every placement
+    // path notifies" true, and makes a regression here visible rather
+    // than silent.
     this.fireRectChange();
   }
 
@@ -2726,6 +2774,7 @@ export class DomPanel {
     // hidden title bar stays editable from its body.
     const titleBarVisible = this.titleBarAvailable && !this._titleBarHidden;
     this.titlebar.style.display = titleBarVisible ? "" : "none";
+    if (titleBarVisible) this.applyTitlebarHeight();
 
     // Minimize button visible iff BOTH the capability toggle says
     // so AND the user hasn't opted to hide just the button.
@@ -2755,6 +2804,21 @@ export class DomPanel {
     // through `isDraggable`; when it's off the cursor flips to
     // default to telegraph that "move" won't do anything.
     this.titlebar.style.cursor = this.isDraggable ? "move" : "default";
+  }
+
+  /** Pin the title bar to exactly ONE GRID ROW — the row it actually
+   *  occupies, which is the row above the body.
+   *
+   *  Not `panelGrid.rowHeight`: that is row 0's height, and integer
+   *  edge rounding lets rows differ by a pixel. A one-pixel error here
+   *  is not cosmetic — it would put the body a pixel off its grid
+   *  line, which is precisely the drift this whole layout exists to
+   *  remove. So the row is looked up from the panel's own top edge,
+   *  which placement has already put on a grid line. */
+  private applyTitlebarHeight(): void {
+    const top = this.panel.getBoundingClientRect().top;
+    const row = panelGrid.nearestRow(top);
+    this.titlebar.style.height = `${panelGrid.rowHeightAt(row)}px`;
   }
 
   private fireRectChange(): void {

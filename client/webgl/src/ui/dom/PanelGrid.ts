@@ -208,7 +208,25 @@ class PanelGrid {
     this.edgesXCache = gridEdges(w, GRID_COLS);
     this.edgesYCache = gridEdges(h, GRID_ROWS);
     this.rebuilds++;
+    this.publishScale();
     return true;
+  }
+
+  /** Publish the row height as `--ui-row` on the root element.
+   *
+   *  This is the ONLY thing the grid writes for the UI scale, and the
+   *  only place any pixel metric leaves this module. Every derived
+   *  value — font sizes, paddings, gaps, button sizes — is a `calc()`
+   *  off it, authored once in the `:root` block of `index.html`. So a
+   *  resize re-styles every element in the app through one property
+   *  write, with no traversal and no per-component recompute.
+   *
+   *  Fractional by design: the browser resolves `calc()` at full
+   *  precision and rounds once at paint, which is more accurate than
+   *  rounding here and multiplying out. */
+  private publishScale(): void {
+    if (typeof document === "undefined") return;
+    document.documentElement.style.setProperty("--ui-row", `${this.rowHeightAt(0)}px`);
   }
 
   /** Attach the single resize listener. Called lazily on first use so
@@ -240,6 +258,23 @@ class PanelGrid {
   /** Height of row `j`. Rows differ by at most a pixel; callers
    *  wanting "the" row height want `rowHeight`. */
   rowHeightAt(j: number): number { return this.edgeY(j + 1) - this.edgeY(j); }
+
+  /** Row index whose top edge is nearest `px`. Use when a piece of
+   *  chrome must be exactly as tall as the row it sits in — a title
+   *  bar takes `rowHeightAt(nearestRow(outerTop))`, not `rowHeight`,
+   *  because integer edge rounding lets rows differ by a pixel and
+   *  that pixel is the difference between a body on its grid line and
+   *  one a hair off it. */
+  nearestRow(px: number): number {
+    const edges = this.edgesY;
+    let best = 0;
+    let bestDist = Math.abs(edges[0] - px);
+    for (let j = 1; j < edges.length; j++) {
+      const dist = Math.abs(edges[j] - px);
+      if (dist < bestDist) { best = j; bestDist = dist; }
+    }
+    return Math.min(best, GRID_ROWS - 1);
+  }
 
   /** The reference row height — row 0's, which is also the top
    *  taskbar's. The unit every piece of chrome and the whole text

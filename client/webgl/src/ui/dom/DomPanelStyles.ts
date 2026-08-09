@@ -24,10 +24,20 @@ export const PANEL_CSS: Partial<CSSStyleDeclaration> = {
   flexDirection: "column",
   color: "#ecd6aa",
   fontFamily: "ui-monospace, monospace",
-  fontSize: "12px",
-  minWidth: "200px",
+  fontSize: "var(--ui-font)",
+  // 6 columns — the min body width in cells (F4). Kept in row units
+  // so it tracks the grid rather than a dead pixel constant.
+  minWidth: "calc(var(--ui-row) * 6.25)",
   zIndex: "20",
   overflow: "hidden",
+  // REQUIRED by the cell law, not a detail. `panelGrid.project()`
+  // returns border-box pixels (differences of edge-table entries), and
+  // placement writes them straight to `style.width` / `style.height`.
+  // Under the default `content-box` the 1px border below is added on
+  // top, so every panel would sit 2px larger than its cell rect and
+  // every toggle that re-reads `getBoundingClientRect().height` and
+  // writes it back would grow the panel by 2px, compounding.
+  boxSizing: "border-box",
   // 1px outline so overlapping panels (multiple chat / debug
   // surfaces, future DOM panels) read as distinct rectangles
   // rather than blending into each other. `PixiPanel` overrides
@@ -44,25 +54,33 @@ export const TITLEBAR_CSS: Partial<CSSStyleDeclaration> = {
   position: "relative",
   display: "flex",
   alignItems: "center",
-  padding: "8px 12px",
+  // The title bar is exactly ONE GRID ROW tall. Its height is not set
+  // here — `DomPanel.applyTitlebarHeight` writes the height of the
+  // specific row the bar occupies, because integer edge rounding lets
+  // rows differ by a pixel and `--ui-row` is only row 0's. Height is
+  // LAYOUT and comes from the projection; the scale vars below are
+  // SCALE. Padding is horizontal only: with a pinned height, vertical
+  // padding would fight `align-items: center` and push the text off
+  // centre on small viewports.
+  padding: "0 var(--ui-pad)",
+  boxSizing: "border-box",
   // Reserve space on the right for the absolute-positioned action
   // buttons (minimize / close). Width matches `ACTIONS_CSS.width`
   // below so the title text doesn't bleed into the actions zone.
-  // Sized to the *Pixi-chrome* button footprint (12px right pad +
-  // 32px close + 4px gap + 32px minimize = 80px) — the DOM
-  // buttons are visually narrower but `PixiPanel` paints over
-  // them with the wider Pixi glyphs, and the drag-skip zone has
-  // to cover the visual extent or clicks on the painted button
-  // hit the bare title bar instead.
-  paddingRight: "80px",
+  // Sized to the *Pixi-chrome* button footprint — two full-row
+  // buttons, a gap and the right pad — because `PixiPanel` paints
+  // wider Pixi glyphs over the narrower DOM buttons and the drag-skip
+  // zone has to cover the visual extent or clicks on the painted
+  // button hit the bare title bar instead.
+  paddingRight: "calc(var(--ui-row) * 2.5)",
   background: CHROME_BG,
   borderBottom: "1px solid #3a3a4a",
-  fontSize: "12px",
+  fontSize: "var(--ui-font)",
   color: "#a0a0b0",
   fontFamily: "sans-serif",
   userSelect: "none",
   cursor: "move",
-  gap: "8px",
+  gap: "var(--ui-pad)",
   flex: "0 0 auto",
   // Explicit `auto` is required (not the default) because
   // `PixiPanel` sets `pointer-events: none` on the parent panel
@@ -82,8 +100,8 @@ export const TABS_CSS: Partial<CSSStyleDeclaration> = {
   display: "flex",
   alignItems: "center",
   justifyContent: "flex-start",
-  gap: "4px",
-  padding: "4px 8px",
+  gap: "var(--ui-gap)",
+  padding: "var(--ui-pad-sm) var(--ui-pad)",
   borderBottom: "1px solid #3a3a4a",
   background: "rgba(12, 14, 20, 0.96)",
   flex: "0 0 auto",
@@ -99,8 +117,8 @@ export const TAB_BTN_CSS: Partial<CSSStyleDeclaration> = {
   color: "#a0a0b0",
   cursor: "pointer",
   fontFamily: NOTO_EMOJI_FAMILY,
-  fontSize: "14px",
-  padding: "4px 8px",
+  fontSize: "var(--ui-font-lg)",
+  padding: "var(--ui-pad-sm) var(--ui-pad)",
   borderRadius: "3px",
   lineHeight: "1",
 };
@@ -136,13 +154,13 @@ export const ACTIONS_CSS: Partial<CSSStyleDeclaration> = {
   top: "0",
   bottom: "0",
   right: "0",
-  width: "80px",
-  paddingRight: "12px",
+  width: "calc(var(--ui-row) * 2.5)",
+  paddingRight: "calc(var(--ui-row) * 0.375)",
   boxSizing: "border-box",
   display: "flex",
   alignItems: "center",
   justifyContent: "flex-end",
-  gap: "4px",
+  gap: "var(--ui-gap)",
   cursor: "default",
   // See `TITLEBAR_CSS` — explicit auto for `PixiPanel` parents.
   pointerEvents: "auto",
@@ -153,7 +171,7 @@ export const ACTION_BTN_CSS: Partial<CSSStyleDeclaration> = {
   border: "none",
   color: "#a0a0b0",
   cursor: "pointer",
-  fontSize: "16px",
+  fontSize: "var(--ui-font-xl)",
   padding: "0",
   lineHeight: "1",
   // Width matches the Pixi-chrome `BUTTON_WIDTH` (32) so the
@@ -167,7 +185,7 @@ export const ACTION_BTN_CSS: Partial<CSSStyleDeclaration> = {
   // panels (no Pixi paint) get the same wider button — the
   // glyph still centres, the layout stays consistent across
   // panel kinds.
-  width: "32px",
+  width: "var(--ui-row)",
   boxSizing: "border-box",
   textAlign: "center",
 };

@@ -32,34 +32,34 @@ reference viewports **1920×1080, 1366×768, 1024×640** ("three sizes" below), 
 
 ## P2 — the chrome on rows
 
-- [ ] `PanelTaskbar` height = one row, re-applied on grid change; `HEIGHT` const + static DELETED
+- [x] `PanelTaskbar` height = one row, re-applied on grid change; `HEIGHT` const + static DELETED
       and `main.ts` stops wiring reserves (F6). Acceptance: measured heights equal `edgeY[1]` and
       `innerHeight − edgeY[32]` at three sizes.
-- [ ] Taskbar entries size off the row instead of a hard 24px. Acceptance: entries stay inside
+- [x] Taskbar entries size off the row instead of a hard 24px. Acceptance: entries stay inside
       the bar with no clipping at 1024×640.
-- [ ] Title bar = one row: `TITLEBAR_CSS` height grid-driven, horizontal padding only, text
+- [x] Title bar = one row: `TITLEBAR_CSS` height grid-driven, horizontal padding only, text
       vertically centred (F4). Acceptance: `titlebar.offsetHeight === rowHeight` for every open
       panel at three sizes.
-- [ ] Title-bar toggle made body-invariant: outer box = body rows + 1 when shown, top edge moves
+- [x] Title-bar toggle made body-invariant: outer box = body rows + 1 when shown, top edge moves
       with it, no persisted geometry written (F4). Acceptance: body rect bit-identical across
       hide→show→hide; capture.
 
 ## P2b — the UI scale (F9)
 
-- [ ] The grid writes `--ui-row` on `document.documentElement` on every recompute, and nothing
+- [x] The grid writes `--ui-row` on `document.documentElement` on every recompute, and nothing
       else (F9). Acceptance: `getComputedStyle(root).getPropertyValue("--ui-row")` equals the
       measured row height at three sizes.
-- [ ] Author `--ui-font` as `max(9px, calc(var(--ui-row) * 0.375))` in one `:root` block in
+- [x] Author `--ui-font` as `max(9px, calc(var(--ui-row) * 0.375))` in one `:root` block in
       `index.html` (F9). Acceptance: it resolves to 12px at a 1080-tall viewport and 9px at 640.
-- [ ] Author the rest of the scale beside it as `calc()` off `--ui-row`: `--ui-font-lg`,
+- [x] Author the rest of the scale beside it as `calc()` off `--ui-row`: `--ui-font-lg`,
       `--ui-font-xl`, `--ui-pad`, `--ui-pad-sm`, `--ui-gap`, `--ui-btn` (F9). Acceptance: each
       resolves to today's px value at a 1080-tall viewport.
-- [ ] Sweep the ~22 hardcoded `fontSize` sites across the 8 files onto `var(--ui-*)`.
+- [x] Sweep the ~22 hardcoded `fontSize` sites across the 8 files onto `var(--ui-*)`.
       Acceptance: zero `fontSize: "<n>px"` literals remain under `client/webgl/src`.
-- [ ] Sweep the fixed paddings, gaps and button widths in `DomPanelStyles` + `PanelTaskbar` onto
+- [x] Sweep the fixed paddings, gaps and button widths in `DomPanelStyles` + `PanelTaskbar` onto
       the scale; 1px borders stay literal (F9). Acceptance: chrome at a 1080-tall viewport is
       pixel-identical to today's; capture the before/after pair.
-- [ ] Confirm the scale costs ONE write per resize, not a traversal. Acceptance: resizing with N
+- [x] Confirm the scale costs ONE write per resize, not a traversal. Acceptance: resizing with N
       panels open performs a single `setProperty` call (counter logged) and no per-element
       restyle pass exists in the resize path.
 

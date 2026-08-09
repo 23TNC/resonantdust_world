@@ -22,7 +22,7 @@ const TAB_CONTENT_CSS: Partial<CSSStyleDeclaration> = {
   flexDirection: "column",
   gap: "2px",
   fontFamily: "sans-serif",
-  fontSize: "13px",
+  fontSize: "var(--ui-font-md)",
   color: "#dddddd",
 };
 
@@ -73,7 +73,7 @@ const INPUT_CSS: Partial<CSSStyleDeclaration> = {
   borderRadius: "3px",
   outline: "none",
   fontFamily: "sans-serif",
-  fontSize: "13px",
+  fontSize: "var(--ui-font-md)",
   padding: "4px 8px",
   margin: "0",
 };

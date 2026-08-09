@@ -1,29 +1,31 @@
 import { NOTO_EMOJI_FAMILY } from "../../assets/fonts";
 import type { DomPanel } from "./DomPanel";
+import { panelGrid, GRID_ROWS } from "./PanelGrid";
 
 const HOST_ID = "app";
 
-/** Height of the taskbar strip. Panels whose default rect anchors to
- *  the bottom should leave this much room. Exposed as a static so
- *  callers can compute their own bottom offsets without hardcoding. */
-const HEIGHT = 32;
-
-/** Base bar style — position-agnostic. The constructor layers a
- *  `top: 0` + `borderBottom` (or `bottom: 0` + `borderTop`) on top
- *  to anchor the bar to the picked edge. */
+/** Base bar style — position-agnostic. The bar's HEIGHT is not here:
+ *  a taskbar IS a row of the app grid (row 0 for the top bar, row 32
+ *  for the bottom), so it is *projected* from that cell rect like any
+ *  panel, and re-projected when the grid changes.
+ *
+ *  The distinction this file leans on — layout comes from the
+ *  projection, scale comes from `--ui-row` — matters here: styling the
+ *  bottom bar with `height: var(--ui-row)` would be *nearly* right and
+ *  wrong by up to a pixel, because integer edge rounding lets row 32
+ *  differ from row 0. Projecting is exact by construction. */
 const BAR_CSS: Partial<CSSStyleDeclaration> = {
   position: "fixed",
   left: "0",
   right: "0",
-  height: `${HEIGHT}px`,
   display: "flex",
   alignItems: "center",
-  gap: "4px",
-  padding: "0 6px",
+  gap: "var(--ui-gap)",
+  padding: "0 var(--ui-pad-sm)",
   background: "rgba(20, 22, 30, 0.96)",
   color: "#ecd6aa",
   fontFamily: "sans-serif",
-  fontSize: "12px",
+  fontSize: "var(--ui-font)",
   // Above every panel TIER (bug-sweep F1) — the taskbar is CHROME, outside the
   // panel ordering (Z_CHROME_BASE + 1; kept literal to avoid an import cycle).
   zIndex: String(64 * 10000 + 1),
@@ -50,15 +52,15 @@ const ENTRY_CSS: Partial<CSSStyleDeclaration> = {
   borderRadius: "3px",
   color: "#a0a0b0",
   cursor: "pointer",
-  padding: "4px 12px",
-  height: "24px",
+  padding: "var(--ui-pad-sm) var(--ui-pad)",
+  height: "var(--ui-btn)",
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
   fontFamily: "sans-serif",
-  fontSize: "12px",
-  minWidth: "100px",
-  maxWidth: "180px",
+  fontSize: "var(--ui-font)",
+  minWidth: "calc(var(--ui-row) * 3.125)",
+  maxWidth: "calc(var(--ui-row) * 5.625)",
   overflow: "hidden",
   textOverflow: "ellipsis",
   whiteSpace: "nowrap",
@@ -69,12 +71,12 @@ const ENTRY_CSS: Partial<CSSStyleDeclaration> = {
  *  bar, holding a single unicode glyph. Used by panels that pass
  *  `taskbarIcon` instead of relying on the title text. */
 const ENTRY_ICON_CSS: Partial<CSSStyleDeclaration> = {
-  width: "24px",
-  minWidth: "24px",
-  maxWidth: "24px",
+  width: "var(--ui-btn)",
+  minWidth: "var(--ui-btn)",
+  maxWidth: "var(--ui-btn)",
   padding: "0",
   fontFamily: NOTO_EMOJI_FAMILY,
-  fontSize: "14px",
+  fontSize: "var(--ui-font-lg)",
   lineHeight: "1",
 };
 
@@ -88,10 +90,10 @@ const ENTRY_ICON_CSS: Partial<CSSStyleDeclaration> = {
 const ENTRY_ICON_WITH_SUFFIX_CSS: Partial<CSSStyleDeclaration> = {
   width: "auto",
   minWidth: "auto",
-  maxWidth: "180px",
-  padding: "0 8px",
+  maxWidth: "calc(var(--ui-row) * 5.625)",
+  padding: "0 var(--ui-pad)",
   fontFamily: NOTO_EMOJI_FAMILY,
-  fontSize: "14px",
+  fontSize: "var(--ui-font-lg)",
   lineHeight: "1",
 };
 
@@ -147,7 +149,7 @@ const ENTRY_CLOSED_CSS: Partial<CSSStyleDeclaration> = {
 const GROUP_CSS: Partial<CSSStyleDeclaration> = {
   display: "flex",
   alignItems: "center",
-  gap: "4px",
+  gap: "var(--ui-gap)",
 };
 
 const SPACER_CSS: Partial<CSSStyleDeclaration> = {
@@ -220,7 +222,6 @@ const taskbarsByPosition: { top: PanelTaskbar | null; bottom: PanelTaskbar | nul
 };
 
 export class PanelTaskbar {
-  static readonly HEIGHT = HEIGHT;
 
   /** Look up the live taskbar for `position`, or `null` when the
    *  app hasn't (yet) constructed one for that edge. Used by
@@ -237,6 +238,9 @@ export class PanelTaskbar {
   private readonly rightGroup:  HTMLDivElement;
   private readonly entries: Entry[] = [];
   private focusedPanel: DomPanel | null = null;
+  /** Unsubscribe from the grid's change broadcast — the bar re-projects
+   *  its row whenever the viewport reshapes. Cleared in `destroy()`. */
+  private unsubGrid: (() => void) | null = null;
   private _destroyed = false;
 
   get destroyed(): boolean { return this._destroyed; }
@@ -275,6 +279,22 @@ export class PanelTaskbar {
 
     const host = document.getElementById(HOST_ID) ?? document.body;
     host.appendChild(this.bar);
+
+    // The bar is a row of the grid — project it, and re-project on
+    // every grid change. Row 0 for the top bar, row 32 for the bottom.
+    this.applyGridRow();
+    this.unsubGrid = panelGrid.on(() => this.applyGridRow());
+  }
+
+  /** Size the bar to its grid row exactly. `top` / `bottom: 0` already
+   *  pins the correct edge; this writes the height as the *difference
+   *  of edge-table entries* for that row, so the bar's inner edge sits
+   *  precisely on the grid line panels clamp to — no sliver, no
+   *  overlap, on any viewport. */
+  private applyGridRow(): void {
+    const row = this.position === "top" ? 0 : GRID_ROWS - 1;
+    const px  = panelGrid.project({ col: 0, row, cols: 1, rows: 1 });
+    this.bar.style.height = `${px.height}px`;
   }
 
   /** Add a panel to the taskbar. Idempotent — re-registering the
@@ -369,6 +389,8 @@ export class PanelTaskbar {
 
   destroy(): void {
     this._destroyed = true;
+    this.unsubGrid?.();
+    this.unsubGrid = null;
     for (const entry of this.entries) {
       entry.unsubOpen();
       entry.unsubMinimize();

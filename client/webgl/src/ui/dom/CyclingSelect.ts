@@ -24,7 +24,7 @@ const LABEL_CSS: Partial<CSSStyleDeclaration> = {
   flex: "1 1 auto",
   textAlign: "center",
   fontFamily: "sans-serif",
-  fontSize: "13px",
+  fontSize: "var(--ui-font-md)",
   color: "#ecd6aa",
 };
 
@@ -34,7 +34,7 @@ const ARROW_BTN_CSS: Partial<CSSStyleDeclaration> = {
   borderRadius: "3px",
   color: "#ecd6aa",
   cursor: "pointer",
-  fontSize: "11px",
+  fontSize: "var(--ui-font-sm)",
   padding: "2px 6px",
   lineHeight: "1",
   minWidth: "24px",

@@ -11,7 +11,7 @@ const ITEM_CSS: Partial<CSSStyleDeclaration> = {
   borderBottom: "1px solid #23252e",
   color: "#ecd6aa",
   fontFamily: "sans-serif",
-  fontSize: "14px",
+  fontSize: "var(--ui-font-lg)",
   textAlign: "left",
   cursor: "pointer",
   width: "100%",
