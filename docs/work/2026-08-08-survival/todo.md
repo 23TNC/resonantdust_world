@@ -6,11 +6,12 @@ decisions in [`forks.md`](forks.md) (F#), the anticipated-issue inventory in
 
 ## P0 — the paper
 
-- [ ] VARIABLES.md: `geo_label` on the thing schema (F1); the `drain` lane
-      on need modifiers (F3 — deplete units, summing, "only events and
-      authored drains move corpus"); the crossing re-stamp law (F4/I2 — one
-      pending slot per (pawn, need), supersede, re-validate). Acceptance:
-      docs-check green.
+- [ ] VARIABLES.md: `geo_label` on the thing schema (F1); the `deplete`
+      DEPLETION MODIFIER on condition need-modifiers (F3 — the need's own
+      field and units, rates summing, "only events and condition depletion
+      move corpus"); the crossing re-stamp law (F4/I2 — one pending slot
+      per (pawn, need), supersede, re-validate). Acceptance: docs-check
+      green.
 
 ## P1 — geo glyphs
 
@@ -25,14 +26,15 @@ decisions in [`forks.md`](forks.md) (F#), the anticipated-issue inventory in
 
 ## P2 — the drain lane
 
-- [ ] shared/content: `drain` on NeedModifier (conditions + the trait
-      per-level form), summing, extended in the ONE piecewise eval with the
-      trajectory unit test (I1); the panel's crossing forecast inherits it.
-      Acceptance: the pinned trajectory test; existing goldens re-blessed
-      deliberately.
-- [ ] content: `starving` and `dehydrated` author corpus drains (F5 —
-      ~3600 tics full→empty each; both = twice the pace). Acceptance: load
-      green; the wasm panel shows corpus falling for a starving pawn.
+- [ ] shared/content: `deplete` on NeedModifier (conditions + the trait
+      per-level form), rates summing, extended in the ONE piecewise eval
+      with the trajectory unit test (I1); the panel's crossing forecast
+      inherits it. Acceptance: the pinned trajectory test; existing goldens
+      re-blessed deliberately.
+- [ ] content: `starving` and `dehydrated` author corpus depletion (F5 —
+      ~3600 tics full→empty each; both active = twice the pace).
+      Acceptance: load green; the wasm panel shows corpus falling for a
+      starving pawn.
 - [ ] The consumer sweep (I1): wasm + webgl + npc + worker + master rebuilt
       and restarted on the new corpus. Acceptance: builds green; seed guard
       quiet.

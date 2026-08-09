@@ -32,24 +32,29 @@ is exactly what canvas text is for; the art pipeline is for art.
 **Rejected — DOM overlays**: the label must live IN the world draw (zoom,
 occlusion, lighting) or it reads as UI.
 
-## F3 — conditions gain a per-need `drain` lane, summing, in the ONE eval {#f3}
-_2026-08-08 · resolved at plan time — the user's "decrease the corpus need over time"_
+## F3 — the condition applies a DEPLETION MODIFIER to the need {#f3}
+_2026-08-08 · the user's simplification of this fork's first draft, adopted_
 
-**Chosen.** `NeedModifier` (conditions now; the trait per-level form
-inherits the field for free) gains `drain` — authored in DEPLETE UNITS
-(tics full→empty contributed by this source alone; the need's own
-`deplete` keeps meaning the base). Active drains SUM (two sources drain
-twice as fast). The piecewise lazy eval in `needs_eval` extends in ONE
-place; the re-stamp law already covers rate changes at grant/expiry, and
-band-derived conditions (starving IS one) enter the eval exactly as today.
-Corpus keeps `deplete 0` — the design's "only events move it" softens to
-"only events and authored drains", stated in VARIABLES.
+**Chosen.** The condition's need-modifier carries **`deplete`** — the SAME
+field, units and meaning the need itself authors (tics full→empty): "while
+this condition is active, the need depletes at this pace."
 
-**Why not the multiplicative `rate`**: rate × base-deplete is zero forever
-on a deplete-0 need — the additive lane is the only way starving can move
-corpus without giving corpus a base drain that would tick for HEALTHY
-pawns. **Rejected — a worker tick that decrements corpus**: violates the
-lazy-value law root and branch.
+    needs = [ { need = "corpus", deplete = 3600 } ]
+
+No new vocabulary (the first draft invented a `drain` lane — the user's
+review collapsed it: this IS just a depletion modifier). Multiple active
+sources combine as RATES SUMMING (starving + dehydrated = faster than
+either alone). The piecewise lazy eval extends in ONE place; the re-stamp
+law already covers grant/expiry; band-derived conditions enter exactly as
+today. Corpus keeps its own `deplete 0` — "only events and condition
+depletion move it", stated in VARIABLES. The trait per-level modifier form
+inherits the field for free.
+
+**The constraint that forced ANY new field**: the existing `rate` is a
+MULTIPLIER on the need's base deplete, and corpus's base is 0 — a
+multiplier alone can never move it, and giving corpus a base would tick
+for healthy pawns. **Rejected — a worker tick that decrements corpus**:
+violates the lazy-value law root and branch.
 
 ## F4 — the zero-crossing scheduler: a re-validating re-stamp, not a timer {#f4}
 _2026-08-08 · resolved at plan time_
