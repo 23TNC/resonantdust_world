@@ -23,7 +23,7 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P2 — the host of module-players
 
-- [ ] lib: `Host` runs N modules, each a PLAYER (F1), over ONE shared world model and one
+- [x] lib: `Host` runs N modules, each a PLAYER (F1), over ONE shared world model and one
       tick loop (I1/I4); env = which-brain-where; single-brain envs kept (I5). Acceptance:
       a two-module host boots; both players visible server-side.
 - [ ] Ownership from spawn attribution (F4/I2): a brain commands only its mints and

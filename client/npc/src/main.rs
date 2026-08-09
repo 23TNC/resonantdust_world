@@ -28,6 +28,30 @@ async fn main() {
     let name = env_or("NPC_NAME", "Wolves");
     let tick_ms: u64 = env_or("MOVE_MS", "1000").parse().unwrap_or(1000);
     let config = ClientConfig::from_env();
+
+    // npc-host P2 (F1/F5): `NPC_MODULES="wolf_pack@112,68;bunny_fluffle@116,71"` runs THE
+    // HOST — one world session + one command-only PLAYER session per module (each named for
+    // its brain def, the F10 law). Absent, the single-brain envs below run unchanged (I5 —
+    // the debug measurement harness).
+    if let Ok(spec) = std::env::var("NPC_MODULES") {
+        let host_name = env_or("NPC_HOST_NAME", "npc_host");
+        let modules: Vec<(String, (i32, i32))> = spec
+            .split(';')
+            .filter_map(|m| {
+                let (name, pos) = m.trim().split_once('@')?;
+                let (x, y) = pos.split_once(',')?;
+                Some((name.to_string(), (x.trim().parse().ok()?, y.trim().parse().ok()?)))
+            })
+            .collect();
+        if modules.is_empty() {
+            tracing::error!(%spec, "NPC_MODULES parsed to nothing (want name@x,y;name@x,y)");
+            std::process::exit(1);
+        }
+        tracing::info!(%host_name, count = modules.len(), gateway = %config.gateway_url, "npc HOST starting");
+        npc::run_host(config, &host_name, &modules, tick_ms).await;
+        return;
+    }
+
     tracing::info!(%brain, %name, tick_ms, gateway = %config.gateway_url, "npc starting");
 
     let Some(bot) = Bot::login(config, &name).await else {

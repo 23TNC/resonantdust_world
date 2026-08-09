@@ -1,5 +1,20 @@
 # Completed — npc-host
 
+## 2026-08-09 — P2 (first half): the F10 mint + the host skeleton
+
+**The login-name mint (F10)** — the edge funnel resolves a brain def whose name equals the
+player's name FIRST, deriving its granted needs; verified live (a `wolf_pack` login minted
+def 0x90010010 + wolf_count, fanned). **The host** — `npc::run_host` (NPC_MODULES=
+`"wolf_pack@112,68;bunny_fluffle@116,71"`; single-brain envs untouched — I5): ONE world
+session (`npc_host`) carrying every module's NAMED anchor (F2 — the engine merges them into
+the one zone set) + one command-only PLAYER session per module (F1, the spike-b posture);
+the module's radius reads from its brain's `area_of_influence` bind through
+`player_trait_stat`. Verified live (container rd-host): both module-players up with
+corpus-derived radii (wolf_pack 12.0 = level 2, bunny_fluffle 8.0 = level 1), each
+receiving ITS OWN player-pawn's row — wolf_count (key 0x50) vs bunny_count (key 0x60), the
+per-brain derivation proven end to end; players rows server-side. Group behaviors land on
+this skeleton with P3's policy (the plan's own structure).
+
 ## 2026-08-08 — P1: brains as content
 
 **codec** — `TYPE_BRAIN = 9`. **loader** — `[[brain]]` (BrainToml/BrainDef: needs + CONSTANT

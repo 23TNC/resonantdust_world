@@ -72,6 +72,99 @@ pub async fn run_brain<B: Brain>(mut bot: Bot, mut brain: B, tick_ms: u64) {
     }
 }
 
+/// One hosted module (npc-host P2, F1): a PLAYER — its own login (the brain def's name, the
+/// F10 law), whose anchor is its position and whose mints are its pawns. The module session
+/// is command-only: the world model lives on the HOST's session; this one carries identity,
+/// command attribution, and the module's OWN player-pawn fan (its wolf_count etc.).
+pub struct HostModule {
+    /// The brain def's name — the login name, the def, the identity.
+    pub name: String,
+    /// The module's position in the world (F2: realized as a named anchor on the HOST session).
+    pub center: (i32, i32),
+    /// The operational-area radius in tiles (F3), read from the brain's `area_of_influence`
+    /// bind through the STAT lane (F10) — 8.0 when unresolvable.
+    pub radius: f64,
+    /// The module-player's own session (command-only).
+    pub session: Bot,
+}
+
+/// Run the HOST (npc-host P2, F1): ONE world session (the host player) carrying every
+/// module's named anchor + the shared world model, plus one command-only PLAYER session per
+/// module. v1 ticks drain both lanes and surface each module's own player-pawn rows — the
+/// group behaviors land on this skeleton with the P3 policy.
+pub async fn run_host(config: ClientConfig, host_name: &str, spec: &[(String, (i32, i32))], tick_ms: u64) {
+    let Some(mut world) = Bot::login(config.clone(), host_name).await else {
+        tracing::error!("host login failed; exiting for the restart policy to retry");
+        std::process::exit(1);
+    };
+    let bundle = match &world.server_url {
+        Some(url) => fetch_corpus(url).await.ok(),
+        None => None,
+    };
+    let mut modules: Vec<HostModule> = Vec::new();
+    for (name, center) in spec {
+        let Some(session) = Bot::login(config.clone(), name).await else {
+            tracing::error!(%name, "module login failed; exiting for the restart policy to retry");
+            std::process::exit(1);
+        };
+        let radius = bundle
+            .as_ref()
+            .and_then(|b| {
+                let id = b.brain_object_id(name)?;
+                let r = b.player_trait_stat("area_radius", &b.brain_player_traits(id));
+                (r > 0.0).then_some(r)
+            })
+            .unwrap_or(8.0);
+        // F2: the module's position IS a named anchor — on the WORLD session, whose engine
+        // merges all anchors into the ONE zone set the shared model reads.
+        let r = (radius.ceil() as i32).clamp(2, 16);
+        let _ = world.client.send(Command::SetAnchor {
+            name: format!("npc:{name}"),
+            tile_x: center.0,
+            tile_y: center.1,
+            radii: AnchorRadii { active: r, hot: r + 2, warm: r + 4, cold: r + 6 },
+            soul: 0,
+        });
+        tracing::info!(%name, ?center, radius, "module-player up (npc-host P2)");
+        modules.push(HostModule { name: name.clone(), center: *center, radius, session });
+    }
+    let mut ticker = tokio::time::interval(Duration::from_millis(tick_ms));
+    loop {
+        ticker.tick().await;
+        // The world lane: note ONCE into the shared model (I1).
+        loop {
+            match world.events.try_recv() {
+                Ok(event) => {
+                    world.note(&event);
+                    log_event(&event);
+                }
+                Err(mpsc::error::TryRecvError::Empty) => break,
+                Err(mpsc::error::TryRecvError::Disconnected) => {
+                    tracing::warn!("world engine ended; stopping host");
+                    return;
+                }
+            }
+        }
+        // Each module's OWN lane: its player-pawn fan (needs on a 0x40… ref) is the group
+        // state the P3 policy reads; v1 surfaces it.
+        for m in &mut modules {
+            loop {
+                match m.session.events.try_recv() {
+                    Ok(Event::PawnNeed { entity_reference, need, .. })
+                        if entity_reference >> 24 == 0x40 =>
+                    {
+                        tracing::info!(module = %m.name, player_pawn = format!("{entity_reference:#010x}"),
+                            need = format!("{need:#010x}"), "module's own player-pawn row");
+                    }
+                    Ok(_) => {}
+                    Err(mpsc::error::TryRecvError::Empty) => break,
+                    Err(mpsc::error::TryRecvError::Disconnected) => break,
+                }
+            }
+        }
+    }
+}
+
 /// The automated-player harness: owns the `client` handle and its event stream, and hides the
 /// connect/await/anchor boilerplate every brain needs.
 pub struct Bot {
