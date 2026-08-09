@@ -375,6 +375,11 @@ struct ModNeedToml {
   min: Option<f64>,
   #[serde(default)]
   max: Option<f64>,
+  /// survival F3: a DEPLETION MODIFIER — the need's own field and units (TICS
+  /// full→empty): "while this condition is active, the need depletes at this pace".
+  /// Sources combine as rates summing. How a deplete-0 need (corpus) moves at all.
+  #[serde(default)]
+  deplete: Option<f64>,
 }
 
 /// A trait's LEVELED stat modifier — arrays index level − 1 (stat-model F5); every
@@ -402,6 +407,9 @@ struct LevelNeedToml {
   min: Vec<f64>,
   #[serde(default)]
   max: Vec<f64>,
+  /// survival F3: per-LEVEL depletion modifiers (see ModNeedToml.deplete).
+  #[serde(default)]
+  deplete: Vec<f64>,
 }
 
 #[derive(Deserialize)]
@@ -933,15 +941,22 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
           });
         }
       }
-      // stat-model F13: a DERIVED (band) condition may not modify needs — its own liveness
-      // is computed FROM need evaluation, so the modifier would feed the thing that decides
-      // it (a fixpoint the lazy eval cannot host). Stat contributions are fine.
-      if m.duration <= 0.0 && !m.needs.is_empty() {
+      // stat-model F13, refined by survival F3: a DERIVED (band) condition may not
+      // author rate/min/max need modifiers — its own liveness is computed FROM need
+      // evaluation, so the modifier would feed the thing that decides it (a fixpoint
+      // the lazy eval cannot host). A DEPLETE modifier is the acyclic exception: it
+      // drains a DIFFERENT need (starving drains corpus), and the eval derives the
+      // in-band window from the SOURCE's trajectory at depth 1. The cycle guard for
+      // deplete targets runs after the need table below.
+      if m.duration <= 0.0
+        && m.needs.iter().any(|n| n.rate != 1.0 || n.min.is_some() || n.max.is_some())
+      {
         errors.push(LoadError {
           file: String::new(),
           message: format!(
-            "condition `{}` is DERIVED (duration 0) and authors need modifiers — only TIMED \
-             conditions may modify needs (stat-model F13)",
+            "condition `{}` is DERIVED (duration 0) and authors rate/min/max need \
+             modifiers — only TIMED conditions may (stat-model F13; a `deplete` \
+             modifier on ANOTHER need is the survival-F3 exception)",
             m.name
           ),
         });
@@ -958,7 +973,9 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
         needs: m
           .needs
           .iter()
-          .map(|n| NeedModifier { need: n.need.clone(), rate: n.rate, min: n.min, max: n.max })
+          .map(|n| NeedModifier {
+            need: n.need.clone(), rate: n.rate, min: n.min, max: n.max, deplete: n.deplete,
+          })
           .collect(),
         emotions: m
           .emotions
@@ -1103,6 +1120,7 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
               rate: n.rate.get(i).copied().unwrap_or(1.0),
               min: n.min.get(i).copied(),
               max: n.max.get(i).copied(),
+              deplete: n.deplete.get(i).copied(),
             })
             .collect(),
           emotions: t
@@ -1166,6 +1184,56 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
           file: String::new(),
           message: format!("need `{}`: band names unknown condition `{}`", n.name, band.condition),
         });
+      }
+    }
+  }
+
+  // survival F3's ACYCLICITY GUARD: a band-derived deplete may not target its own
+  // SOURCE need (self-feeding fixpoint), and a deplete TARGET may not itself carry
+  // bands whose conditions author depletes — the eval derives source trajectories at
+  // depth 1, so a deeper chain would silently mis-evaluate rather than hang. Refused
+  // here so the corpus can never author what the eval cannot honestly compute.
+  {
+    let drains_of = |cname: &str| -> Vec<String> {
+      all.condition
+        .iter()
+        .find(|c| c.name == cname)
+        .map(|c| {
+          c.needs.iter().filter(|n| n.deplete.is_some()).map(|n| n.need.clone()).collect()
+        })
+        .unwrap_or_default()
+    };
+    for n in &all.need {
+      for band in &n.band {
+        for target in drains_of(&band.condition) {
+          if target == n.name {
+            errors.push(LoadError {
+              file: String::new(),
+              message: format!(
+                "need `{}`: band condition `{}` authors a deplete on its OWN source \
+                 need — the self-feeding cycle the lazy eval cannot host (survival F3)",
+                n.name, band.condition
+              ),
+            });
+          }
+          let target_chains = all
+            .need
+            .iter()
+            .filter(|t| t.name == target)
+            .flat_map(|t| t.band.iter())
+            .any(|tb| !drains_of(&tb.condition).is_empty());
+          if target_chains {
+            errors.push(LoadError {
+              file: String::new(),
+              message: format!(
+                "need `{}` is a deplete TARGET (via `{}`) and its own bands author \
+                 depletes — a depth-2 drain chain the depth-1 eval cannot honestly \
+                 compute (survival F3's acyclicity law)",
+                target, band.condition
+              ),
+            });
+          }
+        }
       }
     }
   }

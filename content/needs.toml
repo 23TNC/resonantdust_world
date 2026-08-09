@@ -52,6 +52,11 @@ priority = 20
 [[condition]]
 name = "dehydrated"
 label = "Dehydrated"
+# survival F3/F5: dehydration KILLS — the deplete MODIFIER drains corpus (its own
+# deplete is 0; only events and condition depletion move it) at full→dead in 3600
+# tics (~10 min at 6 Hz, the watchable dev scale). Starving authors the twin; both
+# active SUM to twice the pace. Every species with the band inherits mortality.
+needs = [ { need = "corpus", deplete = 3600 } ]
 emotions = [
   { emotion = "scared", magnitude = 5 },
   { emotion = "uncomfortable", magnitude = 3 },
@@ -90,6 +95,8 @@ priority = 20
 [[condition]]
 name = "starving"
 label = "Starving"
+# survival F3/F5: dehydrated's twin — see its comment.
+needs = [ { need = "corpus", deplete = 3600 } ]
 emotions = [
   { emotion = "scared", magnitude = 4 },
   { emotion = "uncomfortable", magnitude = 3 },
@@ -98,8 +105,10 @@ priority = 30
 
 # CORPUS — health (food-chain F2). The 0..2 domain is the ENCODING (the largest
 # reachable cap); the EFFECTIVE cap is the leveled `corpus` trait's per-level max
-# (level 1 → 1, level 2 → 2; the mint reads it). No deplete, no bands: health only
-# moves by events, and DEATH fires from the need-write trigger (can_die, corpus ≤ 0).
+# (level 1 → 1, level 2 → 2; the mint reads it). No deplete, no bands: health moves
+# by events and by CONDITION DEPLETION (survival F3 — starving/dehydrated drain it),
+# and DEATH fires from the need-write trigger (can_die, corpus ≤ 0) — the crossing
+# re-stamp (F4) lands the write when the lazy drain reaches zero.
 [[need]]
 name = "corpus"
 label = "Corpus"

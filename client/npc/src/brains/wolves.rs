@@ -302,8 +302,9 @@ impl Wolves {
                         mp.min as f32,
                         mp.max as f32,
                     ));
-                    let windows =
-                        needs_eval::rate_windows(bundle, &m.need, &trait_rows, &cond_rows, mset);
+                    let windows = needs_eval::rate_windows(
+                        bundle, &m.need, &trait_rows, &cond_rows, &needs, mset,
+                    );
                     let msat = needs_eval::satisfaction_at(mval, mset, &mp, now, &windows);
                     program.extend_from_slice(&[
                         SET_NEED,

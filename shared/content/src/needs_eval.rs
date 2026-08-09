@@ -55,6 +55,11 @@ pub struct RateWindow {
     pub rate: f64,
     pub start: f64,
     pub until: Option<f64>,
+    /// survival F3: an ABSOLUTE depletion contribution (need units/tic) while this
+    /// window is active — the deplete modifier's lane. Multipliers scale the BASE rate
+    /// only; adds are absolute and SUM (quenched halving thirst does not halve
+    /// starving's corpus drain). A pure multiplier window carries 0.
+    pub add: f64,
 }
 
 /// The elapsed tics of `now` since `then`, under the future-stamp half-window guard.
@@ -67,23 +72,41 @@ fn elapsed_guarded(then: u16, now: u16) -> f64 {
     }
 }
 
-/// The rate-multiplier windows for one need row, from the pawn's trait rows + stored
-/// condition rows, relative to the row's `set_tic`. Rows resolving to nothing are skipped.
+/// The add contribution (units/tic) a deplete modifier authors for `np`'s domain.
+fn add_of(np: &NeedParams, deplete: f64) -> f64 {
+    if deplete > 0.0 { (np.max - np.min) / deplete } else { 0.0 }
+}
+
+/// The rate windows for one need row — multipliers AND deplete-modifier adds — from the
+/// pawn's trait rows, stored condition rows, and (survival F3) the OTHER need rows whose
+/// BAND-DERIVED conditions author a deplete on this need (starving drains corpus while
+/// hunger sits in its band; the in-band interval derives from the SOURCE's own
+/// trajectory). Relative to this row's `set_tic`. Rows resolving to nothing are skipped.
+///
+/// ACYCLICITY LAW: source trajectories are computed WITHOUT cross-need drains (depth 1) —
+/// a drain TARGET must not itself carry bands that drain others. Corpus (the target) has
+/// no bands; thirst/hunger (the sources) are drained by nothing. A future cycle is a
+/// content bug this eval answers with the depth-1 approximation, not a hang.
 pub fn rate_windows(
     bundle: &Bundle,
     need_name: &str,
     trait_rows: &[u32],
     condition_rows: &[(u32, u16)],
+    need_rows: &[(u32, u16)],
     set_tic: u16,
 ) -> Vec<RateWindow> {
+    let np_target = bundle.need_params(need_name);
     let mut out = Vec::new();
     for &row in trait_rows {
         let reference = gameplay_row_reference(GAMEPLAY_TRAIT, row);
         let Some(tp) = bundle.trait_params_by_ref(reference) else { continue };
         let level = gameplay_row_data(row) as usize;
         let Some(entry) = level.checked_sub(1).and_then(|i| tp.levels.get(i)) else { continue };
-        for m in entry.needs.iter().filter(|m| m.need == need_name && m.rate != 1.0) {
-            out.push(RateWindow { rate: m.rate, start: 0.0, until: None });
+        for m in entry.needs.iter().filter(|m| m.need == need_name) {
+            let add = np_target.as_ref().and_then(|np| m.deplete.map(|d| add_of(np, d))).unwrap_or(0.0);
+            if m.rate != 1.0 || add > 0.0 {
+                out.push(RateWindow { rate: m.rate, start: 0.0, until: None, add });
+            }
         }
     }
     for &(row, written) in condition_rows {
@@ -105,11 +128,86 @@ pub fn rate_windows(
         if remaining == 0 {
             continue; // already expired when the row was stamped
         }
-        for m in cp.needs.iter().filter(|m| m.need == need_name && m.rate != 1.0) {
-            out.push(RateWindow { rate: m.rate, start, until: Some(start + f64::from(remaining)) });
+        for m in cp.needs.iter().filter(|m| m.need == need_name) {
+            let add = np_target.as_ref().and_then(|np| m.deplete.map(|d| add_of(np, d))).unwrap_or(0.0);
+            if m.rate != 1.0 || add > 0.0 {
+                out.push(RateWindow {
+                    rate: m.rate, start, until: Some(start + f64::from(remaining)), add,
+                });
+            }
+        }
+    }
+    // survival F3: cross-need DERIVED drains — a source need whose band condition
+    // authors a deplete on THIS need drains it while the source sits in-band.
+    let Some(np_target) = np_target else { return out };
+    for &(src_row, src_set) in need_rows {
+        let src_ref = gameplay_row_reference(GAMEPLAY_NEED, src_row);
+        let Some(src_np) = bundle.need_params_by_ref(src_ref) else { continue };
+        let Some((_, src_name)) = bundle.gameplay_lookup(src_ref) else { continue };
+        if src_name == need_name {
+            continue; // self-drain rides the row's own windows, not the derived lane
+        }
+        for band in &src_np.bands {
+            let Some(cref) = bundle.gameplay_reference("condition", &band.condition) else { continue };
+            let Some(cp) = bundle.condition_params_by_ref(cref) else { continue };
+            for m in cp.needs.iter().filter(|m| m.need == need_name) {
+                let Some(d) = m.deplete else { continue };
+                let add = add_of(&np_target, d);
+                if add <= 0.0 {
+                    continue;
+                }
+                // The source's own trajectory (depth 1 — no cross-need drains).
+                let src_windows =
+                    rate_windows(bundle, &src_name, trait_rows, condition_rows, &[], src_set);
+                let s0 = f64::from(dequantize(
+                    gameplay_row_data(src_row), src_np.min as f32, src_np.max as f32,
+                ))
+                .clamp(src_np.min, src_np.max);
+                let Some((enter, exit)) =
+                    in_band_interval(s0, &src_np, &src_windows, band.lo, band.hi)
+                else {
+                    continue;
+                };
+                // Convert source-elapsed → THIS row's elapsed frame (signed wrapped
+                // offset between the two stamps, exact inside the half-window).
+                let off = f64::from(src_set.wrapping_sub(set_tic) as i16);
+                let start = (enter + off).max(0.0);
+                let until = exit.map(|e| e + off).filter(|&e| e > start);
+                if exit.is_some() && until.is_none() {
+                    continue; // the whole interval predates this row's stamp
+                }
+                out.push(RateWindow { rate: 1.0, start, until, add });
+            }
         }
     }
     out
+}
+
+/// When does a DECREASING lazy value sit inside `[lo, hi)`? Returns the source-elapsed
+/// `(enter, exit)` — `exit` `None` when the domain floor clamps it in-band forever (the
+/// bottom band holds). `None` = never enters (already below, or never reaches the band).
+fn in_band_interval(
+    s0: f64,
+    np: &NeedParams,
+    windows: &[RateWindow],
+    lo: f64,
+    hi: f64,
+) -> Option<(f64, Option<f64>)> {
+    let base_rate = if np.deplete > 0.0 { (np.max - np.min) / np.deplete } else { 0.0 };
+    if s0 < lo {
+        return None; // below the band already; a decreasing value never re-enters
+    }
+    let enter = if s0 < hi {
+        0.0
+    } else {
+        crossing_elapsed(s0 - hi, base_rate, windows)?
+    };
+    let exit = if lo <= np.min {
+        None // the clamp holds the value in the bottom band forever
+    } else {
+        crossing_elapsed(s0 - lo, base_rate, windows)
+    };
+    Some((enter, exit))
 }
 
 /// The product of window multipliers active at elapsed `t` (a window covers `[start, until)`).
@@ -120,6 +218,17 @@ fn multiplier_at(windows: &[RateWindow], t: f64) -> f64 {
         .map(|w| w.rate)
         .product::<f64>()
         .max(0.0)
+}
+
+/// The SEGMENT rate at elapsed `t` (survival F3): the base under its multipliers, plus
+/// the absolute deplete-modifier adds — multipliers never scale the adds.
+fn segment_rate(base_rate: f64, windows: &[RateWindow], t: f64) -> f64 {
+    let adds: f64 = windows
+        .iter()
+        .filter(|w| w.add > 0.0 && t >= w.start && w.until.is_none_or(|u| t < u))
+        .map(|w| w.add)
+        .sum();
+    base_rate * multiplier_at(windows, t) + adds
 }
 
 /// Every elapsed at which some window's multiplier switches on or off, ascending.
@@ -144,8 +253,8 @@ fn depletion(base_rate: f64, windows: &[RateWindow], elapsed: f64) -> f64 {
     let mut total = 0.0;
     let mut prev = 0.0;
     for cut in cuts {
-        // the multiplier is constant inside (prev, cut); sample at its midpoint
-        total += (cut - prev) * base_rate * multiplier_at(windows, (prev + cut) / 2.0);
+        // the rate is constant inside (prev, cut); sample at its midpoint
+        total += (cut - prev) * segment_rate(base_rate, windows, (prev + cut) / 2.0);
         prev = cut;
     }
     total
@@ -215,10 +324,12 @@ pub fn satisfaction_at(
     windows: &[RateWindow],
 ) -> f64 {
     let s0 = value.clamp(np.min, np.max);
-    if np.deplete <= 0.0 {
+    // survival F3: a deplete-0 need still moves under deplete-MODIFIER adds (corpus
+    // under starving); with no adds either, it never moves — the old fast path.
+    if np.deplete <= 0.0 && windows.iter().all(|w| w.add <= 0.0) {
         return s0;
     }
-    let base_rate = (np.max - np.min) / np.deplete;
+    let base_rate = if np.deplete > 0.0 { (np.max - np.min) / np.deplete } else { 0.0 };
     let elapsed = elapsed_guarded(set_tic, now);
     (s0 - depletion(base_rate, windows, elapsed)).max(np.min)
 }
@@ -231,13 +342,14 @@ fn eval_need_row(
     set_tic: u16,
     trait_rows: &[u32],
     condition_rows: &[(u32, u16)],
+    need_rows: &[(u32, u16)],
     now: u16,
 ) -> Option<(u32, NeedParams, f64)> {
     let reference = gameplay_row_reference(GAMEPLAY_NEED, row);
     let np = bundle.need_params_by_ref(reference)?;
     let value = f64::from(dequantize(gameplay_row_data(row), np.min as f32, np.max as f32));
     let (_, name) = bundle.gameplay_lookup(reference)?;
-    let windows = rate_windows(bundle, &name, trait_rows, condition_rows, set_tic);
+    let windows = rate_windows(bundle, &name, trait_rows, condition_rows, need_rows, set_tic);
     let sat = satisfaction_at(value, set_tic, &np, now, &windows);
     Some((reference, np, sat))
 }
@@ -262,7 +374,8 @@ pub fn active_conditions(
 ) -> Vec<ActiveCondition> {
     let mut out = Vec::new();
     for &(row, set_tic) in need_rows {
-        let Some((_, np, sat)) = eval_need_row(bundle, row, set_tic, trait_rows, condition_rows, now)
+        let Some((_, np, sat)) =
+            eval_need_row(bundle, row, set_tic, trait_rows, condition_rows, need_rows, now)
         else {
             continue;
         };
@@ -322,7 +435,8 @@ pub fn need_satisfaction(
     let &(row, set_tic) = need_rows
         .iter()
         .find(|(row, _)| gameplay_row_reference(GAMEPLAY_NEED, *row) == nref)?;
-    eval_need_row(bundle, row, set_tic, trait_rows, condition_rows, now).map(|(_, _, sat)| sat)
+    eval_need_row(bundle, row, set_tic, trait_rows, condition_rows, need_rows, now)
+        .map(|(_, _, sat)| sat)
 }
 
 /// The next FUTURE tic at which the active set can change without any new write: the
@@ -350,12 +464,13 @@ pub fn next_crossing_tic(
     for &(row, set_tic) in need_rows {
         let reference = gameplay_row_reference(GAMEPLAY_NEED, row);
         let Some(np) = bundle.need_params_by_ref(reference) else { continue };
-        if np.deplete <= 0.0 {
+        let Some((_, name)) = bundle.gameplay_lookup(reference) else { continue };
+        let windows = rate_windows(bundle, &name, trait_rows, condition_rows, need_rows, set_tic);
+        // survival F3: a deplete-0 need can still cross under deplete-modifier adds.
+        if np.deplete <= 0.0 && windows.iter().all(|w| w.add <= 0.0) {
             continue;
         }
-        let Some((_, name)) = bundle.gameplay_lookup(reference) else { continue };
-        let windows = rate_windows(bundle, &name, trait_rows, condition_rows, set_tic);
-        let base_rate = (np.max - np.min) / np.deplete;
+        let base_rate = if np.deplete > 0.0 { (np.max - np.min) / np.deplete } else { 0.0 };
         let value = f64::from(dequantize(gameplay_row_data(row), np.min as f32, np.max as f32));
         let s0 = value.clamp(np.min, np.max);
         for band in &np.bands {
@@ -383,6 +498,36 @@ pub fn next_crossing_tic(
     best
 }
 
+/// The FLOOR-crossing of one named need (survival F4 — the crossing scheduler's read):
+/// the first tic strictly after `now`... at which the need's lazy value reaches
+/// `threshold` (death reads corpus at its domain min). `None` = the row is absent, the
+/// value already sits at/below the threshold's write-visible side, or the trajectory
+/// never reaches it. Same eval as everything else — the worker schedules with this and
+/// re-validates at fire.
+pub fn floor_crossing_tic(
+    bundle: &Bundle,
+    need: &str,
+    threshold: f64,
+    trait_rows: &[u32],
+    need_rows: &[(u32, u16)],
+    condition_rows: &[(u32, u16)],
+) -> Option<u16> {
+    let nref = bundle.gameplay_reference("need", need)?;
+    let &(row, set_tic) = need_rows
+        .iter()
+        .find(|(row, _)| gameplay_row_reference(GAMEPLAY_NEED, *row) == nref)?;
+    let np = bundle.need_params_by_ref(nref)?;
+    let windows = rate_windows(bundle, need, trait_rows, condition_rows, need_rows, set_tic);
+    let base_rate = if np.deplete > 0.0 { (np.max - np.min) / np.deplete } else { 0.0 };
+    let s0 = f64::from(dequantize(gameplay_row_data(row), np.min as f32, np.max as f32))
+        .clamp(np.min, np.max);
+    if s0 <= threshold {
+        return None; // already there — a write would see it now, nothing to schedule
+    }
+    let e = crossing_elapsed(s0 - threshold, base_rate, &windows)?;
+    Some(set_tic.wrapping_add(e.ceil() as u16))
+}
+
 /// The REAL elapsed at which cumulative depletion reaches `drop` (> 0), walking the
 /// piecewise segments; `None` if it never does (every live segment rate 0 with no end).
 fn crossing_elapsed(drop: f64, base_rate: f64, windows: &[RateWindow]) -> Option<f64> {
@@ -390,7 +535,7 @@ fn crossing_elapsed(drop: f64, base_rate: f64, windows: &[RateWindow]) -> Option
     let mut prev = 0.0;
     let mut left = drop;
     for cut in cuts {
-        let rate = base_rate * multiplier_at(windows, (prev + cut) / 2.0);
+        let rate = segment_rate(base_rate, windows, (prev + cut) / 2.0);
         let span = cut - prev;
         if rate > 0.0 && left <= rate * span {
             return Some(prev + left / rate);
@@ -399,7 +544,7 @@ fn crossing_elapsed(drop: f64, base_rate: f64, windows: &[RateWindow]) -> Option
         prev = cut;
     }
     // the unbounded tail: every finite window has switched off
-    let rate = base_rate * multiplier_at(windows, prev + 1.0);
+    let rate = segment_rate(base_rate, windows, prev + 1.0);
     (rate > 0.0).then(|| prev + left / rate)
 }
 
@@ -586,8 +731,8 @@ needs = [ { need = "thirst", rate = 0.5 } ]
         let b = load(&[("needs.toml".into(), src.into())]).expect("loads");
         let p = np(&b, "thirst");
         let conditions = [(cond_row(&b, "quenched", 3600), 1000u16)];
-        let windows = rate_windows(&b, "thirst", &[], &conditions, 1000);
-        assert_eq!(windows, vec![RateWindow { rate: 0.5, start: 0.0, until: Some(3600.0) }]);
+        let windows = rate_windows(&b, "thirst", &[], &conditions, &[], 1000);
+        assert_eq!(windows, vec![RateWindow { rate: 0.5, start: 0.0, until: Some(3600.0), add: 0.0 }]);
         let sat = satisfaction_at(40.0, 1000, &p, 6000, &windows);
         assert!((sat - 25.1852).abs() < 1e-3, "the worked window (got {sat})");
         // Inside the quenched window the slope is HALVED: at tic 4600 (expiry) only
@@ -620,8 +765,8 @@ needs = [ { need = "thirst", rate = 0.5 } ]
         let b = load(&[("needs.toml".into(), src.into())]).expect("loads");
         let p = np(&b, "thirst");
         let conditions = [(cond_row(&b, "quenched", 100), 100u16)]; // written at 100, row set at 0
-        let windows = rate_windows(&b, "thirst", &[], &conditions, 0);
-        assert_eq!(windows, vec![RateWindow { rate: 0.5, start: 100.0, until: Some(200.0) }]);
+        let windows = rate_windows(&b, "thirst", &[], &conditions, &[], 0);
+        assert_eq!(windows, vec![RateWindow { rate: 0.5, start: 100.0, until: Some(200.0), add: 0.0 }]);
         // read at 300: 100·0.1 + 100·0.05 + 100·0.1 = 25 drained.
         let sat = satisfaction_at(80.0, 0, &p, 300, &windows);
         assert!((sat - 55.0).abs() < 1e-9, "got {sat}");
@@ -644,8 +789,8 @@ needs = [ { need = "thirst", rate = [0.5] } ]
         let b = load(&[("needs.toml".into(), src.into())]).expect("loads");
         let p = np(&b, "thirst");
         let tr = pack_gameplay_row(b.gameplay_reference("trait", "camel").unwrap(), 1);
-        let windows = rate_windows(&b, "thirst", &[tr], &[], 0);
-        assert_eq!(windows, vec![RateWindow { rate: 0.5, start: 0.0, until: None }]);
+        let windows = rate_windows(&b, "thirst", &[tr], &[], &[], 0);
+        assert_eq!(windows, vec![RateWindow { rate: 0.5, start: 0.0, until: None, add: 0.0 }]);
         // 1000 tics at half of 0.1/tic → 50 drained, not 100.
         let sat = satisfaction_at(100.0, 0, &p, 1000, &windows);
         assert!((sat - 50.0).abs() < 1e-9, "got {sat}");
@@ -799,5 +944,73 @@ deplete = 1000
         let v = f64::from(dequantize(gameplay_row_data(row), p.min as f32, p.max as f32));
         assert!((v - 33.0).abs() < 0.002, "got {v}");
         drop(b);
+    }
+
+    /// survival F3/F4 — the pinned trajectory (I1's acceptance): hunger banded
+    /// [0,10) → starving, whose `deplete = 1000` drains corpus (deplete 0, domain
+    /// 0..2). Hunger 20 at deplete 2000 (rate 100/2000 = 0.05/tic) enters the band at
+    /// elapsed 200; corpus (full, 2.0) then drains at 2/1000 = 0.002/tic. Read at
+    /// elapsed 700: 500 in-band tics → corpus = 2 − 500·0.002 = 1.0. Dehydration's
+    /// twin band SUMS: with thirst also in-band from 0, corpus loses 0.004/tic while
+    /// both run. The floor crossing predicts the zero write-tic the scheduler queues.
+    #[test]
+    fn deplete_modifiers_drain_and_predict_the_floor() {
+        let src = r#"
+[[need]]
+name = "hunger"
+min = 0
+max = 100
+deplete = 2000
+band = [ { condition = "starving", lo = 0, hi = 10 } ]
+
+[[need]]
+name = "thirst"
+min = 0
+max = 100
+deplete = 2000
+band = [ { condition = "dehydrated", lo = 0, hi = 10 } ]
+
+[[need]]
+name = "corpus"
+min = 0
+max = 2
+
+[[condition]]
+name = "starving"
+needs = [ { need = "corpus", deplete = 1000 } ]
+
+[[condition]]
+name = "dehydrated"
+needs = [ { need = "corpus", deplete = 1000 } ]
+"#;
+        let b = load(&[("needs.toml".into(), src.into())]).expect("loads");
+        // Hunger 20, thirst FULL (out of band the whole test), corpus full. All rows
+        // stamped at tic 0.
+        let needs = vec![
+            (need_row(&b, "hunger", 20.0), 0u16),
+            (need_row(&b, "thirst", 100.0), 0u16),
+            (need_row(&b, "corpus", 2.0), 0u16),
+        ];
+        // Hunger reaches its band (< 10) at elapsed 200 (drop 10 at 0.05/tic).
+        let sat = need_satisfaction(&b, "corpus", &[], &needs, &[], 700).expect("corpus row");
+        assert!((sat - 1.0).abs() < 0.01, "single drain: got {sat}");
+        // BOTH sources in-band: thirst 5 sits in dehydrated from elapsed 0 — corpus
+        // loses 0.002/tic (dehydrated alone) for 200 tics, then 0.004/tic summed.
+        let needs2 = vec![
+            (need_row(&b, "hunger", 20.0), 0u16),
+            (need_row(&b, "thirst", 5.0), 0u16),
+            (need_row(&b, "corpus", 2.0), 0u16),
+        ];
+        let sat2 = need_satisfaction(&b, "corpus", &[], &needs2, &[], 500).expect("corpus row");
+        // 200·0.002 + 300·0.004 = 0.4 + 1.2 = 1.6 → corpus 0.4
+        assert!((sat2 - 0.4).abs() < 0.01, "summed drains: got {sat2}");
+        // The floor crossing: from the single-drain trajectory, corpus reaches 0 at
+        // elapsed 200 + 2.0/0.002 = 1200.
+        let cross = floor_crossing_tic(&b, "corpus", 0.0, &[], &needs, &[]).expect("crossing");
+        assert_eq!(cross, 1200, "the scheduler's write tic");
+        // A need with no drains and deplete 0 still never moves (the old fast path).
+        let sat3 = need_satisfaction(&b, "corpus", &[], &[(need_row(&b, "corpus", 2.0), 0)], &[], 5000)
+            .expect("corpus row");
+        assert!((sat3 - 2.0).abs() < 0.001, "undrained corpus moved: {sat3}");
     }
 }

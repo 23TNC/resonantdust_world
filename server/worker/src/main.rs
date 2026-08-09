@@ -2167,7 +2167,7 @@ async fn main() {
                             np.max as f32,
                         ));
                         let windows = resonantdust_content::needs_eval::rate_windows(
-                            &bundle, &need_name, eval_traits, eval_conds, set_tic,
+                            &bundle, &need_name, eval_traits, eval_conds, eval_needs, set_tic,
                         );
                         let now_sat = resonantdust_content::needs_eval::satisfaction_at(
                             value, set_tic, &np, effect_tic, &windows,
@@ -2469,7 +2469,7 @@ async fn main() {
                                 mp.max as f32,
                             ));
                             let mwindows = resonantdust_content::needs_eval::rate_windows(
-                                &bundle, &m.need, &trait_rows, &cond_rows, mset,
+                                &bundle, &m.need, &trait_rows, &cond_rows, &need_rows, mset,
                             );
                             let msat = resonantdust_content::needs_eval::satisfaction_at(
                                 mvalue, mset, &mp, effect_tic, &mwindows,

@@ -26,16 +26,16 @@ decisions in [`forks.md`](forks.md) (F#), the anticipated-issue inventory in
 
 ## P2 — the drain lane
 
-- [ ] shared/content: `deplete` on NeedModifier (conditions + the trait
+- [x] shared/content: `deplete` on NeedModifier (conditions + the trait
       per-level form), rates summing, extended in the ONE piecewise eval
       with the trajectory unit test (I1); the panel's crossing forecast
       inherits it. Acceptance: the pinned trajectory test; existing goldens
       re-blessed deliberately.
-- [ ] content: `starving` and `dehydrated` author corpus depletion (F5 —
+- [x] content: `starving` and `dehydrated` author corpus depletion (F5 —
       ~3600 tics full→empty each; both active = twice the pace).
       Acceptance: load green; the wasm panel shows corpus falling for a
       starving pawn.
-- [ ] The consumer sweep (I1): wasm + webgl + npc + worker + master rebuilt
+- [x] The consumer sweep (I1): wasm + webgl + npc + worker + master rebuilt
       and restarted on the new corpus. Acceptance: builds green; seed guard
       quiet.
 

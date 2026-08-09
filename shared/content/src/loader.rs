@@ -213,6 +213,10 @@ pub struct NeedModifier {
   pub rate: f64,
   pub min: Option<f64>,
   pub max: Option<f64>,
+  /// survival F3: the DEPLETION MODIFIER — TICS full→empty this source contributes
+  /// while active (the need's own `deplete` semantics). Sources sum as rates. `None`
+  /// = no contribution. How a deplete-0 need (corpus) moves at all.
+  pub deplete: Option<f64>,
 }
 
 /// A `[[stat]]` def (stat-model F6/F8) — a DERIVED quantity: never stored, never fanned;

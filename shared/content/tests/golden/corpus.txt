@@ -316,7 +316,17 @@ white
         label: "Dehydrated",
         duration: 0.0,
         stats: [],
-        needs: [],
+        needs: [
+            NeedModifier {
+                need: "corpus",
+                rate: 1.0,
+                min: None,
+                max: None,
+                deplete: Some(
+                    3600.0,
+                ),
+            },
+        ],
         emotions: [
             EmotionModifier {
                 emotion: 9,
@@ -339,6 +349,7 @@ white
                 rate: 0.5,
                 min: None,
                 max: None,
+                deplete: None,
             },
         ],
         emotions: [
@@ -366,7 +377,17 @@ white
         label: "Starving",
         duration: 0.0,
         stats: [],
-        needs: [],
+        needs: [
+            NeedModifier {
+                need: "corpus",
+                rate: 1.0,
+                min: None,
+                max: None,
+                deplete: Some(
+                    3600.0,
+                ),
+            },
+        ],
         emotions: [
             EmotionModifier {
                 emotion: 9,
@@ -417,13 +438,13 @@ can_attack
 biological_lifeform: Some(TraitParams { label: "Biological Lifeform", levels: [TraitLevel { stats: [StatModifier { stat: "metabolism", add: 1.0, min: None, max: None }], needs: [], emotions: [] }], tags: [], emit_light: [] })
 walks: Some(TraitParams { label: "Walks", levels: [TraitLevel { stats: [StatModifier { stat: "ground_speed", add: 24.0, min: None, max: None }], needs: [], emotions: [] }, TraitLevel { stats: [StatModifier { stat: "ground_speed", add: 12.0, min: None, max: None }], needs: [], emotions: [] }, TraitLevel { stats: [StatModifier { stat: "ground_speed", add: 6.0, min: None, max: None }], needs: [], emotions: [] }], tags: [], emit_light: [] })
 lumberjack: Some(TraitParams { label: "Lumberjack", levels: [TraitLevel { stats: [StatModifier { stat: "logging", add: 1.0, min: None, max: None }], needs: [], emotions: [] }], tags: [], emit_light: [] })
-corpus: Some(TraitParams { label: "Corpus", levels: [TraitLevel { stats: [], needs: [NeedModifier { need: "corpus", rate: 1.0, min: None, max: Some(1.0) }], emotions: [] }, TraitLevel { stats: [], needs: [NeedModifier { need: "corpus", rate: 1.0, min: None, max: Some(2.0) }], emotions: [] }], tags: [], emit_light: [] })
+corpus: Some(TraitParams { label: "Corpus", levels: [TraitLevel { stats: [], needs: [NeedModifier { need: "corpus", rate: 1.0, min: None, max: Some(1.0), deplete: None }], emotions: [] }, TraitLevel { stats: [], needs: [NeedModifier { need: "corpus", rate: 1.0, min: None, max: Some(2.0), deplete: None }], emotions: [] }], tags: [], emit_light: [] })
 forager: Some(TraitParams { label: "Forager", levels: [TraitLevel { stats: [StatModifier { stat: "foraging", add: 1.0, min: None, max: None }], needs: [], emotions: [] }], tags: [], emit_light: [] })
 herbivore: Some(TraitParams { label: "Herbivore", levels: [TraitLevel { stats: [StatModifier { stat: "plant_eating", add: 1.0, min: None, max: None }], needs: [], emotions: [] }], tags: [], emit_light: [] })
 carnivore: Some(TraitParams { label: "Carnivore", levels: [TraitLevel { stats: [StatModifier { stat: "meat_eating", add: 1.0, min: None, max: None }], needs: [], emotions: [] }], tags: [], emit_light: [] })
 omnivore: Some(TraitParams { label: "Omnivore", levels: [TraitLevel { stats: [StatModifier { stat: "plant_eating", add: 1.0, min: None, max: None }, StatModifier { stat: "meat_eating", add: 1.0, min: None, max: None }], needs: [], emotions: [] }], tags: [], emit_light: [] })
 bite: Some(TraitParams { label: "Bite", levels: [TraitLevel { stats: [], needs: [], emotions: [] }], tags: ["attack"], emit_light: [] })
-inventory: Some(TraitParams { label: "Inventory", levels: [TraitLevel { stats: [], needs: [NeedModifier { need: "inventory", rate: 1.0, min: None, max: Some(6.0) }], emotions: [] }], tags: [], emit_light: [] })
+inventory: Some(TraitParams { label: "Inventory", levels: [TraitLevel { stats: [], needs: [NeedModifier { need: "inventory", rate: 1.0, min: None, max: Some(6.0), deplete: None }], emotions: [] }], tags: [], emit_light: [] })
 emit_light: Some(TraitParams { label: "Emits Light", levels: [TraitLevel { stats: [], needs: [], emotions: [] }, TraitLevel { stats: [], needs: [], emotions: [] }], tags: [], emit_light: [TraitLight { color: (1.0, 0.85, 0.55), intensity: 1.0, reach: 16.0, fall_off: 1.0, elevation: 2.5, radius: 0.35, cast: true, hot: false, flicker: true }, TraitLight { color: (0.55, 0.75, 1.0), intensity: 1.0, reach: 16.0, fall_off: 1.0, elevation: 2.5, radius: 0.35, cast: true, hot: false, flicker: true }] })
 == interaction_params ==
 drink: Some(InteractionParams { label: "Drink", menu_text: "Drink", affordances: ["can_drink"], inputs: ["pawn", "destination", "amount"], satisfy: Some(SatisfyEffect { target: Input(0), need: Name("thirst"), amount: Input(2) }), move_effect: None, grants: ["quenched"], destroy: None, spawn: None, remove: None, store: None, location: "adjacent", duration: 0.0, queue: QueueVisual { hover: Some("Drinking"), size: 1.0, background: Some(3037816), progress: "cw", progress_color: Some(3855951), progress_fill: true, cancelable: true } })
