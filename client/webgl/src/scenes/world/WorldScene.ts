@@ -446,6 +446,20 @@ export class WorldScene extends Scene {
       return `Zoom set to ${view().zoom}×.`;
     });
 
+    // `/drawMode <mode>` — force the whole G-buffer bake down ONE path, to bisect a render bug by
+    // the stage it lives in. `normal` is the real pipeline; `geo` draws every prim as its solid
+    // `geoColor` box (coverage 1, flat-up normal), so a sprite that has vanished answers the first
+    // question directly: a box means the prim is placed and lit and only the ART is missing; no box
+    // means the prim never made it to the cache. Placement and depth are identical in both modes.
+    this.chat.registerCommand("drawMode", (args) => {
+      const names = view().drawModeNames();
+      const name = args[0];
+      if (!name) return `Usage: /drawMode <mode>. Now ${view().drawMode}. Modes: ${names.join(", ")}.`;
+      const now = view().setDrawMode(name);
+      if (!now) return `Unknown mode "${name}". Modes: ${names.join(", ")}.`;
+      return `Draw mode: ${now}.`;
+    });
+
     // `/overlayRT <channel>` — draw ONE G-buffer composite over the lit world (world-aligned,
     // full-viewport). No arg (or an unknown channel) echoes the valid channels; a valid one
     // switches to it, or turns the overlay off if it's already showing.

@@ -30,6 +30,22 @@ import { NOISE_FIELDS } from "./material";
 import { ZOOM_MAX, ZOOM_MIN } from "../../textures/urls";
 import { WORLD_TILT_DEG, TILT_SIN, worldHeightForDrawn, drawnForWorldHeight } from "./worldTilt";
 
+/** The DRAW MODES `/drawMode` selects between — one G-buffer bake path each, so a render bug can
+ *  be bisected by forcing the stage it lives in.
+ *
+ *  - `normal` — the real pipeline: per stem, master → preview → geo, silhouette from `surface.B`.
+ *  - `geo` — every prim bakes as its solid `geoColor` BOX. The geo tier already exists (it is what
+ *    an unresolved stem falls back to); this forces every prim onto it whether or not its art
+ *    resolved. Because the geo material binds the WHITE surface fill, coverage is 1 everywhere and
+ *    nothing discards — so the box is drawn at the prim's full placement rect. That is exactly the
+ *    question worth asking of a sprite that vanishes: is the PRIM there (placed, sized, z-ordered,
+ *    lit) and only its art missing, or is the prim itself absent? Placement and depth are untouched
+ *    in both modes — only the material changes.
+ *
+ *  More modes append to this list; the command reads it, so registering one is a one-line change. */
+export const DRAW_MODES = ["normal", "geo"] as const;
+export type DrawMode = (typeof DRAW_MODES)[number];
+
 /** Height for debug-placed lights, in units — **the corpus's own contract**, not a taste call.
  *  `content/things.toml` authors `height = 2.5` on the torch light and states in a
  *  comment that 2.5 tiles = 40 units is what a flame must clear to cast against anything. A debug
@@ -162,6 +178,9 @@ export class Viewport {
    *  panel's Lighting tab. Refreshed by `__gather()`; the panel shows "run __gather()" until then, so
    *  it never displays a stale number as if it were live. */
   lightingTiers: { incumbent: number; adjacency: number; walk: number; gatePct: number } | null = null;
+  /** The bake path every prim takes (`/drawMode`) — see {@link DRAW_MODES}. Session-only; the
+   *  caches re-bake on a change, so it flips live without a reload. */
+  private drawModeName: DrawMode = "normal";
   /** The `/overlayRT` debug material — draws one G-buffer composite over the display. */
   private readonly overlayShader: OverlayShader;
   /** The composite the overlay is currently showing (e.g. `normal-cold`), or null (off). */
@@ -289,7 +308,9 @@ export class Viewport {
           const solid = (residual: TexFrame) => ({ texture: white, tint: prim.geoColor ?? prim.tint, material: { residual, layers: null, surface: wf, chA: ZERO_CH, chB: ZERO_CH, chC: ZERO_CH } });
           const glyph = () => this.glyphFrame(prim.geoLabel) ?? wf;
           const r = this.resolver;
-          if (!prim.textureName || !r) return solid(glyph());
+          // `/drawMode geo` takes the SAME branch an unresolved stem takes — the geo tier is not a
+          // second code path, it is this one, so forcing it cannot itself introduce a difference.
+          if (this.drawModeName === "geo" || !prim.textureName || !r) return solid(glyph());
           // The albedo map is the residual base; the visual alpha lives in surface.B — need BOTH real.
           const alb = r.resolve(prim.textureName, "albedo", prim.cell);
           const surf = r.resolve(prim.textureName, "surface", prim.cell);
@@ -315,7 +336,10 @@ export class Viewport {
         key: `normal-${suffix}`,
         resolve: (prim) => {
           const r = this.resolver;
-          if (!prim.textureName || !r) return { texture: white, tint: 0x8080ff };
+          // geo mode drops the normal map too, so the box shades flat-up. Keeping the real normal
+          // under a geo albedo would leave the lighting sculpting a silhouette the albedo no longer
+          // has — the two must describe the same surface or the isolation proves nothing.
+          if (this.drawModeName === "geo" || !prim.textureName || !r) return { texture: white, tint: 0x8080ff };
           const n = r.resolve(prim.textureName, "normal", prim.cell);
           return { texture: white, tint: 0x8080ff, normal: { rgb: n.geo ? null : n.frame } };
         },
@@ -421,6 +445,27 @@ export class Viewport {
   }
   get ambient(): number {
     return this.ambientFloor;
+  }
+
+  // ── The bake path (`/drawMode`) ───────────────────────────────────────────────────
+  /** Every selectable draw mode, in order — the command's usage line reads this. */
+  drawModeNames(): readonly string[] {
+    return DRAW_MODES;
+  }
+  get drawMode(): DrawMode {
+    return this.drawModeName;
+  }
+  /** Switch the bake path, re-baking both tiers so it takes effect on the standing world rather
+   *  than only on prims that happen to change next. Returns the applied mode, or null if `name`
+   *  isn't one (the caller echoes the valid list). */
+  setDrawMode(name: string): DrawMode | null {
+    if (!(DRAW_MODES as readonly string[]).includes(name)) return null;
+    const next = name as DrawMode;
+    if (next === this.drawModeName) return next;
+    this.drawModeName = next;
+    this.map.invalidateAll();
+    this.warm.invalidateAll();
+    return next;
   }
 
   // ── G-buffer debug composites (`/overlayRT`, `/showRT`) ───────────────────────────
