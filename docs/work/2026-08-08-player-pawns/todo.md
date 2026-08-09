@@ -14,10 +14,10 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P1 — the shard
 
-- [ ] The `player_pawn` module stamped from pawn (F1): entity_tables! + payload + spawn +
-      needs sub-tables; published as `…-playerpawn-0`. Acceptance: publish green; a live SQL
+- [x] The `player_pawn` module stamped from pawn (F1): entity_tables! + payload + spawn +
+      needs sub-tables; published as `…-player-pawn-0`. Acceptance: publish green; a live SQL
       probe reads the empty tables.
-- [ ] Routing: the reference lane through edge allowlist → orchestrator claim → worker write
+- [x] Routing: the reference lane through edge allowlist → orchestrator claim → worker write
       (I1/I2); self-heal covers the new DB. Acceptance: a hand-queued write to a player-pawn
       lands in its entity_state_log.
 

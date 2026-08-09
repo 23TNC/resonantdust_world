@@ -1,0 +1,11 @@
+[package]
+name = "resonantdust_player_pawn"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+spacetimedb = { version = "=2.1.0" }
+resonantdust-codec = { path = "../../../shared/codec" }

@@ -98,6 +98,7 @@ rd_deploy_module() {
   case "$target" in
     event_shard) fam="event-shard" ;;
     data_shard)  fam="data-shard" ;;
+    player_pawn) fam="player-pawn" ;;
     *)           fam="$target" ;;
   esac
   rd_log "deploy module $src → $(rd_db_for "$fam" "$idx")"

@@ -35,16 +35,22 @@ use resonantdust_codec::object::{
     def_type_id, kind_pos_ref_data, kind_pos_ref_kind_reference, kind_pos_ref_tile,
     pack_cold_row_reference, pack_kind_reference, pack_pawn_data, pack_position_reference,
     pawn_trip_serial, position_macro, position_micro, position_to_tile, tile_to_position,
-    TYPE_BIOME_THING, TYPE_BIOME_TILE, TYPE_PAWN,
+    TYPE_BIOME_THING, TYPE_BIOME_TILE, TYPE_PAWN, TYPE_PLAYER,
 };
 use resonantdust_codec::speed;
 use resonantdust_codec::refs::entity_ref_type_id;
 use resonantdust_codec::status::{status_phase, EVENT_ASSIGNED, EVENT_COMPLETE};
 use resonantdust_codec::tic::{tic_add, tic_after, tic_before};
-use resonantdust_st_bindings::{data_shard, event_shard, index, pawn, thing, tile};
+use resonantdust_st_bindings::{data_shard, event_shard, index, pawn, player_pawn, thing, tile};
 use resonantdust_uplink::acquire;
 use data_shard::{write as _, EntityStateLogTableAccess as _};
 use pawn::{grant_condition as _, inv_add as _, inv_remove as _, remove as _, set_need as _, spawn as _, write as _, EntityStateLogTableAccess as _};
+// player-pawns P1 (I1): the routing lane's write half — the relay verbs + the hot write/base
+// land on the player_pawn shard for TYPE_PLAYER targets.
+use player_pawn::{
+    grant_condition as _, set_need as _, write as _, EntityStateLogTableAccess as _,
+    EntityStateTableAccess as _,
+};
 // interactions P3 / stat-model P3: the execute arm reads the pawn shard's COMPOSED rows
 // (position + payload traits/conditions + the `needs` sub-table) and the tile shard's
 // baseline ⊕ overlay for the F8 on-tile check.
@@ -72,6 +78,8 @@ use thing::{EntityStateTableAccess as _, OverlayTableAccess as _};
 enum Shard {
     Data,
     Pawn,
+    /// The players' row-carrier shard (player-pawns P1) — `TYPE_PLAYER` targets.
+    PlayerPawn,
     Tile,
     Thing,
 }
@@ -340,6 +348,7 @@ fn shard_of(entity: u32) -> Shard {
         TYPE_BIOME_TILE => Shard::Tile,
         TYPE_BIOME_THING => Shard::Thing,
         TYPE_PAWN => Shard::Pawn,
+        TYPE_PLAYER => Shard::PlayerPawn,
         _ => Shard::Data,
     }
 }
@@ -536,6 +545,7 @@ async fn main() {
     let event_db = env_or("EVENT_DB", "resonantdust-dev-event-shard-0");
     let data_db = env_or("DATA_DB", "resonantdust-dev-data-shard-0");
     let pawn_db = env_or("PAWN_DB", "resonantdust-dev-pawn-0");
+    let player_pawn_db = env_or("PLAYER_PAWN_DB", "resonantdust-dev-player-pawn-0");
     // Cold shards compose on the same machinery — the worker writes a cold-cell mutation to its shard.
     let tile_db = env_or("TILE_DB", "resonantdust-dev-tile-0");
     let thing_db = env_or("THING_DB", "resonantdust-dev-thing-0");
@@ -582,6 +592,12 @@ async fn main() {
     let pawn_up = resonantdust_uplink::subbed_uplink!(pawn, "pawn", uri, pawn_db,
         vec![hot_sql(()), "SELECT * FROM entity_state".to_string(), "SELECT * FROM payload".to_string(),
              "SELECT * FROM needs".to_string(), "SELECT * FROM inventory".to_string()]);
+    // The player_pawn shard mirrors the pawn subscription shape (player-pawns P1): its live
+    // rows gate the hot write (the ghost-row guard) and its composed rows feed the eval. The
+    // population is one-per-player, so "all rows" is small by construction.
+    let player_pawn_up = resonantdust_uplink::subbed_uplink!(player_pawn, "player_pawn", uri, player_pawn_db,
+        vec![hot_sql(()), "SELECT * FROM entity_state".to_string(), "SELECT * FROM payload".to_string(),
+             "SELECT * FROM needs".to_string()]);
     let cold_sql: Vec<String> = ["entity_state_log", "overlay_log"]
         .iter()
         .map(|t| format!("SELECT * FROM {t} WHERE worker_reference = {self_ref} OR observer_reference = {self_ref}"))
@@ -605,6 +621,7 @@ async fn main() {
         ("event_shard", event_up.get().await.is_ok()),
         ("data_shard", data_up.get().await.is_ok()),
         ("pawn", pawn_up.get().await.is_ok()),
+        ("player_pawn", player_pawn_up.get().await.is_ok()),
         ("tile", tile_up.get().await.is_ok()),
         ("thing", thing_up.get().await.is_ok()),
     ] {
@@ -613,7 +630,8 @@ async fn main() {
         }
     }
     tracing::info!("resolving (uplinks lazy — a pass needing a dead upstream defers)");
-    let (mut up_i, mut up_e, mut up_d, mut up_p, mut up_t, mut up_h) = (true, true, true, true, true, true);
+    let (mut up_i, mut up_e, mut up_d, mut up_p, mut up_pp, mut up_t, mut up_h) =
+        (true, true, true, true, true, true, true);
 
     // The per-pawn intent queues (lumberjack F1) — worker MEMORY, deliberately: the
     // in-flight order is a durable queued event; this map is only the tail behind it.
@@ -648,6 +666,7 @@ async fn main() {
         let Some(event) = acquire(&event_up, &mut up_e, "event_shard").await else { continue };
         let Some(data) = acquire(&data_up, &mut up_d, "data_shard").await else { continue };
         let Some(pawn) = acquire(&pawn_up, &mut up_p, "pawn").await else { continue };
+        let Some(player_pawn) = acquire(&player_pawn_up, &mut up_pp, "player_pawn").await else { continue };
         let Some(tile) = acquire(&tile_up, &mut up_t, "tile").await else { continue };
         let Some(thing) = acquire(&thing_up, &mut up_h, "thing").await else { continue };
 
@@ -835,6 +854,15 @@ async fn main() {
                 // events complete as no-ops. Minted pawns are unaffected: `spawn` writes their
                 // first live row before any event names them (CREATE operands never carry the id).
                 .filter(|e| {
+                    // player-pawns P1: the same ghost-row guard on the player_pawn shard —
+                    // a target with no live row composes nothing (its events no-op).
+                    if shard_of(*e) == Shard::PlayerPawn {
+                        let live = player_pawn.db().entity_state().iter().any(|r| r.entity_reference == *e);
+                        if !live {
+                            tracing::info!(target = format!("{e:#010x}"), tic = t, "no live player-pawn row — dropping its events (player-pawns P1)");
+                        }
+                        return live;
+                    }
                     if shard_of(*e) != Shard::Pawn {
                         return true;
                     }
@@ -865,7 +893,7 @@ async fn main() {
             // live in `data_shard.entity_state_log`; a cold overlay base in the shard's `overlay_log`.
             let mut blocked_on = None;
             for &e in &hot_targets {
-                if base_row(&data, &pawn, e, t).map(|b| b.dirty).unwrap_or(false) {
+                if base_row(&data, &pawn, &player_pawn, e, t).map(|b| b.dirty).unwrap_or(false) {
                     blocked_on = Some(e);
                     break;
                 }
@@ -896,7 +924,7 @@ async fn main() {
             // `apply` skips `SET` (a cold verb) — the overlay is composed below.
             let mut scratch: HashMap<u32, Payload> = HashMap::new();
             for &e in &hot_targets {
-                let base = base_row(&data, &pawn, e, t)
+                let base = base_row(&data, &pawn, &player_pawn, e, t)
                     .map(|r| Payload {
                         definition_reference: r.definition_reference,
                         position_reference: r.position_reference,
@@ -979,6 +1007,27 @@ async fn main() {
             if !pawn_w.is_empty() {
                 if let Err(err) = pawn.reducers().write(self_ref, t, pawn_w) {
                     tracing::warn!(%err, tic = t, shard = "pawn", "write failed — will retry next pass");
+                    continue;
+                }
+            }
+            // player-pawns P1: the row-carriers' shard takes its own absolute finals — the
+            // pawn arm's posture verbatim (live/seeded targets only; the ghost guard above).
+            let player_pawn_w: Vec<player_pawn::TargetState> = scratch
+                .iter()
+                .filter(|(&e, _)| shard_of(e) == Shard::PlayerPawn)
+                .filter(|(e, _)| hot_targets.contains(e))
+                .map(|(&e, p)| player_pawn::TargetState {
+                    entity_reference: e,
+                    definition_reference: p.definition_reference,
+                    macro_position_reference: position_macro(p.position_reference),
+                    micro_position_reference: position_micro(p.position_reference),
+                    data: p.data,
+                    promote: promote.contains(&e),
+                })
+                .collect();
+            if !player_pawn_w.is_empty() {
+                if let Err(err) = player_pawn.reducers().write(self_ref, t, player_pawn_w) {
+                    tracing::warn!(%err, tic = t, shard = "player_pawn", "write failed — will retry next pass");
                     continue;
                 }
             }
@@ -1314,7 +1363,15 @@ async fn main() {
                             pawn.reducers().set_need(self_ref, t, *obj, row)
                         }
                         // stat-model: both verbs carry ONE packed gameplay row beside the obj.
+                        // player-pawns P1: the relay lands on the target's OWN shard by its
+                        // type nibble — a TYPE_PLAYER row-carrier composes on player_pawn.
+                        (SET_NEED, [obj, row]) if shard_of(*obj) == Shard::PlayerPawn => {
+                            player_pawn.reducers().set_need(self_ref, t, *obj, *row)
+                        }
                         (SET_NEED, [obj, row]) => pawn.reducers().set_need(self_ref, t, *obj, *row),
+                        (GRANT_CONDITION, [obj, row]) if shard_of(*obj) == Shard::PlayerPawn => {
+                            player_pawn.reducers().grant_condition(self_ref, t, *obj, *row)
+                        }
                         (GRANT_CONDITION, [obj, row]) => pawn.reducers().grant_condition(self_ref, t, *obj, *row),
                         // inventory F3: the item verbs relay the same way — the module owns
                         // the slot scan; the free-count SET_NEED rides the same program.
@@ -2962,7 +3019,13 @@ struct Base {
 /// a cold cell whose truth is still the baseline — whose base is the default (empty) payload; a `SET`
 /// overwrites it absolutely, so the empty base is correct. The two hot shards' `EntityStateLog` rows
 /// are the same macro shape but distinct Rust types, hence the per-arm body.
-fn base_row(data: &data_shard::DbConnection, pawn: &pawn::DbConnection, entity: u32, tic: u16) -> Option<Base> {
+fn base_row(
+    data: &data_shard::DbConnection,
+    pawn: &pawn::DbConnection,
+    player_pawn: &player_pawn::DbConnection,
+    entity: u32,
+    tic: u16,
+) -> Option<Base> {
     macro_rules! latest_base {
         ($conn:expr) => {{
             let newest = $conn
@@ -3000,6 +3063,7 @@ fn base_row(data: &data_shard::DbConnection, pawn: &pawn::DbConnection, entity: 
     match shard_of(entity) {
         Shard::Data => latest_base!(data),
         Shard::Pawn => latest_base!(pawn),
+        Shard::PlayerPawn => latest_base!(player_pawn),
         // Cold cells (tile/thing) are cold-row-addressed with no per-entity slot — their base is the
         // baseline, read/written by the shards' own reducers.
         _ => None,

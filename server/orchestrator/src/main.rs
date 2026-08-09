@@ -24,14 +24,15 @@ use std::time::Duration;
 use spacetimedb_sdk::{DbContext, Table as _};
 
 use resonantdust_codec::action::{self, Route};
-use resonantdust_codec::object::{TYPE_BIOME_THING, TYPE_BIOME_TILE, TYPE_PAWN};
+use resonantdust_codec::object::{TYPE_BIOME_THING, TYPE_BIOME_TILE, TYPE_PAWN, TYPE_PLAYER};
 use resonantdust_codec::refs::entity_ref_type_id;
 use resonantdust_codec::status::{status_phase, EVENT_QUEUED};
 use resonantdust_codec::tic::{tic_add, tic_after};
-use resonantdust_st_bindings::{data_shard, event_shard, index, pawn, thing, tile};
+use resonantdust_st_bindings::{data_shard, event_shard, index, pawn, player_pawn, thing, tile};
 use resonantdust_uplink::acquire;
 use data_shard::claim as _;
 use pawn::claim as _;
+use player_pawn::claim as _;
 use event_shard::{assign as _, EventLogTableAccess as _};
 use index::MasterClockTableAccess as _;
 // A cold slot is claimed on its shard + tier (F11): the baseline via `claim`, the `overlay` via
@@ -54,10 +55,15 @@ fn shard_key_of_type(type_id: u8) -> u8 {
 }
 
 /// A HOT target's claim key from its own type nibble (first-pawns): `TYPE_PAWN` → the `pawn`
-/// shard (`3`), anything else → the `data_shard` catch-all (`0`). Hot routing IS read off the
-/// target — an `entity_reference` carries its type, unlike a cold row.
+/// shard (`3`), `TYPE_PLAYER` → the `player_pawn` shard (`4` — player-pawns work
+/// 2026-08-08 I1), anything else → the `data_shard` catch-all (`0`). Hot routing IS read off
+/// the target — an `entity_reference` carries its type, unlike a cold row.
 fn hot_shard_key(entity: u32) -> u8 {
-    if entity_ref_type_id(entity) == TYPE_PAWN { 3 } else { 0 }
+    match entity_ref_type_id(entity) {
+        TYPE_PAWN => 3,
+        TYPE_PLAYER => 4,
+        _ => 0,
+    }
 }
 
 fn env_or(key: &str, default: &str) -> String {
@@ -94,10 +100,11 @@ async fn main() {
     let event_db = env_or("EVENT_DB", "resonantdust-dev-event-shard-0");
     let data_db = env_or("DATA_DB", "resonantdust-dev-data-shard-0");
     let pawn_db = env_or("PAWN_DB", "resonantdust-dev-pawn-0");
+    let player_pawn_db = env_or("PLAYER_PAWN_DB", "resonantdust-dev-player-pawn-0");
     // Cold shards get their slots claimed here too when a cold-cell mutation is grouped.
     let tile_db = env_or("TILE_DB", "resonantdust-dev-tile-0");
     let thing_db = env_or("THING_DB", "resonantdust-dev-thing-0");
-    tracing::info!(%uri, self_ref = format!("{self_ref:#04x}"), realm, ?workers, %index_db, %event_db, %data_db, %pawn_db, %tile_db, %thing_db, "orchestrator starting");
+    tracing::info!(%uri, self_ref = format!("{self_ref:#04x}"), realm, ?workers, %index_db, %event_db, %data_db, %pawn_db, %player_pawn_db, %tile_db, %thing_db, "orchestrator starting");
 
     // ── uplinks (sim-self-heal P3): lazy + self-healing; subscribed ones gate `get()` on the
     // cache applying. A pass needing a dead upstream defers (grouping is stateless; assign +
@@ -108,6 +115,7 @@ async fn main() {
         vec![format!("SELECT * FROM event_log WHERE orchestrator_reference = {self_ref}")]);
     let data_up = resonantdust_uplink::uplink!(data_shard, "data_shard", uri, data_db);
     let pawn_up = resonantdust_uplink::uplink!(pawn, "pawn", uri, pawn_db);
+    let player_pawn_up = resonantdust_uplink::uplink!(player_pawn, "player_pawn", uri, player_pawn_db);
     let tile_up = resonantdust_uplink::uplink!(tile, "tile", uri, tile_db);
     let thing_up = resonantdust_uplink::uplink!(thing, "thing", uri, thing_db);
 
@@ -116,6 +124,7 @@ async fn main() {
         ("event_shard", event_up.get().await.is_ok()),
         ("data_shard", data_up.get().await.is_ok()),
         ("pawn", pawn_up.get().await.is_ok()),
+        ("player_pawn", player_pawn_up.get().await.is_ok()),
         ("tile", tile_up.get().await.is_ok()),
         ("thing", thing_up.get().await.is_ok()),
     ] {
@@ -124,7 +133,8 @@ async fn main() {
         }
     }
     tracing::info!("grouping (uplinks lazy — a pass needing a dead upstream defers)");
-    let (mut up_i, mut up_e, mut up_d, mut up_p, mut up_t, mut up_h) = (true, true, true, true, true, true);
+    let (mut up_i, mut up_e, mut up_d, mut up_p, mut up_pp, mut up_t, mut up_h) =
+        (true, true, true, true, true, true, true);
 
     // Refs we've already assigned this run — skips redundant (idempotent) reducer calls between the
     // assign and the cache reflecting ASSIGNED. Pruned each pass to what's still in the queue, so it
@@ -140,6 +150,7 @@ async fn main() {
         let Some(event) = acquire(&event_up, &mut up_e, "event_shard").await else { continue };
         let Some(data) = acquire(&data_up, &mut up_d, "data_shard").await else { continue };
         let Some(pawn) = acquire(&pawn_up, &mut up_p, "pawn").await else { continue };
+        let Some(player_pawn) = acquire(&player_pawn_up, &mut up_pp, "player_pawn").await else { continue };
         let Some(tile) = acquire(&tile_up, &mut up_t, "tile").await else { continue };
         let Some(thing) = acquire(&thing_up, &mut up_h, "thing").await else { continue };
 
@@ -230,6 +241,7 @@ async fn main() {
                             (2, false) => thing.reducers().claim(ents, t, worker),
                             (2, true) => thing.reducers().claim_overlay(ents, t, worker),
                             (3, _) => pawn.reducers().claim(ents, t, worker),
+                            (4, _) => player_pawn.reducers().claim(ents, t, worker),
                             _ => data.reducers().claim(ents, t, worker),
                         };
                         if let Err(err) = res {

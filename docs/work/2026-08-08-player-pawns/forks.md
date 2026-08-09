@@ -6,7 +6,7 @@
 the payload sidecar, the spawn/mint machinery, the needs (and other gameplay) sub-tables — so
 "all of the pawn methods" is literal: the ONE eval, the need-write sweep, the crossing
 scheduler shape all apply to player-pawn rows without new laws. One shard
-(`resonantdust-<env>-playerpawn-0`; ST DB names take no underscores): the population is
+(`resonantdust-<env>-player-pawn-0`; ST DB names take no underscores): the population is
 one-per-player and none of it is spatially hot. Rejected: rows inside the pawn shard behind a
 subtype flag (mixes lifecycle — pawn rows are zone-hot and GC'd by movement laws; player-pawns
 are login-lived) and rows in the players auth DB (it is deliberately low-write and carries no

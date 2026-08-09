@@ -27,7 +27,7 @@ a row-carrier.
 - **A new module `player_pawn`, stamped from pawn** (F1): same `entity_tables!` core, payload
   sidecar, spawn/mint machinery, and gameplay sub-tables — a copy, so every pawn method
   (needs, conditions, emotions, inventory, the eval) works unchanged on a player-pawn. ONE
-  shard (`…-playerpawn-0`): player-pawns are few and not spatially hot.
+  shard (`…-player-pawn-0`): player-pawns are few and not spatially hot.
 - **Exactly one per player, minted at login** (F2): idempotent mint on first login; the
   players auth DB carries the linkage (player → player-pawn reference + ACTIVE). "Multiple
   characters, chosen on login" is the recorded future — the linkage is a list with one active
