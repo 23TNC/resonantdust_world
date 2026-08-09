@@ -11,10 +11,10 @@ reference viewports **1920×1080, 1366×768, 1024×640** ("three sizes" below), 
 
 ## P0 — the paper
 
-- [ ] Write `docs/components/client/webgl/design/panel-layout.md`: 58×33 over the full viewport,
+- [x] Write `docs/components/client/webgl/design/panel-layout.md`: 58×33 over the full viewport,
       row 0/32 = the bars, field = rows 1..31, integer edge tables, cell-as-unit, body-rect law
       (F1–F4). Acceptance: docs-check green.
-- [ ] Link the new design doc from the `client/webgl` component README's `design/` bullet.
+- [x] Link the new design doc from the `client/webgl` component README's `design/` bullet.
       Acceptance: docs-check link integrity green.
 
 ## P1 — the grid

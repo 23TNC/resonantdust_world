@@ -10,7 +10,9 @@ the SquareCache G-buffer. **The client renders UNLIT** — see [`current/`](curr
 
 - **[`design/`](design/)** — [`rendering-platform.md`](design/rendering-platform.md) (WebGL2,
   GLSL ES 3.00, the bespoke `gl/` engine); [`de-lighting.md`](design/de-lighting.md) (albedo
-  extraction — art-pipeline-facing).
+  extraction — art-pipeline-facing); [`input-model.md`](design/input-model.md) (right = select,
+  left = the context pie menu); [`panel-layout.md`](design/panel-layout.md) (the 58×33 cell grid
+  — every panel, both taskbars, title bars and the text scale in cells of one grid).
 - **[`current/`](current/)** — what the renderer does today, and where a lighting system attaches.
 - `intent/`, `plan/` — lazy.
 

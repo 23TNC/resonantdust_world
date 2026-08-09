@@ -131,6 +131,13 @@ whole value of F3 is that a resize is arithmetic on unchanged integers.
 `GRID_COLS = 58` / `GRID_ROWS = 33` live as named constants in one module so the pair is
 retunable by editing one line, but they are not a per-viewport function.
 
+**The pair is THE compensation knob** (user, 2026-08-09: _"If we have any issues we can adjust
+the grid width/height to compensate"_). So when something measures wrong — chrome too light
+under [F9](#f9), a row too short to hold a title bar, cells too wide on the working display —
+the first lever is the cell *count*, not a special case. Lowering `GRID_ROWS` makes every row
+(and therefore the bars, the title bars and the whole UI scale) taller in one edit. This is why
+both constants must stay a single-line change with no derived duplicates anywhere.
+
 Rejected: aspect-adaptive column counts (kills the invariant); a minimum cell pixel size with
 overflow scrolling (introduces a second layout mode for small windows — see
 [I2](issues.md#i2), and note that F9's font floor is a *different* thing and is safe).
