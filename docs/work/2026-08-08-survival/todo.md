@@ -58,13 +58,13 @@ decisions in [`forks.md`](forks.md) (F#), the anticipated-issue inventory in
       the starving card, the falling corpus, the death, the meat); a bunny
       denied water dehydrates likewise. Acceptance: captures + logs in
       completed.md.
-- [ ] The control arc (I6): fed+watered wolf + warren survive a ≥30-min
+- [x] The control arc (I6): fed+watered wolf + warren survive a ≥30-min
       soak with population stable; humans asserted inheriting (a human's
       panel shows the drain while starving — no pen needed, I7 stated).
       Acceptance: the soak log + a panel capture.
 
 ## P5 — the truth
 
-- [ ] Docs + memory truth pass + stack bounce with arcs green; **the
+- [x] Docs + memory truth pass + stack bounce with arcs green; **the
       user's eyes close the stream**. Acceptance: docs-check green;
       captures + logs in completed.md.

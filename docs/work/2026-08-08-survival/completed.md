@@ -1,5 +1,26 @@
 # Completed — survival
 
+## 2026-08-08 — P4 control arc + P5: the truth
+
+**P4 the control arc (I6)** — the fed cast soaked ≥30 minutes with 5-minute
+population samples: 4 → 5 at t+5m (the DELIBERATE `/spawn human_female` for
+the I7 assertion) then FLAT at 5 through t+30m — no unforced deaths; the
+wolf and warren sustain themselves against the drains. Soak log:
+`start 4 / t+5m..t+30m = 5 / DONE`.
+
+**P5 the truth** — memory `survival-delivered` + the MEMORY.md line written;
+docs-check green (the 4 standing warnings predate the stream). The stack
+BOUNCE: `rd redeploy --run` (which RESETS the shards — the drill world,
+meats included, was wiped by design), gateway re-deployed (its binary
+did not ride `redeploy --run` back up — the npcs exhausted retries against
+the dead gateway and needed a re-run), then master/orchestrator/worker/
+wolves/bunnies restarted. Arcs green post-bounce: login→anchor→generate→
+render in the browser (glyphs live on the fresh seed), the bunnies brain
+adopts + moves, the wolves brain issues trips, and the crossing scheduler
+RE-DERIVED slots for every fresh pawn from nothing (I4's bounce-durability
+claim observed live: fires at the +20,000 horizon clamp for the full cast).
+The user's eyes close the stream.
+
 ## 2026-08-08 — P3/P4: the crossing scheduler + the drills
 
 **P3 scheduler (D1: RESTAMP_NEED verb 18)** — a queued literal SET_NEED
