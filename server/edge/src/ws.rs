@@ -644,6 +644,8 @@ const CLIENT_VERBS: &[u32] = &[
     // thirst and the drills force-set it through this door. Tighten with ownership.
     resonantdust_codec::action::SET_NEED,
     resonantdust_codec::action::GRANT_CONDITION,
+    // trait-rows-u32 F3: activation is a REQUEST — the worker owns validation.
+    resonantdust_codec::action::ACTIVATE_TRAIT,
     // interactions P3: the client REQUESTS an interaction; the worker resolves + validates
     // it against the corpus and queues the real writes (F4). Same open-door posture as
     // SET_NEED until ownership lands (interactions I4).

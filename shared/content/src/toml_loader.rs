@@ -528,6 +528,21 @@ struct TraitToml {
   /// array-agreement law as every per-level table. Empty = the trait never emits.
   #[serde(default)]
   emit_light: Vec<TraitLightToml>,
+  /// ACTIVE traits only (trait-rows-u32 F3): the condition GRANTS activation executes.
+  #[serde(default)]
+  activate: Vec<ActivateGrantToml>,
+  /// ACTIVE traits only: activation REFUSES while any of these conditions is active on
+  /// the carrier (sprint's cooldown gate — F4).
+  #[serde(default)]
+  blocked_by: Vec<String>,
+}
+
+/// One activation grant (trait-rows-u32 F3): `{ condition = "sprinting", duration = 60 }`.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ActivateGrantToml {
+  condition: String,
+  duration: u16,
 }
 
 /// A light color: `"#rrggbb"` for authoring comfort, or `[r, g, b]` floats when the
@@ -1248,12 +1263,27 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
           }
         })
         .collect();
-      (t.name.clone(), TraitParams {
-        label: t.label.clone().unwrap_or_else(|| t.name.clone()),
-        levels,
-        tags: t.tags.clone(),
-        emit_light,
-      }, cat)
+      {
+        // The ACTIVATION surface belongs to `*_active` categories alone (F3).
+        let is_active = cat == 9 || cat == 12;
+        if !is_active && (!t.activate.is_empty() || !t.blocked_by.is_empty()) {
+          errors.push(LoadError {
+            file: String::new(),
+            message: format!(
+              "trait `{}`: `activate`/`blocked_by` belong to ACTIVE categories only",
+              t.name
+            ),
+          });
+        }
+        (t.name.clone(), TraitParams {
+          label: t.label.clone().unwrap_or_else(|| t.name.clone()),
+          levels,
+          tags: t.tags.clone(),
+          emit_light,
+          activate: t.activate.iter().map(|g| (g.condition.clone(), g.duration)).collect(),
+          blocked_by: t.blocked_by.clone(),
+        }, cat)
+      }
     })
     .collect();
   b.trait_defs = converted_traits;

@@ -47,6 +47,9 @@ quenched
 hungry
 starving
 packless
+sprinting
+sprint_cooldown
+rallied
 == emotions (index name color, declaration order) ==
 0 fine #9aa4b0
 1 happy #e8a33a
@@ -450,6 +453,61 @@ white
         ],
         priority: 40,
     },
+    ConditionParams {
+        label: "Sprinting",
+        duration: 60.0,
+        stats: [
+            StatModifier {
+                stat: "ground_speed",
+                add: -6.0,
+                min: Some(
+                    4.0,
+                ),
+                max: None,
+            },
+        ],
+        needs: [],
+        emotions: [
+            EmotionModifier {
+                emotion: 10,
+                magnitude: 3,
+            },
+        ],
+        priority: 45,
+    },
+    ConditionParams {
+        label: "Winded",
+        duration: 300.0,
+        stats: [
+            StatModifier {
+                stat: "ground_speed",
+                add: 4.0,
+                min: None,
+                max: None,
+            },
+        ],
+        needs: [],
+        emotions: [
+            EmotionModifier {
+                emotion: 14,
+                magnitude: 2,
+            },
+        ],
+        priority: 35,
+    },
+    ConditionParams {
+        label: "Rallied",
+        duration: 120.0,
+        stats: [],
+        needs: [],
+        emotions: [
+            EmotionModifier {
+                emotion: 12,
+                magnitude: 3,
+            },
+        ],
+        priority: 30,
+    },
 ]
 == traits ==
 
@@ -523,6 +581,9 @@ gameplay/condition/quenched Some("0x80020070")
 gameplay/condition/hungry Some("0x80020080")
 gameplay/condition/starving Some("0x80020090")
 gameplay/condition/packless Some("0x800200a0")
+gameplay/condition/sprinting Some("0x800200b0")
+gameplay/condition/sprint_cooldown Some("0x800200c0")
+gameplay/condition/rallied Some("0x800200d0")
 gameplay/interaction/drink Some("0x80040010")
 gameplay/interaction/move_to Some("0x80040020")
 gameplay/interaction/cut_down Some("0x80040030")
@@ -564,7 +625,7 @@ cactus traits=[] interactions=[InteractionBind { name: "cut_down", magnitude: 0.
 reed traits=[] interactions=[InteractionBind { name: "pick_up", magnitude: 0.0, yields: None }]
 rock traits=[] interactions=[InteractionBind { name: "pick_up", magnitude: 0.0, yields: None }]
 flora traits=[] interactions=[InteractionBind { name: "forage", magnitude: 0.0, yields: None }]
-wolf traits=[TraitBind { name: "biological_lifeform", variant: 0 }, TraitBind { name: "walks", variant: 1 }, TraitBind { name: "corpus", variant: 1 }, TraitBind { name: "carnivore", variant: 0 }, TraitBind { name: "bite", variant: 0 }] interactions=[InteractionBind { name: "death", magnitude: 0.0, yields: None }]
+wolf traits=[TraitBind { name: "biological_lifeform", variant: 0 }, TraitBind { name: "walks", variant: 1 }, TraitBind { name: "corpus", variant: 1 }, TraitBind { name: "carnivore", variant: 0 }, TraitBind { name: "bite", variant: 0 }, TraitBind { name: "sprint", variant: 0 }] interactions=[InteractionBind { name: "death", magnitude: 0.0, yields: None }]
 torch traits=[TraitBind { name: "emit_light", variant: 0 }] interactions=[InteractionBind { name: "pick_up", magnitude: 0.0, yields: None }]
 torch_blue traits=[TraitBind { name: "emit_light", variant: 1 }] interactions=[InteractionBind { name: "pick_up", magnitude: 0.0, yields: None }]
 human_female traits=[TraitBind { name: "biological_lifeform", variant: 0 }, TraitBind { name: "walks", variant: 0 }, TraitBind { name: "lumberjack", variant: 0 }, TraitBind { name: "corpus", variant: 0 }, TraitBind { name: "inventory", variant: 0 }, TraitBind { name: "forager", variant: 0 }, TraitBind { name: "omnivore", variant: 0 }] interactions=[InteractionBind { name: "death", magnitude: 0.0, yields: None }, InteractionBind { name: "drop", magnitude: 0.0, yields: None }]

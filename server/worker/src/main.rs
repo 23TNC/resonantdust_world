@@ -28,7 +28,7 @@ use spacetimedb_sdk::{DbContext, Table as _};
 use resonantdust_codec::action::{
     self, Route, BUILD_WALL, CANCEL_INTENT, CREATE, EXECUTE_INTERACTION, GRANT_CONDITION,
     INIT_ZONE, INV_ADD, INV_REMOVE, MOVE_STEP, MOVE_TO, PLACE, PROMOTE, PROMOTE_EVENT,
-    QUEUE_STATE, RESTAMP_NEED, SET, SET_NEED, SPAWN_REQUEST,
+    ACTIVATE_TRAIT, QUEUE_STATE, RESTAMP_NEED, SET, SET_NEED, SPAWN_REQUEST,
 };
 use resonantdust_codec::object::{
     cold_row_layer_id, cold_row_macro_position, cold_row_subtype, data_rotation, def_kind_id,
@@ -49,7 +49,7 @@ use pawn::{grant_condition as _, inv_add as _, inv_remove as _, remove as _, set
 // land on the player_pawn shard for TYPE_PLAYER targets.
 use player_pawn::{
     grant_condition as _, set_need as _, write as _, EntityStateLogTableAccess as _,
-    EntityStateTableAccess as _,
+    EntityStateTableAccess as _, NeedsTableAccess as _,
 };
 // interactions P3 / stat-model P3: the execute arm reads the pawn shard's COMPOSED rows
 // (position + payload traits/conditions + the `needs` sub-table) and the tile shard's
@@ -1379,6 +1379,134 @@ async fn main() {
                         // stat-model: both verbs carry ONE packed gameplay row beside the obj.
                         // player-pawns P1: the relay lands on the target's OWN shard by its
                         // type nibble — a TYPE_PLAYER row-carrier composes on player_pawn.
+                        // trait-rows-u32 F3: ACTIVATE_TRAIT — validate, then queue the
+                        // def's authored condition GRANTS. The LOAD door already bounds
+                        // active binds at 3; `blocked_by` is the run gate (sprint's
+                        // cooldown); an unbound/inactive-category trait refuses by name.
+                        (ACTIVATE_TRAIT, [obj, tref]) => {
+                            use resonantdust_codec::object as codec_obj;
+                            let reject = |why: &str| {
+                                tracing::warn!(tic = t, target = format!("{obj:#010x}"),
+                                    tref = format!("{tref:#010x}"), why, "ACTIVATE_TRAIT refused");
+                            };
+                            let kind = match shard_of(*obj) {
+                                Shard::PlayerPawn => player_pawn
+                                    .db()
+                                    .entity_state()
+                                    .iter()
+                                    .find(|r| r.entity_reference == *obj)
+                                    .map(|r| def_kind_id(r.definition_reference)),
+                                _ => pawn
+                                    .db()
+                                    .entity_state()
+                                    .iter()
+                                    .find(|r| r.entity_reference == *obj)
+                                    .map(|r| def_kind_id(r.definition_reference)),
+                            };
+                            let Some(kind) = kind else {
+                                reject("no live carrier row");
+                                continue;
+                            };
+                            // The bind check runs on the CARRIER's def: things bind pawn
+                            // traits; brains (player-pawn defs) bind player traits.
+                            let binds = if shard_of(*obj) == Shard::PlayerPawn {
+                                let bid = bundle
+                                    .gameplay_lookup(*tref)
+                                    .and_then(|(_, name)| {
+                                        // the player-pawn's def is a BRAIN def — its binds
+                                        // resolve through the brain lane by def kind.
+                                        let _ = name;
+                                        Some(bundle.brain_player_traits(kind))
+                                    });
+                                bid.unwrap_or_default()
+                            } else {
+                                bundle.thing_traits(kind)
+                            };
+                            let bound = binds.iter().any(|b| {
+                                bundle
+                                    .trait_category(&b.name)
+                                    .and_then(codec_obj::gameplay_category)
+                                    .and_then(|c| bundle.gameplay_reference(c, &b.name))
+                                    .map(|r0| (r0 & !0xF) | u32::from(b.variant))
+                                    == Some(*tref)
+                            });
+                            if !bound {
+                                reject("the carrier does not bind this trait");
+                                continue;
+                            }
+                            let Some(tp) = bundle.trait_params_by_ref(*tref) else {
+                                reject("unknown trait def");
+                                continue;
+                            };
+                            let cat = codec_obj::def_subtype_id(*tref);
+                            if cat != codec_obj::GAMEPLAY_PAWN_TRAIT_ACTIVE
+                                && cat != codec_obj::GAMEPLAY_PLAYER_TRAIT_ACTIVE
+                            {
+                                reject("not an ACTIVE trait category");
+                                continue;
+                            }
+                            if tp.activate.is_empty() {
+                                reject("the trait authors no activation grants");
+                                continue;
+                            }
+                            // The availability predicate: every blocked_by must be inactive.
+                            let (trait_rows, cond_rows) = if shard_of(*obj) == Shard::PlayerPawn {
+                                (Vec::new(), Vec::new())
+                            } else {
+                                pawn_gameplay_rows(&bundle, &pawn, *obj)
+                            };
+                            let need_rows: Vec<(u64, u16)> = if shard_of(*obj) == Shard::PlayerPawn {
+                                player_pawn
+                                    .db()
+                                    .needs()
+                                    .iter()
+                                    .filter(|r| r.entity_reference == *obj)
+                                    .map(|r| (r.need, r.set_tic))
+                                    .collect()
+                            } else {
+                                pawn.db()
+                                    .needs()
+                                    .iter()
+                                    .filter(|r| r.entity_reference == *obj)
+                                    .map(|r| (r.need, r.set_tic))
+                                    .collect()
+                            };
+                            let active = resonantdust_content::needs_eval::active_conditions(
+                                &bundle, &trait_rows, &need_rows, &cond_rows, t,
+                            );
+                            let blocked = tp.blocked_by.iter().any(|name| {
+                                bundle
+                                    .gameplay_reference("condition", name)
+                                    .is_some_and(|cref| active.iter().any(|c| c.condition_id == cref))
+                            });
+                            if blocked {
+                                reject("blocked by an active condition (the cooldown gate)");
+                                continue;
+                            }
+                            let mut program = Vec::new();
+                            for (cond, duration) in &tp.activate {
+                                let Some(cref) = bundle.gameplay_reference("condition", cond)
+                                else {
+                                    continue;
+                                };
+                                program.extend_from_slice(&[
+                                    PROMOTE,
+                                    GRANT_CONDITION,
+                                    *obj,
+                                    cref,
+                                    u32::from(*duration),
+                                ]);
+                            }
+                            let fire = tic_add(master, 4);
+                            if let Err(err) = event.reducers().queue_at(program, fire, 0) {
+                                tracing::warn!(%err, tic = t, "activation grants queue failed");
+                            } else {
+                                tracing::info!(tic = t, target = format!("{obj:#010x}"),
+                                    tref = format!("{tref:#010x}"), grants = tp.activate.len(),
+                                    "trait ACTIVATED (trait-rows-u32 F3)");
+                            }
+                            continue;
+                        }
                         (SET_NEED, [obj, nref, data]) if shard_of(*obj) == Shard::PlayerPawn => {
                             player_pawn.reducers().set_need(
                                 self_ref, t, *obj,

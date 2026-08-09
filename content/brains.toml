@@ -16,6 +16,7 @@ needs = ["wolf_count"]
 traits = [
   { name = "wolf_pack" },
   { name = "area_of_influence", variant = 1 },
+  { name = "rally" },
 ]
 
 [[brain]]

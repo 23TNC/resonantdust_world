@@ -148,7 +148,7 @@ needs = ["thirst", "hunger", "corpus"]
 # (the `speed` field is GONE, input-rework F8: the derived stat IS the speed).
 # food-chain: corpus level 2 = the tanky tier (health cap 2); carnivore eats meat.
 # attack F1: bite = the "attack" capability tag — wolves pass can_attack.
-traits = ["biological_lifeform", { name = "walks", variant = 1 }, { name = "corpus", variant = 1 }, "carnivore", "bite"]
+traits = ["biological_lifeform", { name = "walks", variant = 1 }, { name = "corpus", variant = 1 }, "carnivore", "bite", { name = "sprint" } ]
 # The pawn's OWN kind carries death (food-chain F5/I9) — the need-write trigger fires it.
 interactions = [ { name = "death" } ]
 

@@ -74,3 +74,52 @@ label = "Area of influence"
 stats = [ { stat = "area_radius", add = [8, 12, 16] } ]
 
 # The default player-pawn THING def lives at the END of things.toml (append-only seed order).
+
+# ── sprint (trait-rows-u32 F3/F4) — THE canonical ACTIVE trait ─────────────────────────
+#
+# Activation grants BOTH conditions the same tic: `sprinting` (short — its stat modifier
+# LOWERS ground_speed's tics/tile = faster hops) and `sprint_cooldown` (long — covering
+# sprint + recovery: its PRESENCE is the re-activation gate via `blocked_by`, and its own
+# modifier carries the exhaustion, slower hops while recovering). Two overlapping timers
+# express the whole lifecycle; there is no expiry-chaining machinery.
+
+[[condition]]
+name = "sprinting"
+label = "Sprinting"
+duration = 60
+priority = 45
+stats = [ { stat = "ground_speed", add = -6.0, min = 4.0 } ]
+emotions = [ { emotion = "motivated", magnitude = 3 } ]
+
+[[condition]]
+name = "sprint_cooldown"
+label = "Winded"
+duration = 300
+priority = 35
+stats = [ { stat = "ground_speed", add = 4.0 } ]
+emotions = [ { emotion = "uncomfortable", magnitude = 2 } ]
+
+[[pawn_trait_active]]
+name = "sprint"
+label = "Sprint"
+activate = [
+  { condition = "sprinting", duration = 60 },
+  { condition = "sprint_cooldown", duration = 300 },
+]
+blocked_by = ["sprint_cooldown"]
+
+# The player-lane twin (I8's drill vehicle): a brain rallies — pure condition/emotion
+# state on the player-pawn, re-activation gated by its own presence.
+
+[[condition]]
+name = "rallied"
+label = "Rallied"
+duration = 120
+priority = 30
+emotions = [ { emotion = "focused", magnitude = 3 } ]
+
+[[player_trait_active]]
+name = "rally"
+label = "Rally"
+activate = [ { condition = "rallied", duration = 120 } ]
+blocked_by = ["rallied"]

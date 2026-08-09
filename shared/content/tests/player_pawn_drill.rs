@@ -44,7 +44,9 @@ fn brain_defs_carry_the_binds_and_pack_type_brain() {
         assert_eq!(needs.len(), 1);
         assert_eq!(needs[0], b.gameplay_reference("need", need).unwrap());
         let binds = b.brain_player_traits(id);
-        assert_eq!(binds.len(), 2, "{name}: group trait + area_of_influence");
+        // wolf_pack gained `rally` (the ACTIVE player trait) in trait-rows-u32 P4.
+        let expected = if name == "wolf_pack" { 3 } else { 2 };
+        assert_eq!(binds.len(), expected, "{name}: group trait + area (+ rally on wolves)");
         // constancy is CATEGORY membership now (trait-rows-u32 F2) — the binds resolve
         // in player_trait_constant, asserted by the lane they came from.
         // The F10 parameter read: level-selected stat contributions from the CONSTANT binds.

@@ -320,6 +320,11 @@ pub struct TraitParams {
   /// the trait never emits. The bound LEVEL selects the whole tuple; binds carry no
   /// light fields (I2).
   pub emit_light: Vec<TraitLight>,
+  /// ACTIVE traits (trait-rows-u32 F3): the `(condition, duration)` grants activation
+  /// executes. Empty on every other category (load-refused).
+  pub activate: Vec<(String, u16)>,
+  /// ACTIVE traits: activation refuses while any of these is active on the carrier.
+  pub blocked_by: Vec<String>,
 }
 
 /// One authored light tuple on a trait level (trait-lights F4). `elevation` is world

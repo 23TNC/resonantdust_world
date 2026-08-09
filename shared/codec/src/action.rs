@@ -138,6 +138,12 @@ pub const SPAWN_REQUEST: u32 = 17;
 /// re-stamps the honest value and re-schedules — never the predicted one.
 pub const RESTAMP_NEED: u32 = 18;
 
+/// `ACTIVATE_TRAIT obj tref` (trait-rows-u32 F3 — CLIENT-OPEN): request activation of the
+/// ACTIVE trait `tref` on `obj`. Writes NOTHING itself: the WORKER validates (the carrier
+/// BINDS the trait; the category is `*_active`; the def's `blocked_by` conditions are all
+/// inactive — sprint's cooldown gate) and queues the def's authored condition GRANTS.
+pub const ACTIVATE_TRAIT: u32 = 19;
+
 /// Compose a [`SPAWN_REQUEST`] program (spawn-authority F1) — ONE packer shared by every
 /// client so the words cannot drift. `def` is a full `definition_reference` whose variant
 /// nibble is IGNORED (variants ride the nibble vec); `variants[i]` = part i's u4.
@@ -212,6 +218,7 @@ pub fn signature(action: u32) -> Option<&'static [OperandKind]> {
         // trait-rows-u32 F1: the u64 row rides the u32-word program SPLIT — obj, the FULL
         // reference, the def-interpreted data u16 (low half of its word).
         SET_NEED => &[Write, Imm, Imm], // obj, need reference, data (value u16)
+        ACTIVATE_TRAIT => &[Write, Imm], // obj, the ACTIVE trait's full reference
         GRANT_CONDITION => &[Write, Imm, Imm], // obj, condition reference, data (remaining u16)
         // EXECUTE_INTERACTION is variable-arity (interaction, version, count, inputs×count —
         // all Imm; writes ride the verbs the worker queues) — framed in the reader like
