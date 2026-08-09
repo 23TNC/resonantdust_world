@@ -321,3 +321,44 @@ codebase, and no shipped panel selects the mode. So `auto` is inert today.
 Ticked on the structural argument with that stated plainly in [I7](issues.md#i7): the feedback
 loop is impossible by construction rather than unobserved in practice. When a consumer starts
 reporting natural heights, this wants a real watch.
+
+## 2026-08-09 — post-review: overlap ruled fine; two chrome defects fixed
+
+**Overlap** — user ruling, recorded as [F11](forks.md#f11): panels are allowed to overlap. The
+P4 observation is closed, not actioned; `clampCell` constrains panels to the field and must never
+learn about other panels.
+
+**"Do we intentionally show title bars in edit mode on panels with the bar turned off?"** — yes,
+intentionally, and it was made true during this stream. `UiEditMode`'s class doc has *always*
+claimed edit mode "forces its title bar visible regardless of the panel's own preference", but
+`refreshChrome` never implemented it; P3's predicate unification (`titleBarShowing()`) finally
+made the code match the doc. The rationale stands on its own: in edit mode the bar is the drag
+handle and carries the per-panel action buttons, so a title-hidden panel would otherwise be
+unreachable exactly when you're trying to rearrange it.
+
+But the question exposed a real defect in it. Entering edit mode called `refreshChrome()` alone,
+which flips the bar's `display` **without re-placing the panel** — so the bar appeared *inside*
+the existing outer box and the flex body absorbed it. Measured: body `29,860 → 57,832`, i.e.
+down a row and a row shorter, on a pure chrome toggle. That is precisely what [F4](forks.md#f4)
+exists to prevent. Fixed by placing on the edit-mode change: the outer box now grows upward and
+the body holds still — re-measured, **all four panels' bodies unchanged**, outer boxes growing
+`28,861 → 0,889` and `639,250 → 611,278` for the two title-hidden ones.
+
+Known edge, not worth contorting the design for: a body on row 1 has no row above it inside the
+field, so its edit-mode bar lands on row 0 and draws behind the taskbar. The only panel in that
+position is the world viewport, which is `draggable: false` anyway.
+
+**Title-bar text was top-aligned** (user report). Root cause: `refreshChrome` restored the bar
+with `style.display = ""`, which **clears** the inline `display: flex` from `TITLEBAR_CSS` and
+drops the element to `display: block` — so `align-items: center` silently stopped applying. The
+computed style read `block` while the source said `flex`. Pre-existing, but invisible until this
+stream: the old `padding: 8px 12px` was doing the centring by accident, and pinning the height to
+one row with zero vertical padding exposed it.
+
+`applyMinimized` already carried a comment warning about exactly this trap for `PANEL_CSS`
+("Restore to `"flex"` rather than `""`… the panel div has no stylesheet rule to fall back on"),
+so the same audit was run across the file: `TABS_CSS` and `BODY_CSS` also set `display: flex`
+inline and had the same latent bug at four more restore sites. All fixed; the footer, which sets
+no inline display, correctly keeps `""`. Verified: computed `display: flex`, title text 7.8px
+above / 8.5px below in a 28px bar (the sub-pixel difference is the 1px bottom border, inside the
+border-box), centred in edit mode too.

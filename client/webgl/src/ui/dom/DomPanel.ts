@@ -1121,7 +1121,18 @@ export class DomPanel {
     // helper fires once immediately, which doubles as the initial
     // chrome render — no separate seed call needed.
     if (this.uiEditMode) {
-      this.unsubUiEditMode = this.uiEditMode.on(() => this.refreshChrome());
+      this.unsubUiEditMode = this.uiEditMode.on(() => {
+        this.refreshChrome();
+        // Entering edit mode FORCES title bars visible, which changes
+        // whether the outer box carries a chrome row — so the panel
+        // must be re-placed, not merely re-styled. Without this the
+        // bar appears inside the existing box and the flex body
+        // absorbs it: the body shifts down a row and shrinks by one,
+        // which is exactly the behaviour the body-invariant law (F4)
+        // exists to prevent. `place()` grows the outer box upward
+        // instead and leaves the body where it is.
+        this.place();
+      });
     } else {
       this.refreshChrome();
     }
@@ -1209,7 +1220,7 @@ export class DomPanel {
       this.setActiveTab(id);
     });
     this.tabsEl.appendChild(button);
-    this.tabsEl.style.display = "";
+    this.tabsEl.style.display = "flex";
 
     content.style.display = "none";
     this.body.appendChild(content);
@@ -1370,9 +1381,9 @@ export class DomPanel {
     // (not `""`) because `PANEL_CSS` only sets flex inline — see the
     // note in `applyMinimized`.
     this.panel.style.display = "flex";
-    this.body.style.display  = "";
+    this.body.style.display  = "flex";
     if (this.footer) this.footer.style.display = "";
-    if (this.tabs.size > 0) this.tabsEl.style.display = "";
+    if (this.tabs.size > 0) this.tabsEl.style.display = "flex";
     this.minimizeBtn.textContent = "−";
     this.bringToFront();
     // Snapped panels re-derive their corner; free panels get pulled
@@ -1953,7 +1964,7 @@ export class DomPanel {
         this.place();
       }
     }
-    this.body.style.display = min ? "none" : "";
+    this.body.style.display = min ? "none" : "flex";
     if (this.footer) this.footer.style.display = min ? "none" : "";
     // Tabs row hides too — it's content, not chrome, now that it
     // sits below the title bar. The rolled-up panel collapses to
@@ -1961,7 +1972,7 @@ export class DomPanel {
     // doesn't render at all but the inner flips keep state
     // consistent for the restore path.
     if (this.tabs.size > 0) {
-      this.tabsEl.style.display = min ? "none" : "";
+      this.tabsEl.style.display = min ? "none" : "flex";
     }
     if (min) {
       this.resizeCorner.style.display = "none";
@@ -2799,7 +2810,14 @@ export class DomPanel {
     // by clicking anywhere on the panel, so a panel with a
     // hidden title bar stays editable from its body.
     const titleBarVisible = this.titleBarShowing();
-    this.titlebar.style.display = titleBarVisible ? "" : "none";
+    // `"flex"`, not `""` — `TITLEBAR_CSS` sets `display: flex` INLINE
+    // and the div has no stylesheet rule to fall back on, so clearing
+    // it drops the bar to `display: block` and `align-items: center`
+    // silently stops applying: the title text renders top-aligned.
+    // (Same trap `applyMinimized` documents for `PANEL_CSS`.) It was
+    // invisible while the bar had 8px vertical padding doing the
+    // centring by accident; pinning the height to one row exposed it.
+    this.titlebar.style.display = titleBarVisible ? "flex" : "none";
     if (titleBarVisible) this.applyTitlebarHeight();
 
     // Minimize button visible iff BOTH the capability toggle says

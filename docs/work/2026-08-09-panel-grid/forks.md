@@ -208,3 +208,16 @@ Rejected: making `full` mean "the BODY spans the field" (the outer box would the
 row upward into the taskbar whenever the bar is shown — a panel that provably cannot be placed);
 force-hiding the title bar on height-locked panels (silently overrides a user preference, and
 `full` panels are exactly the ones a user may want a bar on to drag by).
+
+## F11 — panels are ALLOWED to overlap
+
+2026-08-09, user: _"Panels are allowed to overlap."_ Settles the observation raised at P4, where
+`build` / `chatPanel` / `details` all snap bottom-left and stack. Overlap is not a defect and not
+something the grid should prevent: the grid's job is that every panel sits ON the cells, not that
+the set of panels tiles without collision. No packing, no collision avoidance, no auto-arrange —
+a panel goes where it is put.
+
+Consequences worth keeping straight: the layering that makes overlap usable is the z-order TIER
+machinery from bug-sweep F1, which is untouched by this stream; and the default corpus stacking
+three panels in one corner is a layout choice, not a bug to fix. `clampCell` constrains panels to
+the FIELD only — it has never had, and must not grow, any notion of other panels.

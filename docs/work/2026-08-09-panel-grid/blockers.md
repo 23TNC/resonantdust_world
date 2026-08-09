@@ -31,8 +31,3 @@ between a few sizes, and look for: a panel crossing a taskbar, a seam or overlap
 panels, and whether the chrome reads too light (it is ~13% smaller than before — see
 [I2](issues.md#i2)). Two knobs if it does: the `0.375` ratio in `index.html`'s `:root`, and
 `GRID_ROWS` in `PanelGrid.ts` — fewer rows means a taller row and a larger everything.
-
-**Also worth your call while you're looking:** `build`, `chatPanel` and `details` all carry
-`snap: "bottom-left"`, so they stack in one corner and overlap by default. Pre-existing and
-unrelated to the grid, so it was left alone — but it is the most visible thing about the default
-layout.
