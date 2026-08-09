@@ -86,7 +86,8 @@
     "bgChrome": "Chrome",
     "bgDim": "Dim",
     "bgNone": "None",
-    "outline": "Outline"
+    "outline": "Outline",
+    "minSize": "Min size"
   },
   "debugPanel": {
     "label": "Debug",

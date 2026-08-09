@@ -400,12 +400,12 @@ export interface DomPanelOptions {
   clickThrough?: boolean;
   /** Draw the panel's 1px outline. Defaults `true`. */
   outline?: boolean;
-  /** Smallest body width in CELLS this panel may be resized to. Defaults 2.
-   *  Raise it only for a panel whose content genuinely cannot survive being
-   *  narrow — the floor exists to stop degenerate panels, not to impose a
-   *  shape the user did not ask for. */
+  /** Smallest body width in CELLS this panel may be resized to. Defaults **1**
+   *  — one cell is the smallest rect the grid can express, and anything above
+   *  it is the code deciding the user's layout for them. Settable per panel
+   *  from the settings popup. */
   minCols?: number;
-  /** Smallest body height in CELLS. Defaults 2. */
+  /** Smallest body height in CELLS. Defaults **1**. */
   minRows?: number;
   /** Per-panel blacklist of `PanelSettingsPopup` rows. Default is
    *  empty — the popup shows every row. Add a key here when a
@@ -454,6 +454,7 @@ export type PanelSettingKey =
   | "background"
   | "clickThrough"
   | "outline"
+  | "minSize"
   | "layer"
   | "reset"
   | "copyJson"
@@ -507,6 +508,8 @@ export interface PanelStateJSON {
   background?:     BackgroundMode;
   clickThrough?:   boolean;
   outline?:        boolean;
+  minCols?:        number;
+  minRows?:        number;
   draggable?:      boolean;
   minimizable?:    boolean;
   resizableX?:     boolean;
@@ -938,8 +941,6 @@ export class DomPanel {
     // (inventory:<surf>:<owner>, gameview:<id>) MUST pass an
     // explicit `defaultsKey` so every instance shares one entry.
     this.defaultsKey = opts.defaultsKey ?? opts.storageKey ?? null;
-    this.minCols    = Math.max(1, opts.minCols ?? 2);
-    this.minRows    = Math.max(1, opts.minRows ?? 2);
     this.minWidth   = opts.minWidth   ?? 200;
     this.minHeight  = opts.minHeight  ?? 100;
     this.baseTitle   = opts.title;
@@ -1013,6 +1014,10 @@ export class DomPanel {
                              contentDefaults.clickThrough ?? opts.clickThrough ?? false);
     this._outline        = this.defaultedBool("outline",
                              contentDefaults.outline ?? opts.outline ?? true);
+    this._minCols        = this.defaultedInt("minCols",
+                             contentDefaults.minCols ?? opts.minCols ?? 1);
+    this._minRows        = this.defaultedInt("minRows",
+                             contentDefaults.minRows ?? opts.minRows ?? 1);
     this._masked         = this.defaultedBool("masked",         contentDefaults.masked         ?? true);
     this._minimizable    = this.defaultedBool("minimizable",    contentDefaults.minimizable    ?? this.initialMinimizable);
     this._resizableX     = this.defaultedBool("resizableX",     contentDefaults.resizableX     ?? this.initialResizable);
@@ -1915,13 +1920,15 @@ export class DomPanel {
     return btn;
   }
 
-  /** Smallest body size in CELLS, per panel. The default is deliberately
-   *  SMALL: a floor is there to stop a panel collapsing to nothing, not to
-   *  decide its shape. The previous global 6 × 3 made every panel at least
-   *  ~190px wide, which stopped a narrow vertical strip (the intentions
-   *  queue) from being narrow — the user's complaint, 2026-08-09. */
-  private readonly minCols: number;
-  private readonly minRows: number;
+  /** Smallest body size in CELLS, per panel and USER-SETTABLE.
+   *
+   *  Default **1 × 1**: one cell is the smallest rect the grid can express, so
+   *  it is the only floor that isn't someone's opinion. This started as a
+   *  global 6 × 3 (panel-grid), which made every panel ~190px wide and stopped
+   *  a narrow queue strip being narrow; the 2 × 2 that replaced it was just as
+   *  arbitrary. If a panel wants more room it says so, or the user does. */
+  private _minCols: number;
+  private _minRows: number;
 
   /** Is the title bar currently rendered? Decides whether the outer
    *  box carries the extra chrome row. Edit mode forces bars visible,
@@ -1985,7 +1992,7 @@ export class DomPanel {
     const extra = this.titleBarShowing() ? 1 : 0;
     this._cell = clampCell(
       { col: outer.col, row: outer.row + extra, cols: outer.cols, rows: Math.max(1, outer.rows - extra) },
-      { titled: this.titleBarShowing(), minCols: this.minCols, minRows: this.minRows },
+      { titled: this.titleBarShowing(), minCols: this._minCols, minRows: this._minRows },
     );
   }
 
@@ -1997,8 +2004,8 @@ export class DomPanel {
     if (!this._cell) return;
     this._cell = clampCell(this._cell, {
       titled:   this.titleBarShowing(),
-      minCols:  this.minCols,
-      minRows:  this.minRows,
+      minCols:  this._minCols,
+      minRows:  this._minRows,
     });
   }
 
@@ -2140,8 +2147,8 @@ export class DomPanel {
       // Projected from the panel's OWN cell floor. Note the X axis uses the
       // column width, not the row height — cells are not square off 16:9, and
       // the old form multiplied columns by a row height.
-      get minWidth()  { return panelGrid.project({ col: 0, row: 0, cols: self.minCols, rows: 1 }).width; },
-      get minHeight() { return panelGrid.project({ col: 0, row: 0, cols: 1, rows: self.minRows }).height; },
+      get minWidth()  { return panelGrid.project({ col: 0, row: 0, cols: self._minCols, rows: 1 }).width; },
+      get minHeight() { return panelGrid.project({ col: 0, row: 0, cols: 1, rows: self._minRows }).height; },
       // Per-handle gate: the corner needs both axes (and an
       // unlocked height); the X-edge needs only its own toggle;
       // the Y-edge needs its toggle AND `heightMode === "off"`
@@ -2258,6 +2265,29 @@ export class DomPanel {
     this._clickThrough = !this._clickThrough;
     this.storageSet("clickThrough", this._clickThrough ? "1" : "0");
     this.applyClickThrough();
+  }
+
+  /** Smallest body size in cells this panel may be resized to. */
+  get minCols(): number { return this._minCols; }
+  get minRows(): number { return this._minRows; }
+
+  /** Nudge the minimum body size. Clamped at 1 (the smallest expressible
+   *  rect) and at the field's extent. Shrinking the floor never resizes the
+   *  panel; raising it above the current size does, so the panel cannot sit
+   *  below its own stated minimum. */
+  setMinSize(cols: number, rows: number): void {
+    const nextCols = Math.min(Math.max(1, cols), GRID_COLS);
+    const nextRows = Math.min(Math.max(1, rows), FIELD_ROWS);
+    if (nextCols === this._minCols && nextRows === this._minRows) return;
+    this._minCols = nextCols;
+    this._minRows = nextRows;
+    this.storageSet("minCols", String(nextCols));
+    this.storageSet("minRows", String(nextRows));
+    if (this._cell && (this._cell.cols < nextCols || this._cell.rows < nextRows)) {
+      this.clampCellToField();
+      this.place();
+      this.persistCell();
+    }
   }
 
   /** Whether the panel draws its 1px outline. */
@@ -2507,7 +2537,7 @@ export class DomPanel {
       // number would oscillate: grow a row -> content reflows into it ->
       // reports a smaller natural height -> shrink a row -> repeat (I7).
       const rows = Math.max(
-        this.minRows,
+        this._minRows,
         Math.ceil(this._contentNaturalHeight / Math.max(1, panelGrid.rowHeight)),
       );
       if (rows === this._cell.rows) return;
@@ -2522,7 +2552,7 @@ export class DomPanel {
     // its outer box exactly the field (F10).
     const chrome = this.titleBarShowing() ? 1 : 0;
     const rows = Math.max(
-      this.minRows,
+      this._minRows,
       Math.round(FIELD_ROWS * HEIGHT_FRACTIONS[this._heightMode]) - chrome,
     );
     if (rows === this._cell.rows) return;
@@ -2774,6 +2804,8 @@ export class DomPanel {
       background:      this._background,
       clickThrough:    this._clickThrough,
       outline:         this._outline,
+      minCols:         this._minCols,
+      minRows:         this._minRows,
       draggable:       this._draggable,
       minimizable:     this._minimizable,
       resizableX:      this._resizableX,
@@ -2804,7 +2836,7 @@ export class DomPanel {
       "anchor", "titleBarHidden", "gridSnap", "masked",
       "minimizable", "resizable", "resizableX", "resizableY",
       "closable", "hideMinimizeBtn", "hideCloseBtn",
-      "pin", "pinned", "heightMode", "background", "clickThrough", "outline",
+      "pin", "pinned", "heightMode", "background", "clickThrough", "outline", "minCols", "minRows",
       "snap", "draggable",
       "taskbarIcon", "titleSuffix",
     ];
@@ -2832,6 +2864,8 @@ export class DomPanel {
     this._background      = cd.background      ?? "chrome";
     this._clickThrough    = cd.clickThrough    ?? false;
     this._outline         = cd.outline         ?? true;
+    this._minCols         = Math.max(1, cd.minCols ?? 1);
+    this._minRows         = Math.max(1, cd.minRows ?? 1);
     this.applyBackground();
     this.applyClickThrough();
     this.applyOutline();
@@ -3053,6 +3087,14 @@ export class DomPanel {
    *  localStorage layers on top of "constructor seed + content
    *  override." Returns `defaultValue` for panels without a
    *  storageKey (persistence opted out). */
+  /** Read a persisted positive integer setting, falling back when absent or
+   *  malformed. Floors at 1 — a zero-cell minimum is not a minimum. */
+  private defaultedInt(suffix: string, defaultValue: number): number {
+    const raw = this.storageGet(suffix);
+    const v = raw === null ? NaN : Number.parseInt(raw, 10);
+    return Number.isFinite(v) && v >= 1 ? v : Math.max(1, defaultValue);
+  }
+
   private defaultedBool(suffix: string, defaultValue: boolean): boolean {
     const raw = this.storageGet(suffix);
     if (raw === "1") return true;

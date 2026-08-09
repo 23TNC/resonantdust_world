@@ -213,6 +213,7 @@ export class PanelSettingsPopup {
   private readonly backgroundSelect: CyclingSelect<BackgroundMode>;
   private readonly clickThroughBtn:  HTMLButtonElement;
   private readonly outlineBtn:       HTMLButtonElement;
+  private readonly minSizeValue:     HTMLSpanElement;
   private readonly layerUpBtn:     HTMLButtonElement;
   private readonly layerDownBtn:   HTMLButtonElement;
   /** Row-element index keyed by `PanelSettingKey`. `refreshControls`
@@ -382,6 +383,13 @@ export class PanelSettingsPopup {
       () => this.boundPanel?.toggleOutline());
     this.outlineBtn = outlineRow.btn;
     this.rowsByKey.set("outline", outlineRow.row);
+    // Min size: two steppers over the panel's own cell floor. 1x1 is the
+    // smallest rect the grid can express and the default — a floor above it
+    // is the code deciding the user's layout, which is what this row exists
+    // to hand back to them.
+    const minSizeRow = this.addMinSizeRow(body);
+    this.minSizeValue = minSizeRow.value;
+    this.rowsByKey.set("minSize", minSizeRow.row);
     const layerRow = this.addLayerRow(body);
     this.layerUpBtn   = layerRow.up;
     this.layerDownBtn = layerRow.down;
@@ -574,6 +582,7 @@ export class PanelSettingsPopup {
     this.maskBtn.textContent            = p.isMasked            ? "▣" : "▢";
     this.clickThroughBtn.textContent    = p.isClickThrough      ? "▣" : "▢";
     this.outlineBtn.textContent         = p.hasOutline          ? "▣" : "▢";
+    this.minSizeValue.textContent       = `${p.minCols}×${p.minRows}`;
     this.backgroundSelect.setValue(p.background);
     // Draggable: when snap is non-none the value is forced off
     // and the row can't be toggled — dim the glyph to signal
@@ -888,6 +897,45 @@ export class PanelSettingsPopup {
 
   /** Layer row has two buttons (up / down) instead of a single
    *  toggle, so it gets its own helper. */
+  private addMinSizeRow(
+    parent: HTMLDivElement,
+  ): { row: HTMLDivElement; value: HTMLSpanElement } {
+    const row = document.createElement("div");
+    Object.assign(row.style, ROW_CSS);
+    const labelEl = document.createElement("span");
+    Object.assign(labelEl.style, LABEL_CSS);
+    labelEl.textContent = pp("minSize");
+    row.appendChild(labelEl);
+
+    const group = document.createElement("div");
+    Object.assign(group.style, BUTTON_GROUP_CSS);
+    const step = (dc: number, dr: number, glyph: string): HTMLButtonElement => {
+      const b = document.createElement("button");
+      Object.assign(b.style, BUTTON_CSS);
+      b.textContent = glyph;
+      b.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const p = this.boundPanel;
+        if (!p) return;
+        p.setMinSize(p.minCols + dc, p.minRows + dr);
+        this.refreshControls();
+      });
+      return b;
+    };
+    const value = document.createElement("span");
+    Object.assign(value.style, LABEL_CSS);
+    value.style.minWidth = "calc(var(--ui-row) * 1.2)";
+    value.style.textAlign = "center";
+    group.appendChild(step(-1, 0, "◀"));
+    group.appendChild(step(+1, 0, "▶"));
+    group.appendChild(value);
+    group.appendChild(step(0, -1, "🞃"));
+    group.appendChild(step(0, +1, "🞁"));
+    row.appendChild(group);
+    parent.appendChild(row);
+    return { row, value };
+  }
+
   private addLayerRow(parent: HTMLDivElement): { row: HTMLDivElement; up: HTMLButtonElement; down: HTMLButtonElement } {
     const row = document.createElement("div");
     Object.assign(row.style, ROW_CSS);

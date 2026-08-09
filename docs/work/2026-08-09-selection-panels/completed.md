@@ -219,3 +219,28 @@ panel's own cell floor, using the column width for X.
 
 Verified: the intentions panel resizes from 4 × 11 cells down to **2 × 2** (64 × 83px), and the
 computed CSS `min-width` reads `0px`.
+
+## 2026-08-09 — the minimum becomes a SETTING, defaulting to 1×1
+
+User: _"Make the minimum settable in settings, and default to 1x1. I havent the foggiest why you
+pulled 2x2."_ Fair — 2 × 2 had no justification. It replaced panel-grid's global 6 × 3 (which was
+"roughly the old 200 × 100px floors") with a different arbitrary number, and both were the code
+deciding the user's layout.
+
+**1 × 1 is the only non-arbitrary floor**: one cell is the smallest rect the grid can express.
+Anything above it is an opinion, so it now belongs to whoever holds the opinion — the panel that
+genuinely needs room says so in its constructor, and the user overrides either from the settings
+popup.
+
+`minCols` / `minRows` became mutable per-panel state through the full option ritual (option →
+JSON → `defaultedInt` read → getters + `setMinSize` → storage → popup row + `PanelSettingKey` →
+`serializeState` → `resetToDefaults`). `setMinSize` clamps to `[1, GRID_COLS]` / `[1, FIELD_ROWS]`
+and — the one non-obvious bit — **re-places the panel when the new floor exceeds its current
+size**, so a panel can never sit below its own stated minimum.
+
+The popup row reuses the existing stepper vocabulary: `◀ ▶` for columns, `🞃 🞁` for rows, with the
+live value between them (`Min size  ◀ ▶ 2×2 🞃 🞁`).
+
+**Verified live**: with the default floor, the intentions panel resizes down to `1,1` cells
+(32 × 28px) — the complaint that started this. The stepper walks `1×1 → 2×1 → 2×2`, clamps at
+`1×1` when driven down, and persists `minCols` / `minRows` per panel.
