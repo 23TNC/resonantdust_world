@@ -115,3 +115,43 @@ not a panel feeding a panel.
 **Build** panel (z 480001, spanning x 0–289) covers the left end of the card band — panels are
 allowed to overlap (panel-grid F11), and conditions sits on `Z_TIER_INFO` beneath the tool tier,
 so where they overlap the cards are hidden. Worth the user's eye when they position it.
+
+## 2026-08-09 — P2/P3/P4/P5 remainder: tooltip, over-width, wash, taskbar
+
+**The tooltip already escapes (I2)** — no change needed. Hovering a card raised
+`"Sprinting +3 Motivated  priority 45  60t remaining"` at z 640011 with `parentIsPanel: false`:
+it was always a fixed-position element appended to the host, the `IntentStrip` pattern. The
+irony noted at planning held exactly — F3 deleted the overlay for the *cards* while the
+*tooltip* is the one part that genuinely still wants to escape a short panel's clip.
+
+**Over-width is WRAP, not scroll (I3).** Pinning 60 synthetic cards through the project's own
+`__cards(n)` debug hook: all 60 stayed inside the panel across **2 rows**, with
+`scrollWidth === clientWidth` — no horizontal overflow at all. Wrap is also the only answer that
+works here: a click-through panel has no pointer events with which to grab a scrollbar, so a
+scroller would be unreachable by construction. At full width a row holds ~46 maximized cards, so
+the collapsed mode (top 4 maximized) has nothing left to solve — its constants were sized against
+details' ~355px and are simply slack now.
+
+**The emotion wash composes with the option (F6/F1).** Measured on the same pawn over both
+backgrounds: `rgba(106, 58, 216, 0.16)` present over `chrome`, and still present over `none`
+with the body and title bar at `rgba(0, 0, 0, 0)`. The coloured-ghost reading F1 predicted is
+what it does.
+
+**Details' min size re-read (I7)**: 220×150 → 160×90. The old floor was sized around the intent
+column and the card band; neither is its content now. Both are a last-resort floor regardless —
+the real minimum is the cell law's 6×3 body.
+
+**Taskbar entries — a real miss, caught by testing.** Neither new panel appeared in the bar.
+Cause: I seeded both corpus entries from `details`, which carries `pin: "none"` — and `pin` is
+what routes an entry into a bar, so details has no entry either. For a panel with **no title
+bar** that is not cosmetic: a closed conditions panel would have had no way back at all. Fixed to
+`pin: "bottom-left"`; verified ☯ and ⚙ both present, and a taskbar cycle restores the panel to
+exactly `0,778,1862,83`.
+
+**The progress ring is unobserved, not verified.** `IntentStrip` moved byte-identical (a `git mv`
+plus its new panel), and the strip demonstrably renders and tracks selection — 1 circle for each
+pawn holding 1 queue entry, 0 for pawns with none, across all five movers. But every live entry
+in the world right now is a walking NPC's `move_to`, and none carries an authored progress ring:
+`ringPercent()` returned `null` for all five and no `<svg>` was emitted. So the per-frame ring
+maths could not be exercised. Recorded as inspection, not observation — the same treatment
+panel-grid's I7 got — and it wants a look the next time a pawn runs a duration interaction.

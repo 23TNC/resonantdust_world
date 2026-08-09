@@ -46,9 +46,9 @@ survive a reset or a corpus export.
       Acceptance: no reference to another panel's rect remains in the file.
 - [x] Cards set `pointer-events: auto` so they stay live inside a click-through panel (I1).
       Acceptance: with click-through on, a card click still expands and a world click still passes.
-- [ ] The tooltip renders outside the panel's clip (I2). Acceptance: hovering a card in a
+- [x] The tooltip renders outside the panel's clip (I2). Acceptance: hovering a card in a
       one-row-tall panel shows the full tooltip, unclipped.
-- [ ] Decide + implement the over-width behaviour, re-reading `CARD_H` / `PAD_BOTTOM` and the
+- [x] Decide + implement the over-width behaviour, re-reading `CARD_H` / `PAD_BOTTOM` and the
       8-square fit note against a full-width panel (I3). Acceptance: 12+ conditions on one pawn
       stay reachable; capture.
 
@@ -57,7 +57,7 @@ survive a reset or a corpus export.
 - [x] New `IntentionsPanel` owning `IntentStrip` unchanged, subscribing to `SelectionModel` +
       `IntentQueues` directly, carrying the `CANCEL_INTENT` sender (F4/F5). Acceptance: the
       selected pawn's queue renders; a circle click still cancels.
-- [ ] The progress ring still computes per frame from the tic estimate after the move (F4).
+- [x] The progress ring still computes per frame from the tic estimate after the move (F4).
       Acceptance: ring percentage advances live and snaps to truth after a hidden-tab pause.
 
 ## P4 — details slims down
@@ -65,9 +65,9 @@ survive a reset or a corpus export.
 - [x] Remove the strip and the cards from `DetailsPanel`, INCLUDING both reserves — the
       `CARD_H + PAD_BOTTOM * 2` bottom band and the `STRIP_W` left shift (I7). Acceptance: no
       empty margin; details is name + tile + button + wash.
-- [ ] Re-read details' min size now it holds two text rows and a button (I7). Acceptance: it
+- [x] Re-read details' min size now it holds two text rows and a button (I7). Acceptance: it
       cannot be resized to hide its own content.
-- [ ] Keep the emotion wash working against a configurable background (F6/F1). Acceptance:
+- [x] Keep the emotion wash working against a configurable background (F6/F1). Acceptance:
       capture of the wash over `chrome` and over `none`.
 
 ## P5 — the corpus
@@ -79,7 +79,7 @@ survive a reset or a corpus export.
       click-through with no bar.
 - [x] Pick both panels' z-tiers deliberately against bug-sweep F1's table (I5). Acceptance:
       neither covers a panel the user reads; conditions sits over the world.
-- [ ] Taskbar entries + icons for both, so a closed panel can be reopened. Acceptance: closing and
+- [x] Taskbar entries + icons for both, so a closed panel can be reopened. Acceptance: closing and
       re-opening each from the taskbar restores it in place.
 
 ## P6 — the truth

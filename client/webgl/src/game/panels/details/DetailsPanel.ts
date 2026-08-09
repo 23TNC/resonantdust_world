@@ -71,8 +71,12 @@ export class DetailsPanel extends DomPanel {
       title: panelTitle(PANEL_KEY),
       storageKey: "details",
       zOrder: Z_TIER_INFO, // bug-sweep F1: the user's table — details at 40
-      minWidth: 220,
-      minHeight: 150,
+      // Sized for what the panel now holds: a button row and two text lines. The
+      // 220x150 it used to ask for was sized around the intent column and the card
+      // band, neither of which is its content any more (I7). These are a floor of
+      // last resort regardless — the real minimum is the cell law's 6x3 body.
+      minWidth: 160,
+      minHeight: 90,
       taskbar: ctx.taskbar,
       pinned: true,
       uiEditMode: ctx.uiEditMode,
