@@ -1,5 +1,17 @@
 # Completed — trait-rows-u32
 
+## 2026-08-09 — P5: the truth
+
+Memory `trait-rows-u32-delivered` + the MEMORY.md line written; docs-check green (the 5
+standing warnings). The bounce criterion is the stream itself: three module republishes,
+every binary rebuilt (some twice — the loader cliff), full restarts throughout — and the
+closing arcs all live on the new law: the host's stage-1 loop (count writes through the
+split wire), the world rendering with a live wolf's condition cards, the sprint lifecycle
+measured to the tic. NOT done, plainly: no ability UI (WS drills are the activator — I7/I8's
+named successors); trait-row per-instance DATA is reserved-zero (nothing writes it yet);
+the retired categories' registry rows sit empty forever by design. The user's eyes close
+the stream.
+
 ## 2026-08-09 — P3/P4 COMPLETE: ACTIVATE_TRAIT + sprint, MEASURED
 
 **The verb** — `ACTIVATE_TRAIT = 19` (client-open): the worker validates the carrier BINDS

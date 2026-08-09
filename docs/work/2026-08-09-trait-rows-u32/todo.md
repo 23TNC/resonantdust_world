@@ -47,6 +47,6 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P5 — the truth
 
-- [ ] Docs + memory truth pass + stack bounce with arcs green (incl. the host's control arc
+- [x] Docs + memory truth pass + stack bounce with arcs green (incl. the host's control arc
       re-proven on the new rows); **the user's eyes close the stream**. Acceptance:
       docs-check green; captures + logs in completed.md.
