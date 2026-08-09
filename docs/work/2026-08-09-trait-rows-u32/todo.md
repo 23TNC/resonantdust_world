@@ -14,7 +14,7 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 - [x] codec: the ONE u64 row helper set (48-bit law) + the encoding decoder seam (F7,
       unknown refuses — I10); ALL payload entries grow a word; the six categories (F2).
       Acceptance: unit round-trips + 2×i8 lanes; level helpers DELETED.
-- [ ] Modules: the `needs` column u64 in pawn + player_pawn; republished (WIPING, I2);
+- [x] Modules: the `needs` column u64 in pawn + player_pawn; republished (WIPING, I2);
       st-bindings + edge bindings regenerated. Acceptance: publish green; a hand SET_NEED
       lands a u64 row.
 - [x] shared/content: the six tables parse into category-tagged lanes (per-level arrays →
@@ -23,7 +23,7 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P2 — the consumer sweep
 
-- [ ] The ONE eval + every consumer on u64 rows (I1): worker, npc, wasm, webgl, panels;
+- [x] The ONE eval + every consumer on u64 rows (I1): worker, npc, wasm, webgl, panels;
       goldens + pins re-blessed deliberately (I4). Acceptance: builds green; the stack up;
       a pawn's panel shows traits/conditions/needs correctly post-sweep.
 - [x] content: every trait re-authored under its category in ONE commit (I3 — passive/

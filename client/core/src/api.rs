@@ -173,7 +173,7 @@ pub enum Event {
     PawnParts { macro_position: u16, entity_reference: u32, tic: u16, parts: Vec<(u8, u32)>, payload: Vec<u32> },
     /// One `needs` sub-table row (stat-model F2): the packed gameplay row
     /// (`value:16 | kind:12 | variant:4`) + its `set_tic`. Joined by `entity_reference`.
-    PawnNeed { macro_position: u16, entity_reference: u32, need: u32, set_tic: u16 },
+    PawnNeed { macro_position: u16, entity_reference: u32, need: u64, set_tic: u16 },
     /// A pawn this session's player MINTED (npc-host I11) — the ownership set a module
     /// brain commands; replayed at login, live thereafter.
     OwnedPawn { entity_reference: u32 },

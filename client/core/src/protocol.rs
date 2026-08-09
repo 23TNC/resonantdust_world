@@ -75,7 +75,7 @@ pub enum ServerMsg {
     /// One `needs` sub-table row (stat-model F2) — a pawn's single need, fanned alone.
     /// `need` is the packed gameplay row `value:16 | kind:12 | variant:4`; `set_tic`
     /// anchors the lazy eval. Joined by `entity_reference`.
-    Need { entity_reference: u32, zone: u16, need: u32, set_tic: u16 },
+    Need { entity_reference: u32, zone: u16, need: u64, set_tic: u16 },
     /// One `inventory` sub-table row (inventory F2); `item = 0` = the slot emptied.
     Inventory { entity_reference: u32, zone: u16, slot: u8, item: u32, state: u32 },
     /// A pawn THIS session's player minted (npc-host I11 — the ownership re-attach lane).

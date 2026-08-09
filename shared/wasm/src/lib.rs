@@ -334,7 +334,7 @@ impl Content {
         &self,
         kind: u16,
         payload: Vec<u32>,
-        needs: Vec<u32>,
+        needs: Vec<f64>,
         now_tic: u16,
     ) -> Vec<f64> {
         let (traits, conditions) = decode_payload(&self.bundle, kind, &payload);
@@ -362,7 +362,7 @@ impl Content {
         &self,
         kind: u16,
         payload: Vec<u32>,
-        needs: Vec<u32>,
+        needs: Vec<f64>,
         now_tic: u16,
     ) -> Vec<f64> {
         let (traits, conditions) = decode_payload(&self.bundle, kind, &payload);
@@ -519,7 +519,7 @@ impl Content {
         &self,
         kind: u16,
         payload: Vec<u32>,
-        needs: Vec<u32>,
+        needs: Vec<f64>,
         now_tic: u16,
     ) -> f64 {
         let (traits, conditions) = decode_payload(&self.bundle, kind, &payload);
@@ -590,7 +590,7 @@ impl Content {
         &self,
         kind: u16,
         payload: Vec<u32>,
-        needs: Vec<u32>,
+        needs: Vec<f64>,
         now_tic: u16,
     ) -> f64 {
         let (traits, conditions) = decode_payload(&self.bundle, kind, &payload);
@@ -613,7 +613,7 @@ impl Content {
         tile_def_id: u16,
         pawn_kind: u16,
         payload: Vec<u32>,
-        needs: Vec<u32>,
+        needs: Vec<f64>,
         now_tic: u16,
         cheb_distance: u32,
     ) -> js_sys::Array {
@@ -628,7 +628,7 @@ impl Content {
         object_id: u16,
         pawn_kind: u16,
         payload: Vec<u32>,
-        needs: Vec<u32>,
+        needs: Vec<f64>,
         now_tic: u16,
         cheb_distance: u32,
     ) -> js_sys::Array {
@@ -697,7 +697,7 @@ impl Content {
         &self,
         pawn_object_id: u16,
         payload: Vec<u32>,
-        needs: Vec<u32>,
+        needs: Vec<f64>,
         now_tic: u16,
     ) -> js_sys::Array {
         let binds: Vec<_> = self
@@ -1030,7 +1030,7 @@ fn menu_options(
     binds: Vec<dsl::loader::InteractionBind>,
     pawn_kind: u16,
     payload: Vec<u32>,
-    needs: Vec<u32>,
+    needs: Vec<f64>,
     now_tic: u16,
     cheb_distance: u32,
 ) -> js_sys::Array {
@@ -1084,16 +1084,24 @@ fn decode_payload(
     bundle: &dsl::loader::Bundle,
     kind: u16,
     payload: &[u32],
-) -> (Vec<u32>, Vec<(u32, u16)>) {
+) -> (Vec<u64>, Vec<(u64, u16)>) {
     (
         bundle.object_trait_rows(kind, &resonantdust_codec::payload::payload_traits(payload)),
         resonantdust_codec::payload::payload_conditions(payload),
     )
 }
 
-/// Un-flatten the stride-2 `[packed_row, set_tic, …]` needs rows the host passes.
-fn decode_need_rows(needs: &[u32]) -> Vec<(u32, u16)> {
-    needs.chunks_exact(2).map(|c| (c[0], c[1] as u16)).collect()
+/// Un-flatten the stride-2 `[row, set_tic, …]` needs rows the host passes. The row is the
+/// ONE u64 (trait-rows-u32 F1) riding a JS number — exact under THE 48-BIT LAW, asserted.
+fn decode_need_rows(needs: &[f64]) -> Vec<(u64, u16)> {
+    needs
+        .chunks_exact(2)
+        .map(|c| {
+            let row = c[0] as u64;
+            debug_assert!(resonantdust_codec::object::row_law_ok(row));
+            (row, c[1] as u16)
+        })
+        .collect()
 }
 
 fn macro_origin(macro_position: u16) -> (i64, i64) {

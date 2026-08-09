@@ -360,7 +360,10 @@ export class MoverLayer {
     this.unsubs.push(client.onPawnNeed((n) => {
       let rows = this.needRows.get(n.entityReference);
       if (!rows) this.needRows.set(n.entityReference, (rows = new Map()));
-      rows.set(n.need & 0xffff, [n.need, n.setTic]);
+      // The row is the ONE u64 (trait-rows-u32 F1) as a 48-bit-safe number; the key is
+      // its FULL reference — split by MODULO, never bitwise (THE 48-BIT LAW: `&`/`>>>`
+      // truncate at 32 bits and would silently mangle anything wider).
+      rows.set(n.need % 0x100000000, [n.need, n.setTic]);
     }));
     this.unsubs.push(client.onMoveIntent((intent) => this.onMoveIntent(intent)));
     // A zone leaving the subscription sends no per-entity delete, so drop its movers.

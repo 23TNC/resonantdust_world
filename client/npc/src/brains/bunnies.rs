@@ -51,7 +51,7 @@ pub struct Bunnies {
     spawn_after: Instant,
     minds: HashMap<u32, Mind>,
     payloads: HashMap<u32, Vec<u32>>,
-    need_rows: HashMap<u32, HashMap<u32, (u32, u16)>>,
+    need_rows: HashMap<u32, HashMap<u32, (u64, u16)>>,
     /// HOSTED mode (npc-host F11): the OWNERSHIP set — only refs the module's player minted
     /// (fed by `Event::OwnedPawn`) are adopted; `None` = the legacy kind-scan (standalone).
     owned: Option<std::collections::HashSet<u32>>,
@@ -154,7 +154,7 @@ impl Bunnies {
         )
     }
 
-    fn rows_of(&self, id: u32) -> (Vec<u32>, Vec<(u32, u16)>, Vec<(u32, u16)>) {
+    fn rows_of(&self, id: u32) -> (Vec<u64>, Vec<(u64, u16)>, Vec<(u64, u16)>) {
         // trait-lights F5: constant binds derive through THE merged accessor.
         let traits = match &self.bundle {
             Some(b) => b.object_trait_rows(
@@ -506,7 +506,7 @@ impl Brain for Bunnies {
                 }
             }
             Event::PawnNeed { entity_reference, need, set_tic, .. } => {
-                let key = *need & 0xffff;
+                let key = resonantdust_codec::object::row_reference(*need);
                 self.need_rows
                     .entry(*entity_reference)
                     .or_default()
@@ -527,8 +527,11 @@ impl Brain for Bunnies {
             let n = self.minds.len();
             if self.last_count != Some(n) {
                 let q = resonantdust_codec::value::quantize(n as f32, min as f32, max as f32);
-                let row = resonantdust_codec::object::pack_gameplay_row(nref, q);
-                if act.queue(vec![resonantdust_codec::action::SET_NEED, pp, row]).is_ok() {
+                // The wire splits the row (trait-rows-u32 F1): reference word + data word.
+                if act
+                    .queue(vec![resonantdust_codec::action::SET_NEED, pp, nref, u32::from(q)])
+                    .is_ok()
+                {
                     self.last_count = Some(n);
                     tracing::info!(count = n, player_pawn = format!("{pp:#010x}"),
                         "group count written (npc-host F8)");

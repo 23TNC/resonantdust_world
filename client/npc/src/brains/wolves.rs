@@ -10,7 +10,7 @@ use client::world::tile_to_position;
 use client::Event;
 use resonantdust_codec::action::{EXECUTE_INTERACTION, GRANT_CONDITION, SET_NEED};
 use resonantdust_codec::object::{
-    def_kind_id, def_sans_variant, gameplay_row_key, pack_gameplay_row, position_macro, TYPE_PAWN,
+    def_kind_id, def_sans_variant, row_reference, position_macro, TYPE_PAWN,
 };
 use resonantdust_codec::payload::{payload_conditions, payload_traits};
 use resonantdust_codec::refs::entity_ref_type_id;
@@ -90,7 +90,7 @@ pub struct Wolves {
     payloads: HashMap<u32, Vec<u32>>,
     /// The `needs` sub-table rows per entity (stat-model F2): `need_key → (packed, set_tic)`,
     /// fed by the fanned `PawnNeed` frames — a sip lands as exactly one update here.
-    need_rows: HashMap<u32, HashMap<u16, (u32, u16)>>,
+    need_rows: HashMap<u32, HashMap<u32, (u64, u16)>>,
     /// Thirst-init grace: wait past this before concluding the wolf HAS no thirst row —
     /// the snapshot's payload replay must get its chance, or a restart would reset a
     /// half-drained thirst to full.
@@ -226,7 +226,7 @@ impl Wolves {
     /// nothing, because nothing changed and nothing was written. Behaviour stays A→B —
     /// the conditions are the DECISION CONTEXT the successor action stream reads.
     /// This wolf's need rows as the eval's `(packed, set_tic)` slice (stat-model F2).
-    fn wolf_needs(&self) -> Vec<(u32, u16)> {
+    fn wolf_needs(&self) -> Vec<(u64, u16)> {
         self.wolf
             .and_then(|w| self.need_rows.get(&w))
             .map(|m| m.values().copied().collect())
@@ -246,8 +246,8 @@ impl Wolves {
         // (CREATE mints needs now — F11 — so this is the drill lane + the re-mint safety
         // net for rows wiped under an adopted wolf).
         if self.thirst != 0 && !self.init_queued && std::time::Instant::now() > self.init_after {
-            let key = (self.thirst & 0xFFFF) as u16;
-            let has_thirst = needs.iter().any(|&(r, _)| gameplay_row_key(r) == key);
+            let has_thirst =
+                needs.iter().any(|&(r, _)| row_reference(r) == self.thirst);
             // A DRILL seed overrides an existing row on purpose — the env is the explicit
             // forcing lane; the no-row grace protects only undrilled runs.
             if !has_thirst || self.thirst_drill.is_some() {
@@ -255,8 +255,8 @@ impl Wolves {
                 let full = np.as_ref().map(|np| np.max as f32).unwrap_or(1.0);
                 let (lo, hi) = np.as_ref().map(|np| (np.min as f32, np.max as f32)).unwrap_or((0.0, 1.0));
                 let sat = self.thirst_drill.unwrap_or(full);
-                let row = pack_gameplay_row(self.thirst, quantize(sat, lo, hi));
-                if act.queue(vec![SET_NEED, wolf, row]).is_err() {
+                let q = quantize(sat, lo, hi);
+                if act.queue(vec![SET_NEED, wolf, self.thirst, u32::from(q)]).is_err() {
                     tracing::error!("engine gone during thirst init");
                     return;
                 }
@@ -291,14 +291,13 @@ impl Wolves {
                 for m in &cp.needs {
                     let Some(mref) = bundle.gameplay_reference("need", &m.need) else { continue };
                     let Some(mp) = bundle.need_params_by_ref(mref) else { continue };
-                    let mkey = (mref & 0xFFFF) as u16;
                     let Some(&(mrow, mset)) =
-                        needs.iter().find(|(r, _)| gameplay_row_key(*r) == mkey)
+                        needs.iter().find(|(r, _)| row_reference(*r) == mref)
                     else {
                         continue;
                     };
                     let mval = f64::from(resonantdust_codec::value::dequantize(
-                        resonantdust_codec::object::gameplay_row_data(mrow),
+                        resonantdust_codec::object::row_data(mrow),
                         mp.min as f32,
                         mp.max as f32,
                     ));
@@ -309,13 +308,15 @@ impl Wolves {
                     program.extend_from_slice(&[
                         SET_NEED,
                         wolf,
-                        pack_gameplay_row(mref, quantize(msat as f32, mp.min as f32, mp.max as f32)),
+                        mref,
+                        u32::from(quantize(msat as f32, mp.min as f32, mp.max as f32)),
                     ]);
                 }
                 program.extend_from_slice(&[
                     GRANT_CONDITION,
                     wolf,
-                    pack_gameplay_row(cref, cp.duration as u16),
+                    cref,
+                    u32::from(cp.duration as u16),
                 ]);
                 if act.queue(program).is_err() {
                     tracing::error!("engine gone during the grant drill");
@@ -341,8 +342,8 @@ impl Wolves {
         let Some(now) = bot.now_tic() else { return };
         // Sip-landed detector: the thirst row's `set_tic` advancing means the last drink
         // (or any write) landed — re-arm the latch so a still-thirsty wolf sips again.
-        let key = (self.thirst & 0xFFFF) as u16;
-        let row_tic = needs.iter().find(|(r, _)| gameplay_row_key(*r) == key).map(|&(_, t)| t);
+        let row_tic =
+            needs.iter().find(|(r, _)| row_reference(*r) == self.thirst).map(|&(_, t)| t);
         if row_tic != self.last_row_tic {
             self.last_row_tic = row_tic;
             self.drink_issued = false;
@@ -823,7 +824,7 @@ impl Brain for Wolves {
             self.need_rows
                 .entry(*entity_reference)
                 .or_default()
-                .insert(gameplay_row_key(*need), (*need, *set_tic));
+                .insert(resonantdust_codec::object::row_reference(*need), (*need, *set_tic));
             return;
         }
         let Event::StateObject { entity_reference, definition_reference, tile_x, tile_y, removed, .. } = event

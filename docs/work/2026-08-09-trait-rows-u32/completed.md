@@ -1,5 +1,22 @@
 # Completed — trait-rows-u32
 
+## 2026-08-09 — P2 COMPLETE: every consumer on the ONE u64 row, LIVE
+
+**The wire**: SET_NEED/GRANT_CONDITION arities widen to (obj, reference, data) — the u64 row
+rides the u32-word program SPLIT; the worker's relays re-join with pack_row; every queue
+site (interaction effects, inventory free-counts, restamp mirrors, the npc's drills and the
+host's bookkeeping) authors the two-word form; event_shard republished (its wasm validates
+arity). **The consumers**: worker (mint_sidecars by category+variant, the sweep/crossing
+lanes keyed by FULL reference), npc (both brains' row maps re-keyed), edge (the mint's
+full_rows → u64; the Need frame field u64 — ONE lossless number under the law), client/core
+(api/protocol/engine/web), wasm (needs arrays cross as f64s with the row-law debug assert),
+webgl (the ONE TS row-key site made lawful: modulo, never bitwise — the I9 comment teaches
+at the site). **Verified LIVE**: registry re-seeded 234 defs CLEAN; pawn needs rows stored
+as u64 (0x8000_80010030); the host's whole stage-1 loop runs on the new law (count 3 written
+through the split wire → stored 0x3000_80010060 → fanned back); the world renders; a live
+wolf's panel shows its condition cards evaluated from u64 rows (capture u64rows). The
+modules item's hand-write drill = the count writes traveling the full event system.
+
 ## 2026-08-09 — P1 complete + the content re-author: EVERYTHING GREEN in shared/content
 
 The corpus re-authored in the SAME commit as the tests (I3's one-commit law):

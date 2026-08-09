@@ -1133,7 +1133,7 @@ async fn ensure_player_pawn(
         .current_worldgen()
         .and_then(|wg| {
             let b = wg.bundle();
-            let full_rows = |nrefs: Vec<u32>| -> Vec<u32> {
+            let full_rows = |nrefs: Vec<u32>| -> Vec<u64> {
                 nrefs
                     .into_iter()
                     .filter_map(|nref| {
@@ -1143,7 +1143,7 @@ async fn ensure_player_pawn(
                             np.min as f32,
                             np.max as f32,
                         );
-                        Some(resonantdust_codec::object::pack_gameplay_row(nref, q))
+                        Some(resonantdust_codec::object::pack_row(nref, q))
                     })
                     .collect()
             };

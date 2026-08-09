@@ -782,7 +782,7 @@ mod def_fixture {
             .thing_traits(kind)
             .iter()
             .map(|b| {
-                resonantdust_codec::object::pack_gameplay_row(
+                resonantdust_codec::object::pack_row(
                     bundle.gameplay_reference("trait", &b.name).expect("trait ref"),
                     b.level,
                 )
