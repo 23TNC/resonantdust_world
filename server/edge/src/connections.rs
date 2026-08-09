@@ -107,6 +107,9 @@ connector!(connect_players, players);
 connector!(connect_event_shard, event_shard);
 connector!(connect_data_shard, data_shard);
 connector!(connect_pawn, pawn);
+// The players' row-carrier shard (player-pawns P2): the login funnel mints there and reads
+// the minted reference off `spawn_log`.
+connector!(connect_player_pawn, player_pawn);
 // The cold shards (`docs/intent/world-storage/`): a zone's ground + scatter, relayed per zone.
 connector!(connect_tile, tile);
 connector!(connect_thing, thing);

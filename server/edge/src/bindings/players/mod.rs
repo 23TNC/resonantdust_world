@@ -13,22 +13,28 @@ use spacetimedb_sdk::__codegen::{
 
 pub mod player_type;
 pub mod player_id_counter_type;
+pub mod player_pawns_type;
 pub mod player_profile_type;
 pub mod claim_or_login_reducer;
 pub mod create_player_reducer;
+pub mod link_player_pawn_reducer;
 pub mod set_last_login_reducer;
 pub mod set_player_faction_reducer;
 pub mod set_player_permissions_reducer;
+pub mod player_pawns_table;
 pub mod player_profiles_table;
 pub mod players_table;
 
 pub use player_type::Player;
 pub use player_id_counter_type::PlayerIdCounter;
+pub use player_pawns_type::PlayerPawns;
 pub use player_profile_type::PlayerProfile;
+pub use player_pawns_table::*;
 pub use player_profiles_table::*;
 pub use players_table::*;
 pub use claim_or_login_reducer::claim_or_login;
 pub use create_player_reducer::create_player;
+pub use link_player_pawn_reducer::link_player_pawn;
 pub use set_last_login_reducer::set_last_login;
 pub use set_player_faction_reducer::set_player_faction;
 pub use set_player_permissions_reducer::set_player_permissions;
@@ -48,6 +54,10 @@ pub enum Reducer {
     CreatePlayer {
         client_time_ms: u64,
         name: String,
+}    ,
+    LinkPlayerPawn {
+        player_id: u32,
+        player_pawn_reference: u32,
 }    ,
     SetLastLogin {
         client_time_ms: u64,
@@ -75,6 +85,7 @@ impl __sdk::Reducer for Reducer {
         match self {
                         Reducer::ClaimOrLogin { .. } => "claim_or_login",
             Reducer::CreatePlayer { .. } => "create_player",
+            Reducer::LinkPlayerPawn { .. } => "link_player_pawn",
             Reducer::SetLastLogin { .. } => "set_last_login",
             Reducer::SetPlayerFaction { .. } => "set_player_faction",
             Reducer::SetPlayerPermissions { .. } => "set_player_permissions",
@@ -97,6 +108,13 @@ fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
 }             => __sats::bsatn::to_vec(&create_player_reducer::CreatePlayerArgs {
                 client_time_ms: client_time_ms.clone(),
                 name: name.clone(),
+}),
+            Reducer::LinkPlayerPawn{
+                player_id,
+                player_pawn_reference,
+}             => __sats::bsatn::to_vec(&link_player_pawn_reducer::LinkPlayerPawnArgs {
+                player_id: player_id.clone(),
+                player_pawn_reference: player_pawn_reference.clone(),
 }),
             Reducer::SetLastLogin{
                 client_time_ms,
@@ -132,7 +150,8 @@ fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
 #[allow(non_snake_case)]
 #[doc(hidden)]
 pub struct DbUpdate {
-        player_profiles: __sdk::TableUpdate<PlayerProfile>,
+        player_pawns: __sdk::TableUpdate<PlayerPawns>,
+    player_profiles: __sdk::TableUpdate<PlayerProfile>,
     players: __sdk::TableUpdate<Player>,
 }
 
@@ -144,7 +163,8 @@ impl TryFrom<__ws::v2::TransactionUpdate> for DbUpdate {
         for table_update in __sdk::transaction_update_iter_table_updates(raw) {
             match &table_update.table_name[..] {
 
-        "player_profiles" => db_update.player_profiles.append(player_profiles_table::parse_table_update(table_update)?),
+        "player_pawns" => db_update.player_pawns.append(player_pawns_table::parse_table_update(table_update)?),
+    "player_profiles" => db_update.player_profiles.append(player_profiles_table::parse_table_update(table_update)?),
     "players" => db_update.players.append(players_table::parse_table_update(table_update)?),
 
                 unknown => {
@@ -168,7 +188,8 @@ impl __sdk::DbUpdate for DbUpdate {
     fn apply_to_client_cache(&self, cache: &mut __sdk::ClientCache<RemoteModule>) -> AppliedDiff<'_> {
                     let mut diff = AppliedDiff::default();
                 
-                diff.player_profiles = cache.apply_diff_to_table::<PlayerProfile>("player_profiles", &self.player_profiles).with_updates_by_pk(|row| &row.player_id);
+                diff.player_pawns = cache.apply_diff_to_table::<PlayerPawns>("player_pawns", &self.player_pawns).with_updates_by_pk(|row| &row.player_pawn_reference);
+        diff.player_profiles = cache.apply_diff_to_table::<PlayerProfile>("player_profiles", &self.player_profiles).with_updates_by_pk(|row| &row.player_id);
         diff.players = cache.apply_diff_to_table::<Player>("players", &self.players).with_updates_by_pk(|row| &row.player_id);
 
                     diff
@@ -177,7 +198,8 @@ fn parse_initial_rows(raw: __ws::v2::QueryRows) -> __sdk::Result<Self> {
                 let mut db_update = DbUpdate::default();
 for table_rows in raw.tables {
             match &table_rows.table[..] {
-                                "player_profiles" => db_update.player_profiles.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
+                                "player_pawns" => db_update.player_pawns.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
+                "player_profiles" => db_update.player_profiles.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
                 "players" => db_update.players.append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
                 unknown => { return Err(__sdk::InternalError::unknown_name("table", unknown, "QueryRows").into()); }
 }}        Ok(db_update)
@@ -186,7 +208,8 @@ fn parse_unsubscribe_rows(raw: __ws::v2::QueryRows) -> __sdk::Result<Self> {
                 let mut db_update = DbUpdate::default();
 for table_rows in raw.tables {
             match &table_rows.table[..] {
-                                "player_profiles" => db_update.player_profiles.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
+                                "player_pawns" => db_update.player_pawns.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
+                "player_profiles" => db_update.player_profiles.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
                 "players" => db_update.players.append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
                 unknown => { return Err(__sdk::InternalError::unknown_name("table", unknown, "QueryRows").into()); }
 }}        Ok(db_update)
@@ -197,7 +220,8 @@ for table_rows in raw.tables {
 #[allow(non_snake_case)]
 #[doc(hidden)]
 pub struct AppliedDiff<'r> {
-        player_profiles: __sdk::TableAppliedDiff<'r, PlayerProfile>,
+        player_pawns: __sdk::TableAppliedDiff<'r, PlayerPawns>,
+    player_profiles: __sdk::TableAppliedDiff<'r, PlayerProfile>,
     players: __sdk::TableAppliedDiff<'r, Player>,
     __unused: std::marker::PhantomData<&'r ()>,
 }
@@ -209,7 +233,8 @@ impl __sdk::InModule for AppliedDiff<'_> {
 
 impl<'r> __sdk::AppliedDiff<'r> for AppliedDiff<'r> {
     fn invoke_row_callbacks(&self, event: &EventContext, callbacks: &mut __sdk::DbCallbacks<RemoteModule>) {
-                callbacks.invoke_table_row_callbacks::<PlayerProfile>("player_profiles", &self.player_profiles, event);
+                callbacks.invoke_table_row_callbacks::<PlayerPawns>("player_pawns", &self.player_pawns, event);
+        callbacks.invoke_table_row_callbacks::<PlayerProfile>("player_profiles", &self.player_profiles, event);
         callbacks.invoke_table_row_callbacks::<Player>("players", &self.players, event);
 }
 }
@@ -862,11 +887,13 @@ impl __sdk::SpacetimeModule for RemoteModule {
     type QueryBuilder = __sdk::QueryBuilder;
 
 fn register_tables(client_cache: &mut __sdk::ClientCache<Self>) {
-                player_profiles_table::register_table(client_cache);
+                player_pawns_table::register_table(client_cache);
+        player_profiles_table::register_table(client_cache);
         players_table::register_table(client_cache);
 }
 const ALL_TABLE_NAMES: &'static [&'static str] = &[
-                "player_profiles",
+                "player_pawns",
+        "player_profiles",
         "players",
 ];
 }

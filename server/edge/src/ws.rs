@@ -197,6 +197,12 @@ async fn session_worker(
             ClientMsg::Login { cid, client_time_ms, name } => {
                 handle_login(players.as_ref(), &out_tx, &mut session, cid, client_time_ms, name)
                     .await;
+                // player-pawns P2: the mint funnel runs DETACHED after LoginOk (I6 — a
+                // healing player_pawn shard can never block or fail a login; the next
+                // login simply retries).
+                if let (Some(player_id), Some(p)) = (session, players.as_ref()) {
+                    tokio::spawn(ensure_player_pawn(pool.clone(), p.clone(), player_id));
+                }
             }
             ClientMsg::Queue { cid, actions } => {
                 handle_queue(world.event.as_ref(), &out_tx, session, cid, actions);
@@ -961,10 +967,111 @@ async fn build_players(
     let handle = conn
         .subscription_builder()
         .on_error(|_ctx, err| tracing::warn!(%err, "players subscription error"))
-        .subscribe(["SELECT * FROM players"]);
+        // player_pawns rides the same subscription (player-pawns P2): the login funnel
+        // reads the linkage to decide whether a mint is needed.
+        .subscribe(["SELECT * FROM players", "SELECT * FROM player_pawns"]);
     // The handle must outlive this fn or the subscription tears down immediately.
     std::mem::forget(handle);
     Some(conn)
+}
+
+/// Ensure the player owns a player-pawn (player-pawns P2, F2/I6) — the login funnel's second
+/// half, spawned DETACHED after `LoginOk` so a healing shard can never block or fail a login:
+/// if the linkage shows no row for this player, mint one on the `player_pawn` shard
+/// (idempotent — the spawn ledger dedups on `(player_id, 0)`), read the minted reference off
+/// `spawn_log`, and record the linkage (idempotent again; the first link becomes ACTIVE
+/// inside the reducer — the one enforcement funnel, I4). Every failure path just logs:
+/// the next login retries the whole funnel.
+async fn ensure_player_pawn(
+    pool: Arc<Pool>,
+    players: Arc<bindings::players::DbConnection>,
+    player_id: u32,
+) {
+    use bindings::players::link_player_pawn as _;
+    use bindings::players::player_pawns_table::PlayerPawnsTableAccess;
+    use bindings::player_pawn::spawn as _;
+    use bindings::player_pawn::spawn_log_table::SpawnLogTableAccess;
+
+    if players.db().player_pawns().iter().any(|r| r.player_id == player_id) {
+        return; // already owns one — the common every-login case
+    }
+    let (conn, ready) = match crate::connections::connect_player_pawn(
+        &pool.cfg.uri,
+        &pool.cfg.player_pawn_db(),
+    ) {
+        Some(c) => c,
+        None => {
+            tracing::warn!(player_id, "player_pawn upstream unavailable — mint deferred to next login");
+            return;
+        }
+    };
+    if !await_ready(ready).await {
+        tracing::warn!(player_id, "player_pawn connect timed out — mint deferred to next login");
+        return;
+    }
+    let handle = conn
+        .subscription_builder()
+        .on_error(|_ctx, err| tracing::warn!(%err, "player_pawn spawn_log subscription error"))
+        .subscribe([format!("SELECT * FROM spawn_log WHERE event_reference = {player_id}")]);
+    // The mint: the ledger key is (player_id, 0) — the login funnel's dedup, not a world
+    // event. def/needs are empty until P3 authors the default `player` def; position 0 and
+    // promote=true so the live row exists (the worker's ghost guard requires it).
+    if let Err(err) = conn.reducers.spawn(0, 0, player_id, 0, 0, 0, vec![], vec![], 0, true) {
+        tracing::warn!(player_id, %err, "player_pawn spawn submit failed — mint deferred");
+        return; // dropping `handle` + `conn` tears the subscription down
+    }
+    // Read the minted reference off the ledger (the reducer returns no value): poll the
+    // subscribed cache the same way the login read polls `players`.
+    let mut minted = None;
+    for _ in 0..PLAYER_READ_POLLS {
+        if let Some(r) = conn.db().spawn_log().iter().find(|r| r.event_reference == player_id) {
+            minted = Some(r.entity_reference);
+            break;
+        }
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+    let Some(player_pawn_reference) = minted else {
+        tracing::warn!(player_id, "player-pawn mint not visible — link deferred to next login");
+        return;
+    };
+    // Await the reducer OUTCOME (the `_then` form, claim_or_login's shape) on a connection
+    // THIS TASK OWNS: the session's players conn is explicitly `disconnect()`ed at session
+    // teardown, so a login-and-quit races the detached submit to death — seen live (the
+    // linkage never landed while the direct CLI call worked). A dedicated conn's lifecycle
+    // ends at this fn's end, after the outcome arrives.
+    let (own_players, ready) = match crate::connections::connect_players(&pool.cfg.uri, &pool.cfg.players_db()) {
+        Some(c) => c,
+        None => {
+            tracing::warn!(player_id, "players upstream unavailable for the link — deferred");
+            return;
+        }
+    };
+    if !await_ready(ready).await {
+        tracing::warn!(player_id, "players connect timed out for the link — deferred");
+        return;
+    }
+    let (done_tx, done_rx) = oneshot::channel::<Result<(), String>>();
+    let done_tx = Mutex::new(Some(done_tx));
+    let submit = own_players.reducers.link_player_pawn_then(player_id, player_pawn_reference, move |_ctx, res| {
+        let outcome = res.unwrap_or_else(|e| Err(format!("internal: {e}")));
+        if let Some(tx) = done_tx.lock().unwrap().take() {
+            let _ = tx.send(outcome);
+        }
+    });
+    if let Err(err) = submit {
+        tracing::warn!(player_id, %err, "link_player_pawn submit failed — link deferred");
+        return;
+    }
+    match tokio::time::timeout(REDUCER_CALL_TIMEOUT, done_rx).await {
+        Ok(Ok(Ok(()))) => tracing::info!(
+            player_id,
+            player_pawn = format!("{player_pawn_reference:#010x}"),
+            "player-pawn minted + linked (player-pawns P2)"
+        ),
+        Ok(Ok(Err(err))) => tracing::warn!(player_id, %err, "link_player_pawn refused — link deferred"),
+        _ => tracing::warn!(player_id, "link_player_pawn outcome not seen — link deferred to next login"),
+    }
+    drop(handle); // drop = unsubscribe; the connection follows at fn end
 }
 
 /// Relay `claim_or_login` to the players DB, then read back the resulting

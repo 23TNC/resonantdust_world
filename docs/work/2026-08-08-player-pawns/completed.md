@@ -1,5 +1,26 @@
 # Completed — player-pawns
 
+## 2026-08-08 — P2: mint-at-login
+
+**The linkage** — `players.player_pawns` (PK player_pawn_reference, btree player_id, active)
++ `link_player_pawn`: idempotent, first link becomes ACTIVE inside the reducer — the ONE
+enforcement funnel (I4). Published as an in-place update (additive table, accounts kept —
+though the earlier P2 publish DID reset the DB: ids restarted at 1024).
+
+**The funnel** — the edge's `ensure_player_pawn`, spawned DETACHED after LoginOk (I6: a
+failing shard can never block or fail a login): linkage-cache fast path → own player_pawn
+connection → `spawn` with ledger key `(player_id, 0)` (the login funnel's dedup, def/needs
+empty until P3) → minted ref off `spawn_log` → `link_player_pawn_then` awaited on a
+connection THE TASK OWNS. Two real defects found and fixed by the drill: (1) a bare reducer
+submit is only a QUEUE — a login-and-quit session tore the connection down before the flush
+and the link silently vanished; (2) even the `_then` form dies when it rides the SESSION's
+players conn, because session teardown calls `disconnect()` explicitly — the fix is a
+dedicated connection whose lifecycle ends after the outcome arrives. Verified LIVE: five
+players (npc Wolves/Bunnies auto-minted on reconnect — every npc module IS a player-pawn
+owner now — plus three drill users) each exactly one linkage row, active=true; a re-login
+linked the SAME deduped ref (0x40800004) healing its earlier deferral; quit-fast logins land;
+login_ok always returned even when the link deferred (the degrade path, observed twice).
+
 ## 2026-08-08 — P1: the shard + the routing lane
 
 **The module** — `server/spacetime/server/modules/player_pawn`: pawn's stamp re-instantiated

@@ -196,6 +196,12 @@ impl ServerConfig {
         format!("resonantdust-{}-pawn-0", self.env)
     }
 
+    /// The `player_pawn` DB — the players' row-carrier shard (player-pawns P1/P2): pawn's
+    /// stamp, one instance, where the login funnel mints each player's player-pawn.
+    pub fn player_pawn_db(&self) -> String {
+        format!("resonantdust-{}-player-pawn-0", self.env)
+    }
+
     /// The `tile` cold DB — a zone's dense ground (`cold_tile`), subscribed per zone.
     pub fn tile_db(&self) -> String {
         format!("resonantdust-{}-tile-0", self.env)

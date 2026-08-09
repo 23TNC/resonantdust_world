@@ -6,3 +6,4 @@ pub mod data_shard;
 pub mod tile;
 pub mod thing;
 pub mod pawn;
+pub mod player_pawn;

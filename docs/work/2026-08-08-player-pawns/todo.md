@@ -23,7 +23,7 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P2 — identity
 
-- [ ] Mint-at-login, idempotent + non-blocking (F2/I6): the players auth DB carries the
+- [x] Mint-at-login, idempotent + non-blocking (F2/I6): the players auth DB carries the
       linkage with the active bit; one enforcement funnel (I4). Acceptance: two logins, one
       row; a bounced shard degrades, not blocks.
 

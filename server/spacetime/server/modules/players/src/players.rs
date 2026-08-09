@@ -228,6 +228,47 @@ pub struct PlayerProfile {
     pub data_shard: u16,
 }
 
+/// The player ↔ player-pawn linkage (player-pawns work F2, `docs/TABLES.md`): a player's
+/// OWNED player-pawns with exactly ONE active. The list's length is pinned to 1 for now
+/// (minted idempotently by the edge's login funnel); "multiple characters, chosen on login"
+/// is the recorded future, so nothing may assume length 1 — readers resolve THE ACTIVE row.
+#[spacetimedb::table(accessor = player_pawns, public)]
+#[derive(Debug, Clone)]
+pub struct PlayerPawns {
+    /// The `TYPE_PLAYER` entity in the `player_pawn` shard (`player_pawn_reference`).
+    #[primary_key]
+    pub player_pawn_reference: u32,
+    /// The owner.
+    #[index(btree)]
+    pub player_id: u32,
+    /// Exactly one true per player — enforced HERE (the one funnel, I4), nowhere else.
+    pub active: bool,
+}
+
+/// Record a minted player-pawn against its owner — the login funnel's second half (the edge
+/// calls the `player_pawn` shard's `spawn`, reads the minted reference off its `spawn_log`,
+/// then links it here). Idempotent: re-linking the same reference is a no-op. The first
+/// linked player-pawn becomes ACTIVE; later ones (the future multi-character arc) link
+/// inactive until a selection funnel flips them — the one-active invariant lives in this
+/// reducer alone (I4).
+#[reducer]
+pub fn link_player_pawn(
+    ctx: &ReducerContext,
+    player_id: u32,
+    player_pawn_reference: u32,
+) -> Result<(), String> {
+    if ctx.db.player_pawns().player_pawn_reference().find(player_pawn_reference).is_some() {
+        return Ok(()); // replayed link — already recorded
+    }
+    let has_active = ctx.db.player_pawns().player_id().filter(player_id).any(|r| r.active);
+    ctx.db.player_pawns().insert(PlayerPawns {
+        player_pawn_reference,
+        player_id,
+        active: !has_active,
+    });
+    Ok(())
+}
+
 fn now_ms(ctx: &ReducerContext) -> u64 {
     (ctx.timestamp.to_micros_since_unix_epoch() / 1_000) as u64
 }
