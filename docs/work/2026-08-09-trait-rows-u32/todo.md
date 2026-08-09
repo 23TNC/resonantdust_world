@@ -5,21 +5,21 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P0 — the paper
 
-- [ ] VARIABLES.md: the u64 row shape (F1/I9), the six categories + the old two's
-      retirement (F2), the ACTIVE law (3 slots, two doors — I5), the sprint lifecycle
-      (F4). Acceptance: docs-check green.
+- [ ] VARIABLES.md: trait rows = bare u32 refs, tier = the VARIANT nibble, level DELETED
+      (F1/F6); condition/need rows u64 (I9); the six categories (F2); the ACTIVE law (I5);
+      the sprint lifecycle (F4). Acceptance: docs-check green.
 
 ## P1 — the row shape
 
-- [ ] codec: the u64 row helpers (pack/key/data/reference — reference now the FULL u32);
-      payload TRAIT/CONDITION entries carry 2 operand words; the six categories appended
-      (F2). Acceptance: codec unit tests round-trip the new shape.
+- [ ] codec: trait rows = bare refs (pack_gameplay_row's trait callers DELETE); u64
+      condition/need helpers; CONDITION payload entries grow a word (TRAIT stays one); the
+      six categories appended (F2). Acceptance: unit round-trips both shapes.
 - [ ] Modules: the `needs` column u64 in pawn + player_pawn; republished (WIPING, I2);
       st-bindings + edge bindings regenerated. Acceptance: publish green; a hand SET_NEED
       lands a u64 row.
-- [ ] shared/content: the six tables parse into category-tagged lanes; the old two
-      REFUSE with a migration message; constant-by-category (F2). Acceptance: unit —
-      each category loads; the old tables refuse.
+- [ ] shared/content: the six tables parse into category-tagged lanes (per-level arrays →
+      per-VARIANT, binds rename level→variant, params-by-REF — F6); the old two REFUSE
+      (F2). Acceptance: unit — each category loads; the old tables refuse.
 
 ## P2 — the consumer sweep
 

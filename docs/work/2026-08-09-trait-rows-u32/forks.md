@@ -1,18 +1,28 @@
 # Forks — trait-rows-u32
 
-## F1 — ONE u64 row shape: `data:16 | definition_reference:32`
+## F1 — trait rows are BARE u32 references; condition/need rows are u64 (REVISED, user)
 
-The user's "hold as u32" names the IDENTITY: the full `definition_reference` (its u12 subtype
-is the point). The data lane (trait level / condition remaining / need value) still needs its
-u16, so the STORED row is u64 — `reserved:16 | data:16 | reference:32`. One shape for all
-three families keeps the ONE-eval law one law. Consequences, taken deliberately: payload
-TRAIT/CONDITION entries carry 2 operand words instead of 1 (the opcode stream's count field
-already supports it); the `needs` (and player_pawn `needs`) sub-table column widens u32→u64
-(a module schema change — the wiping-republish ritual); `pack_gameplay_row`/`gameplay_row_*`
-helpers change signature so every consumer breaks LOUDLY at compile, which is the sweep
-finding itself. Rejected: paired u32 words (two lanes to keep in sync); keeping u32 rows with
-a category nibble squeezed in (the subtype is 12 bits — it does not fit; half-measures are
-how the current collision happened).
+REVISED at review after the level census (14 traits, deepest table 3 levels, highest bind
+L2): LEVEL IS REMOVED — a trait's tier is its definition's VARIANT nibble (u4, 15 tiers +
+the 0 default — five times today's depth). A stored TRAIT row is therefore JUST the full
+u32 `definition_reference`: no data lane, no packing helper, payload TRAIT entries stay ONE
+word, and `object_trait_rows` returns plain refs. Conditions and needs genuinely use their
+u16 data (remaining_at_write / the fixed-point value), so THEIR stored rows are u64 —
+`reserved:16 | data:16 | reference:32` (reserved ZERO, I9) — and their payload/sub-table
+lanes widen. `pack_gameplay_row`'s trait callers DELETE; its condition/need callers move to
+the u64 shape — either way every consumer breaks loudly at compile, which is the sweep
+finding itself. Rejected: a uniform u64 for traits too (a data lane nothing fills);
+keeping level beside variant (two tier numbers is how drift starts).
+
+## F6 — level → variant: the authoring and eval mapping
+
+The per-level ARRAYS stay as authoring sugar — array index i authors VARIANT i+1 (`walks`'s
+`add = [16, 12, 8]` = variants 1..3), so today's corpus re-authors by RENAMING `level = 2`
+binds to `variant = 2` and nothing renumbers. Marker traits (bite, herbivore…) live at
+variant 0 — the bare def IS the capability. `trait_params(name, level)` lookups become
+params-by-REF (the variant indexes the table); "level 0 = absent" semantics die — absence
+is absence of the row. The registry already numbers per-variant tuples (the u4 slot law);
+each authored tier gets its registry row like any variant.
 
 ## F2 — six authored categories; the old two retire empty
 

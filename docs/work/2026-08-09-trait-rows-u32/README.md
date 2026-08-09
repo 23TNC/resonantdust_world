@@ -21,11 +21,14 @@ categories are pure content.
 
 ## The stance
 
-- **The row becomes u64** (F1): `data:16 | definition_reference:32` (high bits reserved) —
-  ONE shape for trait rows (data = level), condition rows (data = remaining_at_write), and
-  need rows (data = value). Payload entries grow a word; the `needs` sub-table column widens;
-  every pack/unpack helper moves to the new shape in ONE codec change; the FULL consumer
-  sweep follows (the ONE eval, worker, wasm, webgl, npc, panels).
+- **LEVEL IS REMOVED; the variant nibble is the tier** (F1/F6, the user's revision after
+  the level census — deepest table 3, highest bind 2, u4 gives 15): a stored TRAIT row is
+  the BARE u32 `definition_reference` (walks tier 2 = the walks def at variant 2); marker
+  traits live at variant 0. Condition and need rows keep their real u16 data
+  (remaining_at_write / value) as u64 `reserved:16 | data:16 | reference:32`. Per-level
+  arrays stay as authoring sugar (index i → variant i+1); binds rename `level` →
+  `variant`; the FULL consumer sweep follows (the ONE eval, worker, wasm, webgl, npc,
+  panels).
 - **Six categories replace two** (F2): `pawn_trait_constant` / `pawn_trait_active` /
   `pawn_trait_passive` / `player_trait_constant` / `player_trait_active` /
   `player_trait_passive`, appended to the gameplay palette; today's `trait` and
@@ -45,7 +48,8 @@ categories are pure content.
 
 ## Exit
 
-A pawn's stored rows carry full references (mixed categories coexist without collision); the
+A pawn's stored trait rows ARE full references (tier in the variant nibble, mixed categories
+coexisting without collision); condition/need rows carry their data beside full references; the
 corpus authors under the six categories with the old two empty; a pawn activates sprint on
 camera — visibly faster while `sprinting` runs, refused while `sprint_cooldown` runs, the
 exhaustion visible on its cards; the 3-slot law refuses a 4th active bind at load and a 4th
