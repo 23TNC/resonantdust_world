@@ -1,5 +1,12 @@
 # Completed — npc-host
 
+## 2026-08-09 — P4 (second half): the harness re-proof (I5)
+
+`NPC_BRAIN=debug NPC_KIND=debug_mover NPC_COUNT=8` under the single-brain FALLBACK: 8 movers
+minted and wandered (175 move intents in ~3 min) and the worker composed IN STEP with the
+master (compose tic = master+1 throughout the sample — mover-perf's verdict language). The
+harness lane survived the host restructure untouched; the drill movers were culled after.
+
 ## 2026-08-09 — P3 (second half): ONE policy, both kinds; the legacy containers retire
 
 The group brain PARAMETERIZED by governed kind — the diet was never code (the corpus's

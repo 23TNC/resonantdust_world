@@ -47,7 +47,7 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 - [ ] The host control arc (I7): wolves + bunnies modules, fed by their own stage-1 AI (no
       forced bands), population stable over a ≥30-min soak. Acceptance: the soak log in
       completed.md.
-- [ ] The measurement harness re-proof (I5): one mover-perf row (`NPC_BRAIN=debug`,
+- [x] The measurement harness re-proof (I5): one mover-perf row (`NPC_BRAIN=debug`,
       NPC_COUNT=8) under the host fallback. Acceptance: the row lands with in-step verdict,
       recorded beside mover-perf's table.
 
