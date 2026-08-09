@@ -1025,6 +1025,21 @@ async fn fan_player_pawn(
     drop(handle);
 }
 
+/// The player's NAME from the auth cache (the F10 login-name resolution's input).
+async fn read_player_name(
+    players: &Arc<bindings::players::DbConnection>,
+    player_id: u32,
+) -> Option<String> {
+    use bindings::players::players_table::PlayersTableAccess;
+    for _ in 0..PLAYER_READ_POLLS {
+        if let Some(p) = players.db().players().iter().find(|p| p.player_id == player_id) {
+            return Some(p.name.clone());
+        }
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+    None
+}
+
 fn player_pawn_need_frame(row: &bindings::player_pawn::Needs) -> ServerMsg {
     ServerMsg::Need {
         entity_reference: row.entity_reference,
@@ -1072,31 +1087,38 @@ async fn ensure_player_pawn(
         .subscription_builder()
         .on_error(|_ctx, err| tracing::warn!(%err, "player_pawn spawn_log subscription error"))
         .subscribe([format!("SELECT * FROM spawn_log WHERE event_reference = {player_id}")]);
-    // The definition + derived rows (P3, F5): the default `player` def from the corpus, its
-    // needs minted FULL at max (the pawn mint law; the owner's bookkeeping writes the true
-    // counts). Player traits are CONSTANT binds — derived by readers, never minted (F4).
-    // A corpus without the def degrades to def 0 (row-carrier still works; rows arrive
-    // when the corpus does).
+    // The definition + derived rows (P3, F5 + npc-host F10, THE LOGIN-NAME LAW): a brain
+    // def whose name equals the player's name wins (the host logs each module-player in AS
+    // its brain); everything else takes the default `player` thing def. Needs mint FULL at
+    // max (the pawn mint law; the owner's bookkeeping writes the true counts). Player
+    // traits are CONSTANT binds — derived by readers, never minted (F4). A corpus without
+    // the def degrades to def 0 (row-carrier still works; rows arrive when the corpus does).
+    let name = read_player_name(&players, player_id).await;
     let (def, need_rows) = pool
         .current_worldgen()
         .and_then(|wg| {
             let b = wg.bundle();
+            let full_rows = |nrefs: Vec<u32>| -> Vec<u32> {
+                nrefs
+                    .into_iter()
+                    .filter_map(|nref| {
+                        let np = b.need_params_by_ref(nref)?;
+                        let q = resonantdust_codec::value::quantize(
+                            np.max as f32,
+                            np.min as f32,
+                            np.max as f32,
+                        );
+                        Some(resonantdust_codec::object::pack_gameplay_row(nref, q))
+                    })
+                    .collect()
+            };
+            if let Some(brain_def) = name.as_deref().and_then(|n| b.brain_definition_reference(n)) {
+                let brain_id = b.brain_object_id(name.as_deref().unwrap())?;
+                return Some((brain_def, full_rows(b.brain_needs(brain_id))));
+            }
             let def = b.definition_reference(false, "player")?;
             let kind = resonantdust_codec::object::def_kind_id(def);
-            let rows: Vec<u32> = b
-                .thing_needs(kind)
-                .into_iter()
-                .filter_map(|nref| {
-                    let np = b.need_params_by_ref(nref)?;
-                    let q = resonantdust_codec::value::quantize(
-                        np.max as f32,
-                        np.min as f32,
-                        np.max as f32,
-                    );
-                    Some(resonantdust_codec::object::pack_gameplay_row(nref, q))
-                })
-                .collect();
-            Some((def, rows))
+            Some((def, full_rows(b.thing_needs(kind))))
         })
         .unwrap_or((0, vec![]));
     if def == 0 {
