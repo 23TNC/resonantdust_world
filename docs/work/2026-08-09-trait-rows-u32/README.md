@@ -22,16 +22,16 @@ categories are pure content.
 ## The stance
 
 - **LEVEL IS REMOVED; the variant nibble is the tier** (F1/F6, after the level census —
-  deepest table 3, highest bind 2, u4 gives 15): a stored TRAIT row is the BARE u32
-  `definition_reference` (walks tier 2 = the walks def at variant 2); markers at variant 0;
-  per-level arrays become per-variant authoring sugar; binds rename `level` → `variant`.
-- **Condition and need rows standardize on u64 = `dead:16 | data:16 | reference:32`**
-  (F1/F7): full subtype + variant lanes on every family; the data u16 kept (most are a
-  single value); the dead 16 held ZERO so a row is 48 significant bits — ONE lossless f64
-  through wasm and JSON (I9: assert the dead lane; TS splits by division, never `>>> 32`).
-  The def's TOML declares HOW the u16 is interpreted (defaults = today's value/remaining;
-  a def may declare lanes, e.g. 2 × i8 onto authored targets — F7). The FULL consumer
-  sweep follows (the ONE eval, worker, wasm, webgl, npc, panels).
+  deepest table 3, highest bind 2, u4 gives 15): walks tier 2 = the walks def at variant 2;
+  markers at variant 0; per-level arrays become per-variant authoring sugar; binds rename
+  `level` → `variant`; "level 0 = absent" dies (absence is the absent row).
+- **EVERY row is the ONE u64 shape: `dead:16 | data:16 | reference:32`** (F1/F7): full
+  subtype + variant lanes on all three families; 48 significant bits = ONE lossless f64
+  through wasm and JSON (I9: dead asserted ZERO; TS splits by division, never `>>> 32`).
+  The data u16 is def-interpreted (F7): need = value, condition = remaining (or declared
+  lanes like 2 × i8); TRAIT = zero, reserved for per-instance state (active-trait charges
+  are the plausible first customer). The FULL consumer sweep follows (the ONE eval, worker,
+  wasm, webgl, npc, panels).
 - **Six categories replace two** (F2): `pawn_trait_constant` / `pawn_trait_active` /
   `pawn_trait_passive` / `player_trait_constant` / `player_trait_active` /
   `player_trait_passive`, appended to the gameplay palette; today's `trait` and
@@ -51,8 +51,8 @@ categories are pure content.
 
 ## Exit
 
-A pawn's stored trait rows ARE full references (tier in the variant nibble, mixed categories
-coexisting without collision); condition/need rows carry their data beside full references; the
+Every stored row is the ONE u64 shape (tier in the variant nibble, mixed categories
+coexisting without collision, data beside full references); the
 corpus authors under the six categories with the old two empty; a pawn activates sprint on
 camera — visibly faster while `sprinting` runs, refused while `sprint_cooldown` runs, the
 exhaustion visible on its cards; the 3-slot law refuses a 4th active bind at load and a 4th

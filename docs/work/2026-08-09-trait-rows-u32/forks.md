@@ -2,22 +2,26 @@
 
 ## F1 — trait rows are BARE u32 references; condition/need rows are u64 (REVISED, user)
 
-REVISED TWICE at review (the level census, then the standardization). LEVEL IS REMOVED —
-a trait's tier is its definition's VARIANT nibble (u4, 15 tiers + the 0 default — five
-times today's authored depth). A stored TRAIT row is JUST the full u32
-`definition_reference`: no data lane, no packing helper, payload TRAIT entries stay ONE
-word, `object_trait_rows` returns plain refs. Condition and need rows STANDARDIZE on u64 =
-`dead:16 | data:16 | reference:32` (the user's settlement): full subtype AND variant lanes
-on all three families, the data u16 kept ("most of our conditions and needs are constant or
-a single value anyway"), and the DEAD 16 held at ZERO — 48 significant bits, so a row rides
-the wasm/JSON boundary as ONE lossless f64 (I9). The def's TOML still declares how the u16
-is interpreted (F7). Their payload entries and the `needs` sub-table columns widen to u64.
-`pack_gameplay_row`'s trait callers DELETE; its condition/need callers move to the u64
-shape — either way every consumer breaks loudly at compile, which is the sweep finding
-itself. Rejected: a uniform u64 for traits too (a data lane nothing fills); keeping level
-beside variant (two tier numbers is how drift starts); a u32 data lane (its 64 significant
-bits force split-word JS transport for headroom nothing authored needs — revisit by waking
-the dead 16, which is exactly what it is reserved for).
+REVISED THRICE at review (the level census, the standardization, then FULL uniformity).
+LEVEL IS REMOVED — a trait's tier is its definition's VARIANT nibble (u4, 15 tiers + the 0
+default — five times today's authored depth); "level 0 = absent" dies with it. EVERY stored
+gameplay row — trait, condition, need — is the ONE u64 shape:
+
+    dead:16 | data:16 | definition_reference:32
+
+48 significant bits, so a row rides the wasm/JSON boundary as ONE lossless f64 (I9); the
+DEAD 16 held ZERO everywhere (waking it is a deliberate revisit). The data u16: need =
+the fixed-point value, condition = remaining-at-write (both def-interpretable — F7);
+TRAIT = ZERO today, reserved for per-instance state (active-trait charges/uses are the
+plausible first customer). Uniformity is the point: one helper set, one eval signature of
+uniform (ref, data) rows, no bare-ref special case threading the consumers — the extra
+4 bytes/row and one extra payload word per TRAIT entry are noise (everything crosses JS
+in f64 slots regardless). The `needs` sub-table columns widen to u64; every
+`pack_gameplay_row` caller moves to the new shape and breaks loudly at compile — the
+sweep finding itself. Rejected: bare-u32 trait rows (uniformity + the free headroom beat
+the special case — reversed from the prior draft once the bits were shown free); keeping
+level beside variant (two tier numbers is how drift starts); a u32 data lane (64
+significant bits force split-word JS transport for headroom nothing needs).
 
 ## F6 — level → variant: the authoring and eval mapping
 

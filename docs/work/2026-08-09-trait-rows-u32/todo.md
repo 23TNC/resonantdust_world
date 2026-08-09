@@ -5,15 +5,15 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P0 — the paper
 
-- [ ] VARIABLES.md: trait rows = bare refs, tier = VARIANT (F1/F6); condition/need rows
-      u64 48-bit (dead 16 ZERO, def-declared u16 encodings — F7/I9/I10); the six categories
-      (F2); the ACTIVE law (I5); sprint (F4). Acceptance: docs-check green.
+- [ ] VARIABLES.md: the ONE u64 row (48-bit law, dead ZERO, def-declared u16 encodings,
+      trait data reserved — F1/F6/F7/I9/I10); tier = VARIANT, level DELETED; the six
+      categories (F2); the ACTIVE law (I5); sprint (F4). Acceptance: docs-check green.
 
 ## P1 — the row shape
 
-- [ ] codec: trait rows = bare refs; u64 condition/need helpers (48-bit law) + the
-      encoding decoder seam (F7, unknown refuses — I10); their payload entries grow a word
-      (TRAIT stays one); the six categories (F2). Acceptance: unit round-trips + 2×i8 lanes.
+- [ ] codec: the ONE u64 row helper set (48-bit law) + the encoding decoder seam (F7,
+      unknown refuses — I10); ALL payload entries grow a word; the six categories (F2).
+      Acceptance: unit round-trips + 2×i8 lanes; level helpers DELETED.
 - [ ] Modules: the `needs` column u64 in pawn + player_pawn; republished (WIPING, I2);
       st-bindings + edge bindings regenerated. Acceptance: publish green; a hand SET_NEED
       lands a u64 row.
