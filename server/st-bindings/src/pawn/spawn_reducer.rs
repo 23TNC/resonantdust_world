@@ -23,6 +23,7 @@ pub(super) struct SpawnArgs {
     pub needs: Vec::<u32>,
     pub data: u8,
     pub promote: bool,
+    pub issuer_player_id: u32,
 }
 
 impl From<SpawnArgs> for super::Reducer {
@@ -38,6 +39,7 @@ impl From<SpawnArgs> for super::Reducer {
             needs: args.needs,
             data: args.data,
             promote: args.promote,
+            issuer_player_id: args.issuer_player_id,
 }
 }
 }
@@ -67,8 +69,9 @@ payload: Vec::<u32>,
 needs: Vec::<u32>,
 data: u8,
 promote: bool,
+issuer_player_id: u32,
 ) -> __sdk::Result<()> {
-        self.spawn_then(worker, tic, event_reference, index, definition_reference, position_reference, payload, needs, data, promote,  |_, _| {})
+        self.spawn_then(worker, tic, event_reference, index, definition_reference, position_reference, payload, needs, data, promote, issuer_player_id,  |_, _| {})
     }
 
     /// Request that the remote module invoke the reducer `spawn` to run as soon as possible,
@@ -89,6 +92,7 @@ payload: Vec::<u32>,
 needs: Vec::<u32>,
 data: u8,
 promote: bool,
+issuer_player_id: u32,
 
         callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
             + Send
@@ -109,12 +113,13 @@ payload: Vec::<u32>,
 needs: Vec::<u32>,
 data: u8,
 promote: bool,
+issuer_player_id: u32,
 
         callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
             + Send
             + 'static,
     ) -> __sdk::Result<()> {
-        self.imp.invoke_reducer_with_callback(SpawnArgs { worker, tic, event_reference, index, definition_reference, position_reference, payload, needs, data, promote,  }, callback)
+        self.imp.invoke_reducer_with_callback(SpawnArgs { worker, tic, event_reference, index, definition_reference, position_reference, payload, needs, data, promote, issuer_player_id,  }, callback)
     }
 }
 

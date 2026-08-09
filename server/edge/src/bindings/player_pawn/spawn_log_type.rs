@@ -17,6 +17,7 @@ pub struct SpawnLog {
     pub event_reference: u32,
     pub index: u16,
     pub entity_reference: u32,
+    pub issuer_player_id: u32,
 }
 
 
@@ -33,6 +34,7 @@ pub struct SpawnLogCols {
     pub event_reference: __sdk::__query_builder::Col<SpawnLog, u32>,
     pub index: __sdk::__query_builder::Col<SpawnLog, u16>,
     pub entity_reference: __sdk::__query_builder::Col<SpawnLog, u32>,
+    pub issuer_player_id: __sdk::__query_builder::Col<SpawnLog, u32>,
 }
 
 impl __sdk::__query_builder::HasCols for SpawnLog {
@@ -43,6 +45,7 @@ impl __sdk::__query_builder::HasCols for SpawnLog {
             event_reference: __sdk::__query_builder::Col::new(table_name, "event_reference"),
             index: __sdk::__query_builder::Col::new(table_name, "index"),
             entity_reference: __sdk::__query_builder::Col::new(table_name, "entity_reference"),
+            issuer_player_id: __sdk::__query_builder::Col::new(table_name, "issuer_player_id"),
 
         }
     }

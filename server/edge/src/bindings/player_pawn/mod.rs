@@ -128,6 +128,7 @@ pub enum Reducer {
         needs: Vec::<u32>,
         data: u8,
         promote: bool,
+        issuer_player_id: u32,
 }    ,
     Write {
         worker: u8,
@@ -243,6 +244,7 @@ fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
                 needs,
                 data,
                 promote,
+                issuer_player_id,
 }             => __sats::bsatn::to_vec(&spawn_reducer::SpawnArgs {
                 worker: worker.clone(),
                 tic: tic.clone(),
@@ -254,6 +256,7 @@ fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
                 needs: needs.clone(),
                 data: data.clone(),
                 promote: promote.clone(),
+                issuer_player_id: issuer_player_id.clone(),
 }),
             Reducer::Write{
                 worker,

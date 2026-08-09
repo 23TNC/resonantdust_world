@@ -1,5 +1,19 @@
 # Completed — npc-host
 
+## 2026-08-09 — P2 (second half): the ISSUER attribution (I11 built)
+
+The full chain: `queue`/`queue_at` take `issuer_player_id` (the edge stamps its session's
+player; worker continuations pass 0), `EventLog` carries it, the worker's CREATE +
+SPAWN_REQUEST arms forward the causing event's issuer into `spawn(… issuer)`, and BOTH
+spawn ledgers (pawn + player_pawn) record it — ownership is now queryable server-side.
+Modules republished (wiping — the linkage was SQL-cleared so logins re-minted),
+st-bindings + edge bindings regenerated, every consumer rebuilt, the host self-healed
+through the bounce. Verified LIVE: the player-pawn ledger shows every mint's owner; the
+pawn ledger shows the legacy brains' mints stamped AUTOMATICALLY (Wolves→1025,
+Bunnies→1024) and a drill SPAWN_REQUEST queued as `wolf_pack` (1033) minting pawn
+0x30800004 with issuer 1033. REMAINING for item 2's tick: the re-attach lane (fan "your
+mints" to the owning session) + deleting the kind-scan adoption.
+
 ## 2026-08-09 — P2 (first half): the F10 mint + the host skeleton
 
 **The login-name mint (F10)** — the edge funnel resolves a brain def whose name equals the

@@ -317,6 +317,9 @@ pub struct SpawnLog {
     pub index: u16,
     /// The minted player-pawn id.
     pub entity_reference: u32,
+    /// The ISSUING player (npc-host I11 — ownership): the login funnel passes the owner's
+    /// `player_id`; `0` = server-internal.
+    pub issuer_player_id: u32,
 }
 
 /// The mint counter. Same `SPAWN_BASE` posture as pawn's — the TOP half of the 24-bit object
@@ -358,13 +361,14 @@ pub fn spawn(
     needs: Vec<u32>,
     data: u8,
     promote: bool,
+    issuer_player_id: u32,
 ) -> Result<(), String> {
     let spawn_uid = ((event_reference as u64) << 16) | index as u64;
     if ctx.db.spawn_log().spawn_uid().find(spawn_uid).is_some() {
         return Ok(()); // replay — already spawned
     }
     let entity = next_player_pawn_reference(ctx);
-    ctx.db.spawn_log().insert(SpawnLog { spawn_uid, event_reference, index, entity_reference: entity });
+    ctx.db.spawn_log().insert(SpawnLog { spawn_uid, event_reference, index, entity_reference: entity, issuer_player_id });
 
     let status_flags = if promote { STATE_FLAG_PROMOTE } else { 0 };
     let phase = if promote { STATE_PROMOTED } else { STATE_OPEN };

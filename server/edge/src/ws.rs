@@ -1129,7 +1129,7 @@ async fn ensure_player_pawn(
     // The mint: the ledger key is (player_id, 0) — the login funnel's dedup, not a world
     // event. Position 0 and promote=true so the live row exists (the worker's ghost guard
     // requires it).
-    if let Err(err) = conn.reducers.spawn(0, 0, player_id, 0, def, 0, vec![], need_rows, 0, true) {
+    if let Err(err) = conn.reducers.spawn(0, 0, player_id, 0, def, 0, vec![], need_rows, 0, true, player_id) {
         tracing::warn!(player_id, %err, "player_pawn spawn submit failed — mint deferred");
         return; // dropping `handle` + `conn` tears the subscription down
     }

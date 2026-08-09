@@ -1145,6 +1145,13 @@ async fn main() {
             // `spawn` (`ACTIONS.md` §CREATE): `(event, index)` keys the replay ledger, so a re-pass
             // re-calls harmlessly. The minted id is not an operand — nothing claimed it and nothing
             // else this tic can reference it. A failed call defers the whole tic (like a write).
+            // npc-host I11: the issuer per event — forwarded into the spawn ledger (ownership).
+            let issuer_of: HashMap<u32, u32> = event
+                .db()
+                .event_log()
+                .iter()
+                .map(|e| (e.event_reference, e.issuer_player_id))
+                .collect();
             let mut create_zones: HashMap<u32, Vec<u16>> = HashMap::new();
             let mut spawn_failed = false;
             // spawn-authority I4: is a def (variant nibble 0) REGISTERED? Matches any
@@ -1198,6 +1205,7 @@ async fn main() {
                                         need_rows,
                                         0, // a bare CREATE seeds no facing (spawn-authority I9)
                                         pending_promote,
+                                        issuer_of.get(event_reference).copied().unwrap_or(0),
                                     ) {
                                         tracing::warn!(%err, tic = t, "spawn failed — will retry next pass");
                                         spawn_failed = true;
@@ -1270,6 +1278,7 @@ async fn main() {
                                                 self_ref, t, *event_reference, index, def, pos,
                                                 words, need_rows, data,
                                                 true, // a spawn you can't see is useless — always promote
+                                                issuer_of.get(event_reference).copied().unwrap_or(0),
                                             ) {
                                                 tracing::warn!(%err, tic = t, "requested spawn failed — will retry next pass");
                                                 spawn_failed = true;
