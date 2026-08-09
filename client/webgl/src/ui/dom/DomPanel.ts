@@ -510,6 +510,8 @@ export interface PanelStateJSON {
   outline?:        boolean;
   minCols?:        number;
   minRows?:        number;
+  /** The panel's z LAYER (tier). */
+  layer?:          number;
   draggable?:      boolean;
   minimizable?:    boolean;
   resizableX?:     boolean;
@@ -737,7 +739,16 @@ export class DomPanel {
   protected readonly _hiddenSettings: Set<PanelSettingKey>;
   /** The panel's Z-ORDER tier (bug-sweep F1). Frozen at construction time; gates
    *  which recency counter `bringToFront` advances. */
-  private readonly _zOrder: number;
+  /** The panel's LAYER — its z tier. Each integer is a full 10000-wide band,
+   *  so one step genuinely moves the panel above everything in its old layer.
+   *
+   *  This used to be `readonly`, set once at construction, while `layerUp` /
+   *  `layerDown` nudged `style.zIndex` WITHIN the band and persisted nothing.
+   *  Two consequences the user hit (2026-08-09): a layer change was silently
+   *  reverted by the next `bringToFront` (i.e. by clicking any panel), and it
+   *  could never cross a tier, so a panel could not be raised above one
+   *  authored on a higher tier at all. */
+  private _zOrder: number;
   /** Whether this panel can be the auto-bound target when UI edit mode opens
    *  the settings popup (and is tracked as last-focused). The popup sets this
    *  `false` so it never binds to itself. */
@@ -932,6 +943,7 @@ export class DomPanel {
   private readonly snapChangeListeners        = new Set<(snap: SnapMode) => void>();
   private readonly draggableChangeListeners   = new Set<(draggable: boolean) => void>();
   private readonly maskedChangeListeners      = new Set<(masked: boolean) => void>();
+  private readonly layerChangeListeners       = new Set<(layer: number) => void>();
 
   constructor(opts: DomPanelOptions) {
     this.storageKey = opts.storageKey ?? null;
@@ -965,7 +977,6 @@ export class DomPanel {
     // re-enables the row in its constructor body.
     this._hiddenSettings = new Set<PanelSettingKey>(opts.excludeSettings ?? []);
     this._hiddenSettings.add("mask");
-    this._zOrder = opts.zOrder ?? Z_TIER_TOOLS;
     this._editTarget = opts.editTarget ?? true;
     this.initialMinimizable = opts.minimizable ?? true;
     this.initialResizable   = opts.resizable   ?? true;
@@ -1018,6 +1029,8 @@ export class DomPanel {
                              contentDefaults.minCols ?? opts.minCols ?? 1);
     this._minRows        = this.defaultedInt("minRows",
                              contentDefaults.minRows ?? opts.minRows ?? 1);
+    this._zOrder         = this.defaultedInt("layer",
+                             contentDefaults.layer ?? opts.zOrder ?? Z_TIER_TOOLS);
     this._masked         = this.defaultedBool("masked",         contentDefaults.masked         ?? true);
     this._minimizable    = this.defaultedBool("minimizable",    contentDefaults.minimizable    ?? this.initialMinimizable);
     this._resizableX     = this.defaultedBool("resizableX",     contentDefaults.resizableX     ?? this.initialResizable);
@@ -2806,6 +2819,7 @@ export class DomPanel {
       outline:         this._outline,
       minCols:         this._minCols,
       minRows:         this._minRows,
+      layer:           this._zOrder,
       draggable:       this._draggable,
       minimizable:     this._minimizable,
       resizableX:      this._resizableX,
@@ -2836,7 +2850,7 @@ export class DomPanel {
       "anchor", "titleBarHidden", "gridSnap", "masked",
       "minimizable", "resizable", "resizableX", "resizableY",
       "closable", "hideMinimizeBtn", "hideCloseBtn",
-      "pin", "pinned", "heightMode", "background", "clickThrough", "outline", "minCols", "minRows",
+      "pin", "pinned", "heightMode", "background", "clickThrough", "outline", "minCols", "minRows", "layer",
       "snap", "draggable",
       "taskbarIcon", "titleSuffix",
     ];
@@ -2966,19 +2980,34 @@ export class DomPanel {
    *  panel above a sibling without re-focusing). Clamped to the
    *  panel's TIER ceiling so a frantic clicker can't push a
    *  lower-tier panel into a higher tier's range (bug-sweep F1). */
-  layerUp(): void {
-    const current = this.readZIndex();
-    const max = (this._zOrder + 1) * Z_STRIDE - 1;
-    this.panel.style.zIndex = String(Math.min(max, current + 1));
-  }
+  layerUp(): void { this.setLayer(this._zOrder + 1); }
 
   /** Drop the panel one step down the stacking order. Floor at
    *  the tier's base so the panel can't tuck behind a lower
    *  tier's range (or behind zero-z DOM). */
-  layerDown(): void {
-    const current = this.readZIndex();
-    const min = this._zOrder * Z_STRIDE;
-    this.panel.style.zIndex = String(Math.max(min, current - 1));
+  layerDown(): void { this.setLayer(this._zOrder - 1); }
+
+  /** The panel's layer (z tier). */
+  get layer(): number { return this._zOrder; }
+
+  /** Move the panel to a layer and PERSIST it. Clamped to `[1, 63]`: 64 is
+   *  `Z_TIER_CHROME`, where the taskbars and tooltips live, and a panel that
+   *  climbed into it would cover the very chrome used to manage it. */
+  setLayer(layer: number): void {
+    const next = Math.min(Math.max(1, Math.round(layer)), Z_TIER_CHROME - 1);
+    if (next === this._zOrder) return;
+    this._zOrder = next;
+    this.storageSet("layer", String(next));
+    // Re-seat within the new band, keeping the focus-recency scheme intact.
+    this.panel.style.zIndex = String(nextTierZ(next));
+    for (const cb of this.layerChangeListeners) cb(next);
+  }
+
+  /** Fires when the layer changes, so the settings popup can refresh its
+   *  readout without polling. */
+  onLayerChange(cb: (layer: number) => void): () => void {
+    this.layerChangeListeners.add(cb);
+    return () => this.layerChangeListeners.delete(cb);
   }
 
   /** Read the panel's current inline z-index as an integer, or

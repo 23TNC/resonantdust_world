@@ -214,6 +214,7 @@ export class PanelSettingsPopup {
   private readonly clickThroughBtn:  HTMLButtonElement;
   private readonly outlineBtn:       HTMLButtonElement;
   private readonly minSizeValue:     HTMLSpanElement;
+  private readonly layerValue:       HTMLSpanElement;
   private readonly layerUpBtn:     HTMLButtonElement;
   private readonly layerDownBtn:   HTMLButtonElement;
   /** Row-element index keyed by `PanelSettingKey`. `refreshControls`
@@ -391,6 +392,7 @@ export class PanelSettingsPopup {
     this.minSizeValue = minSizeRow.value;
     this.rowsByKey.set("minSize", minSizeRow.row);
     const layerRow = this.addLayerRow(body);
+    this.layerValue = layerRow.value;
     this.layerUpBtn   = layerRow.up;
     this.layerDownBtn = layerRow.down;
     this.rowsByKey.set("layer", layerRow.row);
@@ -583,6 +585,7 @@ export class PanelSettingsPopup {
     this.clickThroughBtn.textContent    = p.isClickThrough      ? "▣" : "▢";
     this.outlineBtn.textContent         = p.hasOutline          ? "▣" : "▢";
     this.minSizeValue.textContent       = `${p.minCols}×${p.minRows}`;
+    this.layerValue.textContent         = String(p.layer);
     this.backgroundSelect.setValue(p.background);
     // Draggable: when snap is non-none the value is forced off
     // and the row can't be toggled — dim the glyph to signal
@@ -936,7 +939,9 @@ export class PanelSettingsPopup {
     return { row, value };
   }
 
-  private addLayerRow(parent: HTMLDivElement): { row: HTMLDivElement; up: HTMLButtonElement; down: HTMLButtonElement } {
+  private addLayerRow(parent: HTMLDivElement): {
+    row: HTMLDivElement; up: HTMLButtonElement; down: HTMLButtonElement; value: HTMLSpanElement;
+  } {
     const row = document.createElement("div");
     Object.assign(row.style, ROW_CSS);
     const labelEl = document.createElement("span");
@@ -952,6 +957,7 @@ export class PanelSettingsPopup {
     up.addEventListener("click", (e) => {
       e.stopPropagation();
       this.boundPanel?.layerUp();
+      this.refreshControls();
     });
     const down = document.createElement("button");
     Object.assign(down.style, BUTTON_CSS);
@@ -959,11 +965,20 @@ export class PanelSettingsPopup {
     down.addEventListener("click", (e) => {
       e.stopPropagation();
       this.boundPanel?.layerDown();
+      this.refreshControls();
     });
-    group.appendChild(up);
+    // The layer NUMBER, between the steppers. Without it the control gave no
+    // feedback at all — you could not tell whether a click had done anything,
+    // nor what layer a panel sat on relative to another (user, 2026-08-09).
+    const value = document.createElement("span");
+    Object.assign(value.style, LABEL_CSS);
+    value.style.minWidth = "calc(var(--ui-row) * 1.2)";
+    value.style.textAlign = "center";
     group.appendChild(down);
+    group.appendChild(value);
+    group.appendChild(up);
     row.appendChild(group);
     parent.appendChild(row);
-    return { row, up, down };
+    return { row, up, down, value };
   }
 }

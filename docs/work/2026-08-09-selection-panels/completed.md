@@ -279,3 +279,36 @@ still governs when there is room.
 The corpus currently authors `titleBarHidden: false` for intentions; at this width it wants
 `true`, with edit mode as the way back (the same arrangement the conditions panel uses, proven at
 P6). Left as authored rather than changed unilaterally.
+
+## 2026-08-09 — layer becomes a NUMBER, and starts working
+
+User: _"Please add layer as a number to the settings. I tried changing layer but was unable to
+get the panels to behave as expected."_ The readout was the smaller half; the control was broken
+in two ways that together made it look inert.
+
+**What it did.** `_zOrder` (the tier) was `readonly`, fixed at construction. `layerUp` /
+`layerDown` nudged `style.zIndex` by ±1 **within** that tier's 10000-wide band, clamped to it, and
+persisted **nothing**. So:
+
+1. **Any change was reverted by the next click.** `bringToFront` re-seats a focused panel with
+   `nextTierZ(this._zOrder)`, which recomputes from the band base — so focusing any panel threw
+   the nudge away. You could only ever see the effect until you touched something.
+2. **It could not cross a tier.** A panel authored on 40 was clamped to `[400000, 409999]`, so no
+   number of clicks could raise it above one authored on 48. This is exactly the case flagged at
+   P6: conditions (40) buried under Chat and Build (48), unfixable from the UI.
+3. **No feedback.** Two arrows and no value — nothing to tell you whether a click had done
+   anything, or where a panel sat relative to another.
+
+**What it does now.** The layer IS the tier, mutable, persisted under `<key>.layer`, and shown as
+a number between the steppers. Each integer is a full band, so **one step genuinely moves a panel
+above everything in its old layer** — the control is coarse on purpose rather than by accident.
+Clamped to `[1, 63]`: 64 is `Z_TIER_CHROME`, where the taskbars and tooltips live, and a panel
+that climbed into it would cover the chrome used to manage it. `bringToFront` still applies
+focus-recency, but now within the panel's *chosen* band, so focus and layer stop fighting.
+
+**Verified live**: stepping reads `32 → 33 → 34 → 35`, the z-index follows to `350001`, the value
+persists, and it survives focusing another panel — the exact case that used to lose it. Then the
+case that motivated it: setting `conditions.layer = 50` puts the conditions panel at `z=500001`,
+**above** Build (`480001`) and Chat (`480002`), with its cards hittable where they were previously
+buried. The P6 note about conditions being stuck under the tool tier is now a user setting rather
+than a code change.
