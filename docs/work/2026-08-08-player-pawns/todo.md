@@ -5,10 +5,10 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P0 — the paper
 
-- [ ] VARIABLES.md/TABLES.md/object-model: the playerpawn shard, the reference namespace +
+- [x] VARIABLES.md/TABLES.md/object-model: the playerpawn shard, the reference namespace +
       routing lane (I1), the player↔player-pawn linkage (list + ONE active, F2), the `player`
       gameplay subtypes (F4). Acceptance: docs-check green.
-- [ ] State the active/inactive lanes for player-pawns (I8): bands/conditions/emotions ON,
+- [x] State the active/inactive lanes for player-pawns (I8): bands/conditions/emotions ON,
       death sweep OFF; and the owner fan shape (F6). Acceptance: written in the paper;
       npc-host's I10(a)/F7/F8 annotated as answered/superseded (I5).
 

@@ -150,6 +150,7 @@ An `entity_reference` is realm-unique only via its `server_reference`; crossing 
 | alias | names | `type_id` | on |
 |---|---|---|---|
 | `event_reference` | an event row | `TYPE_EVENT` | `event_log.event_reference` |
+| `player_pawn_reference` | a player-pawn | `TYPE_PLAYER` | `player_pawn` shard rows; `players.player_pawns` |
 
 **Aliases of `server_reference`** (u8, same layout, no interior):
 
@@ -733,6 +734,50 @@ now read as "a conditional condition".
 
 **Indexed slots are bare digits** (`band.0`, `needs.3`) — the `packed.<i>` shape. Safe because
 these nodes never hold a scalar sibling (the `rotation_key` I8 hazard); do not add one.
+
+## Player-pawns — the player's row-carrier (`player_pawn` shard)
+
+_Work [`2026-08-08-player-pawns`](work/2026-08-08-player-pawns/README.md) (user): players play
+**as** their player-pawn; every npc module plays as one too. The shard is a COPY of pawn, so
+every pawn method — the ONE eval, bands, conditions, emotions — applies unchanged._
+
+**The reference lane** (F1/I1): a player-pawn is a `TYPE_PLAYER` entity — its
+`player_pawn_reference` packs `server_reference = TYPE_PLAYER<<4 | server_id` (`0x40` for
+shard 0), minted by the `player_pawn` shard's spawn machinery. The whole event system routes
+by that nibble: edge allowlist → orchestrator claim → worker write land on
+`…-playerpawn-0`, never colliding with pawn (`0x30…`) refs.
+
+**The linkage + ACTIVE law** (F2): the `players` auth DB owns the linkage — a player's OWNED
+player-pawn list with exactly ONE active bit, resolved at login. The list's length is pinned
+to 1 for now (minted idempotently at first login, non-blocking when the shard is healing);
+"multiple characters, chosen on login" is the recorded future, so NOTHING may assume length 1
+— every reader resolves THE ACTIVE player-pawn through the one login funnel, never "the first
+row that matches".
+
+**Row-carriers first** (F3): v1 player-pawns are never rendered, never moved, never
+zone-fanned. Their rows fan to the OWNING session only (F6) — an npc brain reads its own
+`wolf_count`; a browser session reads its own player-pawn. Spectator visibility is a named
+successor.
+
+**The active lanes** (I8): bands, conditions, and emotions evaluate on player-pawn rows
+exactly as on pawns. The DEATH lane stays off **by construction, not by switch**: the
+need-write sweep's existing re-validation gates on the def's death interaction (`can_die`),
+and player definitions author none — a zeroed `wolf_count` bands and conditions, and never
+removes the carrier. The crossing scheduler likewise engages only for authored drain targets
+(none on v1 player defs).
+
+**The `player_trait` category** (F4): the gameplay palette appends `player_trait` — the
+trait schema (levels, per-level parameters, need grants), classified apart so player-facing
+defs are their own lane. At LOAD, `player_trait` rows enter the SAME eval lanes traits do
+(one adapter, the ONE-eval law holds; no consumer grows a parallel path). `player_emotion`
+is the recorded NEXT append for when brains want a palette distinct from the standard 16
+emotions — v1 player-pawns feel the standard 16. Player NEEDS are ordinary `need` defs
+(`wolf_count` is corpus-shaped: nothing structural is player-specific).
+
+**The definition** (F5): a player-pawn's `definition_reference` is its owner's role def —
+an npc module's player-pawn takes its BRAIN def (npc-host), whose constant binds land its
+traits and grant its needs; a human's takes the default `player` def (no binds yet). One
+derivation path — minted rows come from the def's bindings exactly as pawn CREATE mints do.
 
 ## TOML content schema (`content/*.toml` → `shared` loader → every consumer)
 
