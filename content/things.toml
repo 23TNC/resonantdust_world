@@ -148,7 +148,7 @@ needs = ["thirst", "hunger", "corpus"]
 # (the `speed` field is GONE, input-rework F8: the derived stat IS the speed).
 # food-chain: corpus level 2 = the tanky tier (health cap 2); carnivore eats meat.
 # attack F1: bite = the "attack" capability tag — wolves pass can_attack.
-traits = ["biological_lifeform", { name = "walks", level = 2 }, { name = "corpus", level = 2 }, "carnivore", "bite"]
+traits = ["biological_lifeform", { name = "walks", variant = 1 }, { name = "corpus", variant = 1 }, "carnivore", "bite"]
 # The pawn's OWN kind carries death (food-chain F5/I9) — the need-write trigger fires it.
 interactions = [ { name = "death" } ]
 
@@ -173,7 +173,7 @@ subType = ["default"]
 variant = ["0"]
 # trait-lights F7: the light is a CONSTANT trait bind now — derived from the corpus
 # by every consumer, never stored, bakes into cold. Level 1 = the warm tuple.
-traits = [ { name = "emit_light", level = 1, constant = true } ]
+traits = [ { name = "emit_light" } ]
 # Portable (inventory F6) — picking a torch up takes its LIGHT out of the world
 # through the same tombstone lane; a nice stress of the render path.
 interactions = [ { name = "pick_up" } ]
@@ -193,7 +193,7 @@ kind = "torch_blue"
 subType = ["default"]
 variant = ["0"]
 # trait-lights F7: level 2 = the blue tuple, same constant lane.
-traits = [ { name = "emit_light", level = 2, constant = true } ]
+traits = [ { name = "emit_light", variant = 1 } ]
 # Portable (inventory F6).
 interactions = [ { name = "pick_up" } ]
 
@@ -220,7 +220,7 @@ variant = ["0"]
 # inventory F1: the leveled inventory trait caps the FREE-SLOTS need at 6; the mint
 # births all slots free. drop rides the pawn's OWN kind (the slot pie menu offers it).
 needs = ["thirst", "hunger", "corpus", "inventory"]
-traits = ["biological_lifeform", { name = "walks", level = 1 }, { name = "lumberjack", level = 1 }, { name = "corpus", level = 1 }, { name = "inventory", level = 1 }, "forager", "omnivore"]
+traits = ["biological_lifeform", { name = "walks" }, { name = "lumberjack" }, { name = "corpus" }, { name = "inventory" }, "forager", "omnivore"]
 interactions = [ { name = "death" }, { name = "drop" } ]
 
   [[thing.part]]
@@ -255,7 +255,7 @@ kind = "male"
 subType = ["human"]
 variant = ["0"]
 needs = ["thirst", "hunger", "corpus", "inventory"]
-traits = ["biological_lifeform", { name = "walks", level = 1 }, { name = "lumberjack", level = 1 }, { name = "corpus", level = 1 }, { name = "inventory", level = 1 }, "forager", "omnivore"]
+traits = ["biological_lifeform", { name = "walks" }, { name = "lumberjack" }, { name = "corpus" }, { name = "inventory" }, "forager", "omnivore"]
 interactions = [ { name = "death" }, { name = "drop" } ]
 
   [[thing.part]]
@@ -316,7 +316,7 @@ kind = "bunny"
 subType = ["animal"]
 variant = ["0"]
 needs = ["thirst", "hunger", "corpus"]
-traits = ["biological_lifeform", { name = "walks", level = 1 }, { name = "corpus", level = 1 }, "herbivore"]
+traits = ["biological_lifeform", { name = "walks" }, { name = "corpus" }, "herbivore"]
 # attack F2: the PREY offers being attacked (the water-offers-drink pattern); the
 # NEGATIVE magnitude is the hit — corpus 1, one bite kills (the trigger does the rest).
 interactions = [ { name = "death" }, { name = "attack", magnitude = -1 } ]
@@ -372,7 +372,7 @@ type = "pawn"
 kind = "debug_torch"
 subType = ["animal"]
 variant = ["0"]
-traits = [ { name = "walks", level = 2 }, { name = "emit_light", level = 1, constant = true } ]
+traits = [ { name = "walks", variant = 1 }, { name = "emit_light" } ]
 
   [[thing.part]]
   texture = "white"
@@ -391,7 +391,7 @@ type = "pawn"
 kind = "debug_mover"
 subType = ["animal"]
 variant = ["0"]
-traits = [ { name = "walks", level = 2 } ]
+traits = [ { name = "walks", variant = 1 } ]
 
   [[thing.part]]
   texture = "white"

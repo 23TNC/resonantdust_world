@@ -17,7 +17,7 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 - [ ] Modules: the `needs` column u64 in pawn + player_pawn; republished (WIPING, I2);
       st-bindings + edge bindings regenerated. Acceptance: publish green; a hand SET_NEED
       lands a u64 row.
-- [ ] shared/content: the six tables parse into category-tagged lanes (per-level arrays →
+- [x] shared/content: the six tables parse into category-tagged lanes (per-level arrays →
       per-VARIANT, binds rename level→variant, params-by-REF — F6); the old two REFUSE
       (F2). Acceptance: unit — each category loads; the old tables refuse.
 
@@ -26,7 +26,7 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 - [ ] The ONE eval + every consumer on u64 rows (I1): worker, npc, wasm, webgl, panels;
       goldens + pins re-blessed deliberately (I4). Acceptance: builds green; the stack up;
       a pawn's panel shows traits/conditions/needs correctly post-sweep.
-- [ ] content: every trait re-authored under its category in ONE commit (I3 — passive/
+- [x] content: every trait re-authored under its category in ONE commit (I3 — passive/
       constant homes per F2's list). Acceptance: registry seeds with ZERO divergence.
 
 ## P3 — active traits

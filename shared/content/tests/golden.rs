@@ -311,13 +311,13 @@ fn dump(b: &Bundle) -> String {
     let tp = b.need_params("thirst").expect("thirst params");
     let qp = b.condition_params("quenched").expect("quenched params");
     let nrow = |v: f32| {
-        resonantdust_codec::object::pack_gameplay_row(
+        resonantdust_codec::object::pack_row(
             thirst,
             resonantdust_codec::value::quantize(v, tp.min as f32, tp.max as f32),
         )
     };
-    let qrow = resonantdust_codec::object::pack_gameplay_row(quenched, qp.duration as u16);
-    let probes: [(&str, Vec<(u32, u16)>, Vec<(u32, u16)>, u16); 4] = [
+    let qrow = resonantdust_codec::object::pack_row(quenched, qp.duration as u16);
+    let probes: [(&str, Vec<(u64, u16)>, Vec<(u64, u16)>, u16); 4] = [
         ("full", vec![(nrow(100.0), 0)], vec![], 0),
         ("mid", vec![(nrow(25.0), 0)], vec![], 0),
         ("empty", vec![(nrow(0.0), 0)], vec![], 0),

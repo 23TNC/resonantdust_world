@@ -552,7 +552,7 @@ fn crossing_elapsed(drop: f64, base_rate: f64, windows: &[RateWindow]) -> Option
 mod tests {
     use super::*;
     use crate::loader::load;
-    use resonantdust_codec::object::pack_gameplay_row;
+    use resonantdust_codec::object::pack_row;
     use resonantdust_codec::value::quantize;
 
     /// thirst: deplete 1000 tics on the DEFAULT `0..1` domain, Thirsty [0.10, 0.35)
@@ -596,13 +596,13 @@ duration = 100
         load(&[("needs.toml".into(), src.into())]).expect("fixture loads")
     }
 
-    fn need_row(b: &Bundle, name: &str, value: f64) -> u32 {
+    fn need_row(b: &Bundle, name: &str, value: f64) -> u64 {
         let np = b.need_params(name).expect(name);
         let q = quantize(value as f32, np.min as f32, np.max as f32);
-        pack_gameplay_row(b.gameplay_reference("need", name).expect(name), q)
+        pack_row(b.gameplay_reference("need", name).expect(name), q)
     }
-    fn cond_row(b: &Bundle, name: &str, remaining: u16) -> u32 {
-        pack_gameplay_row(b.gameplay_reference("condition", name).expect(name), remaining)
+    fn cond_row(b: &Bundle, name: &str, remaining: u16) -> u64 {
+        pack_row(b.gameplay_reference("condition", name).expect(name), remaining)
     }
     fn cond_ref(b: &Bundle, name: &str) -> u32 {
         b.gameplay_reference("condition", name).expect(name)
@@ -782,13 +782,13 @@ min = 0
 max = 100
 deplete = 1000
 
-[[trait]]
+[[pawn_trait_passive]]
 name = "camel"
 needs = [ { need = "thirst", rate = [0.5] } ]
 "#;
         let b = load(&[("needs.toml".into(), src.into())]).expect("loads");
         let p = np(&b, "thirst");
-        let tr = pack_gameplay_row(b.gameplay_reference("trait", "camel").unwrap(), 1);
+        let tr = pack_row(b.gameplay_reference("pawn_trait_passive", "camel").unwrap(), 1);
         let windows = rate_windows(&b, "thirst", &[tr], &[], &[], 0);
         assert_eq!(windows, vec![RateWindow { rate: 0.5, start: 0.0, until: None, add: 0.0 }]);
         // 1000 tics at half of 0.1/tic → 50 drained, not 100.
@@ -854,7 +854,7 @@ needs = [ { need = "thirst", rate = 0.5 } ]
         assert!(active_conditions(&b, &[], &[], &[], 100).is_empty());
         assert_eq!(next_crossing_tic(&b, &[], &[], &[], 100), None);
         // an unknown need/condition KEY skips, never panics.
-        let ghost = pack_gameplay_row(0x8001_0FF0, 30000); // gameplay/need, kind past the registry
+        let ghost = pack_row(0x8001_0FF0, 30000); // gameplay/need, kind past the registry
         assert!(active_conditions(&b, &[], &[(ghost, 0)], &[(ghost, 0)], 100).is_empty());
     }
 
@@ -897,20 +897,20 @@ name = "corpus"
 min = 0
 max = 2
 
-[[trait]]
+[[pawn_trait_passive]]
 name = "corpus"
 needs = [ { need = "corpus", max = [1.0, 2.0] } ]
 "##;
         let b = load(&[("t.toml".into(), src.into())]).expect("loads");
         let np = b.need_params("corpus").expect("corpus");
-        let tref = b.gameplay_reference("trait", "corpus").expect("trait ref");
-        let level1 = [pack_gameplay_row(tref, 1)];
-        let level2 = [pack_gameplay_row(tref, 2)];
+        let tref = b.gameplay_reference("pawn_trait_passive", "corpus").expect("trait ref");
+        let level1 = [pack_row(tref, 0)]; // tier 1 = variant 0 (F6)
+        let level2 = [pack_row(tref | 1, 0)]; // tier 2 = variant 1
         assert_eq!(need_bounds(&b, "corpus", &np, &level1, &[], 0), (0.0, 1.0), "level 1 caps 1");
         assert_eq!(need_bounds(&b, "corpus", &np, &level2, &[], 0), (0.0, 2.0), "level 2 caps 2");
         assert_eq!(need_bounds(&b, "corpus", &np, &[], &[], 0), (0.0, 2.0), "unraited = domain");
         // Two sources: the HIGHEST authored cap stands (a second source cannot shrink).
-        let both = [pack_gameplay_row(tref, 1), pack_gameplay_row(tref, 2)];
+        let both = [pack_row(tref, 0), pack_row(tref | 1, 0)];
         assert_eq!(need_bounds(&b, "corpus", &np, &both, &[], 0), (0.0, 2.0));
     }
 

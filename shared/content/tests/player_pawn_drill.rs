@@ -16,7 +16,7 @@ fn a_zeroed_wolf_count_bands_packless_and_never_kills() {
     let b = corpus();
     let nref = b.gameplay_reference("need", "wolf_count").expect("wolf_count");
     // The live drill's row: value 0 at set_tic 35303 (deplete 0 — the value IS current).
-    let row = resonantdust_codec::object::pack_gameplay_row(nref, 0);
+    let row = resonantdust_codec::object::pack_row(nref, 0);
     let need_rows = [(row, 35303u16)];
     let sat = needs_eval::need_satisfaction(&b, "wolf_count", &[], &need_rows, &[], 35303)
         .expect("evaluates");
@@ -45,7 +45,8 @@ fn brain_defs_carry_the_binds_and_pack_type_brain() {
         assert_eq!(needs[0], b.gameplay_reference("need", need).unwrap());
         let binds = b.brain_player_traits(id);
         assert_eq!(binds.len(), 2, "{name}: group trait + area_of_influence");
-        assert!(binds.iter().all(|t| t.constant));
+        // constancy is CATEGORY membership now (trait-rows-u32 F2) — the binds resolve
+        // in player_trait_constant, asserted by the lane they came from.
         // The F10 parameter read: level-selected stat contributions from the CONSTANT binds.
         let gs = b.player_trait_stat("group_size", &binds);
         assert_eq!(gs, size, "{name}'s level-1 group_size");

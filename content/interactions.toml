@@ -79,20 +79,20 @@ winner = "min"
 
 # ── traits ────────────────────────────────────────────────────────────────────
 
-[[trait]]
+[[pawn_trait_passive]]
 name = "biological_lifeform"
 label = "Biological Lifeform"
 stats = [ { stat = "metabolism", add = [1] } ]
 
 # The leveled locomotion skill (stat-model F5): level 1 lumbers, level 2 is the wolf's
 # standard pace, level 3 sprints. Values are tics/tile INTO ground_speed.
-[[trait]]
+[[pawn_trait_passive]]
 name = "walks"
 label = "Walks"
 stats = [ { stat = "ground_speed", add = [24, 12, 6] } ]
 
 # The tree-feller (lumberjack F4/F7): level 1 is all the gate needs today.
-[[trait]]
+[[pawn_trait_passive]]
 name = "lumberjack"
 label = "Lumberjack"
 stats = [ { stat = "logging", add = [1] } ]
@@ -100,7 +100,7 @@ stats = [ { stat = "logging", add = [1] } ]
 # The HEALTH cap (food-chain F2, the user's shape): ONE leveled trait owns corpus's
 # effective max — level 1 = ordinary life (cap 1), level 2 = the wolves' tier (cap 2).
 # Need MAX modifiers tier UPWARD (highest wins); the mint reads the effective cap.
-[[trait]]
+[[pawn_trait_passive]]
 name = "corpus"
 label = "Corpus"
 needs = [ { need = "corpus", max = [1.0, 2.0] } ]
@@ -112,22 +112,22 @@ needs = [ { need = "corpus", max = [1.0, 2.0] } ]
 # name, registry consumers read another (an omnivore that reads as bite), and the
 # collided newcomer silently never seeds. The trait order below is the registry's
 # recorded history; append after `inventory`.
-[[trait]]
+[[pawn_trait_passive]]
 name = "forager"
 label = "Forager"
 stats = [ { stat = "foraging", add = [1] } ]
 
-[[trait]]
+[[pawn_trait_passive]]
 name = "herbivore"
 label = "Herbivore"
 stats = [ { stat = "plant_eating", add = [1] } ]
 
-[[trait]]
+[[pawn_trait_passive]]
 name = "carnivore"
 label = "Carnivore"
 stats = [ { stat = "meat_eating", add = [1] } ]
 
-[[trait]]
+[[pawn_trait_passive]]
 name = "omnivore"
 label = "Omnivore"
 stats = [ { stat = "plant_eating", add = [1] }, { stat = "meat_eating", add = [1] } ]
@@ -135,7 +135,7 @@ stats = [ { stat = "plant_eating", add = [1] }, { stat = "meat_eating", add = [1
 # The BITE (attack F1, the user's generalization): a capability TAG, not a stat —
 # can_attack matches ANY trait tagged "attack", so a clawed bear or a pecking hawk
 # joins the predator club by content alone. Tag-only: presence IS the capability.
-[[trait]]
+[[pawn_trait_passive]]
 name = "bite"
 label = "Bite"
 tags = ["attack"]
@@ -144,7 +144,7 @@ tags = ["attack"]
 # the inventory need and caps it — the need counts FREE slots, so the standing
 # mint-at-effective-max law births every carrier with all slots free. Level 1 = 6
 # (humans); future backpack tiers append per-level values.
-[[trait]]
+[[pawn_trait_passive]]
 name = "inventory"
 label = "Inventory"
 needs = [ { need = "inventory", max = [6.0] } ]
@@ -154,7 +154,7 @@ needs = [ { need = "inventory", max = [6.0] } ]
 # FLOAT triples here to hold the retired `light = {}` block's values bit-identically;
 # `elevation` is its `height` (a torch emits from its flame, not its base). APPENDED
 # per the declaration-order law.
-[[trait]]
+[[pawn_trait_constant]]
 name = "emit_light"
 label = "Emits Light"
 emit_light = [

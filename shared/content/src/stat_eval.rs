@@ -162,14 +162,17 @@ pub fn interaction_available(
 mod tests {
     use super::*;
     use crate::loader::load;
-    use resonantdust_codec::object::pack_gameplay_row;
+    use resonantdust_codec::object::pack_row;
 
     fn bundle(src: &str) -> Bundle {
         load(&[("gameplay.toml".into(), src.into())]).expect("fixture loads")
     }
 
-    fn trait_row(b: &Bundle, name: &str, level: u16) -> u32 {
-        pack_gameplay_row(b.gameplay_reference("trait", name).expect(name), level)
+    fn trait_row(b: &Bundle, name: &str, level: u16) -> u64 {
+        // The tier is the VARIANT (F6, 0-based): level N = variant N-1 on the def's ref.
+        let cat = b.trait_category(name).and_then(resonantdust_codec::object::gameplay_category).expect(name);
+        let r = b.gameplay_reference(cat, name).expect(name);
+        pack_row((r & !0xF) | u32::from(level.saturating_sub(1)), 0)
     }
 
     /// The stream's real shape: walks' leveled tics/tile into ground_speed,
@@ -187,11 +190,11 @@ min = 0
 max = 10
 winner = "min"
 
-[[trait]]
+[[pawn_trait_passive]]
 name = "walks"
 stats = [ { stat = "ground_speed", add = [24, 12, 6] } ]
 
-[[trait]]
+[[pawn_trait_passive]]
 name = "biological_lifeform"
 stats = [ { stat = "metabolism", add = [1] } ]
 
@@ -250,11 +253,11 @@ min = 0
 max = 10
 winner = "min"
 
-[[trait]]
+[[pawn_trait_passive]]
 name = "floor_four"
 stats = [ { stat = "s", add = [1], min = [4] } ]
 
-[[trait]]
+[[pawn_trait_passive]]
 name = "cap_beyond_global"
 stats = [ { stat = "s", add = [0], max = [50] } ]
 "#,
@@ -294,7 +297,7 @@ stats = [ { stat = "s", add = 2.0 } ]
 
     #[test]
     fn condition_remaining_derives_and_guards_the_seams() {
-        let row = pack_gameplay_row(0x8002_0030, 3600);
+        let row = pack_row(0x8002_0030, 3600);
         assert_eq!(condition_remaining(row, 1000, 1000), 3600);
         assert_eq!(condition_remaining(row, 1000, 2000), 2600);
         assert_eq!(condition_remaining(row, 1000, 4600), 0, "expiry at exactly remaining");
@@ -330,8 +333,8 @@ check = { need = "corpus", lte = 0.0 }
             let np = b.need_params("corpus").unwrap();
             resonantdust_codec::value::quantize(v, np.min as f32, np.max as f32)
         };
-        let alive = [(pack_gameplay_row(nref, quant(1.0)), 0u16)];
-        let dead = [(pack_gameplay_row(nref, quant(0.0)), 0u16)];
+        let alive = [(pack_row(nref, quant(1.0)), 0u16)];
+        let dead = [(pack_row(nref, quant(0.0)), 0u16)];
         assert!(!affordance_passes(&b, "can_die", &[], &alive, &[], &[], 0));
         assert!(affordance_passes(&b, "can_die", &[], &dead, &[], &[], 0));
         assert!(interaction_available(&b, "death", &[], &dead, &[], &[], 0));
@@ -346,9 +349,9 @@ check = { need = "corpus", lte = 0.0 }
         assert_eq!(stat_value(&b, "nonsense", &[], &[]), 0.0);
         assert!(!affordance_passes(&b, "nonsense", &[], &[], &[], &[], 0));
         assert!(!interaction_available(&b, "nonsense", &[], &[], &[], &[], 0));
-        // a level past the authored table contributes nothing (not a panic).
+        // a tier past the authored table contributes nothing (not a panic). "level 0 =
+        // absent" is DEAD (trait-rows-u32 F6): variant 0 IS tier 1 — absence is the
+        // absent row, so the old level-0 defensive case has nothing to defend.
         assert_eq!(stat_value(&b, "ground_speed", &[trait_row(&b, "walks", 9)], &[]), 0.0);
-        // a level-0 row (never minted, but defensively) contributes nothing.
-        assert_eq!(stat_value(&b, "ground_speed", &[trait_row(&b, "walks", 0)], &[]), 0.0);
     }
 }

@@ -14,8 +14,8 @@ subType = ["npc"]
 variant = ["0"]
 needs = ["wolf_count"]
 traits = [
-  { name = "wolf_pack", level = 1, constant = true },
-  { name = "area_of_influence", level = 2, constant = true },
+  { name = "wolf_pack" },
+  { name = "area_of_influence", variant = 1 },
 ]
 
 [[brain]]
@@ -26,6 +26,6 @@ subType = ["npc"]
 variant = ["0"]
 needs = ["bunny_count"]
 traits = [
-  { name = "bunny_fluffle", level = 1, constant = true },
-  { name = "area_of_influence", level = 1, constant = true },
+  { name = "bunny_fluffle" },
+  { name = "area_of_influence" },
 ]

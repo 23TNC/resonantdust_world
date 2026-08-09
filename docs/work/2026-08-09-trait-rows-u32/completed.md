@@ -1,6 +1,21 @@
 # Completed — trait-rows-u32
 
-## 2026-08-09 — P1 (third piece, IN FLIGHT): shared/content's LIB on u64 rows
+## 2026-08-09 — P1 complete + the content re-author: EVERYTHING GREEN in shared/content
+
+The corpus re-authored in the SAME commit as the tests (I3's one-commit law):
+interactions.toml's `[[trait]]` defs → `[[pawn_trait_passive]]` (walks, corpus, bio, tags,
+diets, forager, inventory, lumberjack) and `[[pawn_trait_constant]]` (emit_light);
+players.toml's → `[[player_trait_constant]]`; every bind `level = N` → `variant = N-1`
+(0-based F6), `constant = true` DELETED corpus-wide (category is the flag now); brains.toml
+rides along. Every inline test fixture in all five source/test files swept likewise; the
+affordance tag-check scans the six lanes; the dead "level 0 = absent" defensive test arm
+REMOVED with its epitaph. Verified: 70 lib + 2 golden (re-blessed DELIBERATELY — the
+category move is the diff) + 2 drill tests green — the whole crate loads, evaluates, and
+pins on u64 rows with variant tiers. REGISTRY NOTE for the sweep's restart: the re-homed
+defs get NEW registry rows under their new categories (append-only; the retired rows
+remain); the master seed must come up ZERO-divergence.
+
+## 2026-08-09 — P1 (superseded, third piece): shared/content's LIB on u64 rows
 
 The loader model restructured: `TraitBind {name, variant}` (level + the constant flag DEAD);
 `Bundle.trait_defs: Vec<(name, params, category 8..13)>` replaces the traits/player_traits

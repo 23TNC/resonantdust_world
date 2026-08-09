@@ -55,7 +55,7 @@ pub fn active_emotion(
 mod tests {
     use super::*;
     use crate::loader::load;
-    use resonantdust_codec::object::pack_gameplay_row;
+    use resonantdust_codec::object::pack_row;
 
     /// The user's worked oracle (emotions I6): 3 playful + 5 uncomfortable + 2 focused
     /// + 6 happy → HAPPY. Declaration order fine/happy/focused/uncomfortable/playful.
@@ -105,7 +105,7 @@ duration = 100
 name = "c_sadless"
 duration = 100
 
-[[trait]]
+[[pawn_trait_passive]]
 name = "puppyish"
 emotions = [ { emotion = "playful", magnitude = [1, 4] } ]
 "##;
@@ -143,7 +143,8 @@ emotions = [ { emotion = "playful", magnitude = [1, 4] } ]
         assert_eq!(active_emotion(&b, &[], &active(&b, &["c_sadless"])).0, 0, "+0 set → fine");
         // Trait levels sum in beside conditions: puppyish level 2 (+4 playful) +
         // c_playful (+3) = 7, beating c_happy's 6.
-        let t = pack_gameplay_row(b.gameplay_reference("trait", "puppyish").unwrap(), 2);
+        let tref = b.gameplay_reference("pawn_trait_passive", "puppyish").unwrap();
+        let t = pack_row((tref & !0xF) | 1, 0); // level 2 = variant 1 (F6)
         let set = active(&b, &["c_playful", "c_happy"]);
         let (e, sums) = active_emotion(&b, &[t], &set);
         assert_eq!(sums[b.emotion_index("playful").unwrap() as usize], 7, "trait levels sum in");

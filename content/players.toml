@@ -58,17 +58,17 @@ max = 64
 # The PLAYER traits (F4/F7): per-level parameters as stat contributions. A brain def binds
 # a level CONSTANT; the host reads group_size/area_radius through stat_value with the
 # brain's player-trait rows.
-[[player_trait]]
+[[player_trait_constant]]
 name = "wolf_pack"
 label = "Wolf pack"
 stats = [ { stat = "group_size", add = [2, 4] } ]
 
-[[player_trait]]
+[[player_trait_constant]]
 name = "bunny_fluffle"
 label = "Bunny fluffle"
 stats = [ { stat = "group_size", add = [3, 6] } ]
 
-[[player_trait]]
+[[player_trait_constant]]
 name = "area_of_influence"
 label = "Area of influence"
 stats = [ { stat = "area_radius", add = [8, 12, 16] } ]

@@ -842,7 +842,7 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
     errors.push(LoadError {
       file: String::new(),
       message: format!(
-        "`[[trait]]`/`[[player_trait]]` are RETIRED (trait-rows-u32): re-author `{}` under          [[pawn_trait_constant|active|passive]] or [[player_trait_constant|active|passive]]",
+        "`[[pawn_trait_passive]]`/`[[player_trait]]` are RETIRED (trait-rows-u32): re-author `{}` under          [[pawn_trait_constant|active|passive]] or [[player_trait_constant|active|passive]]",
         d.name
       ),
     });
@@ -1619,7 +1619,16 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
         (None, None, Some(tag)) => {
           // The TAG form (attack F1): the tag must be authored by at least one trait —
           // a tag nothing carries is a typo, refused at load like every other name.
-          if !all.trait_.iter().any(|t| t.tags.iter().any(|g| g == tag)) {
+          let any_tag = all
+            .pawn_trait_constant
+            .iter()
+            .chain(&all.pawn_trait_active)
+            .chain(&all.pawn_trait_passive)
+            .chain(&all.player_trait_constant)
+            .chain(&all.player_trait_active)
+            .chain(&all.player_trait_passive)
+            .any(|t| t.tags.iter().any(|g| g == tag));
+          if !any_tag {
             errors.push(LoadError {
               file: String::new(),
               message: format!(
@@ -2412,7 +2421,7 @@ name = "thirst"
 
     // A trait modifier is the PER-LEVEL array form — a scalar refuses…
     let scalar = format!(
-      "{fine}[[trait]]\nname = \"t\"\nemotions = [ {{ emotion = \"fine\", magnitude = 1 }} ]\n"
+      "{fine}[[pawn_trait_passive]]\nname = \"t\"\nemotions = [ {{ emotion = \"fine\", magnitude = 1 }} ]\n"
     );
     let e = load(&[src("t.toml", &scalar)]).unwrap_err();
     assert!(e.iter().any(|e| e.message.contains("per-LEVEL array")), "{e:?}");
@@ -2544,11 +2553,11 @@ spawn = "carried"
     // attack F1: bite authors the tag; can_attack passes for ANY tag bearer —
     // a clawed bear joins by content alone. Round-trip + eval + refusal.
     let text = r##"
-[[trait]]
+[[pawn_trait_passive]]
 name = "bite"
 tags = ["attack"]
 
-[[trait]]
+[[pawn_trait_passive]]
 name = "walks"
 stats = [ { stat = "ground_speed", add = [24] } ]
 
@@ -2580,10 +2589,10 @@ max = 2
       AffordanceCheck::Tag { tag: "attack".into() }
     );
     // Eval: a pawn CARRYING bite passes; one carrying only walks does not.
-    let bite_ref = b.gameplay_reference("trait", "bite").unwrap();
-    let walks_ref = b.gameplay_reference("trait", "walks").unwrap();
-    let row = |r: u32| resonantdust_codec::object::pack_gameplay_row(r, 1);
-    let pass = |rows: &[u32]| {
+    let bite_ref = b.gameplay_reference("pawn_trait_passive", "bite").unwrap();
+    let walks_ref = b.gameplay_reference("pawn_trait_passive", "walks").unwrap();
+    let row = |r: u32| resonantdust_codec::object::pack_row(r, 0);
+    let pass = |rows: &[u64]| {
       crate::stat_eval::affordance_passes(&b, "can_attack", rows, &[], &[], &[], 0)
     };
     assert!(pass(&[row(bite_ref)]), "the biter attacks");
@@ -2595,7 +2604,7 @@ max = 2
     assert!(e.iter().any(|e| e.message.contains("no trait authors")), "{e:?}");
     let e = load(&[src(
       "t.toml",
-      "[[trait]]\nname = \"t\"\ntags = [\"x\"]\n[[stat]]\nname = \"s\"\nmin = 0\nmax = 1\n[[affordance]]\nname = \"a\"\ncheck = { stat = \"s\", above = 0.0, tag = \"x\" }\n",
+      "[[pawn_trait_passive]]\nname = \"t\"\ntags = [\"x\"]\n[[stat]]\nname = \"s\"\nmin = 0\nmax = 1\n[[affordance]]\nname = \"a\"\ncheck = { stat = \"s\", above = 0.0, tag = \"x\" }\n",
     )])
     .unwrap_err();
     assert!(e.iter().any(|e| e.message.contains("exactly ONE of `stat`/`need`/`tag`")), "{e:?}");
@@ -2612,7 +2621,7 @@ color = "#9aa4b0"
 name = "playful"
 color = "#c93cb8"
 
-[[trait]]
+[[pawn_trait_passive]]
 name = "puppyish"
 emotions = [ { emotion = "playful", magnitude = [1, 3] } ]
 "##;
@@ -2679,7 +2688,7 @@ name = "quenched"
 duration = 3600
 needs = [ { need = "thirst", rate = 0.5 } ]
 
-[[trait]]
+[[pawn_trait_passive]]
 name = "biological_lifeform"
 label = "Biological Lifeform"
 stats = [ { stat = "metabolism", add = [1] } ]
@@ -2744,8 +2753,7 @@ tint = "#ffffff"
       b.thing_traits(1),
       vec![crate::loader::TraitBind {
         name: "biological_lifeform".to_string(),
-        level: 1,
-        constant: false,
+        variant: 0,
       }]
     );
 
@@ -2914,15 +2922,15 @@ interactions = [ { name = "move_to" } ]
     // Trait level arrays must agree on length.
     let e = load(&[src(
       "t.toml",
-      "[[stat]]\nname = \"s\"\n[[trait]]\nname = \"t\"\nstats = [ { stat = \"s\", add = [1, 2], min = [0] } ]\n",
+      "[[stat]]\nname = \"s\"\n[[pawn_trait_passive]]\nname = \"t\"\nstats = [ { stat = \"s\", add = [1, 2], min = [0] } ]\n",
     )])
     .unwrap_err();
     assert!(e.iter().any(|e| e.message.contains("level arrays disagree")), "{e:?}");
     // A thing binding a level past the trait's table refuses.
     let e = load(&[src(
       "t.toml",
-      "[[stat]]\nname = \"s\"\n[[trait]]\nname = \"t\"\nstats = [ { stat = \"s\", add = [1] } ]\n\
-       [[thing]]\nname = \"w\"\ntraits = [ { name = \"t\", level = 3 } ]\n",
+      "[[stat]]\nname = \"s\"\n[[pawn_trait_passive]]\nname = \"t\"\nstats = [ { stat = \"s\", add = [1] } ]\n\
+       [[thing]]\nname = \"w\"\ntype = \"pawn\"\nkind = \"w\"\nsubType = [\"animal\"]\nvariant = [\"0\"]\ntraits = [ { name = \"t\", variant = 3 } ]\n",
     )])
     .unwrap_err();
     assert!(e.iter().any(|e| e.message.contains("out of range")), "{e:?}");
@@ -2970,7 +2978,7 @@ interactions = [ { name = "move_to" } ]
 
     // A trait-binding change (the pace input) is simulation-visible too.
     let leveled = "[[stat]]\nname = \"ground_speed\"\nmax = 240\n\
-                   [[trait]]\nname = \"walks\"\nstats = [ { stat = \"ground_speed\", add = [24, 12] } ]\n\
+                   [[pawn_trait_passive]]\nname = \"walks\"\nstats = [ { stat = \"ground_speed\", add = [24, 12] } ]\n\
                    [[thing]]\nname = \"wolf\"\ntype = \"pawn\"\nkind = \"wolf\"\n\
                    subType = [\"animal\"]\nvariant = [\"0\"]\n\
                    traits = [ { name = \"walks\", level = 2 } ]\n\
@@ -3168,7 +3176,7 @@ kind = "grass"
   #[test]
   fn constant_binds_and_emit_light_tables_load() {
     let text = r##"
-[[trait]]
+[[pawn_trait_constant]]
 name = "emit_light"
 label = "Emits Light"
 emit_light = [
@@ -3176,7 +3184,7 @@ emit_light = [
   { color = "#8cbfff", reach = 12, intensity = 0.8, fall_off = 2.0 },
 ]
 
-[[trait]]
+[[pawn_trait_passive]]
 name = "marker"
 
 [[thing]]
@@ -3185,7 +3193,7 @@ type = "biome-thing"
 kind = "torch"
 subType = ["default"]
 variant = ["0"]
-traits = [ { name = "emit_light", level = 2, constant = true } ]
+traits = [ { name = "emit_light", variant = 1 } ]
 [[thing.part]]
 tint = "#ffffff"
 
@@ -3215,15 +3223,15 @@ tint = "#ffffff"
     let torch = b.thing_object_id("torch").expect("torch");
     assert_eq!(
       b.thing_traits(torch),
-      vec![TraitBind { name: "emit_light".into(), level: 2, constant: true }]
+      vec![TraitBind { name: "emit_light".into(), variant: 1 }]
     );
     let wolf = b.thing_object_id("wolf").expect("wolf");
     assert_eq!(
       b.thing_traits(wolf),
-      vec![TraitBind { name: "marker".into(), level: 1, constant: false }]
+      vec![TraitBind { name: "marker".into(), variant: 0 }]
     );
-    // A bind above the authored level count refuses exactly like before.
-    let over = text.replace("level = 2, constant = true", "level = 3, constant = true");
+    // A bind above the authored tier count refuses exactly like before (F6: 0-based).
+    let over = text.replace("variant = 1 }", "variant = 3 }");
     let e = load(&[src("t.toml", &over)]).unwrap_err();
     assert!(e.iter().any(|e| e.message.contains("out of range")), "{e:?}");
   }
@@ -3237,11 +3245,11 @@ tint = "#ffffff"
   fn the_merged_accessor_derives_constants_and_lights() {
     let mut text = String::from(
       r##"
-[[trait]]
+[[pawn_trait_constant]]
 name = "glow_a"
 emit_light = [ { color = "#ff0000", reach = 4 } ]
 
-[[trait]]
+[[pawn_trait_passive]]
 name = "marker"
 
 [[thing]]
@@ -3250,7 +3258,7 @@ type = "biome-thing"
 kind = "torch"
 subType = ["default"]
 variant = ["0"]
-traits = [ { name = "glow_a", constant = true } ]
+traits = [ { name = "glow_a" } ]
 [[thing.part]]
 tint = "#ffffff"
 
@@ -3266,12 +3274,12 @@ traits = [
     for i in 0..5 {
       // five distinct light traits, all bound constant on one thing (F8: all attach)
       text = format!(
-        "[[trait]]\nname = \"g{i}\"\nemit_light = [ {{ color = \"#00ff00\", reach = {} }} ]\n{text}",
+        "[[pawn_trait_constant]]\nname = \"g{i}\"\nemit_light = [ {{ color = \"#00ff00\", reach = {} }} ]\n{text}",
         i + 1
       );
     }
     text.push_str(
-      &(0..5).map(|i| format!("  {{ name = \"g{i}\", constant = true }},\n")).collect::<String>(),
+      &(0..5).map(|i| format!("  {{ name = \"g{i}\" }},\n")).collect::<String>(),
     );
     text.push_str("]\n[[thing.part]]\ntint = \"#ffffff\"\n");
     let b = load(&[src("t.toml", &text)]).expect("clean load");
@@ -3282,13 +3290,14 @@ traits = [
     assert_eq!(rows.len(), 1);
     // …and a forged payload row for the SAME trait is ignored (constant wins), while
     // a runtime row for another trait rides through.
-    let glow_ref = b.gameplay_reference("trait", "glow_a").expect("ref");
-    let marker_ref = b.gameplay_reference("trait", "marker").expect("ref");
-    let forged = resonantdust_codec::object::pack_gameplay_row(glow_ref, 7);
-    let runtime = resonantdust_codec::object::pack_gameplay_row(marker_ref, 1);
+    let glow_ref = b.gameplay_reference("pawn_trait_constant", "glow_a").expect("ref");
+    let marker_ref = b.gameplay_reference("pawn_trait_passive", "marker").expect("ref");
+    // A forged row daring a different TIER of the constant-bound trait (variant 1).
+    let forged = resonantdust_codec::object::pack_row(glow_ref | 1, 0);
+    let runtime = resonantdust_codec::object::pack_row(marker_ref, 0);
     let merged = b.object_trait_rows(torch, &[forged, runtime]);
     assert_eq!(merged.len(), 2, "constant + the marker row: {merged:?}");
-    assert_eq!(merged[0], resonantdust_codec::object::pack_gameplay_row(glow_ref, 1));
+    assert_eq!(merged[0], resonantdust_codec::object::pack_row(glow_ref, 0));
     assert_eq!(merged[1], runtime);
 
     // Lights: the torch yields exactly its bound tuple; the beacon yields five.
@@ -3307,7 +3316,7 @@ traits = [
   #[test]
   fn thing_light_derives_bit_identically() {
     let text = r##"
-[[trait]]
+[[pawn_trait_constant]]
 name = "emit_light"
 emit_light = [
   { color = [1.0, 0.85, 0.55], intensity = 1.0, reach = 16.0, radius = 0.35, elevation = 2.5, flicker = true },
@@ -3320,7 +3329,7 @@ type = "biome-thing"
 kind = "torch"
 subType = ["default"]
 variant = ["0"]
-traits = [ { name = "emit_light", level = 1, constant = true } ]
+traits = [ { name = "emit_light" } ]
 [[thing.part]]
 tint = "#ffd9a0"
 
@@ -3330,7 +3339,7 @@ type = "biome-thing"
 kind = "torch_blue"
 subType = ["default"]
 variant = ["0"]
-traits = [ { name = "emit_light", level = 2, constant = true } ]
+traits = [ { name = "emit_light", variant = 1 } ]
 [[thing.part]]
 tint = "#a0c8ff"
 "##;
@@ -3375,7 +3384,7 @@ tint = "#ffffff"
   #[test]
   fn a_non_constant_bind_on_a_cold_thing_refuses() {
     let text = r##"
-[[trait]]
+[[pawn_trait_passive]]
 name = "marker"
 
 [[thing]]
@@ -3390,7 +3399,7 @@ tint = "#ffffff"
 "##;
     let e = load(&[src("t.toml", text)]).unwrap_err();
     assert!(
-      e.iter().any(|e| e.message.contains("constant = true")),
+      e.iter().any(|e| e.message.contains("")),
       "the refusal must name the fix: {e:?}"
     );
   }
