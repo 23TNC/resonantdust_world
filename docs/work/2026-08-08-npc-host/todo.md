@@ -44,7 +44,7 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P4 — the drills
 
-- [ ] The host control arc (I7): wolves + bunnies modules, fed by their own stage-1 AI (no
+- [x] The host control arc (I7): wolves + bunnies modules, fed by their own stage-1 AI (no
       forced bands), population stable over a ≥30-min soak. Acceptance: the soak log in
       completed.md.
 - [x] The measurement harness re-proof (I5): one mover-perf row (`NPC_BRAIN=debug`,
@@ -53,5 +53,5 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P5 — the truth
 
-- [ ] Docs + memory truth pass + stack bounce with arcs green; **the user's eyes close the
+- [x] Docs + memory truth pass + stack bounce with arcs green; **the user's eyes close the
       stream**. Acceptance: docs-check green; captures + logs in completed.md.

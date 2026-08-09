@@ -1,5 +1,20 @@
 # Completed — npc-host
 
+## 2026-08-09 — P4 (first half) + P5: the control arc + the truth
+
+**The control arc (I7)** — wolves + bunnies modules, fed by their own stage-1 AI, NO forced
+bands, survival's drains live: SIX 5-minute samples over 30 minutes, wolf_count = 2 and
+bunny_count = 3 FLAT throughout (the quantized rows 0x2000/0x3000 unmoved), the host up the
+whole arc. **P5 the truth** — memory `npc-host-delivered` + the MEMORY.md line written;
+docs-check green (the 5 standing warnings pre-date the stream). The bounce criterion is
+covered by the stream itself: seven edge deploys, three wiping-adjacent module republishes,
+full sim restarts and host restarts — the arcs re-proven after EACH (the host self-healed
+through every one; the browser was re-eyed after the wasm sweep heal, capture migrate3).
+NOT done, recorded plainly: the hosted wolves have no HUNT (the wolves brain remains the
+stage-2 reference); brain emotions/conditions are authored-ready but unread by DECIDE
+(stage 3's seam); multi-host arbitration untested (one host ran). The user's eyes close
+the stream.
+
 ## 2026-08-09 — P4 (second half): the harness re-proof (I5)
 
 `NPC_BRAIN=debug NPC_KIND=debug_mover NPC_COUNT=8` under the single-brain FALLBACK: 8 movers
