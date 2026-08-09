@@ -1,5 +1,20 @@
 # Completed — npc-host
 
+## 2026-08-09 — P3 (second half): ONE policy, both kinds; the legacy containers retire
+
+The group brain PARAMETERIZED by governed kind — the diet was never code (the corpus's
+affordance gates decide what each kind eats), so "wolf" vs "bunny" is the whole difference;
+wolf_pack runs it with group_size 2 (its level-1 trait), bunny_fluffle with 3. FOUND + FIXED
+live: the SNAPSHOT RACE — a resting pawn's StateObject replays once at subscribe and can
+beat the Owned frame, orphaning ownership forever; the world model now keeps a pawn-position
+map (`Bot::pawn_at`) and the OwnedPawn arm adopts from it directly (six pawns adopted
+"from the world model" at the next boot, both groups at target within seconds). The LEGACY
+wolves/bunnies CONTAINERS retired — the host is the wildlife driver; their unowned strays
+take I8's stated fate (the world reclaims them). The wolves BRAIN stays in-tree solely as
+the HUNT-lane reference (stage-2 world-state AI's seam) and `debug` remains THE measurement
+harness; the kind-scan adoption no longer drives anything (P2 item 2's tail). wolf_pack's
+count row 0x2000 (=2), fluffle's 0x3000 (=3) — both exactly their traits' numbers.
+
 ## 2026-08-09 — P2 (fourth piece): position, area, migration
 
 The F3 clamp: `in_area` (cheb ≤ radius from the module's center) bounds the fluffle's

@@ -60,6 +60,10 @@ pub struct Bunnies {
     group: Option<(u32, u32, f64, f64)>,
     /// The last count written (avoid re-writing an unchanged value every tick).
     last_count: Option<usize>,
+    /// The governed pawn KIND (npc-host P3, F6/F11): "bunny" standalone; hosted modules pass
+    /// their brain's kind ("wolf" for wolf_pack). The DIET is not a parameter — the corpus's
+    /// affordance gates decide what each kind may eat (`usable_eat` asks, never assumes).
+    kind_name: String,
 }
 
 impl Bunnies {
@@ -96,13 +100,15 @@ impl Bunnies {
             owned: None,
             group: None,
             last_count: None,
+            kind_name: "bunny".to_string(),
         }
     }
 
     /// HOSTED construction (npc-host F11): explicit area + count (no env), ownership-gated
     /// adoption from the start. `init_with` supplies the corpus the HOST already fetched.
-    pub fn hosted(rng: Rng, home: (i32, i32), radius: i32, count: usize) -> Self {
+    pub fn hosted(rng: Rng, kind_name: &str, home: (i32, i32), radius: i32, count: usize) -> Self {
         let mut b = Self::new(rng);
+        b.kind_name = kind_name.to_string();
         b.home = home;
         b.radius = radius;
         b.count = count;
@@ -113,10 +119,11 @@ impl Bunnies {
     /// Resolve defs from an already-fetched corpus (the hosted twin of `on_start`'s fetch;
     /// the HOST anchored, so no anchor here).
     pub fn init_with(&mut self, bundle: &Bundle) {
-        match crate::resolve_thing_in(bundle, "bunny") {
+        let kind_name = self.kind_name.clone();
+        match crate::resolve_thing_in(bundle, &kind_name) {
             Ok(def) => {
                 self.def = def;
-                self.kind = bundle.thing_object_id("bunny").unwrap_or(0);
+                self.kind = bundle.thing_object_id(&kind_name).unwrap_or(0);
                 self.thirst = bundle.gameplay_reference("need", "thirst").unwrap_or(0);
                 self.hunger = bundle.gameplay_reference("need", "hunger").unwrap_or(0);
                 self.bundle = Some(bundle.clone());
@@ -472,6 +479,25 @@ impl Brain for Bunnies {
             Event::OwnedPawn { entity_reference } => {
                 if let Some(owned) = &mut self.owned {
                     owned.insert(*entity_reference);
+                }
+                // The snapshot race (npc-host P3): a RESTING pawn's StateObject replays
+                // once at subscribe and may beat this frame — adopt from the world model's
+                // position map so ownership arriving second still lands the mind.
+                if !self.minds.contains_key(entity_reference) {
+                    if let Some(at) = _bot.pawn_at(*entity_reference) {
+                        tracing::info!(pawn = format!("{entity_reference:#010x}"), ?at,
+                            "owned pawn adopted from the world model (snapshot race)");
+                        self.minds.insert(*entity_reference, Mind {
+                            at,
+                            dest: None,
+                            deadline: Instant::now(),
+                            drink_issued: false,
+                            eat_issued: false,
+                            busy_until: None,
+                            active: Vec::new(),
+                            active_set: Vec::new(),
+                        });
+                    }
                 }
             }
             Event::PawnParts { entity_reference, payload, .. } => {

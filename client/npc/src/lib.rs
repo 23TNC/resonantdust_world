@@ -131,9 +131,16 @@ pub async fn run_host(config: ClientConfig, host_name: &str, spec: &[(String, (i
             radii: AnchorRadii { active: r, hot: r + 2, warm: r + 4, cold: r + 6 },
             soul: 0,
         });
-        // The group brain (F11): bunny_fluffle runs the ownership-gated group brain; the
-        // wolf module's hunt-capable twin is the next increment (recorded in completed.md).
-        let brain = if name == "bunny_fluffle" {
+        // The ONE group brain (F6/F11): every hosted module runs it, parameterized by the
+        // governed KIND (the corpus's affordance gates carry the diet — a wolf refuses
+        // plant matter by content, not by code). The live-prey HUNT stays un-ported
+        // (stage-2 world-state AI is its home); hosted wolves drink + scavenge + wander.
+        let pawn_kind = match name.as_str() {
+            "wolf_pack" => Some("wolf"),
+            "bunny_fluffle" => Some("bunny"),
+            _ => None,
+        };
+        let brain = pawn_kind.and_then(|kind| {
             bundle.as_ref().map(|b| {
                 let count = b
                     .brain_object_id(name)
@@ -142,6 +149,7 @@ pub async fn run_host(config: ClientConfig, host_name: &str, spec: &[(String, (i
                     .unwrap_or(3.0) as usize;
                 let mut gb = crate::brains::bunnies::Bunnies::hosted(
                     Rng(rand_seed()),
+                    kind,
                     *center,
                     radius.ceil() as i32,
                     count,
@@ -149,9 +157,7 @@ pub async fn run_host(config: ClientConfig, host_name: &str, spec: &[(String, (i
                 gb.init_with(b);
                 gb
             })
-        } else {
-            None
-        };
+        });
         tracing::info!(%name, ?center, radius, brain = brain.is_some(), "module-player up (npc-host P2)");
         modules.push(HostModule { name: name.clone(), center: *center, radius, session, brain, player_pawn: None });
     }
@@ -191,7 +197,8 @@ pub async fn run_host(config: ClientConfig, host_name: &str, spec: &[(String, (i
                         if m.player_pawn.is_none() {
                             m.player_pawn = Some(entity_reference);
                             if let (Some(brain), Some(b)) = (&mut m.brain, bundle.as_ref()) {
-                                if let Some(nref) = b.gameplay_reference("need", "bunny_count") {
+                                let count_need = if m.name == "wolf_pack" { "wolf_count" } else { "bunny_count" };
+                                if let Some(nref) = b.gameplay_reference("need", count_need) {
                                     let (min, max) = b
                                         .need_params_by_ref(nref)
                                         .map(|np| (np.min, np.max))
@@ -256,6 +263,10 @@ pub struct Bot {
     /// `pack_tile_reference(x, y)`), from the layer-0 `ColdTiles` baseline. What
     /// [`Bot::nearest_tile`] scans — a brain's "where is water" question.
     tiles: std::collections::HashMap<u16, Vec<u16>>,
+    /// Known PAWN positions (npc-host F11): `entity → world tile`, from `StateObject`
+    /// events (removed = gone). What a hosted brain adopts from when the OWNERSHIP frame
+    /// loses the race against a resting pawn's one-shot snapshot replay.
+    pawns: std::collections::HashMap<u32, (i32, i32)>,
     /// Cold OVERLAY overrides (built walls etc.): `(zone, cell)` → `kind_reference`.
     tile_overlays: std::collections::HashMap<(u16, u8), u16>,
     /// The composed THING view (food-chain F8, closing pathfinding F8's successor):
@@ -281,6 +292,7 @@ impl Bot {
             server_url: None,
             tic_anchor: None,
             tiles: std::collections::HashMap::new(),
+            pawns: std::collections::HashMap::new(),
             tile_overlays: std::collections::HashMap::new(),
             things: std::collections::HashMap::new(),
         };
@@ -353,6 +365,13 @@ impl Bot {
     /// Track harness-level state off an event (the pause flag + the tic anchor).
     pub(crate) fn note(&mut self, event: &Event) {
         match event {
+            Event::StateObject { entity_reference, tile_x, tile_y, removed, .. } => {
+                if *removed {
+                    self.pawns.remove(entity_reference);
+                } else {
+                    self.pawns.insert(*entity_reference, (*tile_x, *tile_y));
+                }
+            }
             Event::Paused { paused } => {
                 if *paused != self.paused {
                     tracing::info!(paused, "simulation freeze changed (/pause)");
@@ -507,6 +526,11 @@ impl Bot {
             }
         }
         best.map(|(w, _)| w)
+    }
+
+    /// A known pawn's world tile, or `None` if it never streamed (or was removed).
+    pub fn pawn_at(&self, entity: u32) -> Option<(i32, i32)> {
+        self.pawns.get(&entity).copied()
     }
 
     /// The current sim tic, extrapolated from the latest anchor at its LEARNED rate — `None`

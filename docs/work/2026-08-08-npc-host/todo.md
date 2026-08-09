@@ -26,7 +26,7 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 - [x] lib: `Host` runs N modules, each a PLAYER (F1), over ONE shared world model and one
       tick loop (I1/I4); env = which-brain-where; single-brain envs kept (I5). Acceptance:
       a two-module host boots; both players visible server-side.
-- [ ] Ownership from spawn attribution (F4/I2): a brain commands only its mints and
+- [x] Ownership from spawn attribution (F4/I2): a brain commands only its mints and
       RE-ATTACHES to them on restart via the spawn log; kind-global adoption deleted.
       Acceptance: restart drill — the re-attached set equals the minted set exactly.
 - [x] Position + area: each module-player anchors at its position (F2); scans/wander/mints
@@ -38,7 +38,7 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 - [x] The `wolf_pawn` group need live (F8): written at mint/death on the brain-player; low
       band drives re-minting. Acceptance: kill a wolf — the need drops, the band fires, the
       brain re-mints to its trait's group size.
-- [ ] The shared keep-alive policy (F6): banded thirst/hunger → nearest in-area water/food +
+- [x] The shared keep-alive policy (F6): banded thirst/hunger → nearest in-area water/food +
       drink/eat, else wander; wolves AND bunnies call it, per-brain copies die. Acceptance:
       both modules' pawns drink and eat via the ONE policy path (worker log).
 
