@@ -4,7 +4,7 @@ import {
   ACTION_BTN_CSS,
   ACTIONS_CSS,
   BODY_CSS,
-  CHROME_BG,
+  CHROME_RGB,
   PANEL_OUTLINE,
   edgeXCssFor,
   edgeYCssFor,
@@ -73,7 +73,7 @@ let lastEditTarget: DomPanel | null = null;
 
 /** Storage schema stamp for panel geometry. Bumped when the persisted
  *  shape changes in a way old values can't satisfy. */
-const LAYOUT_SCHEMA_VERSION = "2";
+const LAYOUT_SCHEMA_VERSION = "3";
 const LAYOUT_VERSION_KEY = "rd.panelLayout.v";
 
 /** Per-panel keys that v1 wrote and v2 supersedes: the six CSS-string
@@ -81,7 +81,9 @@ const LAYOUT_VERSION_KEY = "rd.panelLayout.v";
  *  the panels a returning user had snapping turned off on, since
  *  `defaultedBool` prefers a stored value over the new `true` default
  *  (F5/I3). */
-const SUPERSEDED_KEYS = ["left", "top", "right", "bottom", "width", "height", "gridSnap"];
+const SUPERSEDED_KEYS = ["left", "top", "right", "bottom", "width", "height", "gridSnap",
+  // v3: the background ENUM became an opacity number.
+  "background"];
 
 /** One-time migration to cell-based geometry. Runs before any panel
  *  constructs, and drops every superseded key in one sweep.
@@ -257,32 +259,21 @@ function pinSide(pin: PinMode): PinSide {
  *    details panel toggling between compact and expanded, etc. */
 export type HeightMode = "off" | "full" | "half" | "quarter" | "auto";
 
-/** Per-panel background (selection-panels F1). A NAMED value rather than a
- *  colour literal: the settings popup speaks toggles and cycling selects, and
- *  the corpus is hand-edited JSON where `"background": "none"` survives review
- *  and `"#1a1c22f5"` does not. The value is a string, so an arbitrary
- *  `#rrggbb` stays an additive change to `backgroundCss` alone.
+/** Per-panel background OPACITY, 0–100 (selection-panels F1, reworked
+ *  2026-08-09 at the user's call: _"Can we replace background with opacity
+ *  instead of chrome dim and none?"_).
  *
- *  `none` is genuinely transparent — it is what lets a panel sit over the world
- *  without occluding it. */
-export type BackgroundMode = "chrome" | "dim" | "none";
+ *  It replaced a three-value enum (`chrome` 96% / `dim` 55% / `none` 0%) — one
+ *  number spans all three and everything between, so the enum was only ever
+ *  three samples of this scale. `0` is fully transparent, which is what lets a
+ *  panel sit over the world without occluding it. */
+export const BACKGROUND_OPACITY_DEFAULT = 96;
 
-const VALID_BACKGROUNDS = new Set<BackgroundMode>(["chrome", "dim", "none"]);
-
-function readBackground(raw: string | null, fallback: BackgroundMode): BackgroundMode {
-  return raw && VALID_BACKGROUNDS.has(raw as BackgroundMode)
-    ? (raw as BackgroundMode) : fallback;
-}
-
-/** Resolve a background mode to a CSS value. The ONE place a mode becomes a
- *  colour — a future `#rrggbb` mode passes straight through here. */
-export function backgroundCss(mode: BackgroundMode): string {
-  switch (mode) {
-    case "none":  return "transparent";
-    case "dim":   return "rgba(20, 22, 30, 0.55)";
-    case "chrome":
-    default:      return CHROME_BG;
-  }
+/** Resolve an opacity to a CSS colour. The ONE place the panel fill is
+ *  composed, so the chrome RGB and the per-panel alpha meet exactly once. */
+export function backgroundCss(opacity: number): string {
+  const a = Math.min(Math.max(0, opacity), 100) / 100;
+  return a === 0 ? "transparent" : `rgba(${CHROME_RGB}, ${a})`;
 }
 
 const VALID_HEIGHTS = new Set<HeightMode>(["off", "full", "half", "quarter", "auto"]);
@@ -393,8 +384,8 @@ export interface DomPanelOptions {
    *  (e.g. the details panel sets `"auto"` so the host follows
    *  compact↔expanded content). Defaults to `"off"`. */
   heightMode?: HeightMode;
-  /** Initial background seed when no persisted value exists (F1). */
-  background?: BackgroundMode;
+  /** Initial background opacity (0–100) when no persisted value exists (F1). */
+  backgroundOpacity?: number;
   /** Initial click-through seed (F2) — `pointer-events: none` on the panel
    *  root, so the body passes clicks to the world beneath. */
   clickThrough?: boolean;
@@ -451,7 +442,7 @@ export type PanelSettingKey =
   | "close"
   | "hideClose"
   | "mask"
-  | "background"
+  | "backgroundOpacity"
   | "clickThrough"
   | "outline"
   | "minSize"
@@ -505,7 +496,7 @@ export interface PanelStateJSON {
    *  of `pin`, which chooses *where* the entry sits. */
   pinned?: boolean;
   heightMode?:     HeightMode;
-  background?:     BackgroundMode;
+  backgroundOpacity?: number;
   clickThrough?:   boolean;
   outline?:        boolean;
   minCols?:        number;
@@ -833,7 +824,7 @@ export class DomPanel {
   /** Per-panel background (F1). Reaches the title bar, body AND footer together
    *  — repainting only the body would leave an opaque bar floating over a
    *  transparent panel, which reads as a rendering fault, not a setting. */
-  private _background: BackgroundMode = "chrome";
+  private _backgroundOpacity = BACKGROUND_OPACITY_DEFAULT;
   /** Per-panel click-through (F2). `pointer-events: none` on the root; chrome
    *  keeps `auto`, and so must any interactive body content, which inherits
    *  `none` and would otherwise go silently dead. Independent of
@@ -1019,8 +1010,9 @@ export class DomPanel {
       : (contentDefaults.anchor ?? "top-left");
     this._titleBarHidden = this.defaultedBool("titleBarHidden", contentDefaults.titleBarHidden ?? false);
     this._gridSnap       = this.defaultedBool("gridSnap",       contentDefaults.gridSnap       ?? true);
-    this._background     = readBackground(this.storageGet("background"),
-                             contentDefaults.background ?? opts.background ?? "chrome");
+    this._backgroundOpacity = this.defaultedInt("backgroundOpacity",
+                             contentDefaults.backgroundOpacity ?? opts.backgroundOpacity
+                             ?? BACKGROUND_OPACITY_DEFAULT, 0);
     this._clickThrough   = this.defaultedBool("clickThrough",
                              contentDefaults.clickThrough ?? opts.clickThrough ?? false);
     this._outline        = this.defaultedBool("outline",
@@ -2258,14 +2250,15 @@ export class DomPanel {
    *  reattaches / detaches the mask Graphics; non-Pixi panels just
    *  persist the flag (toggle is a no-op visually, and the row is
    *  default-hidden for them — see `isSettingHidden`). */
-  /** Current background mode (F1). */
-  get background(): BackgroundMode { return this._background; }
+  /** Current background opacity, 0–100 (F1). */
+  get backgroundOpacity(): number { return this._backgroundOpacity; }
 
-  /** Set the background mode and repaint all three chrome surfaces. */
-  setBackground(mode: BackgroundMode): void {
-    if (this._background === mode) return;
-    this._background = mode;
-    this.storageSet("background", mode);
+  /** Set the background opacity and repaint all three chrome surfaces. */
+  setBackgroundOpacity(opacity: number): void {
+    const next = Math.min(Math.max(0, Math.round(opacity)), 100);
+    if (next === this._backgroundOpacity) return;
+    this._backgroundOpacity = next;
+    this.storageSet("backgroundOpacity", String(next));
     this.applyBackground();
   }
 
@@ -2333,7 +2326,7 @@ export class DomPanel {
    *  body treatment (`PixiPanel` showing the canvas) select `background: none`
    *  rather than overriding the element directly. */
   protected applyBackground(): void {
-    const css = backgroundCss(this._background);
+    const css = backgroundCss(this._backgroundOpacity);
     this.titlebar.style.background = css;
     this.body.style.background     = css;
     if (this.footer) this.footer.style.background = css;
@@ -2814,7 +2807,7 @@ export class DomPanel {
       pin:             this._pin,
       pinned:          this._pinned,
       heightMode:      this._heightMode,
-      background:      this._background,
+      backgroundOpacity: this._backgroundOpacity,
       clickThrough:    this._clickThrough,
       outline:         this._outline,
       minCols:         this._minCols,
@@ -2850,7 +2843,7 @@ export class DomPanel {
       "anchor", "titleBarHidden", "gridSnap", "masked",
       "minimizable", "resizable", "resizableX", "resizableY",
       "closable", "hideMinimizeBtn", "hideCloseBtn",
-      "pin", "pinned", "heightMode", "background", "clickThrough", "outline", "minCols", "minRows", "layer",
+      "pin", "pinned", "heightMode", "backgroundOpacity", "clickThrough", "outline", "minCols", "minRows", "layer",
       "snap", "draggable",
       "taskbarIcon", "titleSuffix",
     ];
@@ -2875,7 +2868,7 @@ export class DomPanel {
     this._anchor          = cd.anchor          ?? "top-left";
     this._titleBarHidden  = cd.titleBarHidden  ?? false;
     this._gridSnap        = cd.gridSnap        ?? true;
-    this._background      = cd.background      ?? "chrome";
+    this._backgroundOpacity = cd.backgroundOpacity ?? BACKGROUND_OPACITY_DEFAULT;
     this._clickThrough    = cd.clickThrough    ?? false;
     this._outline         = cd.outline         ?? true;
     this._minCols         = Math.max(1, cd.minCols ?? 1);
@@ -3118,10 +3111,10 @@ export class DomPanel {
    *  storageKey (persistence opted out). */
   /** Read a persisted positive integer setting, falling back when absent or
    *  malformed. Floors at 1 — a zero-cell minimum is not a minimum. */
-  private defaultedInt(suffix: string, defaultValue: number): number {
+  private defaultedInt(suffix: string, defaultValue: number, floor = 1): number {
     const raw = this.storageGet(suffix);
     const v = raw === null ? NaN : Number.parseInt(raw, 10);
-    return Number.isFinite(v) && v >= 1 ? v : Math.max(1, defaultValue);
+    return Number.isFinite(v) && v >= floor ? v : Math.max(floor, defaultValue);
   }
 
   private defaultedBool(suffix: string, defaultValue: boolean): boolean {

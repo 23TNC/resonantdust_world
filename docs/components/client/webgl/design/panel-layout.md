@@ -131,16 +131,15 @@ Two axes the grid deliberately does **not** own, added by work
 They join the layout/scale split above as a third category: *layout* comes from the projection,
 *scale* from `--ui-row`, and **appearance/interaction from per-panel options**.
 
-- **`background`** — a named value, not a colour literal: `chrome` (the default
-  `rgba(20,22,30,0.96)`), `dim`, `none`. It reaches **all three** chrome surfaces — title bar,
-  body and footer — because a panel whose body alone goes transparent keeps an opaque bar floating
-  over nothing, which reads as a rendering fault rather than a setting. `none` means genuinely
-  transparent; it is what lets a panel sit over the world without occluding it.
+- **`backgroundOpacity`** — an integer **0–100** over the chrome colour, default 96. It reaches
+  **all three** chrome surfaces — title bar, body and footer — because a panel whose body alone
+  goes transparent keeps an opaque bar floating over nothing, which reads as a rendering fault
+  rather than a setting. `0` is genuinely transparent; it is what lets a panel sit over the world
+  without occluding it.
 
-  Named rather than free because the settings popup speaks toggles and cycling selects, and the
-  corpus is hand-edited JSON where `"background": "none"` survives review. The value is a
-  **string**, so an arbitrary `#rrggbb` remains an additive change to one resolver if it is ever
-  wanted.
+  This began as a three-value enum (`chrome` 96% / `dim` 55% / `none` 0%) and became a number at
+  the user's call — those three were only ever samples of this one scale. `backgroundCss` is the
+  single place the chrome RGB and the per-panel alpha meet.
 
 - **`clickThrough`** — `pointer-events: none` on the panel root, so the body passes clicks to
   whatever is beneath (the world canvas). Chrome keeps `pointer-events: auto`, and so must any
@@ -190,7 +189,7 @@ so the tooltip is the entire read surface, and a panel docked one row tall would
    grid change, migration, title toggle, drag end, resize end, snap, reset. Consumers that
    mirror a panel's rect (the world canvas) have no other notification.
 7. No stored panel geometry is a pixel string, and no component hardcodes a pixel font size.
-8. `background` reaches title bar, body and footer together — never one surface alone.
+8. `backgroundOpacity` reaches title bar, body and footer together — never one surface alone.
 9. A click-through panel's interactive children set `pointer-events: auto` explicitly; they
    inherit `none` from the root and go silently dead otherwise.
 10. Each selection surface subscribes to the selection model itself. No selection panel feeds

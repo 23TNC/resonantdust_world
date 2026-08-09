@@ -7,7 +7,7 @@
 //! strip wider than its parent. A panel of their own, as wide as the screen, removes the reason:
 //! the cards flow left-to-right inside it and never escape a clip.
 //!
-//! Authored full-width along the bottom with `background: none` + `clickThrough: true`, so it
+//! Authored full-width along the bottom at `backgroundOpacity: 0` + `clickThrough: true`, so it
 //! sits over the world without occluding it and passes clicks through — while the cards
 //! themselves keep `pointer-events: auto` and stay live (design invariant 9).
 
@@ -49,7 +49,7 @@ export class ConditionsPanel extends DomPanel {
       // The stream's whole shape (F3): full width along the bottom of the field, transparent,
       // click-through, no bar. The corpus can override all four.
       defaultCell: { col: 0, row: 28, cols: 58, rows: 3 },
-      background: "none",
+      backgroundOpacity: 0,
       clickThrough: true,
     });
     this.cards = new ConditionCards({ storageKey: "conditions" });

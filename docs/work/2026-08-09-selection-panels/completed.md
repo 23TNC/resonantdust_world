@@ -312,3 +312,22 @@ case that motivated it: setting `conditions.layer = 50` puts the conditions pane
 **above** Build (`480001`) and Chat (`480002`), with its cards hittable where they were previously
 buried. The P6 note about conditions being stuck under the tool tier is now a user setting rather
 than a code change.
+
+## 2026-08-09 — background becomes an OPACITY
+
+User: _"Can we replace background with opacity instead of chrome dim and none?"_ Yes — the enum
+was only ever three samples of one scale (`chrome` 96%, `dim` 55%, `none` 0%).
+
+`backgroundOpacity` is an integer 0–100, default 96, stepped in 5s from a popup row that shows
+the percentage. `CHROME_BG` split into `CHROME_RGB` (the colour) plus an alpha, so `backgroundCss`
+is the single place the two meet — which is what made this a small change rather than a sweep.
+`BackgroundMode`, `VALID_BACKGROUNDS`, `readBackground` and the cycling-select row are deleted.
+
+Storage schema bumped to **v3** with `background` added to the superseded list, so the old enum
+strings are swept on first boot rather than lingering as unread keys.
+
+**Verified live**: stepping reads `96% → 91% → 86% → 81%` with the body's computed alpha tracking
+exactly (`0.96 → 0.91 → 0.86 → 0.81`); it clamps at `0%` where both the body AND title bar go
+`rgba(0, 0, 0, 0)` together; `5%` gives `rgba(20, 22, 30, 0.05)`. After a clean reload the schema
+stamp reads `3`, no `.background` keys remain, and the conditions panel is still transparent and
+click-through from its corpus entry.

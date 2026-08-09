@@ -15,7 +15,12 @@ import { NOTO_EMOJI_FAMILY } from "../../assets/fonts";
 // footer). The panel container itself stays transparent so
 // a panel can select `background: none` to show whatever is beneath
 // it (the world) instead. Resolved per panel via `backgroundCss`.
-export const CHROME_BG = "rgba(20, 22, 30, 0.96)";
+/** The chrome fill's RGB channels. The ALPHA is per-panel (`backgroundOpacity`),
+ *  so this is the one place the colour itself lives. */
+export const CHROME_RGB = "20, 22, 30";
+
+/** Default chrome fill — the base colour at the default 96% opacity. */
+export const CHROME_BG = `rgba(${CHROME_RGB}, 0.96)`;
 
 /** The panel's 1px outline colour. Toggled per panel via the `outline`
  *  option, which swaps this for `transparent` — never for `none`, so the

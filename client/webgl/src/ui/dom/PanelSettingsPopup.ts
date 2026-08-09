@@ -5,7 +5,6 @@ import {
   DomPanel,
   Z_TIER_CHROME,
   type AnchorMode,
-  type BackgroundMode,
   type HeightMode,
   type PanelSettingKey,
   type PinMode,
@@ -131,11 +130,6 @@ const ANCHOR_OPTIONS: readonly { value: AnchorMode; labelKey: string }[] = [
   { value: "bottom-right", labelKey: "bottomRight" },
 ];
 
-const BACKGROUND_OPTIONS: readonly { value: BackgroundMode; labelKey: string }[] = [
-  { value: "chrome", labelKey: "bgChrome" },
-  { value: "dim",    labelKey: "bgDim" },
-  { value: "none",   labelKey: "bgNone" },
-];
 
 const SNAP_OPTIONS: readonly { value: SnapMode; labelKey: string }[] = [
   { value: "none",         labelKey: "none" },
@@ -210,7 +204,7 @@ export class PanelSettingsPopup {
   private readonly hideMinimizeBtnBtn: HTMLButtonElement;
   private readonly hideCloseBtnBtn:    HTMLButtonElement;
   private readonly maskBtn:        HTMLButtonElement;
-  private readonly backgroundSelect: CyclingSelect<BackgroundMode>;
+  private readonly backgroundValue:  HTMLSpanElement;
   private readonly clickThroughBtn:  HTMLButtonElement;
   private readonly outlineBtn:       HTMLButtonElement;
   private readonly minSizeValue:     HTMLSpanElement;
@@ -374,8 +368,8 @@ export class PanelSettingsPopup {
     // conditions panel needs transparent + click-through + clickable cards,
     // which one flag could not express.
     const bgRow = this.addBackgroundRow(body);
-    this.backgroundSelect = bgRow.select;
-    this.rowsByKey.set("background", bgRow.row);
+    this.backgroundValue = bgRow.value;
+    this.rowsByKey.set("backgroundOpacity", bgRow.row);
     const clickRow = this.addToggleRow(body, pp("clickThrough"), "▣",
       () => this.boundPanel?.toggleClickThrough());
     this.clickThroughBtn = clickRow.btn;
@@ -586,7 +580,7 @@ export class PanelSettingsPopup {
     this.outlineBtn.textContent         = p.hasOutline          ? "▣" : "▢";
     this.minSizeValue.textContent       = `${p.minCols}×${p.minRows}`;
     this.layerValue.textContent         = String(p.layer);
-    this.backgroundSelect.setValue(p.background);
+    this.backgroundValue.textContent    = `${p.backgroundOpacity}%`;
     // Draggable: when snap is non-none the value is forced off
     // and the row can't be toggled — dim the glyph to signal
     // "locked". When snap is none the raw `_draggable` toggle
@@ -708,24 +702,41 @@ export class PanelSettingsPopup {
    *  reflects via its `onDraggableChange` subscription. */
   private addBackgroundRow(
     parent: HTMLDivElement,
-  ): { row: HTMLDivElement; select: CyclingSelect<BackgroundMode> } {
+  ): { row: HTMLDivElement; value: HTMLSpanElement } {
     const row = document.createElement("div");
     Object.assign(row.style, ROW_CSS);
     const labelEl = document.createElement("span");
     Object.assign(labelEl.style, LABEL_CSS);
     labelEl.textContent = pp("background");
     row.appendChild(labelEl);
-    const wrap = document.createElement("div");
-    Object.assign(wrap.style, CYCLER_WRAP_CSS);
-    const select = new CyclingSelect<BackgroundMode>({
-      options: localizeOptions(BACKGROUND_OPTIONS),
-      labelMinWidth: "92px",
-      onChange: (value) => this.boundPanel?.setBackground(value),
-    });
-    wrap.appendChild(select.element);
-    row.appendChild(wrap);
+
+    const group = document.createElement("div");
+    Object.assign(group.style, BUTTON_GROUP_CSS);
+    // A percentage, stepped in 5s. Replaced a three-value cycling select
+    // (chrome / dim / none) which was only ever three samples of this scale.
+    const step = (d: number, glyph: string): HTMLButtonElement => {
+      const b = document.createElement("button");
+      Object.assign(b.style, BUTTON_CSS);
+      b.textContent = glyph;
+      b.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const panel = this.boundPanel;
+        if (!panel) return;
+        panel.setBackgroundOpacity(panel.backgroundOpacity + d);
+        this.refreshControls();
+      });
+      return b;
+    };
+    const value = document.createElement("span");
+    Object.assign(value.style, LABEL_CSS);
+    value.style.minWidth = "calc(var(--ui-row) * 1.6)";
+    value.style.textAlign = "center";
+    group.appendChild(step(-5, "🞃"));
+    group.appendChild(value);
+    group.appendChild(step(+5, "🞁"));
+    row.appendChild(group);
     parent.appendChild(row);
-    return { row, select };
+    return { row, value };
   }
 
   private addSnapRow(parent: HTMLDivElement): { row: HTMLDivElement; select: CyclingSelect<SnapMode> } {
