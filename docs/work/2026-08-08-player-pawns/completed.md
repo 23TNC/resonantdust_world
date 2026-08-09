@@ -1,5 +1,22 @@
 # Completed — player-pawns
 
+## 2026-08-08 — P4 (first half): the eval drill
+
+Live: a WS-queued SET_NEED zeroed PPDrill4's wolf_count (row 0x0050) through the full event
+system; the OWNER fan pushed the zeroed row back to the session (set_tic 35303); the carrier
+STAYED ALIVE — no death line, entity_state intact (I8 by construction, observed). Pinned:
+`tests/player_pawn_drill.rs` — the ONE eval takes the exact live row to satisfaction 0.0,
+packless ACTIVE via active_conditions, and the player def's constant wolf_pack bind sits in
+the DEDICATED player-trait lane (1 bind, constant). Test green.
+
+OPEN (the P4 npc-coupling drill): Wolves' (player 1024) linkage + spawn-ledger row + entity
+were deleted to force a re-mint under the real def; the npc container restarted and its
+session re-subscribed zones, but NO mint/link/warn line appeared in the edge log and the
+ledger stayed empty — either the reconnect path skipped ClientMsg::Login or the detached
+funnel task died silently (tokio::spawn swallows panics). NEXT: check whether client/core's
+reconnect re-sends `login`; add a catch/log around the funnel; re-drill. Wolves currently
+has NO player-pawn (self-heals at its next real login).
+
 ## 2026-08-08 — P3 (second half): the owner fan
 
 The edge's `fan_player_pawn`, spawned per session after LoginOk: waits for the ACTIVE
