@@ -102,13 +102,13 @@ impl Debug {
         if v >= 1.0 { v.round() as u16 } else { DEFAULT_TICS_PER_TILE }
     }
 
-    fn issue_move(&mut self, bot: &Bot, id: u32, dest: (i32, i32)) {
+    fn issue_move(&mut self, bot: &Bot, act: &client::Client, id: u32, dest: (i32, i32)) {
         let Some(bundle) = &self.bundle else { return };
         let Some(iref) = bundle.gameplay_reference("interaction", "move_to") else { return };
         let program = vec![
             EXECUTE_INTERACTION, iref, 0, 2, id, tile_to_position(dest.0, dest.1),
         ];
-        if bot.client.queue(program).is_err() {
+        if act.queue(program).is_err() {
             return;
         }
         let at = self.minds.get(&id).map(|m| m.at).unwrap_or(dest);
@@ -160,7 +160,7 @@ impl Brain for Debug {
         }
     }
 
-    fn on_event(&mut self, _bot: &Bot, event: &Event) {
+    fn on_event(&mut self, _bot: &Bot, act: &client::Client, event: &Event) {
         match event {
             Event::StateObject {
                 entity_reference, definition_reference, tile_x, tile_y, removed, ..
@@ -201,7 +201,7 @@ impl Brain for Debug {
         }
     }
 
-    fn tick(&mut self, bot: &Bot) {
+    fn tick(&mut self, bot: &Bot, act: &client::Client) {
         if self.bundle.is_none() {
             return;
         }
@@ -238,7 +238,7 @@ impl Brain for Debug {
                 self.def,
                 &[],
             );
-            if bot.client.queue(program.to_vec()).is_ok() {
+            if act.queue(program.to_vec()).is_ok() {
                 self.outstanding += 1;
                 self.spawn_after = Instant::now() + Duration::from_secs(10);
                 tracing::info!(?spawn, outstanding = self.outstanding,
@@ -251,7 +251,7 @@ impl Brain for Debug {
             let m = &self.minds[&id];
             if m.dest.is_none() || Instant::now() > m.deadline {
                 let d = self.pick_dest();
-                self.issue_move(bot, id, d);
+                self.issue_move(bot, act, id, d);
             }
         }
     }

@@ -38,10 +38,12 @@ pub trait Brain {
     /// One-time setup after login. The bot is logged in; the zone stream is NOT yet open —
     /// call [`Bot::anchor_and_wait`] here.
     fn on_start(&mut self, bot: &mut Bot) -> impl std::future::Future<Output = ()>;
-    /// One world event (already logged by the harness).
-    fn on_event(&mut self, bot: &Bot, event: &Event);
+    /// One world event (already logged by the harness). `act` is the ACTOR seam (npc-host
+    /// F11): the client commands queue through — the brain's own session under the host
+    /// (ownership attribution), the bot's own client standalone.
+    fn on_event(&mut self, bot: &Bot, act: &Client, event: &Event);
     /// Periodic think. Not called while the simulation is paused.
-    fn tick(&mut self, bot: &Bot);
+    fn tick(&mut self, bot: &Bot, act: &Client);
 }
 
 /// Drive `brain` over `bot` until the client engine ends: drain events (pause tracking +
@@ -56,7 +58,7 @@ pub async fn run_brain<B: Brain>(mut bot: Bot, mut brain: B, tick_ms: u64) {
                 Ok(event) => {
                     bot.note(&event);
                     log_event(&event);
-                    brain.on_event(&bot, &event);
+                    brain.on_event(&bot, &bot.client, &event);
                 }
                 Err(mpsc::error::TryRecvError::Empty) => break,
                 Err(mpsc::error::TryRecvError::Disconnected) => {
@@ -68,7 +70,7 @@ pub async fn run_brain<B: Brain>(mut bot: Bot, mut brain: B, tick_ms: u64) {
         if bot.paused {
             continue;
         }
-        brain.tick(&bot);
+        brain.tick(&bot, &bot.client);
     }
 }
 
@@ -86,6 +88,10 @@ pub struct HostModule {
     pub radius: f64,
     /// The module-player's own session (command-only).
     pub session: Bot,
+    /// The module's group brain (npc-host F11) — `None` until a brain exists for its kind.
+    pub brain: Option<crate::brains::bunnies::Bunnies>,
+    /// The module's own player-pawn, learned from its session's 0x40… need fan.
+    pub player_pawn: Option<u32>,
 }
 
 /// Run the HOST (npc-host P2, F1): ONE world session (the host player) carrying every
@@ -125,18 +131,45 @@ pub async fn run_host(config: ClientConfig, host_name: &str, spec: &[(String, (i
             radii: AnchorRadii { active: r, hot: r + 2, warm: r + 4, cold: r + 6 },
             soul: 0,
         });
-        tracing::info!(%name, ?center, radius, "module-player up (npc-host P2)");
-        modules.push(HostModule { name: name.clone(), center: *center, radius, session });
+        // The group brain (F11): bunny_fluffle runs the ownership-gated group brain; the
+        // wolf module's hunt-capable twin is the next increment (recorded in completed.md).
+        let brain = if name == "bunny_fluffle" {
+            bundle.as_ref().map(|b| {
+                let count = b
+                    .brain_object_id(name)
+                    .map(|id| b.player_trait_stat("group_size", &b.brain_player_traits(id)))
+                    .filter(|v| *v > 0.0)
+                    .unwrap_or(3.0) as usize;
+                let mut gb = crate::brains::bunnies::Bunnies::hosted(
+                    Rng(rand_seed()),
+                    *center,
+                    radius.ceil() as i32,
+                    count,
+                );
+                gb.init_with(b);
+                gb
+            })
+        } else {
+            None
+        };
+        tracing::info!(%name, ?center, radius, brain = brain.is_some(), "module-player up (npc-host P2)");
+        modules.push(HostModule { name: name.clone(), center: *center, radius, session, brain, player_pawn: None });
     }
     let mut ticker = tokio::time::interval(Duration::from_millis(tick_ms));
     loop {
         ticker.tick().await;
-        // The world lane: note ONCE into the shared model (I1).
+        // The world lane: note ONCE into the shared model (I1), then fan read-only to
+        // every module brain (sense is shared; act is per-module).
         loop {
             match world.events.try_recv() {
                 Ok(event) => {
                     world.note(&event);
                     log_event(&event);
+                    for m in &mut modules {
+                        if let Some(brain) = &mut m.brain {
+                            brain.on_event(&world, &m.session.client, &event);
+                        }
+                    }
                 }
                 Err(mpsc::error::TryRecvError::Empty) => break,
                 Err(mpsc::error::TryRecvError::Disconnected) => {
@@ -155,12 +188,27 @@ pub async fn run_host(config: ClientConfig, host_name: &str, spec: &[(String, (i
                     {
                         tracing::info!(module = %m.name, player_pawn = format!("{entity_reference:#010x}"),
                             need = format!("{need:#010x}"), "module's own player-pawn row");
+                        if m.player_pawn.is_none() {
+                            m.player_pawn = Some(entity_reference);
+                            if let (Some(brain), Some(b)) = (&mut m.brain, bundle.as_ref()) {
+                                if let Some(nref) = b.gameplay_reference("need", "bunny_count") {
+                                    let (min, max) = b
+                                        .need_params_by_ref(nref)
+                                        .map(|np| (np.min, np.max))
+                                        .unwrap_or((0.0, 16.0));
+                                    brain.set_group(entity_reference, nref, min, max);
+                                }
+                            }
+                        }
                     }
                     // The ownership set (I11/F4): the pawns THIS module minted, replayed at
-                    // login and live thereafter — what the P3 policy commands.
-                    Ok(Event::OwnedPawn { entity_reference }) => {
+                    // login and live thereafter — what the policy commands.
+                    Ok(ev @ Event::OwnedPawn { entity_reference }) => {
                         tracing::info!(module = %m.name,
                             pawn = format!("{entity_reference:#010x}"), "module owns pawn");
+                        if let Some(brain) = &mut m.brain {
+                            brain.on_event(&world, &m.session.client, &ev);
+                        }
                     }
                     Ok(_) => {}
                     Err(mpsc::error::TryRecvError::Empty) => break,
@@ -168,7 +216,24 @@ pub async fn run_host(config: ClientConfig, host_name: &str, spec: &[(String, (i
                 }
             }
         }
+        if world.paused {
+            continue;
+        }
+        for m in &mut modules {
+            if let Some(brain) = &mut m.brain {
+                brain.tick(&world, &m.session.client);
+            }
+        }
     }
+}
+
+/// A wall-clock rng seed (npc motion is not part of sim determinism).
+fn rand_seed() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0x9E37_79B9_7F4A_7C15)
+        | 1
 }
 
 /// The automated-player harness: owns the `client` handle and its event stream, and hides the

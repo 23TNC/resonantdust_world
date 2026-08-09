@@ -233,7 +233,7 @@ impl Wolves {
             .unwrap_or_default()
     }
 
-    fn mind_needs(&mut self, bot: &Bot) {
+    fn mind_needs(&mut self, bot: &Bot, act: &client::Client) {
         let Some(wolf) = self.wolf else { return };
         let Some(bundle) = &self.bundle else { return };
         let payload = self.payloads.get(&wolf).cloned().unwrap_or_default();
@@ -256,7 +256,7 @@ impl Wolves {
                 let (lo, hi) = np.as_ref().map(|np| (np.min as f32, np.max as f32)).unwrap_or((0.0, 1.0));
                 let sat = self.thirst_drill.unwrap_or(full);
                 let row = pack_gameplay_row(self.thirst, quantize(sat, lo, hi));
-                if bot.client.queue(vec![SET_NEED, wolf, row]).is_err() {
+                if act.queue(vec![SET_NEED, wolf, row]).is_err() {
                     tracing::error!("engine gone during thirst init");
                     return;
                 }
@@ -317,7 +317,7 @@ impl Wolves {
                     wolf,
                     pack_gameplay_row(cref, cp.duration as u16),
                 ]);
-                if bot.client.queue(program).is_err() {
+                if act.queue(program).is_err() {
                     tracing::error!("engine gone during the grant drill");
                     return;
                 }
@@ -332,7 +332,7 @@ impl Wolves {
         // must be REFUSED there and logged, never half-executed.
         if !self.interact_fired && self.init_queued {
             if let Some(name) = self.interact_drill.clone() {
-                self.fire_interaction(bot, &name, 3.0, self.at);
+                self.fire_interaction(bot, act, &name, 3.0, self.at);
                 self.interact_fired = true;
             }
         }
@@ -383,7 +383,7 @@ impl Wolves {
     /// The eat pass (food-chain F8): when hungry, head for the nearest thing OFFERING a
     /// hunger-satisfying interaction this wolf may use (eat_meat via carnivore), and
     /// fire it from within reach — the drink pattern, over the THING mirror.
-    fn mind_eat(&mut self, bot: &Bot) {
+    fn mind_eat(&mut self, bot: &Bot, act: &client::Client) {
         if self.hunger == 0 || self.eat_issued || !self.is_hungry() {
             return;
         }
@@ -402,7 +402,7 @@ impl Wolves {
                             .and_then(|b| b.interaction_params(&interaction))
                             .map(|ip| ip.duration)
                             .unwrap_or(0.0);
-                        self.fire_interaction(bot, &interaction, magnitude, c);
+                        self.fire_interaction(bot, act, &interaction, magnitude, c);
                         self.eat_issued = true;
                         self.eat_target = None;
                         self.busy_until = Some(
@@ -424,7 +424,7 @@ impl Wolves {
                 if self.eat_target != Some(t) || self.dest.is_none() {
                     tracing::info!(meat = ?t, from = ?self.at, "hungry — heading to food");
                     self.eat_target = Some(t);
-                    self.issue_move(bot, t);
+                    self.issue_move(bot, act, t);
                 }
             }
             None => {
@@ -438,7 +438,7 @@ impl Wolves {
     /// (walk-then-act to the victim's LIVE position). Moved-away prey no-ops the
     /// completion, so a still-hungry wolf re-fires past `hunt_until`. The kill's meat
     /// enters the thing mirror and mind_eat (which runs FIRST) takes over.
-    fn mind_hunt(&mut self, bot: &Bot) {
+    fn mind_hunt(&mut self, bot: &Bot, act: &client::Client) {
         if self.attack_ref == 0 || self.hunger == 0 || !self.is_hungry() {
             self.hunt_target = None;
             return;
@@ -478,7 +478,7 @@ impl Wolves {
         program.push(wolf);
         program.push(victim);
         program.push((self.attack_magnitude as f32).to_bits());
-        if bot.client.queue(program).is_err() {
+        if act.queue(program).is_err() {
             tracing::error!("engine gone during hunt");
             return;
         }
@@ -575,7 +575,7 @@ impl Wolves {
     /// the F5 RESERVED vocabulary (`pawn` = this wolf, `amount` = `magnitude` as f32 bits)
     /// — the same rule the pie menu's composer applies. An unbindable name refuses loudly
     /// (input-rework I11: the hardcoded 3-input drink shape mis-fired move_to live).
-    fn fire_interaction(&self, bot: &Bot, interaction: &str, magnitude: f64, dest: (i32, i32)) {
+    fn fire_interaction(&self, bot: &Bot, act: &client::Client, interaction: &str, magnitude: f64, dest: (i32, i32)) {
         let Some(wolf) = self.wolf else { return };
         let Some(bundle) = &self.bundle else { return };
         let (Some(iref), Some(ip)) = (
@@ -604,7 +604,7 @@ impl Wolves {
         }
         let mut program = vec![EXECUTE_INTERACTION, iref, 0, inputs.len() as u32];
         program.extend_from_slice(&inputs);
-        if bot.client.queue(program).is_err() {
+        if act.queue(program).is_err() {
             tracing::error!("engine gone during interaction fire");
             return;
         }
@@ -615,7 +615,7 @@ impl Wolves {
     /// The drink pass (interactions P4): when a thirst band is active and unhandled, walk to
     /// the nearest AVAILABLE water and fire the interaction on arrival. Unreachable or
     /// unknown water logs and leaves the wolf to its wander — never a spin.
-    fn mind_drink(&mut self, bot: &Bot) {
+    fn mind_drink(&mut self, bot: &Bot, act: &client::Client) {
         if self.thirst == 0 || self.drink_issued || !self.is_thirsty() {
             return;
         }
@@ -629,7 +629,7 @@ impl Wolves {
                 let c = (self.at.0 + ox, self.at.1 + oy);
                 if let Some(kind) = bot.tile_kind_at(c) {
                     if let Some((interaction, magnitude)) = self.usable_drink(kind, now) {
-                        self.fire_interaction(bot, &interaction, magnitude, c);
+                        self.fire_interaction(bot, act, &interaction, magnitude, c);
                         self.drink_issued = true;
                         self.drink_target = None;
                         return;
@@ -671,7 +671,7 @@ impl Wolves {
                     tracing::info!(water = ?t, shore = ?(sx, sy), from = ?self.at,
                                    "thirsty — heading to the shore");
                     self.drink_target = Some(t);
-                    self.issue_move(bot, (sx, sy));
+                    self.issue_move(bot, act, (sx, sy));
                 }
             }
             None => {
@@ -700,7 +700,7 @@ impl Wolves {
     /// Issue one A→B move — through the `move_to` INTERACTION (input-rework F2/F3: the raw
     /// MOVE_TO door is closed; this is the same event the pie menu composes) — and arm the
     /// give-up deadline from the trip length.
-    fn issue_move(&mut self, bot: &Bot, dest: (i32, i32)) {
+    fn issue_move(&mut self, bot: &Bot, act: &client::Client, dest: (i32, i32)) {
         let Some(wolf) = self.wolf else { return };
         let Some(bundle) = &self.bundle else { return };
         let Some(iref) = bundle.gameplay_reference("interaction", "move_to") else {
@@ -711,7 +711,7 @@ impl Wolves {
         let program = vec![
             EXECUTE_INTERACTION, iref, 0, 2, wolf, tile_to_position(dest.0, dest.1),
         ];
-        if bot.client.queue(program).is_err() {
+        if act.queue(program).is_err() {
             tracing::error!("engine gone during move");
             return;
         }
@@ -810,7 +810,7 @@ impl Brain for Wolves {
         tracing::info!("awaiting an existing minted wolf (SPAWN_REQUEST if none appears)");
     }
 
-    fn on_event(&mut self, _bot: &Bot, event: &Event) {
+    fn on_event(&mut self, _bot: &Bot, act: &client::Client, event: &Event) {
         // The payload sidecar (needs-moodlets P4): buffer the RAW stream per entity — the
         // zone snapshot may fan it before OR after the StateObject the adoption keys on.
         if let Event::PawnParts { entity_reference, payload, .. } = event {
@@ -889,7 +889,7 @@ impl Brain for Wolves {
         }
     }
 
-    fn tick(&mut self, bot: &Bot) {
+    fn tick(&mut self, bot: &Bot, act: &client::Client) {
         if self.wolf.is_none() {
             // spawn-authority I2/I6: a REQUEST can be refused (the refusal is a worker
             // log we never see) — the once-latch would wedge forever, so a request with
@@ -912,7 +912,7 @@ impl Brain for Wolves {
                     self.def,
                     &[],
                 );
-                if bot.client.queue(program.to_vec()).is_err() {
+                if act.queue(program.to_vec()).is_err() {
                     tracing::error!("engine gone during spawn request");
                     return;
                 }
@@ -922,7 +922,7 @@ impl Brain for Wolves {
             }
             return;
         }
-        self.mind_needs(bot);
+        self.mind_needs(bot, act);
         // An ACT with a duration is in flight (eat_meat runs 20 tics): HOLD STILL —
         // walking off mid-act makes the completion no-op ("pawn left the carrier's
         // range", lumberjack F1) and the latch would strand the need. On expiry,
@@ -934,16 +934,16 @@ impl Brain for Wolves {
             self.busy_until = None;
             self.eat_issued = false;
         }
-        self.mind_drink(bot);
-        self.mind_eat(bot);
-        self.mind_hunt(bot);
+        self.mind_drink(bot, act);
+        self.mind_eat(bot, act);
+        self.mind_hunt(bot, act);
         match self.dest {
             None => {
                 // A drink or eat trip owns the destination slot — the wander yields
                 // (the minds re-issue their trips on their own).
                 if self.drink_target.is_none() && self.eat_target.is_none() {
                     let dest = self.pick_pathable_dest(bot);
-                    self.issue_move(bot, dest);
+                    self.issue_move(bot, act, dest);
                 }
             }
             Some(dest) if std::time::Instant::now() > self.deadline => {
@@ -953,7 +953,7 @@ impl Brain for Wolves {
                 // (the old one may be exactly why the trip stalled).
                 tracing::warn!(?dest, "trip deadline passed — superseding with a fresh trip");
                 let fresh = self.pick_pathable_dest(bot);
-                self.issue_move(bot, fresh);
+                self.issue_move(bot, act, fresh);
             }
             Some(_) => {}
         }

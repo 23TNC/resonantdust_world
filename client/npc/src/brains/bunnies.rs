@@ -52,6 +52,14 @@ pub struct Bunnies {
     minds: HashMap<u32, Mind>,
     payloads: HashMap<u32, Vec<u32>>,
     need_rows: HashMap<u32, HashMap<u32, (u32, u16)>>,
+    /// HOSTED mode (npc-host F11): the OWNERSHIP set — only refs the module's player minted
+    /// (fed by `Event::OwnedPawn`) are adopted; `None` = the legacy kind-scan (standalone).
+    owned: Option<std::collections::HashSet<u32>>,
+    /// HOSTED mode: the module's own player-pawn + its count need — the F8 bookkeeping
+    /// target (`bunny_count` written on drift).
+    group: Option<(u32, u32, f64, f64)>,
+    /// The last count written (avoid re-writing an unchanged value every tick).
+    last_count: Option<usize>,
 }
 
 impl Bunnies {
@@ -85,7 +93,44 @@ impl Bunnies {
             minds: HashMap::new(),
             payloads: HashMap::new(),
             need_rows: HashMap::new(),
+            owned: None,
+            group: None,
+            last_count: None,
         }
+    }
+
+    /// HOSTED construction (npc-host F11): explicit area + count (no env), ownership-gated
+    /// adoption from the start. `init_with` supplies the corpus the HOST already fetched.
+    pub fn hosted(rng: Rng, home: (i32, i32), radius: i32, count: usize) -> Self {
+        let mut b = Self::new(rng);
+        b.home = home;
+        b.radius = radius;
+        b.count = count;
+        b.owned = Some(std::collections::HashSet::new());
+        b
+    }
+
+    /// Resolve defs from an already-fetched corpus (the hosted twin of `on_start`'s fetch;
+    /// the HOST anchored, so no anchor here).
+    pub fn init_with(&mut self, bundle: &Bundle) {
+        match crate::resolve_thing_in(bundle, "bunny") {
+            Ok(def) => {
+                self.def = def;
+                self.kind = bundle.thing_object_id("bunny").unwrap_or(0);
+                self.thirst = bundle.gameplay_reference("need", "thirst").unwrap_or(0);
+                self.hunger = bundle.gameplay_reference("need", "hunger").unwrap_or(0);
+                self.bundle = Some(bundle.clone());
+                tracing::info!(def = format!("{def:#010x}"), count = self.count,
+                    "bunny def resolved — the hosted fluffle opens");
+            }
+            Err(err) => tracing::error!(%err, "hosted bunny def resolution failed"),
+        }
+    }
+
+    /// HOSTED bookkeeping target (F8): the module's player-pawn + its count need
+    /// (`(player_pawn_ref, need_ref, need_min, need_max)`).
+    pub fn set_group(&mut self, player_pawn: u32, need_ref: u32, min: f64, max: f64) {
+        self.group = Some((player_pawn, need_ref, min, max));
     }
 
     fn pick_dest(&mut self) -> (i32, i32) {
@@ -130,13 +175,13 @@ impl Bunnies {
         if v >= 1.0 { v.round() as u16 } else { DEFAULT_TICS_PER_TILE }
     }
 
-    fn issue_move(&mut self, bot: &Bot, id: u32, dest: (i32, i32)) {
+    fn issue_move(&mut self, bot: &Bot, act: &client::Client, id: u32, dest: (i32, i32)) {
         let Some(bundle) = &self.bundle else { return };
         let Some(iref) = bundle.gameplay_reference("interaction", "move_to") else { return };
         let program = vec![
             EXECUTE_INTERACTION, iref, 0, 2, id, tile_to_position(dest.0, dest.1),
         ];
-        if bot.client.queue(program).is_err() {
+        if act.queue(program).is_err() {
             return;
         }
         let at = self.minds.get(&id).map(|m| m.at).unwrap_or(dest);
@@ -154,7 +199,7 @@ impl Bunnies {
         }
     }
 
-    fn fire(&self, bot: &Bot, id: u32, interaction: &str, magnitude: f64, dest: (i32, i32)) {
+    fn fire(&self, bot: &Bot, act: &client::Client, id: u32, interaction: &str, magnitude: f64, dest: (i32, i32)) {
         let Some(bundle) = &self.bundle else { return };
         let (Some(iref), Some(ip)) = (
             bundle.gameplay_reference("interaction", interaction),
@@ -175,7 +220,7 @@ impl Bunnies {
         }
         let mut program = vec![EXECUTE_INTERACTION, iref, 0, inputs.len() as u32];
         program.extend_from_slice(&inputs);
-        let _ = bot.client.queue(program);
+        let _ = act.queue(program);
     }
 
     /// The first satisfying interaction `kind` (a THING) offers that this bunny may use.
@@ -213,7 +258,7 @@ impl Bunnies {
     }
 
     /// One bunny's think: needs re-eval → drink → eat → wander.
-    fn think(&mut self, bot: &Bot, id: u32) {
+    fn think(&mut self, bot: &Bot, act: &client::Client, id: u32) {
         if self.bundle.is_none() {
             return;
         }
@@ -252,7 +297,7 @@ impl Bunnies {
                     let c = (at.0 + ox, at.1 + oy);
                     if let Some(kind) = bot.tile_kind_at(c) {
                         if let Some((i, mag)) = self.usable_drink(id, kind, now) {
-                            self.fire(bot, id, &i, mag, c);
+                            self.fire(bot, act, id, &i, mag, c);
                             if let Some(m) = self.minds.get_mut(&id) {
                                 m.drink_issued = true;
                             }
@@ -284,7 +329,7 @@ impl Bunnies {
                     }
                 }
                 if let Some((_, sy, sx)) = best {
-                    self.issue_move(bot, id, (sx, sy));
+                    self.issue_move(bot, act, id, (sx, sy));
                     return;
                 }
             }
@@ -302,7 +347,7 @@ impl Bunnies {
                                 .and_then(|b| b.interaction_params(&i))
                                 .map(|ip| ip.duration)
                                 .unwrap_or(0.0);
-                            self.fire(bot, id, &i, mag, c);
+                            self.fire(bot, act, id, &i, mag, c);
                             if let Some(m) = self.minds.get_mut(&id) {
                                 m.eat_issued = true;
                                 m.busy_until = Some(
@@ -321,7 +366,7 @@ impl Bunnies {
                     .is_none_or(|k| self.bundle.as_ref().is_none_or(|b| b.tile_pathable(k)))
                     && self.usable_eat(id, kind, now).is_some()
             }) {
-                self.issue_move(bot, id, t);
+                self.issue_move(bot, act, id, t);
                 return;
             }
         }
@@ -329,7 +374,7 @@ impl Bunnies {
         let m = &self.minds[&id];
         if m.dest.is_none() || Instant::now() > m.deadline {
             let d = self.pick_dest();
-            self.issue_move(bot, id, d);
+            self.issue_move(bot, act, id, d);
         }
     }
 }
@@ -367,12 +412,15 @@ impl Brain for Bunnies {
         }
     }
 
-    fn on_event(&mut self, _bot: &Bot, event: &Event) {
+    fn on_event(&mut self, _bot: &Bot, act: &client::Client, event: &Event) {
         match event {
             Event::StateObject {
                 entity_reference, definition_reference, tile_x, tile_y, removed, ..
             } => {
                 if *removed {
+                    if let Some(owned) = &mut self.owned {
+                        owned.remove(entity_reference);
+                    }
                     if self.minds.remove(entity_reference).is_some() {
                         tracing::info!(bunny = format!("{entity_reference:#010x}"),
                             left = self.minds.len(), "a bunny died — the pack thins");
@@ -380,6 +428,12 @@ impl Brain for Bunnies {
                     return;
                 }
                 if self.kind != 0 && def_kind_id(*definition_reference) == self.kind {
+                    // npc-host F11: hosted modules adopt ONLY their own mints.
+                    if let Some(owned) = &self.owned {
+                        if !owned.contains(entity_reference) {
+                            return;
+                        }
+                    }
                     let at = (*tile_x, *tile_y);
                     self.minds
                         .entry(*entity_reference)
@@ -405,6 +459,11 @@ impl Brain for Bunnies {
                         });
                 }
             }
+            Event::OwnedPawn { entity_reference } => {
+                if let Some(owned) = &mut self.owned {
+                    owned.insert(*entity_reference);
+                }
+            }
             Event::PawnParts { entity_reference, payload, .. } => {
                 if self.minds.contains_key(entity_reference) || self.payloads.len() < 64 {
                     self.payloads.insert(*entity_reference, payload.clone());
@@ -421,15 +480,36 @@ impl Brain for Bunnies {
         }
     }
 
-    fn tick(&mut self, bot: &Bot) {
+    fn tick(&mut self, bot: &Bot, act: &client::Client) {
         if self.bundle.is_none() {
             return;
+        }
+        // HOSTED bookkeeping (npc-host F11/F8): the group's live count IS a need on the
+        // module's player-pawn — written on drift, so mint/death move `bunny_count` and the
+        // banded `packless` state derives server-side for free.
+        if let Some((pp, nref, min, max)) = self.group {
+            let n = self.minds.len();
+            if self.last_count != Some(n) {
+                let q = resonantdust_codec::value::quantize(n as f32, min as f32, max as f32);
+                let row = resonantdust_codec::object::pack_gameplay_row(nref, q);
+                if act.queue(vec![resonantdust_codec::action::SET_NEED, pp, row]).is_ok() {
+                    self.last_count = Some(n);
+                    tracing::info!(count = n, player_pawn = format!("{pp:#010x}"),
+                        "group count written (npc-host F8)");
+                }
+            }
         }
         // Mint up to `count`, one per tick, after the adopt-first window. Adopted
         // strangers count toward the cap. spawn-authority I2/I6: a REQUEST can be
         // refused invisibly — an unanswered window hands the counter back so the
         // warren re-rolls instead of wedging short.
-        if self.created > self.minds.len()
+        // HOSTED mode paces on the OWNERSHIP LEDGER, not the created counter (npc-host
+        // F11): `owned` grows only on REAL mints (the edge's Owned fan off the spawn
+        // ledger) and prunes on death, so the guard can never double-mint on stream-in
+        // lag — the exact race the legacy re-roll papers over (torch-perf I9).
+        let hosted_pool = self.owned.as_ref().map(|o| o.len());
+        if hosted_pool.is_none()
+            && self.created > self.minds.len()
             && Instant::now() > self.spawn_after
             && self.created > 0
         {
@@ -437,8 +517,11 @@ impl Brain for Bunnies {
                 "spawn request(s) unanswered — re-rolling (spawn-authority I2)");
             self.created = self.minds.len();
         }
-        if self.minds.len() < self.count
-            && self.created < self.count
+        let below_target = match hosted_pool {
+            Some(owned) => owned < self.count,
+            None => self.minds.len() < self.count && self.created < self.count,
+        };
+        if below_target
             && self.def != 0
             && Instant::now() > self.spawn_after
         {
@@ -464,7 +547,7 @@ impl Brain for Bunnies {
                 self.def,
                 &[],
             );
-            if bot.client.queue(program.to_vec()).is_ok() {
+            if act.queue(program.to_vec()).is_ok() {
                 self.created += 1;
                 self.spawn_after = Instant::now() + Duration::from_secs(10);
                 tracing::info!(?spawn, requested = self.created, "bunny SPAWN_REQUEST queued");
@@ -472,7 +555,7 @@ impl Brain for Bunnies {
         }
         let ids: Vec<u32> = self.minds.keys().copied().collect();
         for id in ids {
-            self.think(bot, id);
+            self.think(bot, act, id);
         }
     }
 }

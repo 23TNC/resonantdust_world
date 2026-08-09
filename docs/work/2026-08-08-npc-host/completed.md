@@ -1,5 +1,24 @@
 # Completed — npc-host
 
+## 2026-08-09 — P3 (first half): the hosted group brain — the F8 loop LIVE
+
+The ACTOR seam threaded through every brain (`on_event`/`tick` + helpers take
+`act: &Client` — sense reads the shared world, acts queue on the MODULE's session, so
+attribution flows by construction); `Bunnies::hosted` (explicit area/count, ownership-GATED
+adoption fed by `Event::OwnedPawn`, owned pruned on death) + `init_with` (the host's corpus)
++ `set_group` (the F8 bookkeeping target); `run_host` builds the bunny_fluffle group brain
+with `group_size` from its brain def's trait, fans world events read-only to every brain,
+learns each module's player-pawn off its own fan, and ticks per module. The count need
+writes on drift. GUARD FIX (found live): the legacy created-counter re-roll double-mints on
+stream-in lag (torch-perf I9's race, worse under the host) — HOSTED mode paces on the
+OWNERSHIP LEDGER instead (owned grows only on real mints, prunes on death; can never
+double-mint). Verified LIVE, the full loop: count 0 written → bunny_count zeroed (packless
+bands server-side) → mints via the module session → Owned fan → gated adoption (legacy
+bunnies IGNORED) → count 3 = the trait's group_size (row 0x3000 on 0..16); the DEATH drill:
+kill one → "the pack thins" → count 2 → ONE re-mint → count 3; a 2-cull settles back to
+exactly 3 with no overshoot. OPEN in P3: the wolves conversion onto the shared policy
+(item 2) — the fluffle's keep-alive still rides the bunnies' own think().
+
 ## 2026-08-09 — P2 (third piece): the ownership re-attach lane
 
 The edge's `fan_owned_pawns` (per session, post-login): subscribes the pawn spawn ledger

@@ -795,7 +795,7 @@ pub(crate) struct BrainDef {
 }
 
 /// (index = id − 1; a `""`-named slot is a retired id) + evaluated params.
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub struct Bundle {
   pub(crate) tiles: Vec<TileDef>,
   pub(crate) things: Vec<ThingDef>,

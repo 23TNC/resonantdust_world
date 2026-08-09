@@ -35,7 +35,7 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 
 ## P3 — stage-1 needs AI
 
-- [ ] The `wolf_pawn` group need live (F8): written at mint/death on the brain-player; low
+- [x] The `wolf_pawn` group need live (F8): written at mint/death on the brain-player; low
       band drives re-minting. Acceptance: kill a wolf — the need drops, the band fires, the
       brain re-mints to its trait's group size.
 - [ ] The shared keep-alive policy (F6): banded thirst/hunger → nearest in-area water/food +
