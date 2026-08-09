@@ -9,18 +9,18 @@
 
 use crate::loader::Bundle;
 use crate::needs_eval::ActiveCondition;
-use resonantdust_codec::object::{gameplay_row_data, gameplay_row_reference, GAMEPLAY_TRAIT};
+use resonantdust_codec::object::{def_variant_id, row_reference};
 
 /// The 16 per-emotion magnitude sums (index = the u4 declaration index) for a pawn's
 /// trait rows + active conditions. Rows naming an unknown trait/condition are skipped —
 /// version skew reads as "no contribution", never a panic.
-pub fn emotion_sums(bundle: &Bundle, trait_rows: &[u32], active: &[ActiveCondition]) -> [u16; 16] {
+pub fn emotion_sums(bundle: &Bundle, trait_rows: &[u64], active: &[ActiveCondition]) -> [u16; 16] {
     let mut sums = [0u16; 16];
     for &row in trait_rows {
-        let reference = gameplay_row_reference(GAMEPLAY_TRAIT, row);
+        let reference = row_reference(row);
         let Some(tp) = bundle.trait_params_by_ref(reference) else { continue };
-        let level = gameplay_row_data(row) as usize;
-        let Some(entry) = level.checked_sub(1).and_then(|i| tp.levels.get(i)) else { continue };
+        let tier = def_variant_id(reference) as usize;
+        let Some(entry) = tp.levels.get(tier) else { continue };
         for m in &entry.emotions {
             sums[(m.emotion & 0x0f) as usize] += m.magnitude as u16;
         }
@@ -38,7 +38,7 @@ pub fn emotion_sums(bundle: &Bundle, trait_rows: &[u32], active: &[ActiveConditi
 /// LOWEST index (`>` scan from 0 keeps the first maximum).
 pub fn active_emotion(
     bundle: &Bundle,
-    trait_rows: &[u32],
+    trait_rows: &[u64],
     active: &[ActiveCondition],
 ) -> (u8, [u16; 16]) {
     let sums = emotion_sums(bundle, trait_rows, active);

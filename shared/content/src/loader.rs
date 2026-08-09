@@ -349,8 +349,9 @@ pub struct TraitLight {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TraitBind {
   pub name: String,
-  pub level: u16,
-  pub constant: bool,
+  /// The bound TIER = the def's VARIANT nibble (trait-rows-u32 F6, 0-based). `constant`
+  /// is gone — constancy is the def's CATEGORY (`*_trait_constant`), not the bind's flag.
+  pub variant: u16,
 }
 
 /// One operand of an interaction effect (interactions F5): an `"@name"` reference into the
@@ -809,12 +810,11 @@ pub struct Bundle {
   /// never a position.
   pub(crate) needs: Vec<(String, NeedParams)>,
   pub(crate) conditions: Vec<(String, ConditionParams)>,
-  pub(crate) traits: Vec<(String, TraitParams)>,
-  /// The PLAYER-facing trait lane (player-pawns F4): the trait SCHEMA, classified apart under
-  /// `gameplay/player_trait`. v1 binds are CONSTANT-only and consumers read them through the
-  /// DEDICATED accessors — never merged into the trait lane (a stored row could not name its
-  /// category until the payload-opcode successor lands).
-  pub(crate) player_traits: Vec<(String, TraitParams)>,
+  /// EVERY trait def, category-tagged (trait-rows-u32 F2): `(name, params, category
+  /// subtype id 8..13)`. ONE name namespace across all six categories; constancy is
+  /// category membership. The retired `trait`/`player_trait` lanes hold NOTHING.
+  pub(crate) trait_defs: Vec<(String, TraitParams, u16)>,
+
   pub(crate) interactions: Vec<(String, InteractionParams)>,
   pub(crate) affordances: Vec<(String, AffordanceParams)>,
   pub(crate) stats: Vec<(String, StatParams)>,
@@ -831,11 +831,13 @@ pub struct Bundle {
   material_names: Vec<String>,
   need_names: Vec<String>,
   condition_names: Vec<String>,
-  trait_names: Vec<String>,
+  trait_names: Vec<String>, // RETIRED EMPTY (category 3)
   interaction_names: Vec<String>,
   affordance_names: Vec<String>,
   stat_names: Vec<String>,
-  player_trait_names: Vec<String>,
+  player_trait_names: Vec<String>, // RETIRED EMPTY (category 7)
+  /// Per-category name caches for the SIX live trait categories, subtype order 8..13.
+  trait_category_names: [Vec<String>; 6],
   brain_names: Vec<String>,
   /// The REGISTRY override for `name → definition_reference` (definition-registry P4/P5), keyed
   /// `(is_tile, name)`. `None` means "resolve from corpus position", which is what a registry-less
@@ -902,6 +904,12 @@ impl Bundle {
       "affordance" => Some(&self.affordance_names),
       "stat" => Some(&self.stat_names),
       "player_trait" => Some(&self.player_trait_names),
+      "pawn_trait_constant" => Some(&self.trait_category_names[0]),
+      "pawn_trait_active" => Some(&self.trait_category_names[1]),
+      "pawn_trait_passive" => Some(&self.trait_category_names[2]),
+      "player_trait_constant" => Some(&self.trait_category_names[3]),
+      "player_trait_active" => Some(&self.trait_category_names[4]),
+      "player_trait_passive" => Some(&self.trait_category_names[5]),
       _ => None,
     }
   }
@@ -963,11 +971,15 @@ impl Bundle {
     self.material_names = self.materials.iter().map(|(n, _)| n.clone()).collect();
     self.need_names = self.needs.iter().map(|(n, _)| n.clone()).collect();
     self.condition_names = self.conditions.iter().map(|(n, _)| n.clone()).collect();
-    self.trait_names = self.traits.iter().map(|(n, _)| n.clone()).collect();
+    self.trait_names = Vec::new(); // retired empty
+    for (i, cat) in (8u16..=13).enumerate() {
+      self.trait_category_names[i] =
+        self.trait_defs.iter().filter(|(_, _, c)| *c == cat).map(|(n, _, _)| n.clone()).collect();
+    }
     self.interaction_names = self.interactions.iter().map(|(n, _)| n.clone()).collect();
     self.affordance_names = self.affordances.iter().map(|(n, _)| n.clone()).collect();
     self.stat_names = self.stats.iter().map(|(n, _)| n.clone()).collect();
-    self.player_trait_names = self.player_traits.iter().map(|(n, _)| n.clone()).collect();
+    self.player_trait_names = Vec::new(); // retired empty
     self.brain_names = self.brains.iter().map(|d| d.name.clone()).collect();
     self
   }
@@ -1039,8 +1051,7 @@ impl Bundle {
     }
     for t in &d.traits {
       fnv_str(&mut h, &t.name);
-      fnv_bytes(&mut h, &t.level.to_le_bytes());
-      fnv_bytes(&mut h, &[u8::from(t.constant)]);
+      fnv_bytes(&mut h, &t.variant.to_le_bytes());
     }
     for b in &d.interactions {
       fnv_str(&mut h, &b.name);
@@ -1153,7 +1164,7 @@ impl Bundle {
       .conditions
       .iter()
       .flat_map(|(_, cp)| cp.needs.iter())
-      .chain(self.traits.iter().flat_map(|(_, tp)| {
+      .chain(self.trait_defs.iter().flat_map(|(_, tp, _)| {
         tp.levels.iter().flat_map(|l| l.needs.iter())
       }))
       .filter(|m| m.deplete.is_some())
@@ -1353,15 +1364,15 @@ impl Bundle {
   }
   /// A brain-parameter STAT read from CONSTANT player-trait BINDS (npc-host F10): sums the
   /// bound levels' `add` contributions for `stat`, clamped to the stat's authored domain.
-  /// Bind-based deliberately — player-trait rows never enter the trait lanes (F4: a packed
-  /// row's low 16 cannot name its category), and constant binds need no rows at all.
+  /// Bind-based: constant binds need no rows at all (their tier is the bind's variant).
   pub fn player_trait_stat(&self, stat: &str, binds: &[TraitBind]) -> f64 {
     let (mut v, mut any) = (0.0, false);
     for b in binds {
-      let Some(p) = self.player_traits.iter().find(|(n, _)| n == &b.name).map(|(_, p)| p) else {
+      let Some(p) = self.trait_defs.iter().find(|(n, _, _)| n == &b.name).map(|(_, p, _)| p)
+      else {
         continue;
       };
-      let Some(level) = p.levels.get((b.level as usize).saturating_sub(1)) else { continue };
+      let Some(level) = p.levels.get(b.variant as usize) else { continue };
       for m in &level.stats {
         if m.stat == stat {
           v += m.add;
@@ -1410,22 +1421,29 @@ impl Bundle {
   /// collision the CONSTANT bind wins and the payload row is ignored — a forged row
   /// cannot shadow authored truth. This is also the enforcement seam: constant binds
   /// never come FROM storage, so nothing at runtime can have written one (I4).
-  pub fn object_trait_rows(&self, object_id: u16, payload_rows: &[u32]) -> Vec<u32> {
-    let mut rows: Vec<u32> = Vec::new();
-    let mut constant_keys: Vec<u16> = Vec::new();
+  pub fn object_trait_rows(&self, object_id: u16, payload_rows: &[u64]) -> Vec<u64> {
+    use resonantdust_codec::object as obj;
+    let mut rows: Vec<u64> = Vec::new();
+    let mut constant_kinds: Vec<u32> = Vec::new();
     for b in self.thing_traits(object_id) {
-      if !b.constant {
+      let Some(cat) = self.trait_category(&b.name) else { continue };
+      // Constancy is CATEGORY membership (trait-rows-u32 F2) — only the `*_constant`
+      // categories derive here; non-constant binds mint payload rows at CREATE.
+      let constant = cat == obj::GAMEPLAY_PAWN_TRAIT_CONSTANT
+        || cat == obj::GAMEPLAY_PLAYER_TRAIT_CONSTANT;
+      if !constant {
         continue;
       }
-      if let Some(r) = self.gameplay_reference("trait", &b.name) {
-        rows.push(resonantdust_codec::object::pack_gameplay_row(r, b.level));
-        constant_keys.push(resonantdust_codec::object::gameplay_row_key(
-          resonantdust_codec::object::pack_gameplay_row(r, b.level),
-        ));
-      }
+      let Some(cat_name) = obj::gameplay_category(cat) else { continue };
+      let Some(r0) = self.gameplay_reference(cat_name, &b.name) else { continue };
+      let r = (r0 & !0xF) | (u32::from(b.variant) & 0xF); // the TIER is the variant (F6)
+      rows.push(obj::pack_row(r, 0));
+      constant_kinds.push(r & !0xF);
     }
     for &row in payload_rows {
-      if !constant_keys.contains(&resonantdust_codec::object::gameplay_row_key(row)) {
+      // Constant wins at KIND granularity — a forged row cannot shadow authored truth
+      // at any tier.
+      if !constant_kinds.contains(&(obj::row_reference(row) & !0xF)) {
         rows.push(row);
       }
     }
@@ -1436,18 +1454,15 @@ impl Bundle {
   /// level authors an `emit_light` tuple yields it, in authored order — constant binds
   /// first (def order), then runtime rows. NOTHING drops here; the render's spill
   /// packing (F8) is presentation, not derivation.
-  pub fn object_lights(&self, object_id: u16, payload_rows: &[u32]) -> Vec<TraitLight> {
+  pub fn object_lights(&self, object_id: u16, payload_rows: &[u64]) -> Vec<TraitLight> {
+    use resonantdust_codec::object as obj;
     let mut out = Vec::new();
     for row in self.object_trait_rows(object_id, payload_rows) {
-      let nref = resonantdust_codec::object::gameplay_row_reference(
-        resonantdust_codec::object::GAMEPLAY_TRAIT,
-        row,
-      );
-      let Some((_, name)) = self.gameplay_lookup(nref) else { continue };
-      let Some(p) = self.trait_params(&name) else { continue };
-      let level = resonantdust_codec::object::gameplay_row_data(row) as usize;
-      if level >= 1 && level <= p.emit_light.len() {
-        out.push(p.emit_light[level - 1]);
+      let nref = obj::row_reference(row);
+      let Some(p) = self.trait_params_by_ref(nref) else { continue };
+      let tier = obj::def_variant_id(nref) as usize; // 0-based (F6)
+      if tier < p.emit_light.len() {
+        out.push(p.emit_light[tier]);
       }
     }
     out
@@ -1606,21 +1621,25 @@ impl Bundle {
   pub fn trait_names(&self) -> &[String] {
     &self.trait_names
   }
-  /// A trait's [`TraitParams`], or `None` if unknown.
-  /// A `player_trait` def's params by name (player-pawns F4) — the dedicated lane; the
-  /// schema is the trait schema, the classification (and registry numbering) is its own.
-  pub fn player_trait_params(&self, name: &str) -> Option<TraitParams> {
-    self.player_traits.iter().find(|(n, _)| n == name).map(|(_, p)| p.clone())
-  }
-
+  /// A trait def's params by NAME — searches ALL six categories (one namespace, F2).
+  /// `player_trait_params` is the same lookup, kept as an alias for its call sites.
   pub fn trait_params(&self, name: &str) -> Option<TraitParams> {
-    self.traits.iter().find(|(n, _)| n == name).map(|(_, p)| p.clone())
+    self.trait_defs.iter().find(|(n, _, _)| n == name).map(|(_, p, _)| p.clone())
   }
-  /// A trait's params by gameplay `definition_reference` — the stat eval's resolution of
-  /// a pawn's packed trait rows.
+  pub fn player_trait_params(&self, name: &str) -> Option<TraitParams> {
+    self.trait_params(name)
+  }
+  /// A trait def's CATEGORY subtype id (8..13) by name.
+  pub fn trait_category(&self, name: &str) -> Option<u16> {
+    self.trait_defs.iter().find(|(n, _, _)| n == name).map(|(_, _, c)| *c)
+  }
+  /// A trait's params by gameplay `definition_reference` (any of the six categories) —
+  /// the eval's resolution of a u64 row's reference.
   pub fn trait_params_by_ref(&self, reference: u32) -> Option<TraitParams> {
     let (category, name) = self.gameplay_lookup(reference)?;
-    (category == "trait").then(|| self.trait_params(&name)).flatten()
+    let is_trait =
+      category.starts_with("pawn_trait_") || category.starts_with("player_trait_");
+    is_trait.then(|| self.trait_params(&name)).flatten()
   }
 
   /// Every stat name, corpus order.

@@ -11,16 +11,16 @@
 
 use crate::loader::{Bundle, StatModifier};
 use crate::needs_eval::ActiveCondition;
-use resonantdust_codec::object::{gameplay_row_data, gameplay_row_reference, GAMEPLAY_TRAIT};
+use resonantdust_codec::object::{def_variant_id, row_data, row_reference};
 
 /// A stored condition row's remaining tics at `now`: `remaining_at_write − elapsed`
 /// (stat-model F3 — backward-looking, never a stored countdown). A row written AHEAD of the
 /// observer's clock (within the wrap half-window) reads as elapsed 0, not as ancient — the
 /// same future-stamp guard the needs eval carries (I6).
-pub fn condition_remaining(row: u32, written_tic: u16, now: u16) -> u16 {
+pub fn condition_remaining(row: u64, written_tic: u16, now: u16) -> u16 {
     let raw = now.wrapping_sub(written_tic);
     let elapsed = if raw > u16::MAX / 2 { 0 } else { raw };
-    gameplay_row_data(row).saturating_sub(elapsed)
+    row_data(row).saturating_sub(elapsed)
 }
 
 /// The combiner's RANGE half (F6): intersect `contribs`' optional lo/hi pairs inside the
@@ -57,15 +57,16 @@ pub fn combine_bounds(
 fn modifiers_for<'a>(
     bundle: &'a Bundle,
     stat: &'a str,
-    trait_rows: &'a [u32],
+    trait_rows: &'a [u64],
     active: &'a [ActiveCondition],
 ) -> Vec<StatModifier> {
     let mut out = Vec::new();
     for &row in trait_rows {
-        let reference = gameplay_row_reference(GAMEPLAY_TRAIT, row);
+        // trait-rows-u32 F1/F6: the row IS the full reference; the TIER is its variant.
+        let reference = row_reference(row);
         let Some(tp) = bundle.trait_params_by_ref(reference) else { continue };
-        let level = gameplay_row_data(row) as usize;
-        let Some(entry) = level.checked_sub(1).and_then(|i| tp.levels.get(i)) else { continue };
+        let tier = def_variant_id(reference) as usize;
+        let Some(entry) = tp.levels.get(tier) else { continue };
         out.extend(entry.stats.iter().filter(|m| m.stat == stat).cloned());
     }
     for c in active {
@@ -80,7 +81,7 @@ fn modifiers_for<'a>(
 pub fn stat_value(
     bundle: &Bundle,
     stat: &str,
-    trait_rows: &[u32],
+    trait_rows: &[u64],
     active: &[ActiveCondition],
 ) -> f64 {
     let Some(sp) = bundle.stat_params(stat) else { return 0.0 };
@@ -98,9 +99,9 @@ pub fn stat_value(
 pub fn affordance_passes(
     bundle: &Bundle,
     affordance: &str,
-    trait_rows: &[u32],
-    need_rows: &[(u32, u16)],
-    cond_rows: &[(u32, u16)],
+    trait_rows: &[u64],
+    need_rows: &[(u64, u16)],
+    cond_rows: &[(u64, u16)],
     active: &[ActiveCondition],
     now: u16,
 ) -> bool {
@@ -127,10 +128,7 @@ pub fn affordance_passes(
             // authors the tag passes — capability by tag, resolved through the
             // corpus at eval; tags never ride the wire.
             trait_rows.iter().any(|row| {
-                let tref = resonantdust_codec::object::gameplay_row_reference(
-                    resonantdust_codec::object::GAMEPLAY_TRAIT,
-                    *row,
-                );
+                let tref = row_reference(*row);
                 bundle
                     .gameplay_lookup(tref)
                     .and_then(|(_, name)| bundle.trait_params(&name))
@@ -146,9 +144,9 @@ pub fn affordance_passes(
 pub fn interaction_available(
     bundle: &Bundle,
     interaction: &str,
-    trait_rows: &[u32],
-    need_rows: &[(u32, u16)],
-    cond_rows: &[(u32, u16)],
+    trait_rows: &[u64],
+    need_rows: &[(u64, u16)],
+    cond_rows: &[(u64, u16)],
     active: &[ActiveCondition],
     now: u16,
 ) -> bool {

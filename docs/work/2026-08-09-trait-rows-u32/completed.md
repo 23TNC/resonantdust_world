@@ -1,5 +1,22 @@
 # Completed — trait-rows-u32
 
+## 2026-08-09 — P1 (third piece, IN FLIGHT): shared/content's LIB on u64 rows
+
+The loader model restructured: `TraitBind {name, variant}` (level + the constant flag DEAD);
+`Bundle.trait_defs: Vec<(name, params, category 8..13)>` replaces the traits/player_traits
+pair (ONE namespace, params-by-name/by-ref across all six categories, `trait_category()`);
+the six `[[…]]` tables parse through the ONE conversion; `[[trait]]`/`[[player_trait]]`
+REFUSE with the migration message; binds parse `variant` (0-BASED tiers — F6 refined);
+thing/brain validation is category-law (non-pawn things = constant categories only; brains =
+player_* only; the ACTIVE ≤3 LOAD DOOR lands early — F3/I5). The merged accessor +
+object_lights + the THREE evals (needs/stat/emotion) consume u64 rows: reference =
+`row_reference` (reconstruction DELETED), tier = the reference's variant, value/remaining =
+`row_data`. THE LIB COMPILES CLEAN. STILL RED (the continuation's order): the crate TESTS
+(64 errors — pack_gameplay_row/level pins) + the CONTENT re-author under the six categories
+(the corpus still authors the retired tables) move TOGETHER, then goldens re-bless, then the
+consumer sweep (worker → npc → wasm/webgl → edge mint's brain-bind reads) + restarts, then
+ACTIVATE_TRAIT (P3) and sprint (P4).
+
 ## 2026-08-09 — P1 (second piece, IN FLIGHT): the module lanes
 
 Both shards' `needs.need` columns are u64 (set_need/grant_condition/spawn take u64 rows;

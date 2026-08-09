@@ -34,11 +34,25 @@ struct Corpus {
   need: Vec<NeedToml>,
   #[serde(default)]
   condition: Vec<ConditionToml>,
+  /// RETIRED (trait-rows-u32 F2): parsed only to REFUSE with a migration message.
   #[serde(default, rename = "trait")]
   trait_: Vec<TraitToml>,
-  /// The player-facing trait lane (player-pawns F4) — the trait SCHEMA, own category.
+  /// RETIRED (trait-rows-u32 F2): parsed only to REFUSE with a migration message.
   #[serde(default)]
   player_trait: Vec<TraitToml>,
+  // The SIX live trait categories (trait-rows-u32 F2), subtype order 8..13.
+  #[serde(default)]
+  pawn_trait_constant: Vec<TraitToml>,
+  #[serde(default)]
+  pawn_trait_active: Vec<TraitToml>,
+  #[serde(default)]
+  pawn_trait_passive: Vec<TraitToml>,
+  #[serde(default)]
+  player_trait_constant: Vec<TraitToml>,
+  #[serde(default)]
+  player_trait_active: Vec<TraitToml>,
+  #[serde(default)]
+  player_trait_passive: Vec<TraitToml>,
   /// Brain defs (npc-host F5) — an npc module's constants as content.
   #[serde(default)]
   brain: Vec<BrainToml>,
@@ -723,27 +737,20 @@ enum TraitBindToml {
   Name(String),
   Full {
     name: String,
-    #[serde(default = "one_u16")]
-    level: u16,
-    /// trait-lights F2: a CONSTANT bind is TOML-only, immutable, ZERO-storage —
-    /// derived from the def by every reader, never minted, never fanned. Non-pawn
-    /// things accept ONLY constant binds (F6, validated at load).
+    /// The bound TIER = the def's VARIANT (trait-rows-u32 F6, 0-BASED). `level` and
+    /// `constant` are RETIRED — the loader refuses them by deny_unknown_fields; constancy
+    /// is the def's CATEGORY.
     #[serde(default)]
-    constant: bool,
+    variant: u16,
   },
 }
 
-fn one_u16() -> u16 {
-  1
-}
-
 impl TraitBindToml {
-  /// The full resolved bind: `(name, level, constant)` — a bare string is
-  /// level 1, non-constant.
-  fn bind(&self) -> (String, u16, bool) {
+  /// The full resolved bind: `(name, variant)` — a bare string is variant 0.
+  fn bind(&self) -> (String, u16) {
     match self {
-      TraitBindToml::Name(n) => (n.clone(), 1, false),
-      TraitBindToml::Full { name, level, constant } => (name.clone(), *level, *constant),
+      TraitBindToml::Name(n) => (n.clone(), 0),
+      TraitBindToml::Full { name, variant } => (name.clone(), *variant),
     }
   }
 }
@@ -766,6 +773,12 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
         all.condition.extend(c.condition);
         all.trait_.extend(c.trait_);
         all.player_trait.extend(c.player_trait);
+        all.pawn_trait_constant.extend(c.pawn_trait_constant);
+        all.pawn_trait_active.extend(c.pawn_trait_active);
+        all.pawn_trait_passive.extend(c.pawn_trait_passive);
+        all.player_trait_constant.extend(c.player_trait_constant);
+        all.player_trait_active.extend(c.player_trait_active);
+        all.player_trait_passive.extend(c.player_trait_passive);
         all.brain.extend(c.brain);
         all.interaction.extend(c.interaction);
         all.affordance.extend(c.affordance);
@@ -804,26 +817,35 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
   };
   unique("need", all.need.iter().map(|d| d.name.as_str()).collect());
   unique("condition", all.condition.iter().map(|d| d.name.as_str()).collect());
-  unique("trait", all.trait_.iter().map(|d| d.name.as_str()).collect());
-  unique("player_trait", all.player_trait.iter().map(|d| d.name.as_str()).collect());
   unique("brain", all.brain.iter().map(|d| d.name.as_str()).collect());
+  // ONE namespace across the six live categories (trait-rows-u32 F2).
+  unique(
+    "trait (any category)",
+    all
+      .pawn_trait_constant
+      .iter()
+      .chain(&all.pawn_trait_active)
+      .chain(&all.pawn_trait_passive)
+      .chain(&all.player_trait_constant)
+      .chain(&all.player_trait_active)
+      .chain(&all.player_trait_passive)
+      .map(|d| d.name.as_str())
+      .collect(),
+  );
   unique("interaction", all.interaction.iter().map(|d| d.name.as_str()).collect());
   unique("affordance", all.affordance.iter().map(|d| d.name.as_str()).collect());
   unique("stat", all.stat.iter().map(|d| d.name.as_str()).collect());
   unique("emotion", all.emotion.iter().map(|d| d.name.as_str()).collect());
   drop(unique);
-  // ONE name namespace across the two trait lanes (player-pawns F4): a bind resolves by
-  // name, so a name in BOTH would make the bind ambiguous.
-  for pt in &all.player_trait {
-    if all.trait_.iter().any(|t| t.name == pt.name) {
-      errors.push(LoadError {
-        file: String::new(),
-        message: format!(
-          "player_trait `{}` collides with a trait of the same name — the bind namespace is one",
-          pt.name
-        ),
-      });
-    }
+  // The RETIRED tables refuse with a migration message (trait-rows-u32 F2).
+  for d in all.trait_.iter().chain(&all.player_trait) {
+    errors.push(LoadError {
+      file: String::new(),
+      message: format!(
+        "`[[trait]]`/`[[player_trait]]` are RETIRED (trait-rows-u32): re-author `{}` under          [[pawn_trait_constant|active|passive]] or [[player_trait_constant|active|passive]]",
+        d.name
+      ),
+    });
   }
   // Tiles and things carry NO ids (definition-registry F1/F15): the corpus describes and the
   // server numbers. Their position here is only the SEED a fresh registry allocates from — an
@@ -1065,12 +1087,20 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
   // level count; a trait with no modifier arrays has ONE (empty) level.
   // player-pawns F4: `[[player_trait]]` shares the SCHEMA, so both lanes convert through the
   // ONE pass (chained, split by count below) — the classification is the only difference.
-  let n_plain_traits = all.trait_.len();
-  let converted_traits: Vec<(String, TraitParams)> = all
-    .trait_
+  // The six categories through the ONE conversion (trait-rows-u32 F2), tagged with their
+  // subtype ids in palette order 8..13.
+  let category_lanes: [(&[TraitToml], u16); 6] = [
+    (&all.pawn_trait_constant, 8),
+    (&all.pawn_trait_active, 9),
+    (&all.pawn_trait_passive, 10),
+    (&all.player_trait_constant, 11),
+    (&all.player_trait_active, 12),
+    (&all.player_trait_passive, 13),
+  ];
+  let converted_traits: Vec<(String, TraitParams, u16)> = category_lanes
     .iter()
-    .chain(all.player_trait.iter())
-    .map(|t| {
+    .flat_map(|(lane, cat)| lane.iter().map(move |t| (t, *cat)))
+    .map(|(t, cat)| {
       let mut lens: Vec<usize> = Vec::new();
       for s in &t.stats {
         for l in [s.add.len(), s.min.len(), s.max.len()] {
@@ -1223,11 +1253,10 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
         levels,
         tags: t.tags.clone(),
         emit_light,
-      })
+      }, cat)
     })
     .collect();
-  b.traits = converted_traits[..n_plain_traits].to_vec();
-  b.player_traits = converted_traits[n_plain_traits..].to_vec();
+  b.trait_defs = converted_traits;
 
   // Band → condition references (needs already built; conditions above).
   for n in &all.need {
@@ -1623,11 +1652,10 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
   let material_id = |name: &str| -> u16 {
     b.materials.iter().position(|(n, _)| n == name).map(|i| i as u16 + 1).unwrap_or(0)
   };
-  // A thing's trait BINDING must name a level the trait's table has (stat-model F11).
-  let trait_level_counts: HashMap<String, usize> =
-    b.traits.iter().map(|(n, p)| (n.clone(), p.levels.len())).collect();
-  let player_trait_level_counts: HashMap<String, usize> =
-    b.player_traits.iter().map(|(n, p)| (n.clone(), p.levels.len())).collect();
+  // A trait BINDING must name a TIER the def's table has (F6: 0-based variants) — one
+  // map across all six categories: name → (category subtype id, tier count).
+  let trait_lookup: HashMap<String, (u16, usize)> =
+    b.trait_defs.iter().map(|(n, p, c)| (n.clone(), (*c, p.levels.len()))).collect();
 
   for slot in &tiles {
     b.tiles.push(match slot {
@@ -1641,8 +1669,7 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
         t,
         &material_id,
         &need_exists,
-        &trait_level_counts,
-        &player_trait_level_counts,
+        &trait_lookup,
         &interaction_exists,
         &thing_exists,
         &mut errors,
@@ -1675,31 +1702,41 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
       }
     }
     let mut player_traits = Vec::new();
+    let mut active_binds = 0usize;
     for tb in &br.traits {
-      let (name, level, constant) = tb.bind();
-      match player_trait_level_counts.get(&name) {
-        None => errors.push(LoadError {
+      let (name, variant) = tb.bind();
+      match trait_lookup.get(&name) {
+        Some(&(cat, tiers)) if cat >= 11 => {
+          if variant as usize >= tiers {
+            errors.push(LoadError {
+              file: String::new(),
+              message: format!(
+                "brain `{}`: `{name}` variant {variant} is out of range ({tiers} tier(s),                  0-based)",
+                br.name
+              ),
+            });
+          } else if cat == 12 && {
+            active_binds += 1;
+            active_binds > 3
+          } {
+            errors.push(LoadError {
+              file: String::new(),
+              message: format!(
+                "brain `{}`: at most 3 ACTIVE traits (the slot law, trait-rows-u32 F3)",
+                br.name
+              ),
+            });
+          } else {
+            player_traits.push(TraitBind { name, variant });
+          }
+        }
+        _ => errors.push(LoadError {
           file: String::new(),
           message: format!(
-            "brain `{}`: `{name}` is not a player_trait — brains bind PLAYER traits only",
+            "brain `{}`: `{name}` is not a PLAYER trait category — brains bind player_* only",
             br.name
           ),
         }),
-        Some(&count) if level == 0 || level as usize > count => errors.push(LoadError {
-          file: String::new(),
-          message: format!(
-            "brain `{}`: player_trait `{name}` level {level} is out of range ({count} level(s))",
-            br.name
-          ),
-        }),
-        Some(_) if !constant => errors.push(LoadError {
-          file: String::new(),
-          message: format!(
-            "brain `{}`: player_trait `{name}` must be `constant = true` (player-pawns F4)",
-            br.name
-          ),
-        }),
-        Some(_) => player_traits.push(TraitBind { name, level, constant }),
       }
     }
     b.brains.push(crate::loader::BrainDef {
@@ -2052,8 +2089,7 @@ fn thing_def(
   t: &ThingToml,
   material_id: &dyn Fn(&str) -> u16,
   need_exists: &dyn Fn(&str) -> bool,
-  trait_level_counts: &HashMap<String, usize>,
-  player_trait_level_counts: &HashMap<String, usize>,
+  trait_lookup: &HashMap<String, (u16, usize)>,
   interaction_exists: &dyn Fn(&str) -> bool,
   thing_exists: &dyn Fn(&str) -> bool,
   errors: &mut Vec<LoadError>,
@@ -2073,61 +2109,54 @@ fn thing_def(
   }
   let mut traits = Vec::new();
   let mut player_traits = Vec::new();
-  // trait-lights F6: non-pawn things take CONSTANT binds ONLY — a runtime (payload)
-  // trait on a cold thing could never be saved back to cold, so the loader refuses
-  // the bind rather than letting a save lose it. Pawn kinds keep both flavors.
+  let mut active_binds = 0usize;
+  // trait-rows-u32 F2/F6: binds resolve in the ONE namespace; constancy and activation are
+  // CATEGORY membership. Non-pawn things take CONSTANT categories only (a runtime trait on
+  // a cold thing could not survive a cold save — trait-lights F6's law, category form).
+  // The LOAD DOOR of the active-slot law (F3/I5): at most 3 `*_active` binds per def.
   let is_pawn = tax.as_ref().is_some_and(|x| x.type_name == "pawn");
   for tb in &t.traits {
-    let (name, level, constant) = tb.bind();
-    // player-pawns F4: a bind naming a PLAYER trait lands in its own list, CONSTANT-only
-    // on every carrier (no stored row can name the category until the payload-opcode
-    // successor) — checked before the trait arm so the one namespace stays unambiguous.
-    if let Some(&count) = player_trait_level_counts.get(&name) {
-      if level == 0 || level as usize > count {
-        errors.push(LoadError {
-          file: String::new(),
-          message: format!(
-            "thing `{}`: player_trait `{name}` level {level} is out of range ({count} level(s))",
-            t.name
-          ),
-        });
-      } else if !constant {
-        errors.push(LoadError {
-          file: String::new(),
-          message: format!(
-            "thing `{}`: player_trait `{name}` must be `constant = true` — player traits \
-             have no stored-row form (player-pawns F4)",
-            t.name
-          ),
-        });
-      } else {
-        player_traits.push(TraitBind { name, level, constant });
-      }
-      continue;
-    }
-    match trait_level_counts.get(&name) {
+    let (name, variant) = tb.bind();
+    match trait_lookup.get(&name) {
       None => errors.push(LoadError {
         file: String::new(),
         message: format!("thing `{}`: unknown trait `{name}`", t.name),
       }),
-      Some(&count) if level == 0 || level as usize > count => errors.push(LoadError {
+      Some(&(_, tiers)) if variant as usize >= tiers => errors.push(LoadError {
         file: String::new(),
         message: format!(
-          "thing `{}`: trait `{name}` level {level} is out of range (the trait authors \
-           {count} level(s); level 0 = absent — don't bind it)",
+          "thing `{}`: trait `{name}` variant {variant} is out of range ({tiers} tier(s),            0-based — trait-rows-u32 F6)",
           t.name
         ),
       }),
-      Some(_) if !is_pawn && !constant => errors.push(LoadError {
+      Some(&(cat, _)) if !is_pawn && cat != 8 && cat != 11 => errors.push(LoadError {
         file: String::new(),
         message: format!(
-          "thing `{}`: trait `{name}` must be `constant = true` — a non-pawn thing has \
-           no runtime trait storage, so a non-constant bind could not survive a cold \
-           save (trait-lights F6)",
+          "thing `{}`: trait `{name}` is not a CONSTANT category — a non-pawn thing has no            runtime trait storage (trait-lights F6 / trait-rows-u32 F2)",
           t.name
         ),
       }),
-      Some(_) => traits.push(TraitBind { name, level, constant }),
+      Some(&(cat, _)) => {
+        if cat == 9 || cat == 12 {
+          active_binds += 1;
+          if active_binds > 3 {
+            errors.push(LoadError {
+              file: String::new(),
+              message: format!(
+                "thing `{}`: a carrier binds at most 3 ACTIVE traits (the slot law,                  trait-rows-u32 F3)",
+                t.name
+              ),
+            });
+            continue;
+          }
+        }
+        let bind = TraitBind { name, variant };
+        if cat >= 11 {
+          player_traits.push(bind);
+        } else {
+          traits.push(bind);
+        }
+      }
     }
   }
   ThingDef {

@@ -27,7 +27,7 @@
 use crate::loader::{Bundle, NeedParams};
 use crate::stat_eval::condition_remaining;
 use resonantdust_codec::object::{
-    gameplay_row_data, gameplay_row_reference, GAMEPLAY_CONDITION, GAMEPLAY_NEED, GAMEPLAY_TRAIT,
+    def_variant_id, row_data, row_reference,
 };
 use resonantdust_codec::value::dequantize;
 
@@ -90,18 +90,18 @@ fn add_of(np: &NeedParams, deplete: f64) -> f64 {
 pub fn rate_windows(
     bundle: &Bundle,
     need_name: &str,
-    trait_rows: &[u32],
-    condition_rows: &[(u32, u16)],
-    need_rows: &[(u32, u16)],
+    trait_rows: &[u64],
+    condition_rows: &[(u64, u16)],
+    need_rows: &[(u64, u16)],
     set_tic: u16,
 ) -> Vec<RateWindow> {
     let np_target = bundle.need_params(need_name);
     let mut out = Vec::new();
     for &row in trait_rows {
-        let reference = gameplay_row_reference(GAMEPLAY_TRAIT, row);
+        let reference = row_reference(row);
         let Some(tp) = bundle.trait_params_by_ref(reference) else { continue };
-        let level = gameplay_row_data(row) as usize;
-        let Some(entry) = level.checked_sub(1).and_then(|i| tp.levels.get(i)) else { continue };
+        let tier = def_variant_id(reference) as usize;
+        let Some(entry) = tp.levels.get(tier) else { continue };
         for m in entry.needs.iter().filter(|m| m.need == need_name) {
             let add = np_target.as_ref().and_then(|np| m.deplete.map(|d| add_of(np, d))).unwrap_or(0.0);
             if m.rate != 1.0 || add > 0.0 {
@@ -110,7 +110,7 @@ pub fn rate_windows(
         }
     }
     for &(row, written) in condition_rows {
-        let reference = gameplay_row_reference(GAMEPLAY_CONDITION, row);
+        let reference = row_reference(row);
         let Some(cp) = bundle.condition_params_by_ref(reference) else { continue };
         if cp.duration <= 0.0 {
             continue; // a stored row of a DERIVED condition is inert (F2/F13)
@@ -123,7 +123,7 @@ pub fn rate_windows(
         let (start, remaining) = if offset > u16::MAX / 2 {
             (0.0, condition_remaining(row, written, set_tic))
         } else {
-            (f64::from(offset), gameplay_row_data(row))
+            (f64::from(offset), row_data(row))
         };
         if remaining == 0 {
             continue; // already expired when the row was stamped
@@ -141,7 +141,7 @@ pub fn rate_windows(
     // authors a deplete on THIS need drains it while the source sits in-band.
     let Some(np_target) = np_target else { return out };
     for &(src_row, src_set) in need_rows {
-        let src_ref = gameplay_row_reference(GAMEPLAY_NEED, src_row);
+        let src_ref = row_reference(src_row);
         let Some(src_np) = bundle.need_params_by_ref(src_ref) else { continue };
         let Some((_, src_name)) = bundle.gameplay_lookup(src_ref) else { continue };
         if src_name == need_name {
@@ -160,7 +160,7 @@ pub fn rate_windows(
                 let src_windows =
                     rate_windows(bundle, &src_name, trait_rows, condition_rows, &[], src_set);
                 let s0 = f64::from(dequantize(
-                    gameplay_row_data(src_row), src_np.min as f32, src_np.max as f32,
+                    row_data(src_row), src_np.min as f32, src_np.max as f32,
                 ))
                 .clamp(src_np.min, src_np.max);
                 let Some((enter, exit)) =
@@ -267,20 +267,20 @@ pub fn need_bounds(
     bundle: &Bundle,
     need_name: &str,
     np: &NeedParams,
-    trait_rows: &[u32],
-    condition_rows: &[(u32, u16)],
+    trait_rows: &[u64],
+    condition_rows: &[(u64, u16)],
     now: u16,
 ) -> (f64, f64) {
     let mut contribs: Vec<(Option<f64>, Option<f64>)> = Vec::new();
     for &row in trait_rows {
-        let reference = gameplay_row_reference(GAMEPLAY_TRAIT, row);
+        let reference = row_reference(row);
         let Some(tp) = bundle.trait_params_by_ref(reference) else { continue };
-        let level = gameplay_row_data(row) as usize;
-        let Some(entry) = level.checked_sub(1).and_then(|i| tp.levels.get(i)) else { continue };
+        let tier = def_variant_id(reference) as usize;
+        let Some(entry) = tp.levels.get(tier) else { continue };
         contribs.extend(entry.needs.iter().filter(|m| m.need == need_name).map(|m| (m.min, m.max)));
     }
     for &(row, written) in condition_rows {
-        let reference = gameplay_row_reference(GAMEPLAY_CONDITION, row);
+        let reference = row_reference(row);
         let Some(cp) = bundle.condition_params_by_ref(reference) else { continue };
         if cp.duration <= 0.0 || condition_remaining(row, written, now) == 0 {
             continue;
@@ -338,16 +338,16 @@ pub fn satisfaction_at(
 /// build its windows, and return `(need_reference, params, satisfaction_at(now))`.
 fn eval_need_row(
     bundle: &Bundle,
-    row: u32,
+    row: u64,
     set_tic: u16,
-    trait_rows: &[u32],
-    condition_rows: &[(u32, u16)],
-    need_rows: &[(u32, u16)],
+    trait_rows: &[u64],
+    condition_rows: &[(u64, u16)],
+    need_rows: &[(u64, u16)],
     now: u16,
 ) -> Option<(u32, NeedParams, f64)> {
-    let reference = gameplay_row_reference(GAMEPLAY_NEED, row);
+    let reference = row_reference(row);
     let np = bundle.need_params_by_ref(reference)?;
-    let value = f64::from(dequantize(gameplay_row_data(row), np.min as f32, np.max as f32));
+    let value = f64::from(dequantize(row_data(row), np.min as f32, np.max as f32));
     let (_, name) = bundle.gameplay_lookup(reference)?;
     let windows = rate_windows(bundle, &name, trait_rows, condition_rows, need_rows, set_tic);
     let sat = satisfaction_at(value, set_tic, &np, now, &windows);
@@ -367,9 +367,9 @@ fn eval_need_row(
 /// is decided here, once, for every observer. No consumer re-sorts.
 pub fn active_conditions(
     bundle: &Bundle,
-    trait_rows: &[u32],
-    need_rows: &[(u32, u16)],
-    condition_rows: &[(u32, u16)],
+    trait_rows: &[u64],
+    need_rows: &[(u64, u16)],
+    condition_rows: &[(u64, u16)],
     now: u16,
 ) -> Vec<ActiveCondition> {
     let mut out = Vec::new();
@@ -395,7 +395,7 @@ pub fn active_conditions(
         }
     }
     for &(row, written) in condition_rows {
-        let cref = gameplay_row_reference(GAMEPLAY_CONDITION, row);
+        let cref = row_reference(row);
         let Some(cp) = bundle.condition_params_by_ref(cref) else { continue };
         if cp.duration <= 0.0 {
             continue; // a stored row of a DERIVED condition is inert (F2)
@@ -426,15 +426,15 @@ pub fn active_conditions(
 pub fn need_satisfaction(
     bundle: &Bundle,
     need: &str,
-    trait_rows: &[u32],
-    need_rows: &[(u32, u16)],
-    condition_rows: &[(u32, u16)],
+    trait_rows: &[u64],
+    need_rows: &[(u64, u16)],
+    condition_rows: &[(u64, u16)],
     now: u16,
 ) -> Option<f64> {
     let nref = bundle.gameplay_reference("need", need)?;
     let &(row, set_tic) = need_rows
         .iter()
-        .find(|(row, _)| gameplay_row_reference(GAMEPLAY_NEED, *row) == nref)?;
+        .find(|(row, _)| row_reference(*row) == nref)?;
     eval_need_row(bundle, row, set_tic, trait_rows, condition_rows, need_rows, now)
         .map(|(_, _, sat)| sat)
 }
@@ -445,9 +445,9 @@ pub fn need_satisfaction(
 /// sleep between crossings instead of sampling (F4).
 pub fn next_crossing_tic(
     bundle: &Bundle,
-    trait_rows: &[u32],
-    need_rows: &[(u32, u16)],
-    condition_rows: &[(u32, u16)],
+    trait_rows: &[u64],
+    need_rows: &[(u64, u16)],
+    condition_rows: &[(u64, u16)],
     now: u16,
 ) -> Option<u16> {
     let mut best: Option<u16> = None;
@@ -462,7 +462,7 @@ pub fn next_crossing_tic(
         });
     };
     for &(row, set_tic) in need_rows {
-        let reference = gameplay_row_reference(GAMEPLAY_NEED, row);
+        let reference = row_reference(row);
         let Some(np) = bundle.need_params_by_ref(reference) else { continue };
         let Some((_, name)) = bundle.gameplay_lookup(reference) else { continue };
         let windows = rate_windows(bundle, &name, trait_rows, condition_rows, need_rows, set_tic);
@@ -471,7 +471,7 @@ pub fn next_crossing_tic(
             continue;
         }
         let base_rate = if np.deplete > 0.0 { (np.max - np.min) / np.deplete } else { 0.0 };
-        let value = f64::from(dequantize(gameplay_row_data(row), np.min as f32, np.max as f32));
+        let value = f64::from(dequantize(row_data(row), np.min as f32, np.max as f32));
         let s0 = value.clamp(np.min, np.max);
         for band in &np.bands {
             for threshold in [band.lo, band.hi] {
@@ -489,10 +489,10 @@ pub fn next_crossing_tic(
         }
     }
     for &(row, written) in condition_rows {
-        let cref = gameplay_row_reference(GAMEPLAY_CONDITION, row);
+        let cref = row_reference(row);
         let Some(cp) = bundle.condition_params_by_ref(cref) else { continue };
         if cp.duration > 0.0 && condition_remaining(row, written, now) > 0 {
-            consider(written.wrapping_add(gameplay_row_data(row)));
+            consider(written.wrapping_add(row_data(row)));
         }
     }
     best
@@ -508,18 +508,18 @@ pub fn floor_crossing_tic(
     bundle: &Bundle,
     need: &str,
     threshold: f64,
-    trait_rows: &[u32],
-    need_rows: &[(u32, u16)],
-    condition_rows: &[(u32, u16)],
+    trait_rows: &[u64],
+    need_rows: &[(u64, u16)],
+    condition_rows: &[(u64, u16)],
 ) -> Option<u16> {
     let nref = bundle.gameplay_reference("need", need)?;
     let &(row, set_tic) = need_rows
         .iter()
-        .find(|(row, _)| gameplay_row_reference(GAMEPLAY_NEED, *row) == nref)?;
+        .find(|(row, _)| row_reference(*row) == nref)?;
     let np = bundle.need_params_by_ref(nref)?;
     let windows = rate_windows(bundle, need, trait_rows, condition_rows, need_rows, set_tic);
     let base_rate = if np.deplete > 0.0 { (np.max - np.min) / np.deplete } else { 0.0 };
-    let s0 = f64::from(dequantize(gameplay_row_data(row), np.min as f32, np.max as f32))
+    let s0 = f64::from(dequantize(row_data(row), np.min as f32, np.max as f32))
         .clamp(np.min, np.max);
     if s0 <= threshold {
         return None; // already there — a write would see it now, nothing to schedule
@@ -941,7 +941,7 @@ deplete = 1000
         let b2 = load(&[("needs.toml".into(), src.into())]).expect("loads");
         let row = need_row(&b2, "thirst", 33.0);
         let p = np(&b2, "thirst");
-        let v = f64::from(dequantize(gameplay_row_data(row), p.min as f32, p.max as f32));
+        let v = f64::from(dequantize(row_data(row), p.min as f32, p.max as f32));
         assert!((v - 33.0).abs() < 0.002, "got {v}");
         drop(b);
     }
