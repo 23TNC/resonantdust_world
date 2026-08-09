@@ -1,5 +1,18 @@
 # Completed — player-pawns
 
+## 2026-08-08 — P5: the truth
+
+Memory `player-pawns-delivered` + the MEMORY.md line written; docs-check green (the 5
+standing warnings predate or are the players-module current/ staleness note). The stack was
+bounced REPEATEDLY through the stream (4 edge deploys, module publishes, full sim restarts
+after the consumer sweep) and healed each time; the closing arc: a brand-new player
+(`FinalArc`) logged in against the running stack and received its own freshly-minted
+player-pawn's wolf_count row (0x4080000b / 0xffff0050) through the owner fan within
+seconds — login → mint → link → derive → fan, end to end. NOT re-eyed: the browser client
+post-sweep (webgl/wasm rebuilt for the corpus change; the bundle built clean — a visual
+regression would be the rebuilt loader failing, which the FinalArc probe's corpus-served
+login contradicts). The user's eyes close the stream.
+
 ## 2026-08-08 — P4 (second half): the npc coupling drill
 
 The earlier "silent failure" was NO bug: the P2 players-DB reset reshuffled claim order —
