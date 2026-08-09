@@ -239,6 +239,8 @@ export class WorldBridge {
    *  tables. `reach === 0` ⇒ the kind emits nothing. Authored per kind, so a torch's light
    *  costs nothing per placed instance and never rides the wire. */
   private thingLight: Float64Array = new Float64Array();
+  /** survival F1: per-kind GEO glyphs (`thingGeoLabels`, object_id order). */
+  private thingGeoLabels: string[] = [];
 
   /** Anchor centre, in world px. */
   private anchorX = 0;
@@ -299,6 +301,7 @@ export class WorldBridge {
     this.tilePacked = this.content.tilePackedChannels();
     this.thingPacked = this.content.thingPackedChannels();
     this.thingLight = this.content.thingLight();
+    this.thingGeoLabels = this.content.thingGeoLabels();
     this.tileHeights = new Float64Array(this.content.tileHeights());
     // lighting-strip P2: `setMaxCardTiles` (the walk dilation) and `setTileKinds` (tiles entering
     // presence) both fed the gather and nothing else, so both are gone with it. `tileLanes` stays —
@@ -729,6 +732,7 @@ export class WorldBridge {
       const p = placeThing(tileX, tileY, readLayout(this.thingLayout, kindId), tex.flipX, !tex.name);
       const primId = this.viewport.addPrim({
         light: this.lightFor(kindId),   // P5: the kind's LIGHT presentation, if it has one
+        geoLabel: this.thingGeoLabels[kindId - 1], // survival F1: the geo glyph
         texture: this.white,
         textureName: tex.name,
         outline: !tex.name,             // food-chain F9: textureless = outlined placeholder
@@ -903,6 +907,7 @@ export class WorldBridge {
           texture: this.white,
           textureName: tex.name,
           outline: !tex.name,           // food-chain F9: textureless = outlined placeholder
+          geoLabel: this.thingGeoLabels[kindId - 1], // survival F1: the geo glyph
           flipX: tex.flipX,
           cell: tex.cell,
           x: p.x,

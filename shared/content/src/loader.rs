@@ -705,6 +705,8 @@ pub(crate) struct ThingDef {
   /// May a pawn ENTER a cell this thing occupies? (pathfinding F1 — absence authors
   /// true; the `Default` false only reaches RETIRED slots, which the accessor guards.)
   pub pathable: bool,
+  /// The authored GEO-TIER glyph (survival F1), or `None` = derive from the name.
+  pub geo_label: Option<String>,
 }
 
 /// One biome, with its classifier body in either dialect.
@@ -1110,6 +1112,21 @@ impl Bundle {
   /// Every thing name in `object_id` order (index 0 → object_id 1; `""` = retired).
   pub fn thing_names(&self) -> &[String] {
     &self.thing_names
+  }
+
+  /// Every thing's GEO-TIER glyph in `object_id` order (survival F1): the authored
+  /// `geo_label`, or the name's first character UPPERCASED (bunny → "B", logs → "L").
+  /// Drawn centered on the geo/placeholder box by the client; never rides the wire.
+  pub fn thing_geo_labels(&self) -> Vec<String> {
+    self
+      .things
+      .iter()
+      .map(|d| {
+        d.geo_label.clone().unwrap_or_else(|| {
+          d.name.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default()
+        })
+      })
+      .collect()
   }
   /// The `object_id` for a thing name (1-based; `None` if unknown) — the u12 packed
   /// into a zone's thing entry.

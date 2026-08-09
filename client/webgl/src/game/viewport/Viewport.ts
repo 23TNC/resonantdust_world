@@ -87,6 +87,35 @@ export class Viewport {
   readonly white: Texture;
   /** The white fill as an identity frame — the geo tier's residual/surface (whole-texture UV). */
   private whiteFrame!: TexFrame;
+  /** survival F1/F2: the GEO-glyph frames — a white fill with the label drawn DARK,
+   *  rasterized once per label on an offscreen canvas and cached forever (the label
+   *  set is the kind set — dozens, not thousands). Dark-on-white because the bake
+   *  multiplies residual × geoColor: the white ground takes the box color, the dark
+   *  letter survives the multiply on any tint. */
+  private readonly glyphFrames = new Map<string, TexFrame>();
+
+  private glyphFrame(label: string | undefined): TexFrame | null {
+    if (!label) return null;
+    let f = this.glyphFrames.get(label);
+    if (!f) {
+      const c = document.createElement("canvas");
+      c.width = 64;
+      c.height = 64;
+      const x = c.getContext("2d")!;
+      x.fillStyle = "#ffffff";
+      x.fillRect(0, 0, 64, 64);
+      x.fillStyle = "#22262e";
+      x.textAlign = "center";
+      x.textBaseline = "middle";
+      x.font = `bold ${label.length > 1 ? 34 : 44}px sans-serif`;
+      x.fillText(label, 32, 34, 58);
+      f = TexFrame.whole(new Texture(this.renderer.gl, {
+        width: 64, height: 64, data: c, premultiply: true,
+      }));
+      this.glyphFrames.set(label, f);
+    }
+    return f;
+  }
   private readonly empty: Texture;
   /** Flat-normal / zero-dir fallback (0.5,0.5,1.0) — neutral relief when no normal/dir map is bound. */
   private materialRegistry: MaterialRegistry | null = null;
@@ -252,15 +281,19 @@ export class Viewport {
           // case is a SOLID material — residual × geoColor, a WHITE surface (coverage 1 → never discards →
           // fills the box). A real material passes tint = white (its tint lives in chA/chB). `residual`
           // defaults to the white fill; a partially-loaded stem (albedo up, surface not yet) uses the real
-          // albedo so it doesn't flash white (matching pixijs).
+          // albedo so it doesn't flash white (matching pixijs). survival F1/F2: a prim carrying a
+          // `geoLabel` substitutes the GLYPH fill (white ground, dark letter — the tint multiply colors
+          // the ground and the letter reads on it) wherever the white fill would have served; a
+          // partially-loaded real albedo still wins, so glyphs never stamp real art.
           const wf = this.whiteFrame;
           const solid = (residual: TexFrame) => ({ texture: white, tint: prim.geoColor ?? prim.tint, material: { residual, layers: null, surface: wf, chA: ZERO_CH, chB: ZERO_CH, chC: ZERO_CH } });
+          const glyph = () => this.glyphFrame(prim.geoLabel) ?? wf;
           const r = this.resolver;
-          if (!prim.textureName || !r) return solid(wf);
+          if (!prim.textureName || !r) return solid(glyph());
           // The albedo map is the residual base; the visual alpha lives in surface.B — need BOTH real.
           const alb = r.resolve(prim.textureName, "albedo", prim.cell);
           const surf = r.resolve(prim.textureName, "surface", prim.cell);
-          if (alb.geo || surf.geo || !alb.frame || !surf.frame) return solid(alb.frame ?? wf);
+          if (alb.geo || surf.geo || !alb.frame || !surf.frame) return solid(alb.frame ?? glyph());
           // Real tier: reconstruct residual + Σ layers·jitter (from the material registry), alpha from
           // surface.B. A stem with no `layers` map keeps just the residual.
           let layers: TexFrame | null = null;

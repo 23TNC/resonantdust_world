@@ -159,6 +159,9 @@ struct ThingToml {
   /// the TREE authors false; the composed view (kind-0 suppresses) decides occupancy.
   #[serde(default = "yes")]
   pathable: bool,
+  /// The GEO-TIER glyph (survival F1). Absent = the name's first char, uppercased.
+  #[serde(default)]
+  geo_label: Option<String>,
 }
 
 fn one() -> f64 { 1.0 }
@@ -1925,6 +1928,7 @@ fn thing_def(
     traits,
     interactions: interaction_binds(&t.interactions, interaction_exists, thing_exists, "thing", &t.name, errors),
     pathable: t.pathable,
+    geo_label: t.geo_label.clone(),
   }
 }
 
@@ -3094,6 +3098,34 @@ tint = "#a0c8ff"
     // flags = cast(1) | flicker(4) = 5.
     assert_eq!(&v[0..8], &[1.0, 0.85, 0.55, 1.0, 16.0, 0.35, 2.5, 5.0]);
     assert_eq!(&v[8..16], &[0.55, 0.75, 1.0, 1.0, 16.0, 0.35, 2.5, 5.0]);
+  }
+
+  /// survival F1: the geo glyph defaults to the name's first char uppercased; an
+  /// authored `geo_label` wins whole.
+  #[test]
+  fn geo_labels_default_and_override() {
+    let text = r##"
+[[thing]]
+name = "bunny"
+type = "pawn"
+kind = "bunny"
+subType = ["animal"]
+variant = ["0"]
+[[thing.part]]
+tint = "#ffffff"
+
+[[thing]]
+name = "logs"
+type = "biome-thing"
+kind = "logs"
+subType = ["default"]
+variant = ["0"]
+geo_label = "Lg"
+[[thing.part]]
+tint = "#ffffff"
+"##;
+    let b = load(&[src("t.toml", text)]).expect("clean load");
+    assert_eq!(b.thing_geo_labels(), vec!["B".to_string(), "Lg".to_string()]);
   }
 
   /// trait-lights F6: a NON-constant trait bind on a non-pawn thing refuses with a

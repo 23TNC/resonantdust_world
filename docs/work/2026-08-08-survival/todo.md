@@ -6,7 +6,7 @@ decisions in [`forks.md`](forks.md) (F#), the anticipated-issue inventory in
 
 ## P0 — the paper
 
-- [ ] VARIABLES.md: `geo_label` on the thing schema (F1); the `deplete`
+- [x] VARIABLES.md: `geo_label` on the thing schema (F1); the `deplete`
       DEPLETION MODIFIER on condition need-modifiers (F3 — the need's own
       field and units, rates summing, "only events and condition depletion
       move corpus"); the crossing re-stamp law (F4/I2 — one pending slot
@@ -15,10 +15,10 @@ decisions in [`forks.md`](forks.md) (F#), the anticipated-issue inventory in
 
 ## P1 — geo glyphs
 
-- [ ] Loader: `geo_label` parsed (default = the name's first char,
+- [x] Loader: `geo_label` parsed (default = the name's first char,
       uppercased) and exposed beside the thing visual tables. Acceptance:
       unit — bunny → "B", an authored override wins; golden re-blessed.
-- [ ] Client: the glyph rasterizer (cached per label+bucket, white with a
+- [x] Client: the glyph rasterizer (cached per label+bucket, white with a
       dark outline) drawn CENTERED on the geo-tier box AND the textureless
       placeholder box; gone the moment a real albedo serves (I5).
       Acceptance: a geo-tier capture shows B/L/D…; a loaded conifer shows

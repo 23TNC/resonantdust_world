@@ -180,6 +180,14 @@ impl Content {
         self.bundle.thing_names().to_vec()
     }
 
+    /// Every thing's GEO-TIER glyph in `object_id` order (survival F1) — authored
+    /// `geo_label` or the name's first char uppercased. The client centers it on the
+    /// geo/placeholder box.
+    #[wasm_bindgen(js_name = thingGeoLabels)]
+    pub fn thing_geo_labels(&self) -> Vec<String> {
+        self.bundle.thing_geo_labels()
+    }
+
     /// A tile's TAXONOMY as `[type, subType, kind, variant]`, or `undefined` if it authors none.
     /// The first `subType`/`variant` of the applicability arrays — enough to key the registry,
     /// since a def's `kind_id` is the same across every tuple it covers.

@@ -631,8 +631,12 @@ export class MoverLayer {
     this.thingStems = this.content.thingTextureStems();
     this.thingLayout = this.content.thingLayout();
     this.thingPacked = this.content.thingPackedChannels();
+    this.geoLabels = this.content.thingGeoLabels();
     this.slotCounts.clear();
   }
+
+  /** survival F1: per-kind GEO glyphs (object_id order), refreshed on hot-swap. */
+  private geoLabels: string[] = [];
 
   /** Slot count per kind, cached (cleared on content swap) — the RESTING-mover heal below
    *  compares against it every tick, and a wasm call per mover per frame would be churn. */
@@ -1065,6 +1069,9 @@ export class MoverLayer {
           carrierOf: i > 0 ? parts[0].id : undefined, // P5: pieces name the carrier owner
           elevation: sp.elevation ?? 0, // z-positioning P3 — `y` is already shifted north by this
           light: lights[i], // trait-lights P4: part i carries light i (undefined past the set)
+          // survival F1: the glyph rides the CARRIER slot only (a two-part pawn must
+          // not print its letter twice).
+          geoLabel: i === 0 ? this.geoLabels[kind - 1] : undefined,
         });
         parts.push({
           id,

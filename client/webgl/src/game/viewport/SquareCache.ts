@@ -77,6 +77,10 @@ export interface Primitive {
    *  sprite and a glow. Carried under the SAME carrier prim as the billboard ([F9](../../../../docs/work/2026-07-25-primitive-graph/forks.md)),
    *  so it needs no second delivery list. Absent ⇒ nothing about the records changes. */
   light?: PrimitiveLight;
+  /** survival F1: the GEO-TIER glyph — drawn centered on the geo/placeholder box (the
+   *  albedo resolve substitutes a glyph fill for the white fill); gone the moment a
+   *  real albedo serves. Absent ⇒ the anonymous box, exactly as before. */
+  geoLabel?: string;
   /** human-pawns P5 — this billboard is a CARRIED PIECE of another prim's carrier: the value is
    *  the OWNER billboard's prim id (a pawn's head names its body). Its `billboard_data` leaf
    *  parents on that carrier (`prim_data` holds up to 4 pieces — "a pawn = prim{head, body, …}",
@@ -585,6 +589,8 @@ export class SquareCache {
                                  // footprint, which is the exact bug this stream exists to fix
       outline: spec.outline,     // food-chain F9: the placeholder border — dropped here, a
                                  // placeholder reads as a bug again (the addPrim gotcha)
+      geoLabel: spec.geoLabel,   // survival F1: the geo glyph — dropped here, every geo box
+                                 // goes anonymous again (the addPrim gotcha)
     };
     const range = squaresForAABB(prim.x, prim.y, prim.x + prim.width, prim.y + prim.height);
     this.prims.set(id, { prim, range });

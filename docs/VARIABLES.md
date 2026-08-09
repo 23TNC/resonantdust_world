@@ -608,6 +608,16 @@ rows** (write the evaluated value + the mutation tic in the same transaction: a 
 re-stamps; a trait change re-stamps). A condition EXPIRY needs no write — the expiry tic is
 derivable from the row, and the eval integrates PIECEWISE across it.
 
+**THE CROSSING RE-STAMP LAW** (survival F4/I2): a lazily-depleting need can cross a
+trigger-bearing threshold (corpus → 0 → death) WITHOUT a write, and triggers fire only on
+writes — so whenever the worker touches a pawn's need trajectory (a SET_NEED, a mint, a
+re-stamp), it computes the zero-crossing via the shared `next_crossing` machinery and queues
+ONE re-validating SET_NEED re-stamp at that tic (+ the queue barrier; a crossing beyond the u16
+half-window re-stamps at the horizon instead and chains). One pending slot per `(pawn, need)`,
+the freshest trajectory SUPERSEDES, a removed pawn unschedules. The re-stamp writes the
+freshly-evaluated value — a pawn that ate meanwhile gets an honest re-stamp and a new
+crossing; a pawn at ≤ 0 hits the existing need-write sweep → `can_die` → death.
+
 **Worked window** (the numbers stat-model P1's eval test reuses): thirst `0..100`,
 `deplete = 21600` (base rate `100/21600` per tic). At tic 1000 a sip re-stamps thirst at 40.0
 (`q = 26214` — 40% of 65535 exactly, so the stamp dequantizes to `40.0000`) and grants
@@ -856,6 +866,10 @@ name = "wolf"
                             #  cell with no extra write. A cell is pathable iff tile AND
                             #  occupant agree — ACTIONS.md §Movement, the pathing law.)
 needs = ["thirst"]          # the needs this kind carries (optional)
+geo_label = "W"             # the GEO-TIER glyph (survival F1): drawn centered on the
+                            #   geo/placeholder box, client-rasterized, gone when real
+                            #   art serves. Optional — default = the name's first
+                            #   character UPPERCASED (bunny → B, logs → L).
 traits = [                  # trait bindings (stat-model F11 + trait-lights F2/F6):
   "biological_lifeform",    #   a bare string = level 1, non-constant
   { name = "walks", level = 2 },
@@ -972,10 +986,17 @@ duration = 3600             # TICS a TIMED grant lives; 0 = DERIVED (band-comput
 priority = 10               # card sort key, desc; absent = 0
 # modifier lists (all optional; conditions contribute SCALARS — no levels):
 #   add SUMS into the stat; min/max join the range intersection; rate multiplies;
+#   deplete = a DEPLETION MODIFIER (survival F3, the user's shape): the need's own
+#   field and units (TICS full→empty) — "while this condition is active, the need
+#   depletes at this pace". Sources combine as RATES SUMMING (starving + dehydrated
+#   drains corpus faster than either alone). This is how a deplete-0 need (corpus)
+#   moves at all: "only events and condition depletion move it" — the multiplicative
+#   `rate` times a base of 0 is 0 forever.
 #   emotions feed the active-emotion argmax (emotions F2/F3 — magnitude 1..15, the u8
 #   pack `emotion:4|magnitude:4`; +0 = author NOTHING; mood is RETIRED, emotions F4)
 stats = [ { stat = "metabolism", add = 0.0 } ]          # (illustrative shapes)
 needs = [ { need = "thirst", rate = 0.5 } ]             # quenched halves thirst depletion
+# needs = [ { need = "corpus", deplete = 3600 } ]       # starving kills in 3600 tics
 emotions = [ { emotion = "happy", magnitude = 2 } ]
 
 [[trait]]                   # a LEVELED stat contributor — "traits/skills" (stat-model F1/F5)
