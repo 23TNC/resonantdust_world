@@ -138,3 +138,36 @@ Core carries it as `Event::MoveChords` with the payload **verbatim** — decode 
 `MoverTrack`. Deciding what a route MEANS is P5; P1 only has to prove the wire carries it.
 
 `bin/sim check worker` and `bin/rd build core` clean.
+
+## 2026-08-10 — P2: how many chords does a real trip need?
+
+`headless <name> chords <x> <y>` — `find_chords` over 1000 random pairs per band, against core's
+own composed view (the same derivation the worker's pathability uses, so this is the map the pawns
+actually walk).
+
+Terrain: **9409 known cells, 19.09% impathable**, extent `76..172 x 27..123`.
+
+| band | n | p50 | p90 | p99 | max | **needing >10 chords** |
+|---|---|---|---|---|---|---|
+| 3-12 tiles | 1000 | 1 | 3 | 5 | 8 | 0 (0.00%) |
+| 12-40 tiles | 1000 | 2 | 6 | 9 | 12 | 4 (0.40%) |
+| 40-90 tiles | 999 | 5 | 9 | 12 | 14 | 37 (3.70%) |
+
+**The unknown resolves in the design's favour.** A cap of 10 truncates nothing at wander range,
+0.4% of medium trips and 3.7% of cross-map ones. The re-request stutter is a rare case, not the
+normal one — which was the outcome that would have made this design worse than what it replaces.
+
+**Two false starts, both worth recording.** The survey first reported `p50 = 1, 0% over cap` across
+every band. It was measuring nothing: the world generates on demand, `pathable` calls an unknown
+cell OPEN, and the sampled square was 99.3% unseen, so every pair string-pulled to one straight
+line. The fix was to draw pairs only from cells the view holds — which then reported an honest
+`known=256`, one 16x16 zone, and refused the long band outright.
+
+That is [I4](issues.md#i4), and it is now closed rather than carried: the harness **generates the
+terrain it measures**, laying a grid of 49 retained anchors (distinct names, so the nested-radii
+release cannot evict the early ones behind the late ones) and waiting for generation. Coverage went
+from 256 cells at 2.73% impathable — one empty meadow — to 9409 at 19.09%, which is where the
+chord counts above come from and why they are believable.
+
+The lesson is the reusable part: **a probe over a default-open world reports confident numbers
+about nothing**, and the number it reports is exactly the reassuring one.

@@ -88,7 +88,13 @@ async fn main() -> ExitCode {
     let mut report = tokio::time::interval(std::time::Duration::from_secs(5));
     report.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
-    // The survey runs ONCE, after the terrain has had time to stream in.
+    // **The survey has to generate the terrain it measures.** A zone comes into existence when a
+    // client anchors on it and not before, so an anchor at the fluffle yields exactly one 16x16
+    // zone and every longer trip is drawn through space that has never existed (I4). Lay a GRID
+    // of anchors — distinct names, all retained, so the nested-radii release does not evict the
+    // early ones behind the late ones — and let generation catch up before sampling.
+    const ZONE_TILES: i32 = 16;
+    let reach: i32 = std::env::var("SURVEY_REACH").ok().and_then(|v| v.parse().ok()).unwrap_or(48);
     let survey_at = survey.then(|| std::time::Instant::now() + std::time::Duration::from_secs(20));
 
     let code = loop {
@@ -146,6 +152,26 @@ async fn main() -> ExitCode {
                                     soul: 0,
                                 });
                             }
+                            if survey {
+                                let mut n = 0;
+                                let mut y = anchor_y - reach;
+                                while y <= anchor_y + reach {
+                                    let mut x = anchor_x - reach;
+                                    while x <= anchor_x + reach {
+                                        let _ = client.send(Command::SetAnchor {
+                                            name: format!("gen:{n}"),
+                                            tile_x: x,
+                                            tile_y: y,
+                                            radii: AnchorRadii { active: 1, hot: 1, warm: 1, cold: 1 },
+                                            soul: 0,
+                                        });
+                                        n += 1;
+                                        x += ZONE_TILES;
+                                    }
+                                    y += ZONE_TILES;
+                                }
+                                info!(anchors = n, reach, "seeding terrain for the survey");
+                            }
                         }
                         // A failed login is terminal; a disconnect after login is too.
                         Event::LoginFailed { .. } => break ExitCode::FAILURE,
@@ -177,7 +203,7 @@ async fn main() -> ExitCode {
 /// (corpus flags × composed cells, unknown = OPEN), so this measures the map the pawns walk.
 fn chord_survey(client: &Client, home_x: i32, home_y: i32) {
     // Bands in tiles: within a zone, across a zone, across several.
-    const BANDS: [(i32, i32); 3] = [(3, 12), (12, 40), (40, 96)];
+    const BANDS: [(i32, i32); 3] = [(3, 12), (12, 40), (40, 90)];
     const PER_BAND: usize = 1000;
     const CAP: usize = 10; // the proposed queue depth
 
@@ -188,11 +214,12 @@ fn chord_survey(client: &Client, home_x: i32, home_y: i32) {
     // OPEN, and a pair drawn from that space string-pulls to one straight chord no matter what
     // the real terrain would be. The first run of this survey reported "p50 = 1 chord, 0% over
     // cap" from a square that was 99.3% unknown — a confident number about nothing.
+    let reach: i32 = std::env::var("SURVEY_REACH").ok().and_then(|v| v.parse().ok()).unwrap_or(48);
     let known: Vec<(i32, i32)> = {
         let mut v = Vec::new();
         if let Ok(w) = client.world().lock() {
-            for dx in -96i32..=96 {
-                for dy in -96i32..=96 {
+            for dx in -reach..=reach {
+                for dy in -reach..=reach {
                     let at = (home_x + dx, home_y + dy);
                     if w.world.tile_kind_at(at).is_some() {
                         v.push(at);

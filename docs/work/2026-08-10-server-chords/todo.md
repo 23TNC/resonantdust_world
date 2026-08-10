@@ -52,7 +52,7 @@ false, including one whose criterion had been rewritten after ticking. Do not re
 
 ## P2 — measure the three unknowns before committing
 
-- [ ] Histogram `find_chords` over 1000 random pairs × 3 distance bands on the live map.
+- [x] Histogram `find_chords` over 1000 random pairs × 3 distance bands on the live map.
       Acceptance: a table in `completed.md` including the **fraction needing >10 chords** — that
       fraction is the re-request stutter rate.
 - [ ] Measure player-order latency today: wall ms from command to first rendered displacement,
