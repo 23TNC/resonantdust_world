@@ -235,11 +235,18 @@ pub enum Event {
         tables: Vec<SubStat>,
     },
     /// The wall↔tic estimate RE-ANCHORED (`ticclock` — a fresher wire tic arrived, or the old
-    /// anchor aged out). The host computes fractional deltas locally:
-    /// `serial(tic − t) + (now − wall_ms) · tics_per_sec / 1000`. `tics_per_sec` is the
-    /// LEARNED rate (pawn-movement F6 — starts at `TIC_HZ`, refined from the stream; the true
-    /// rate measurably drifts from the authored one). Sparse by construction; the first place
-    /// clients care about tic at all (first-pawns P3).
+    /// anchor aged out).
+    ///
+    /// **DIAGNOSTIC.** Ask `Client::now_tic()` for the tic; do not rebuild the estimate from this
+    /// frame. This doc used to hand every host the extrapolation formula, and both of them took
+    /// it — npc kept its own anchor, webgl hand-rolled the u16 conversion eight times. An
+    /// instruction to re-derive a shared answer is a leak written into the contract
+    /// (shared-simulation P2e).
+    ///
+    /// `tics_per_sec` remains readable and useful: it is the LEARNED rate (pawn-movement F6 —
+    /// starts at `TIC_HZ`, refined from the stream, and it measurably drifts from the authored
+    /// one), and a renderer legitimately needs the RATE to pace a smoothing chase. The rate is a
+    /// shared input; only the evaluation INSTANT is core's answer.
     TicAnchor { tic: u16, wall_ms: f64, tics_per_sec: f64 },
     /// A promoted move INTENT reached a subscribed zone (`ACTIONS.md` §Movement):
     /// `entity_reference` is heading to global tile `(tile_x, tile_y)`, its first hop composed

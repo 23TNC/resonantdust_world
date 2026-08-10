@@ -3,6 +3,23 @@
 _The verification log: what landed and **how it was checked**. Append-only; authoritative for what
 is done. Items live in [`todo.md`](todo.md) with their boxes ticked._
 
+## 2026-08-10 — P2e items 1-3: one clock
+
+`Client::now_tic()` is the answer; `Bot::now_tic` delegates and npc's `tic_anchor` field, its
+`TicAnchor` arm and its local extrapolation are deleted (`grep -c tic_anchor` is 0).
+
+`Event::TicAnchor`'s doc is re-labelled **DIAGNOSTIC** and the extrapolation formula is removed
+from it. That doc was handing every host the recipe to rebuild a shared answer, and both hosts took
+it — npc kept an anchor, webgl hand-rolled the u16 conversion eight times. **An instruction to
+re-derive a shared answer is a leak written into the contract**, which is the sharpest thing the
+audit found.
+
+`tics_per_sec` stays readable, deliberately: a renderer needs the RATE to pace its smoothing chase
+([F2](forks.md#f2)). The rate is a shared input; only the evaluation INSTANT is core's answer.
+
+Live: **38 move intents in 60 s, 0 errors** with npc taking its clock from core. Item 4 (npc
+calling `SeedTicRate` at login) is left open.
+
 ## 2026-08-10 — P2d COMPLETE: the gameplay rows are core's, and I8 is closed
 
 [`client/core/src/gameplay_rows.rs`](../../../client/core/src/gameplay_rows.rs) — payload and need

@@ -260,10 +260,6 @@ pub struct Bot {
     /// The world server this session logged into (from [`Event::LoggedIn`]) — the base URL its
     /// `/content` corpus is fetched from (the def-id authority, first-pawns F5).
     pub server_url: Option<String>,
-    /// The latest tic anchor `(tic, received_at, tics_per_sec)` off [`Event::TicAnchor`] — the
-    /// engine's LEARNED rate estimate (never raw `TIC_HZ`), stamped at event receipt. Feeds
-    /// [`Bot::now_tic`], which is what lets a brain evaluate lazy needs (needs-moodlets F4).
-    tic_anchor: Option<(u16, std::time::Instant, f64)>,
     /// Known PAWN positions (npc-host F11): `entity → world tile`, from `StateObject`
     /// events (removed = gone). What a hosted brain adopts from when the OWNERSHIP frame
     /// loses the race against a resting pawn's one-shot snapshot replay.
@@ -283,7 +279,6 @@ impl Bot {
             events,
             paused: false,
             server_url: None,
-            tic_anchor: None,
             pawns: std::collections::HashMap::new(),
         };
         if bot.client.login(name).is_err() {
@@ -368,9 +363,6 @@ impl Bot {
                 }
                 self.paused = *paused;
             }
-            Event::TicAnchor { tic, tics_per_sec, .. } => {
-                self.tic_anchor = Some((*tic, std::time::Instant::now(), *tics_per_sec));
-            }
             // The known-zone tile map (interactions P4). Layer 0 is the ground baseline; a
             // zone streams ONE ROW PER BIOME (subtype), each carrying only its own cells —
             // so rows MERGE cell-wise, nonzero winning (seen live: zone 99 = 3 rows).
@@ -423,9 +415,11 @@ impl Bot {
     /// until the first anchor lands. Receipt-stamped, so it carries event-delivery jitter
     /// (~a tick of the pump), which is fine for band evaluation; it is never a movement clock.
     pub fn now_tic(&self) -> Option<u16> {
-        let (tic, at, rate) = self.tic_anchor?;
-        let elapsed = at.elapsed().as_secs_f64() * rate;
-        Some(tic.wrapping_add(elapsed as u16))
+        // shared-simulation P2e: ONE clock. The Bot used to keep its own anchor and extrapolate,
+        // which is a second answer to a question that has one — and `api.rs` was handing every
+        // host the formula to build it, so the leak was written into the contract as an
+        // instruction. Core owns the estimate; every host asks.
+        self.client.now_tic()
     }
 }
 

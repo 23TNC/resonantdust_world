@@ -195,13 +195,13 @@ them. **The fix is one read surface; the folds then move behind it.**
 
 ## P2e — one clock: core answers "what tic is it" (before P3)
 
-- [ ] Add `now_tic()` to the read surface off `ticclock::delta_since` (`ticclock.rs:182`) — its
+- [x] Add `now_tic()` to the read surface off `ticclock::delta_since` (`ticclock.rs:182`) — its
       first production caller ever. Acceptance: `grep -rn delta_since client/core/src` returns a
       non-test caller.
-- [ ] Demote `Event::TicAnchor` to DIAGNOSTIC and delete the extrapolation formula from
+- [x] Demote `Event::TicAnchor` to DIAGNOSTIC and delete the extrapolation formula from
       `api.rs:236-240` — the instruction IS the leak. Acceptance: no host-facing doc tells a host to
       extrapolate; docs-check green.
-- [ ] Delete npc's `tic_anchor` (`lib.rs:261`, stamped at `:374`) and `Bot::now_tic`'s local
+- [x] Delete npc's `tic_anchor` (`lib.rs:261`, stamped at `:374`) and `Bot::now_tic`'s local
       extrapolation (`lib.rs:464-468`); its five call sites read core's. Acceptance:
       `grep -c tic_anchor client/npc/src/lib.rs` is 0.
 - [ ] Have npc call the `SeedTicRate` seam (`api.rs:93`) at login from its last observed rate — no
