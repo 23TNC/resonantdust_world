@@ -100,6 +100,16 @@ impl Client {
         self.world.lock().map(|w| w.pathable(x, y)).unwrap_or(true)
     }
 
+    /// This entity's raw payload opcode stream — the trait/condition rows every eval reads.
+    pub fn pawn_payload(&self, entity: u32) -> Vec<u32> {
+        self.world.lock().map(|w| w.rows.payload(entity).to_vec()).unwrap_or_default()
+    }
+
+    /// This entity's `needs` sub-table rows as the `(row, set_tic)` pairs the evals take.
+    pub fn pawn_needs(&self, entity: u32) -> Vec<(u64, u16)> {
+        self.world.lock().map(|w| w.rows.needs(entity)).unwrap_or_default()
+    }
+
     /// Hand core the corpus. Until this lands core answers nothing derived.
     pub fn set_corpus(&self, bundle: std::sync::Arc<resonantdust_content::loader::Bundle>) {
         if let Ok(mut w) = self.world.lock() {

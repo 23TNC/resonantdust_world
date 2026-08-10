@@ -3,6 +3,32 @@
 _The verification log: what landed and **how it was checked**. Append-only; authoritative for what
 is done. Items live in [`todo.md`](todo.md) with their boxes ticked._
 
+## 2026-08-10 — P2d COMPLETE: the gameplay rows are core's, and I8 is closed
+
+[`client/core/src/gameplay_rows.rs`](../../../client/core/src/gameplay_rows.rs) — payload and need
+rows keyed by ENTITY, not hung off `Mover`. That placement was **this stream's own instance of the
+defect it exists to delete** ([I8](issues.md#i8)): I put the rows where their first consumer needed
+them (pace derivation) rather than where they belong, and two real bugs followed — rows arriving
+before a pawn's first anchor were dropped (leaving it at `pace: None`, held still forever), and
+`PawnNeed` fans for player-pawn references that have no position to key on at all.
+
+Both are now regression tests: `rows_arriving_before_any_position_are_kept`,
+`a_positionless_player_pawn_reference_is_storable`, and — driving the whole path —
+`rows_before_the_anchor_still_reach_the_pace`, which feeds the payload FIRST in the zone-snapshot
+order that used to lose it and asserts the pace still derives to 24.0.
+
+Needs upsert by `codec::object::row_reference`, not a second open-coded modulo. One eviction rule
+on `StateGone`/removal. `pawn_payload`/`pawn_needs` on both hosts' handles.
+
+**The fifth copy is gone.** `wolves.rs` and `bunnies.rs` no longer keep `payloads`/`need_rows`;
+they read core through the handle, and the `PawnParts` arm that existed to buffer pre-adoption
+rows is deleted — core buffers for every host now. The arbitrary `payloads.len() < 64` cap went
+with it.
+
+**Verified live, not just compiled.** Fresh world, full sim rebuilt: **24 move intents in 60 s, 0
+errors, worker in step** (`tic=605 master=604`) — with wolves and bunnies deriving every trait,
+condition and need row through core. `client/core` 47 passed, `client/npc` 3 passed.
+
 ## 2026-08-10 — P2c COMPLETE: npc's fold is gone; one model, both hosts
 
 Retried item 4 with [I9](issues.md#i9) fixed at the root. `WorldView::nearest_tile`/`nearest_thing`

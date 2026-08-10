@@ -178,18 +178,18 @@ them. **The fix is one read surface; the folds then move behind it.**
 
 ## P2d — the pawn's gameplay ROWS are core's answer, not each host's (before P3)
 
-- [ ] Move `payload`/`needs` off `Mover` (`movers.rs:66-69`) into an entity-keyed store on
+- [x] Move `payload`/`needs` off `Mover` (`movers.rs:66-69`) into an entity-keyed store on
       `ClientWorld` that accepts rows for entities with no position row yet. Acceptance: unit test —
       `PawnParts` arriving BEFORE `StateObject` still derives pace 24.
-- [ ] Key need rows through `resonantdust_codec::object::row_reference` (`object.rs:164`), deleting
+- [x] Key need rows through `resonantdust_codec::object::row_reference` (`object.rs:164`), deleting
       the open-coded modulo at `movers.rs:207`. Acceptance: `grep -rn "0x1_0000_0000\|0x100000000"`
       over `client/` returns 0.
-- [ ] Give the store ONE eviction rule — drop on `StateGone`/removal and on zone close, mirroring
+- [x] Give the store ONE eviction rule — drop on `StateGone`/removal and on zone close, mirroring
       `MoverLayer.ts:1371-1372,1383-1384`. Acceptance: unit test — closing a zone drops that zone's
       rows to 0.
-- [ ] Expose `pawn_payload(entity)` / `pawn_needs(entity)` on the handle, needs as native
+- [x] Expose `pawn_payload(entity)` / `pawn_needs(entity)` on the handle, needs as native
       `(u64, u16)` pairs. Acceptance: a headless run prints a live bunny's thirst value nonzero.
-- [ ] Delete `payloads`/`need_rows` from the brains (`wolves.rs:90,93`, `bunnies.rs:53-54`,
+- [x] Delete `payloads`/`need_rows` from the brains (`wolves.rs:90,93`, `bunnies.rs:53-54`,
       `debug.rs:48`) and read core's. Acceptance: `grep -c "payloads\|need_rows"` over
       `client/npc/src/brains/` is 0 — the `< 64` cap goes with them.
 

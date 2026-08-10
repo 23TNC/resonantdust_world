@@ -63,10 +63,6 @@ pub struct Mover {
     /// the shared [`resonantdust_content::move_eval::advance_along`], so the cheap per-frame
     /// path and the full pathfinding path are the same arithmetic rather than two versions of it.
     leg: Option<((f64, f64), f64)>,
-    /// The pawn's raw payload opcode stream — trait and condition rows the pace derives from.
-    payload: Vec<u32>,
-    /// The pawn's `needs` sub-table rows, `(row, set_tic)`.
-    needs: Vec<(u64, u16)>,
 }
 
 impl Mover {
@@ -135,8 +131,6 @@ impl MoverTrack {
             facing,
             intent_tic: None,
             leg: None,
-            payload: Vec::new(),
-            needs: Vec::new(),
         });
         entry.point = point;
         entry.tic = tic;
@@ -192,45 +186,41 @@ impl MoverTrack {
         true
     }
 
-    /// A pawn's payload sidecar row arrived — the trait/condition rows its pace derives from.
-    pub fn observe_payload(&mut self, entity: u32, payload: Vec<u32>) {
-        if let Some(m) = self.movers.get_mut(&entity) {
-            m.payload = payload;
-            m.pace = None; // re-derive: a trait change can move the pace
-        }
-    }
-
-    /// One `needs` sub-table row. Conditions banded off needs narrow the pace, so a sip can
-    /// change how fast a pawn walks.
-    pub fn observe_need(&mut self, entity: u32, need: u64, set_tic: u16) {
-        if let Some(m) = self.movers.get_mut(&entity) {
-            let key = need % 0x1_0000_0000;
-            match m.needs.iter_mut().find(|(r, _)| r % 0x1_0000_0000 == key) {
-                Some(slot) => *slot = (need, set_tic),
-                None => m.needs.push((need, set_tic)),
-            }
-            m.pace = None;
-        }
-    }
 
     /// Derive every unpaced mover's `ground_speed` through the SHARED
     /// [`resonantdust_content::move_eval::ground_speed`] — the same call the worker spaces its
     /// hops with. Cheap and idempotent: only pawns whose rows changed re-evaluate.
     ///
+    /// Rows come from the shared [`crate::gameplay_rows::GameplayRows`], NOT from the mover —
+    /// the pace merely consumes them (I8).
+    ///
     /// A pawn deriving below 1 tic/tile keeps `pace: None` and is held still. There is no default
     /// here on purpose ([I2]): a guessed pace is an 8x error on the pawns it is wrong about.
-    pub fn derive_paces(&mut self, bundle: &resonantdust_content::loader::Bundle, now: u16) {
-        for m in self.movers.values_mut() {
+    pub fn derive_paces(
+        &mut self,
+        bundle: &resonantdust_content::loader::Bundle,
+        rows: &crate::gameplay_rows::GameplayRows,
+        now: u16,
+    ) {
+        for (&entity, m) in self.movers.iter_mut() {
             if m.pace.is_some() {
                 continue;
             }
             let kind = resonantdust_content::move_eval::def_kind_id(m.definition_reference);
             let v = resonantdust_content::move_eval::ground_speed(
-                bundle, kind, &m.payload, &m.needs, now,
+                bundle, kind, rows.payload(entity), &rows.needs(entity), now,
             );
             if v >= 1.0 {
                 m.pace = Some(v.round());
             }
+        }
+    }
+
+    /// This pawn's rows changed — re-derive its pace next pass. A condition banded off a need
+    /// can narrow `ground_speed`, so a sip really can change how fast a pawn walks.
+    pub fn invalidate_pace(&mut self, entity: u32) {
+        if let Some(m) = self.movers.get_mut(&entity) {
+            m.pace = None;
         }
     }
 

@@ -26,6 +26,9 @@ pub type SharedWorld = Arc<Mutex<ClientWorld>>;
 pub struct ClientWorld {
     pub world: WorldView,
     pub movers: MoverTrack,
+    /// Payload and need rows, keyed by ENTITY — accepted before a pawn has a position, and for
+    /// references that never will have one (I8).
+    pub rows: crate::gameplay_rows::GameplayRows,
     /// The corpus every derived answer needs. Held HERE, not passed per call: a `&Bundle`
     /// argument on `pathable` is an invitation for two hosts to pass two different corpora,
     /// which is this stream's defect wearing a parameter.
@@ -84,6 +87,7 @@ impl ClientWorld {
             } => {
                 if *removed {
                     self.movers.forget(*entity_reference);
+                    self.rows.forget(*entity_reference);
                     return;
                 }
                 let point = (
@@ -104,10 +108,12 @@ impl ClientWorld {
                 );
             }
             E::PawnParts { entity_reference, payload, .. } => {
-                self.movers.observe_payload(*entity_reference, payload.clone());
+                self.rows.observe_payload(*entity_reference, payload.clone());
+                self.movers.invalidate_pace(*entity_reference);
             }
             E::PawnNeed { entity_reference, need, set_tic, .. } => {
-                self.movers.observe_need(*entity_reference, *need, *set_tic);
+                self.rows.observe_need(*entity_reference, *need, *set_tic);
+                self.movers.invalidate_pace(*entity_reference);
             }
             E::ColdTiles { macro_position, layer_id, tiles, .. } => {
                 self.world.observe_cold_tiles(*macro_position, *layer_id, tiles);
@@ -145,7 +151,7 @@ impl ClientWorld {
             _ => {}
         }
         if let (Some(bundle), Some(now)) = (self.corpus.clone(), self.now_tic_at(now_ms)) {
-            self.movers.derive_paces(&bundle, now);
+            self.movers.derive_paces(&bundle, &self.rows, now);
         }
     }
 
@@ -196,7 +202,7 @@ impl ClientWorld {
     /// Cheap and idempotent — only pawns whose rows changed evaluate.
     pub fn derive_paces(&mut self, now: u16) {
         let Some(bundle) = self.corpus.clone() else { return };
-        self.movers.derive_paces(&bundle, now);
+        self.movers.derive_paces(&bundle, &self.rows, now);
     }
 
     /// Can a pawn stand on this tile — the composed view through the corpus's own flags.
@@ -246,7 +252,8 @@ mod tests {
                 payload.extend_from_slice(&resonantdust_codec::payload::trait_entry(r, 0));
             }
         }
-        cw.movers.observe_payload(1, payload);
+        cw.rows.observe_payload(1, payload);
+        cw.movers.invalidate_pace(1);
         cw.derive_paces(100);
         assert_eq!(cw.movers.get(1).unwrap().pace, Some(24.0));
 
@@ -255,6 +262,31 @@ mod tests {
         assert_eq!(a, (10.0, 10.0));
         assert!(b.0 > a.0, "the pawn advanced: {a:?} -> {b:?}");
         assert!((b.0 - 12.0).abs() < 0.01, "48 tics at 24 t/t is two tiles, got {b:?}");
+    }
+
+    /// [I8](../../docs/work/2026-08-09-shared-simulation/issues.md) as a regression test: a
+    /// payload that lands BEFORE the pawn's first position row must still reach the pace. The
+    /// old shape dropped it and left the pawn held still forever.
+    #[test]
+    fn rows_before_the_anchor_still_reach_the_pace() {
+        let bundle = corpus();
+        let mut cw = ClientWorld::new();
+        cw.set_corpus(std::sync::Arc::new(corpus()));
+        let bunny = bundle.thing_object_id("bunny").expect("bunny kind");
+        let mut payload: Vec<u32> = Vec::new();
+        for b in bundle.thing_traits(bunny) {
+            let Some(cat) = bundle.trait_category(&b.name) else { continue };
+            let Some(cn) = resonantdust_codec::object::gameplay_category(cat) else { continue };
+            if let Some(r0) = bundle.gameplay_reference(cn, &b.name) {
+                let r = (r0 & !0xF) | (u32::from(b.variant) & 0xF);
+                payload.extend_from_slice(&resonantdust_codec::payload::trait_entry(r, 0));
+            }
+        }
+        // Payload FIRST — the zone-snapshot order that used to lose it.
+        cw.rows.observe_payload(1, payload);
+        cw.observe_state(1, 0, u32::from(bunny), (10.0, 10.0), 0, 100);
+        cw.derive_paces(100);
+        assert_eq!(cw.movers.get(1).unwrap().pace, Some(24.0));
     }
 
     /// A closing zone must clear BOTH halves. A mover left in a closed zone is a ghost that

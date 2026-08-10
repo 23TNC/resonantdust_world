@@ -86,11 +86,9 @@ pub struct Wolves {
     hunt_until: std::time::Instant,
     /// Latest RAW payload per entity — buffered pre-adoption too (the zone snapshot may
     /// fan `Payload` before the `StateObject` this brain adopts on; either order is legal).
-    /// TRAIT + CONDITION rows decode from here (stat-model F1) — runtime truth, not the def.
-    payloads: HashMap<u32, Vec<u32>>,
+    /// The handle rows are READ through (P2d) — core owns the store.
+    client: Option<client::Client>,
     /// The `needs` sub-table rows per entity (stat-model F2): `need_key → (packed, set_tic)`,
-    /// fed by the fanned `PawnNeed` frames — a sip lands as exactly one update here.
-    need_rows: HashMap<u32, HashMap<u32, (u64, u16)>>,
     /// Thirst-init grace: wait past this before concluding the wolf HAS no thirst row —
     /// the snapshot's payload replay must get its chance, or a restart would reset a
     /// half-drained thirst to full.
@@ -168,8 +166,7 @@ impl Wolves {
             hunt_target: None,
             hunt_strikes: 0,
             hunt_until: std::time::Instant::now(),
-            payloads: HashMap::new(),
-            need_rows: HashMap::new(),
+            client: None,
             init_after: std::time::Instant::now(),
             init_queued: false,
             active: Vec::new(),
@@ -187,6 +184,16 @@ impl Wolves {
             interact_drill: std::env::var("NPC_INTERACT").ok().filter(|s| !s.is_empty()),
             interact_fired: false,
         }
+    }
+
+    /// This entity's payload, from core (shared-simulation P2d — core owns the store).
+    fn payload_of(&self, id: u32) -> Vec<u32> {
+        self.client.as_ref().map(|c| c.pawn_payload(id)).unwrap_or_default()
+    }
+
+    /// This entity's need rows, from core.
+    fn needs_of(&self, id: u32) -> Vec<(u64, u16)> {
+        self.client.as_ref().map(|c| c.pawn_needs(id)).unwrap_or_default()
     }
 
     fn pick_dest(&mut self) -> (i32, i32) {
@@ -227,16 +234,13 @@ impl Wolves {
     /// the conditions are the DECISION CONTEXT the successor action stream reads.
     /// This wolf's need rows as the eval's `(packed, set_tic)` slice (stat-model F2).
     fn wolf_needs(&self) -> Vec<(u64, u16)> {
-        self.wolf
-            .and_then(|w| self.need_rows.get(&w))
-            .map(|m| m.values().copied().collect())
-            .unwrap_or_default()
+        self.wolf.map(|w| self.needs_of(w)).unwrap_or_default()
     }
 
     fn mind_needs(&mut self, bot: &Bot, act: &client::Client) {
         let Some(wolf) = self.wolf else { return };
         let Some(bundle) = &self.bundle else { return };
-        let payload = self.payloads.get(&wolf).cloned().unwrap_or_default();
+        let payload = self.payload_of(wolf);
         // trait-lights F5: constant binds derive through THE merged accessor.
         let trait_rows = bundle.object_trait_rows(def_kind_id(self.def), &payload_traits(&payload));
         let cond_rows = payload_conditions(&payload);
@@ -504,10 +508,10 @@ impl Wolves {
         let wolf = self.wolf?;
         let trait_rows = bundle.object_trait_rows(
             def_kind_id(self.def),
-            &self.payloads.get(&wolf).map(|p| payload_traits(p)).unwrap_or_default(),
+            &payload_traits(&self.payload_of(wolf)),
         );
         let cond_rows =
-            self.payloads.get(&wolf).map(|p| payload_conditions(p)).unwrap_or_default();
+            payload_conditions(&self.payload_of(wolf));
         let need_rows = self.wolf_needs();
         bundle
             .thing_interactions(kind)
@@ -550,10 +554,10 @@ impl Wolves {
         let wolf = self.wolf?;
         let trait_rows = bundle.object_trait_rows(
             def_kind_id(self.def),
-            &self.payloads.get(&wolf).map(|p| payload_traits(p)).unwrap_or_default(),
+            &payload_traits(&self.payload_of(wolf)),
         );
         let cond_rows =
-            self.payloads.get(&wolf).map(|p| payload_conditions(p)).unwrap_or_default();
+            payload_conditions(&self.payload_of(wolf));
         let need_rows = self.wolf_needs();
         bundle
             .tile_interactions(kind)
@@ -689,11 +693,7 @@ impl Wolves {
         let Some(bundle) = &self.bundle else { return DEFAULT_TICS_PER_TILE };
         let rows = bundle.object_trait_rows(
             def_kind_id(self.def),
-            &self
-                .wolf
-                .and_then(|w| self.payloads.get(&w))
-                .map(|p| payload_traits(p))
-                .unwrap_or_default(),
+            &self.wolf.map(|w| payload_traits(&self.payload_of(w))).unwrap_or_default(),
         );
         let v = stat_eval::stat_value(bundle, "ground_speed", &rows, &self.active_set);
         if v >= 1.0 { v.round() as u16 } else { DEFAULT_TICS_PER_TILE }
@@ -813,19 +813,20 @@ impl Brain for Wolves {
     }
 
     fn on_event(&mut self, _bot: &Bot, act: &client::Client, event: &Event) {
+        // P2d: rows are READ from core through this handle; hold it for `payload_of`/`needs_of`.
+        if self.client.is_none() {
+            self.client = Some(act.clone());
+        }
         // The payload sidecar (needs-moodlets P4): buffer the RAW stream per entity — the
         // zone snapshot may fan it before OR after the StateObject the adoption keys on.
-        if let Event::PawnParts { entity_reference, payload, .. } = event {
-            self.payloads.insert(*entity_reference, payload.clone());
+        if let Event::PawnParts { .. } = event {
+            // P2d: core folded this at `emit`; the brain reads it back through the handle, so
+            // the pre-adoption buffering this arm existed for is now core's, for every host.
             return;
         }
         // The needs sub-table fan (stat-model F2): one row per frame, keyed by the row's
         // low 16 — a sip lands as exactly one update here.
         if let Event::PawnNeed { entity_reference, need, set_tic, .. } = event {
-            self.need_rows
-                .entry(*entity_reference)
-                .or_default()
-                .insert(resonantdust_codec::object::row_reference(*need), (*need, *set_tic));
             return;
         }
         let Event::StateObject { entity_reference, definition_reference, tile_x, tile_y, removed, .. } = event
@@ -892,6 +893,10 @@ impl Brain for Wolves {
     }
 
     fn tick(&mut self, bot: &Bot, act: &client::Client) {
+        // P2d: rows are READ from core through this handle; hold it for `payload_of`/`needs_of`.
+        if self.client.is_none() {
+            self.client = Some(act.clone());
+        }
         if self.wolf.is_none() {
             // spawn-authority I2/I6: a REQUEST can be refused (the refusal is a worker
             // log we never see) — the once-latch would wedge forever, so a request with

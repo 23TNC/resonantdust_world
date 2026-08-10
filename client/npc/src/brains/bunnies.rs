@@ -50,8 +50,9 @@ pub struct Bunnies {
     created: usize,
     spawn_after: Instant,
     minds: HashMap<u32, Mind>,
-    payloads: HashMap<u32, Vec<u32>>,
-    need_rows: HashMap<u32, HashMap<u32, (u64, u16)>>,
+    /// The handle rows are READ through (shared-simulation P2d) — core owns the store; the
+    /// brain used to keep the fifth copy of it.
+    client: Option<client::Client>,
     /// HOSTED mode (npc-host F11): the OWNERSHIP set — only refs the module's player minted
     /// (fed by `Event::OwnedPawn`) are adopted; `None` = the legacy kind-scan (standalone).
     owned: Option<std::collections::HashSet<u32>>,
@@ -95,8 +96,7 @@ impl Bunnies {
             // window (spawn-authority P4's cold-boot drill, same race as the wolves').
             spawn_after: Instant::now() + Duration::from_secs(10),
             minds: HashMap::new(),
-            payloads: HashMap::new(),
-            need_rows: HashMap::new(),
+            client: None,
             owned: None,
             group: None,
             last_count: None,
@@ -154,18 +154,27 @@ impl Bunnies {
         )
     }
 
+    /// This entity's payload, from core.
+    fn payload_of(&self, id: u32) -> Vec<u32> {
+        self.client.as_ref().map(|c| c.pawn_payload(id)).unwrap_or_default()
+    }
+
+    /// This entity's need rows, from core.
+    fn needs_of(&self, id: u32) -> Vec<(u64, u16)> {
+        self.client.as_ref().map(|c| c.pawn_needs(id)).unwrap_or_default()
+    }
+
     fn rows_of(&self, id: u32) -> (Vec<u64>, Vec<(u64, u16)>, Vec<(u64, u16)>) {
+        // shared-simulation P2d: the rows are the ENTITY's and live in core. The brain used to
+        // keep its own `payloads`/`need_rows` maps — the fifth copy of one store.
+        let payload = self.client.as_ref().map(|c| c.pawn_payload(id)).unwrap_or_default();
+        let needs = self.client.as_ref().map(|c| c.pawn_needs(id)).unwrap_or_default();
         // trait-lights F5: constant binds derive through THE merged accessor.
         let traits = match &self.bundle {
-            Some(b) => b.object_trait_rows(
-                def_kind_id(self.def),
-                &self.payloads.get(&id).map(|p| payload_traits(p)).unwrap_or_default(),
-            ),
-            None => self.payloads.get(&id).map(|p| payload_traits(p)).unwrap_or_default(),
+            Some(b) => b.object_trait_rows(def_kind_id(self.def), &payload_traits(&payload)),
+            None => payload_traits(&payload),
         };
-        let conds = self.payloads.get(&id).map(|p| payload_conditions(p)).unwrap_or_default();
-        let needs =
-            self.need_rows.get(&id).map(|m| m.values().copied().collect()).unwrap_or_default();
+        let conds = payload_conditions(&payload);
         (traits, needs, conds)
     }
 
@@ -432,6 +441,10 @@ impl Brain for Bunnies {
     }
 
     fn on_event(&mut self, _bot: &Bot, act: &client::Client, event: &Event) {
+        // P2d: rows are READ from core through this handle; hold it for `payload_of`/`needs_of`.
+        if self.client.is_none() {
+            self.client = Some(act.clone());
+        }
         match event {
             Event::StateObject {
                 entity_reference, definition_reference, tile_x, tile_y, removed, ..
@@ -503,22 +516,20 @@ impl Brain for Bunnies {
                 }
             }
             Event::PawnParts { entity_reference, payload, .. } => {
-                if self.minds.contains_key(entity_reference) || self.payloads.len() < 64 {
-                    self.payloads.insert(*entity_reference, payload.clone());
-                }
+                // P2d: core folded this already; the brain reads it.
             }
             Event::PawnNeed { entity_reference, need, set_tic, .. } => {
                 let key = resonantdust_codec::object::row_reference(*need);
-                self.need_rows
-                    .entry(*entity_reference)
-                    .or_default()
-                    .insert(key, (*need, *set_tic));
             }
             _ => {}
         }
     }
 
     fn tick(&mut self, bot: &Bot, act: &client::Client) {
+        // P2d: rows are READ from core through this handle; hold it for `payload_of`/`needs_of`.
+        if self.client.is_none() {
+            self.client = Some(act.clone());
+        }
         if self.bundle.is_none() {
             return;
         }
