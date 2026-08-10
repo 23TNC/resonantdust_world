@@ -32,10 +32,10 @@ so P2 must have landed. Do not reorder.
 - [x] Add `move_eval::position_at(from, dest, base_tic, now, pace, pathable) -> point` — where a
       walking pawn IS at any tic. Acceptance: at the hop's own tic it equals `next_hop`'s landing
       for the same 20 cases.
-- [ ] Rewrite worker `MOVE_STEP` and `resolve_walk_position_for` as calls into `move_eval`, and
+- [x] Rewrite worker `MOVE_STEP` and `resolve_walk_position_for` as calls into `move_eval`, and
       delete the private copies. Acceptance: `grep -c 'REANCHOR_TICS\|CHORD_CAP_TILES' server/`
       is 0.
-- [ ] Re-run the P0 probe against the rebuilt worker. Acceptance: anchor stride p50 within 0.05
+- [x] Re-run the P0 probe against the rebuilt worker. Acceptance: anchor stride p50 within 0.05
       tiles of the P0 baseline — a pure move changed nothing.
 
 ## P2 — `client/core` holds positions

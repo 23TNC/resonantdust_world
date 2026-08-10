@@ -3,6 +3,28 @@
 _The verification log: what landed and **how it was checked**. Append-only; authoritative for what
 is done. Items live in [`todo.md`](todo.md) with their boxes ticked._
 
+## 2026-08-10 — P1 COMPLETE: the worker no longer owns the walk
+
+`MOVE_STEP`'s chord block and `resolve_walk_position_for`'s body are now single calls into
+`move_eval::next_hop` / `move_eval::position_at`. About 95 lines of movement logic left
+`server/worker/src/main.rs`. What remains under `server/` is the shared `use`, one prose comment,
+and the hop-queueing site calling the shared `hop_stride_tiles`. **There is one walk in the tree.**
+
+**Verified — a pure move that changed nothing**, which was the item's whole point:
+
+| anchor stride p50 | baseline (before) | after the extraction | delta |
+|---|---|---|---|
+| bunny | 1.326 | **1.318** | 0.008 |
+| wolf | 2.652 | **2.653** | 0.001 |
+
+Both inside the 0.05-tile tolerance; implied pace unmoved (24.27 / 12.06); cadence still 32.
+`bin/sim check worker` green, worker rebuilt and restarted in step (`tic=5938 master=5936`).
+
+Reseed error is unchanged too — bunny p50 1.31, wolf p50 2.63, and reseeds past
+`CHASE_SNAP_TILES` still ~9-19%. That is the correct result: the extraction was never going to fix
+the drift, because both sides still run *their own* code. The client's copy dies in P4, and that is
+where the number should move. Recorded so nobody reads this phase as a fix.
+
 ## 2026-08-10 — P0 complete: the BASELINE, on a reset world
 
 World reset (`bin/rd redeploy --run`, all module DBs wiped, all four sim crates rebuilt and

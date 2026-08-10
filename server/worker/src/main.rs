@@ -409,43 +409,21 @@ fn resolve_walk_position_for(obj: u32, p: &Payload, ctx: &ApplyCtx) -> u32 {
     let Some(dest) = (ctx.active_dest)(obj, pawn_trip_serial(p.data)) else {
         return p.position_reference;
     };
-    let start_tile = position_to_tile(p.position_reference);
-    let dest_tile = position_to_tile(dest);
-    if start_tile == dest_tile {
-        return p.position_reference;
-    }
-    let Some(chords) =
-        resonantdust_content::path_eval::find_chords(start_tile, dest_tile, 0, ctx.pathable)
-    else {
-        return p.position_reference;
-    };
-    let Some(&(wx, wy)) = chords.first() else { return p.position_reference };
-    let raw = ctx.now.wrapping_sub(p.base_tic);
-    let elapsed = if raw > u16::MAX / 2 { 0 } else { raw } as f64;
-    let pace = (ctx.tics_per_tile)(obj);
-    if pace < 1.0 {
-        return p.position_reference;
-    }
-    let walked = elapsed / pace;
-    let (sx, sy) = position_to_point(p.position_reference);
-    let (dxf, dyf) = (wx as f64 - sx, wy as f64 - sy);
-    let len = dxf.hypot(dyf);
-    if len <= f64::EPSILON {
-        return p.position_reference;
-    }
-    // The same off-center clamp the hop landing applies: the resolved position gets
-    // WRITTEN as the new order's start, so an unclamped resolve could park a pawn in
-    // the water the validated corridor skirted.
-    let clear = resonantdust_content::path_eval::clear_point_fraction(
-        (sx, sy),
-        (wx as f64, wy as f64),
+    // `move_eval::position_at` (shared-simulation P1) — THE "where is this pawn now"
+    // question, asked here by the worker and by every observer through the same code.
+    // It carries the wrapping-tic guard (a future `base_tic` reads as elapsed 0, never
+    // ancient — the needs-eval rule) and the off-centre clamp, which matters here because
+    // the resolved point gets WRITTEN as the new order's start: an unclamped resolve
+    // could park a pawn in the water the validated corridor skirted.
+    let at = resonantdust_content::move_eval::position_at(
+        position_to_point(p.position_reference),
+        position_to_point(dest),
+        p.base_tic,
+        ctx.now,
+        (ctx.tics_per_tile)(obj),
         ctx.pathable,
     );
-    let f = (walked / len).min(1.0).min(clear);
-    if f <= f64::EPSILON {
-        return p.position_reference;
-    }
-    point_to_position(sx + dxf * f, sy + dyf * f)
+    point_to_position(at.0, at.1)
 }
 
 /// One parked order in a pawn's EPHEMERAL intent queue (lumberjack F1 — ACTIONS.md
@@ -3001,58 +2979,26 @@ fn apply(
                             p.position_reference = *dest;
                             p.base_tic = ctx.now;
                         } else {
-                            // The shared route's FIRST CHORD (chord-movement F2/F3) —
-                            // recomputed statelessly from the CURRENT point; the hop
-                            // lands one STRIDE along it (F8: the re-anchor cadence as
-                            // distance, chord-capped — I7).
+                            // The shared route's FIRST CHORD, one STRIDE along it — now
+                            // `move_eval::next_hop` (shared-simulation P1). The chord
+                            // recompute, the off-centre `clear_point_fraction` clamp and
+                            // the lattice recenter all live there, so an observer asking
+                            // "where will this pawn be" runs THIS code, not a copy of it.
                             use resonantdust_codec::object::{point_to_position, position_to_point};
-                            match resonantdust_content::path_eval::find_chords(
-                                cur_tile,
-                                (tx, ty),
-                                0,
+                            match resonantdust_content::move_eval::next_hop(
+                                position_to_point(p.position_reference),
+                                position_to_point(*dest),
+                                (ctx.tics_per_tile)(*obj),
                                 ctx.pathable,
                             ) {
-                                Some(chords) if !chords.is_empty() => {
-                                    let (wx, wy) = chords[0];
-                                    let (cxf, cyf) = position_to_point(p.position_reference);
-                                    // The chord LOS validated the LATTICE segment; the pawn
-                                    // walks from its SUBTILE point — clamp the landing to
-                                    // the pathable prefix of the REAL segment, or a hop
-                                    // near a shoreline floors one tile into water (seen
-                                    // live — the user's clip). A fully-blocked direct
-                                    // segment RECENTERS instead: step toward the own
-                                    // tile's lattice anchor (a segment inside one tile is
-                                    // always legal), from which the validated corridor is
-                                    // exact.
-                                    let (mut dxf, mut dyf) = (wx as f64 - cxf, wy as f64 - cyf);
-                                    let clear = resonantdust_content::path_eval::clear_point_fraction(
-                                        (cxf, cyf),
-                                        (wx as f64, wy as f64),
-                                        ctx.pathable,
-                                    );
-                                    if clear <= f64::EPSILON {
-                                        dxf = cur_tile.0 as f64 - cxf;
-                                        dyf = cur_tile.1 as f64 - cyf;
-                                        tracing::debug!(obj = format!("{obj:#010x}"),
-                                            "off-center segment blocked — recentering on the lattice");
-                                    }
-                                    let len = dxf.hypot(dyf);
-                                    if len > f64::EPSILON {
-                                        let stride = hop_stride_tiles((ctx.tics_per_tile)(*obj));
-                                        let mut f = (stride / len).min(1.0);
-                                        if clear > f64::EPSILON {
-                                            f = f.min(clear);
-                                        }
-                                        p.position_reference =
-                                            point_to_position(cxf + dxf * f, cyf + dyf * f);
-                                        p.base_tic = ctx.now;
-                                        let facing: u8 = if dxf.abs() >= dyf.abs() {
-                                            if dxf > 0.0 { 1 } else { 3 }
-                                        } else if dyf > 0.0 { 0 } else { 2 };
-                                        p.data = pack_pawn_data(facing, pawn_trip_serial(p.data));
-                                    }
+                                Some(hop) => {
+                                    p.position_reference =
+                                        point_to_position(hop.point.0, hop.point.1);
+                                    p.base_tic = ctx.now;
+                                    p.data =
+                                        pack_pawn_data(hop.facing, pawn_trip_serial(p.data));
                                 }
-                                _ => {
+                                None => {
                                     // Blocked THIS hop (the world changed mid-trip): step
                                     // nothing. The chain keeps re-queuing and re-routing —
                                     // a cleared blockage resumes the trip by itself.
