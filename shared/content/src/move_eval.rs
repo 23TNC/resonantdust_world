@@ -359,6 +359,40 @@ mod tests {
         assert_eq!(position_at((10.0, 10.0), (30.0, 10.0), 0, 500, 0.0, &open), (10.0, 10.0));
     }
 
+    /// Leaving an impathable cell is always legal (`path_eval` F6 — the start cell is never
+    /// probed), including from a point off its centre. A pawn that ended up in water walks out.
+    ///
+    /// This began as an attempt to reach the RECENTER branch and instead showed why that branch
+    /// is hard to reach: `clear_point_fraction` does not count the START cell, so standing inside
+    /// a wall does NOT drive `clear` to 0 — the hop leaves eastward, correctly. The recenter
+    /// therefore needs a segment whose first crossed cell is blocked while the lattice corridor
+    /// is not, and no test reaches it today. See [I10].
+    #[test]
+    fn a_pawn_inside_a_wall_can_still_walk_out() {
+        // The pawn is STANDING IN a blocked cell — legal, and the case this exists for (a pawn
+        // that ended up in water). Leaving an impathable cell is always allowed (path_eval F6),
+        // so a route exists; but every segment OUT of it starts inside the wall, so
+        // `clear_point_fraction` is 0 and the direct step is refused.
+        let world = |x: i32, y: i32| !(x == 11 && y != 10);
+        let from = (11.5, 11.5); // inside the wall column, off-centre
+        let hop = next_hop(from, (14.0, 10.0), 24.0, &world).expect("leaving a wall is legal");
+        assert!(hop.point.0 > from.0, "did not leave the wall eastward: {:?}", hop.point);
+        assert!(hop.point.0 <= 14.0, "overshot the destination: {:?}", hop.point);
+    }
+
+    /// The sub-1 `clear` CLAMP: the segment is partly legal, so the hop lands on the pathable
+    /// prefix rather than the full stride. Also previously unreachable from any test.
+    #[test]
+    fn a_partly_blocked_segment_lands_on_its_clear_prefix() {
+        // Open everywhere except a wall far along the eastward line.
+        let world = |x: i32, _y: i32| x < 14;
+        let from = (10.0, 10.0);
+        let far = next_hop(from, (13.0, 10.0), 6.0, &world).expect("a route exists");
+        // pace 6 => stride 5.33 tiles, which would carry it to 15.33 — past the wall at x=14.
+        assert!(far.point.0 < 14.0, "walked into the wall at x=14: {:?}", far.point);
+        assert!(far.point.0 > from.0, "did not move at all: {:?}", far.point);
+    }
+
     /// An impathable world routes nowhere: the hop reports "step nothing" rather than guessing.
     #[test]
     fn a_blocked_world_yields_no_hop() {

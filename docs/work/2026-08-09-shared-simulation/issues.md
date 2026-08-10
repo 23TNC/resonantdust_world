@@ -2,6 +2,28 @@
 
 _Problems hit, candidate solutions, which we chose and why. Chronological append._
 
+## I10 — `next_hop`'s RECENTER branch has no reachable test and may be dead
+**2026-08-10. Open — found while closing the tick audit's P1 finding.**
+
+The audit proved the branch is unreached: a `panic!` inserted at `move_eval.rs`'s
+`if clear <= f64::EPSILON` fails nothing. Trying to reach it showed why. The branch fires only
+when `clear_point_fraction` returns ~0 for the segment to the first chord waypoint, and two rules
+work against that:
+
+- **The start cell is never probed** (`path_eval` F6), so a pawn standing INSIDE a wall does not
+  drive `clear` to 0 — verified: from `(11.5, 11.5)` in a blocked column it hops east, correctly.
+- **The chord's waypoint is lattice-reachable by construction**, so the direct segment to it is
+  usually clear too; it takes an off-centre start whose FIRST crossed cell is blocked while the
+  lattice corridor around it is not.
+
+The sibling CLAMP branch (`f.min(clear)` for `0 < clear < 1`) **is** now covered —
+`a_partly_blocked_segment_lands_on_its_clear_prefix`.
+
+So: either a geometry that reaches the recenter exists and should be pinned, or the branch is dead
+and should be deleted with the shoreline comment that justifies it. **Not resolving it by
+contriving a test that passes for the wrong reason** — that is the habit the tick audit was run to
+break. Worth an hour with `clear_point_fraction`'s own traversal, not a guess.
+
 ## I9 — reading core's model from npc DEADLOCKS: brain predicates re-enter the lock
 **2026-08-10. RESOLVED — fixed at the root; P2c item 4 landed. See `completed.md`.**
 

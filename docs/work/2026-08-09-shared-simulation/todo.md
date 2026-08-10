@@ -204,8 +204,10 @@ including one whose criterion I had rewritten after ticking it.
       teleport events — [I1](issues.md#i1) closed by construction, or reopened loudly.
 - [x] Add a core test that feeds a `StateObject` through `Engine::emit` and reads `pawn_point` off
       the handle, covering the anchor-less `None` path. Acceptance: the test exists and passes.
-- [ ] Cover `next_hop`'s blocked-path branches. Acceptance: a `panic!` inserted in the recenter
-      (`clear == 0`) or in the sub-1 `clear` clamp fails a test; today neither branch is reached.
+- [x] Cover `next_hop`'s sub-1 `clear` CLAMP branch. Acceptance: a `panic!` inserted in
+      `f.min(clear)` fails `a_partly_blocked_segment_lands_on_its_clear_prefix`.
+- [ ] Resolve the RECENTER branch ([I10](issues.md#i10)) — reach it with real geometry, or delete
+      it as dead. Acceptance: either a test that a `panic!` there fails, or the branch is gone.
 - [ ] Make `headless.rs` print one mover's point at two tics between anchors. Acceptance:
       `grep -c pawn_point client/core/src/bin/headless.rs` is nonzero and a run shows it moving.
 - [ ] Read a live pawn's thirst back through `Client::pawn_needs` and transcribe it. Acceptance: a

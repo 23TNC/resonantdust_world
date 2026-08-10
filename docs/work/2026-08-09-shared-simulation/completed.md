@@ -3,6 +3,27 @@
 _The verification log: what landed and **how it was checked**. Append-only; authoritative for what
 is done. Items live in [`todo.md`](todo.md) with their boxes ticked._
 
+## 2026-08-10 — one clock for real, and two of `next_hop`'s dark branches
+
+**`now_tic` goes through `ticclock::delta_since`.** The audit was right that core had grown a
+SECOND clock inside the phase meant to remove second clocks: `ClientWorld` held its own
+`(tic, wall_ms, rate)` tuple and open-coded the extrapolation beside it. It now holds the real
+`TicEstimate` — with its learned rate, its poison-streak guards and its re-anchor window — and
+`now_tic_at` asks `delta_since(0, now)`. That is the criterion's "first production caller", and it
+means the headless client and the browser inherit the estimator's hard-won behaviour instead of a
+naive multiply. `ticclock`'s own module doc no longer hands hosts the formula.
+
+**`next_hop`'s CLAMP branch is covered** — `a_partly_blocked_segment_lands_on_its_clear_prefix`: a
+pace-6 pawn whose 5.33-tile stride would carry it through a wall lands on the pathable prefix.
+
+**The RECENTER branch is not, and I am not faking it** ([I10](issues.md#i10)). Two attempts failed
+and taught something: `clear_point_fraction` does not count the START cell, so a pawn standing
+inside a wall does *not* drive `clear` to 0 — it walks out eastward, correctly, which is now its
+own test. The branch needs a segment whose first crossed cell is blocked while the lattice
+corridor is not, and I could not construct one. Either that geometry exists and should be pinned,
+or the branch is dead and should go. Contriving a passing test is exactly the habit the audit was
+run to break.
+
 ## 2026-08-10 — the tick audit's corrections, and the defects it caught
 
 An adversarial re-run of all 34 ticked criteria: **19 not clean, 15 outright false**
