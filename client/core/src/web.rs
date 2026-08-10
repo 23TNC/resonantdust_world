@@ -103,6 +103,16 @@ impl Client {
         self.world.lock().map(|w| w.movers.iter().map(|(e, _)| e).collect()).unwrap_or_default()
     }
 
+    /// The host just queued an interaction for `entity`: hold it busy until the fan confirms, or
+    /// `duration` tics pass. Closes the fire->fan gap in which the queue says idle and the pawn
+    /// is not (P3b).
+    pub fn arm_pending(&self, entity: u32, duration_tics: u16) {
+        if let Ok(mut w) = self.world.lock() {
+            let Some(now) = w.now_tic_at(0.0) else { return };
+            w.intents.arm_pending(entity, now, duration_tics);
+        }
+    }
+
     /// Is this pawn committed to something right now — see [`crate::intents::IntentQueues::busy`].
     pub fn pawn_busy(&self, entity: u32) -> bool {
         let Ok(w) = self.world.lock() else { return false };

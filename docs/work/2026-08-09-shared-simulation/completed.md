@@ -3,6 +3,24 @@
 _The verification log: what landed and **how it was checked**. Append-only; authoritative for what
 is done. Items live in [`todo.md`](todo.md) with their boxes ticked._
 
+## 2026-08-10 — the local optimistic arm closes the fire→fan gap
+
+`IntentQueues::arm_pending(entity, at_tic, duration)` — the host queued something and the server
+has not answered yet, so the pawn reads busy across that round trip. **This is what the deleted
+`+ 3.0` seconds was really for**, and getting it right means the margin was never needed: the arm
+is superseded by the NEXT FAN OF ANY KIND, including an empty one, so a refused order releases the
+pawn immediately instead of after a fixed wait.
+
+The deadline is a TIC, not a wall clock — the thing being waited on is tic-paced — and it expires
+on its own so a fan that never arrives cannot wedge a pawn busy forever.
+
+Both brains arm at their fire site with the interaction's authored duration (floored at 8 tics for
+instantaneous acts, which still have a round trip). Two tests: the arm holds to its deadline tic
+and expires past it; a fan supersedes it, and the empty-fan case asserts the release comes from
+the *refusal*, not the timeout.
+
+`client/core` 56 passed; live: 13 move intents in 40 s, 0 errors.
+
 ## 2026-08-10 — zero warnings across npc, worker and core
 
 Acting on [I12](issues.md#i12) rather than only recording it. That deadlock hid behind

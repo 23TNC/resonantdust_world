@@ -617,6 +617,15 @@ impl Wolves {
             tracing::warn!(%interaction, "fire_interaction: unbindable input — not fired");
             return;
         };
+        // Hold this pawn across the fire->fan gap (P3b). The duration is the corpus's; the
+        // deadline is core's, in TICS, and any fan supersedes it — including a refusal.
+        if let Some(wolf) = self.wolf {
+            let dur = bundle
+                .interaction_params(interaction)
+                .map(|ip| ip.duration)
+                .unwrap_or(0.0);
+            act.arm_pending(wolf, (dur as u16).max(8));
+        }
         let mut program = vec![EXECUTE_INTERACTION, iref, 0, inputs.len() as u32];
         program.extend_from_slice(&inputs);
         if act.queue(program).is_err() {

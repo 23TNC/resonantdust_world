@@ -235,6 +235,9 @@ impl Bunnies {
             ..Default::default()
         };
         let Some(inputs) = bundle.bind_interaction(interaction, &ctx) else { return };
+        // Hold across the fire->fan gap (P3b) — see the wolf's note.
+        let dur = bundle.interaction_params(interaction).map(|ip| ip.duration).unwrap_or(0.0);
+        act.arm_pending(id, (dur as u16).max(8));
         let mut program = vec![EXECUTE_INTERACTION, iref, 0, inputs.len() as u32];
         program.extend_from_slice(&inputs);
         let _ = act.queue(program);

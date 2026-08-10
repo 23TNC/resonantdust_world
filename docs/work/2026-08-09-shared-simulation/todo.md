@@ -133,7 +133,7 @@ including one whose criterion I had rewritten after ticking it.
 - [x] Settle the tic-ring comparison ONCE: delete `movers.rs:34`'s local `tic_newer` and call the
       codec (`tic.rs:41`). Acceptance: `grep -rn "fn tic_newer\|function ticAfter\|function
       ticNewer"` over `client/` is 0.
-- [ ] Add the LOCAL OPTIMISTIC ARM — `arm_pending(entity, ref, at_tic, duration)` stamped when the
+- [x] Add the LOCAL OPTIMISTIC ARM — `arm_pending(entity, ref, at_tic, duration)` stamped when the
       host queues its own `EXECUTE_INTERACTION`, superseded by the next fan. Acceptance: unit test
       — busy at T+1 with no fan, idle past its tic deadline.
 - [x] Add `busy(entity, now_tic)` — true for phase 2 until `fire_tic`, and for an unsuperseded arm

@@ -26,10 +26,21 @@ pub struct QueueEntry {
     pub fire_tic: u16,
 }
 
+/// A locally-armed intent: the host queued an `EXECUTE_INTERACTION` and the fan has not come back
+/// yet. Without it there is a gap of the fire→fan round trip in which the queue says idle and the
+/// pawn is not — which is precisely the window the brains' `+ 3.0` second margin was covering.
+#[derive(Debug, Clone, Copy)]
+struct Pending {
+    /// Past this tic the arm expires on its own, so a fan that never arrives cannot wedge a pawn
+    /// busy forever. A TIC deadline, not a wall clock: the thing being waited on is tic-paced.
+    deadline: u16,
+}
+
 /// Every pawn's committed work.
 #[derive(Debug, Default)]
 pub struct IntentQueues {
     queues: HashMap<u32, (u16, Vec<QueueEntry>)>,
+    pending: HashMap<u32, Pending>,
 }
 
 impl IntentQueues {
@@ -57,12 +68,23 @@ impl IntentQueues {
                 fire_tic: (c[3] & 0xffff) as u16,
             })
             .collect();
+        // Any authoritative fan supersedes the local arm — the server has answered.
+        self.pending.remove(&entity);
         if decoded.is_empty() {
             self.queues.remove(&entity);
         } else {
             self.queues.insert(entity, (event_tic, decoded));
         }
         true
+    }
+
+    /// The host just queued an interaction for this pawn. Hold it busy until the fan confirms —
+    /// or until `duration` tics have passed, whichever comes first.
+    ///
+    /// **Superseded by the next fan of any kind**, including an EMPTY one: an order that was
+    /// refused or raced away fans nothing, and the arm must not outlive that answer.
+    pub fn arm_pending(&mut self, entity: u32, at_tic: u16, duration: u16) {
+        self.pending.insert(entity, Pending { deadline: at_tic.wrapping_add(duration.max(1)) });
     }
 
     pub fn entries(&self, entity: u32) -> &[QueueEntry] {
@@ -75,6 +97,11 @@ impl IntentQueues {
     /// phase-1 entry fans `fire_tic 0`, so reading "0 is in the past" would call a walking pawn
     /// idle and let its brain issue a second order over the first.
     pub fn busy(&self, entity: u32, now: u16) -> bool {
+        if let Some(p) = self.pending.get(&entity) {
+            if !resonantdust_codec::tic::tic_after(now, p.deadline) {
+                return true;
+            }
+        }
         self.entries(entity).iter().any(|e| match e.phase {
             1 => true,
             _ => !resonantdust_codec::tic::tic_after(now, e.fire_tic),
@@ -88,6 +115,7 @@ impl IntentQueues {
 
     pub fn forget(&mut self, entity: u32) {
         self.queues.remove(&entity);
+        self.pending.remove(&entity);
     }
 }
 
@@ -131,6 +159,28 @@ mod tests {
         assert!(q.busy(1, 160), "the fire tic itself still counts as committed");
         assert!(!q.busy(1, 161));
         assert_eq!(q.fires_at(1), Some(160));
+    }
+
+    /// The fire→fan gap: the host has queued something and the server has not answered yet. The
+    /// pawn must read BUSY across that window, or its brain fires a second order into it — the
+    /// gap the deleted `+ 3.0` second margin was really covering.
+    #[test]
+    fn a_local_arm_holds_until_the_fan_or_its_deadline() {
+        let mut q = IntentQueues::new();
+        q.arm_pending(1, 100, 20);
+        assert!(q.busy(1, 101), "armed and unanswered — busy");
+        assert!(q.busy(1, 120), "the deadline tic itself still holds");
+        assert!(!q.busy(1, 121), "past the deadline it expires rather than wedging the pawn");
+    }
+
+    /// ANY fan supersedes the arm — including an empty one, which is the refusal.
+    #[test]
+    fn a_fan_supersedes_the_local_arm() {
+        let mut q = IntentQueues::new();
+        q.arm_pending(1, 100, 200);
+        assert!(q.busy(1, 150));
+        q.observe(1, 101, &[]); // refused: nothing queued
+        assert!(!q.busy(1, 150), "the refusal released the pawn, not the deadline");
     }
 
     /// An EMPTY fan clears the pawn — the refusal signal a brain currently cannot see: an order
