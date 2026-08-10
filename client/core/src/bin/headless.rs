@@ -38,6 +38,11 @@ async fn main() -> ExitCode {
     // ZoneTiles / ZoneThings events show in the log (a full round-trip smoke test, not
     // just login).
     let anchor = std::env::args().nth(2).as_deref() == Some("anchor");
+    // Where to anchor. (0,0) subscribes terrain but fans NO pawn rows, so a probe there sees a
+    // world with no movers — and, before the engine started stamping its estimate in, no tic at
+    // all. Default to the fluffle so the read surface has something to answer about.
+    let anchor_x: i32 = std::env::args().nth(3).and_then(|v| v.parse().ok()).unwrap_or(124);
+    let anchor_y: i32 = std::env::args().nth(4).and_then(|v| v.parse().ok()).unwrap_or(75);
 
     let config = ClientConfig::from_env();
     info!(gateway = %config.gateway_url, %name, anchor, "logging in");
@@ -52,6 +57,20 @@ async fn main() -> ExitCode {
     if client.send(Command::Login { name }).is_err() {
         error!("client engine failed to start");
         return ExitCode::FAILURE;
+    }
+
+    // Hand core the corpus off disk so the derived answers (pace, pathability) work. Core does
+    // not fetch it itself yet — see the stream's D3; a dev probe reading `content/` is enough to
+    // exercise the read surface without a `#[cfg]` fork inside core.
+    match resonantdust_content::content::read_content_dir(std::path::Path::new("content"))
+        .map_err(|e| e.to_string())
+        .and_then(|src| resonantdust_content::load(&src).map_err(|e| format!("{e:?}")))
+    {
+        Ok(bundle) => {
+            info!("corpus loaded; core can answer derived reads");
+            client.set_corpus(std::sync::Arc::new(bundle));
+        }
+        Err(e) => info!(error = %e, "no corpus on disk — positions only, no pace"),
     }
 
     let mut logged_in = false;
@@ -69,13 +88,13 @@ async fn main() -> ExitCode {
                     info!("core has no tic yet — the estimate has not anchored");
                     continue;
                 };
-                let movers: Vec<(u32, (f64, f64))> = {
-                    let w = client.world().lock().expect("world");
-                    w.movers.iter().map(|(e, _)| e).collect::<Vec<_>>()
-                        .into_iter()
-                        .filter_map(|e| client.pawn_point(e).map(|p| (e, p)))
-                        .collect()
-                };
+                // No guard is held here — `mover_entities` returns owned ids precisely so this
+                // loop cannot re-enter the lock (I9, which I then repeated right here).
+                let movers: Vec<(u32, (f64, f64))> = client
+                    .mover_entities()
+                    .into_iter()
+                    .filter_map(|e| client.pawn_point(e).map(|p| (e, p)))
+                    .collect();
                 info!(now_tic = now, movers = movers.len(), "core answers");
                 for (entity, (x, y)) in movers.iter().take(4) {
                     let pace = client.pawn_pace(*entity);
@@ -102,11 +121,11 @@ async fn main() -> ExitCode {
                         Event::LoggedIn { .. } => {
                             logged_in = true;
                             if anchor {
-                                info!("anchoring at zone (0,0) to subscribe terrain");
+                                info!(tile_x = anchor_x, tile_y = anchor_y, "anchoring to subscribe terrain");
                                 let _ = client.send(Command::SetAnchor {
                                     name: "headless:0".to_string(),
-                                    tile_x: 0,
-                                    tile_y: 0,
+                                    tile_x: anchor_x,
+                                    tile_y: anchor_y,
                                     radii: AnchorRadii { active: 2, hot: 4, warm: 6, cold: 8 },
                                     soul: 0,
                                 });

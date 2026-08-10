@@ -33,11 +33,13 @@ pub struct ClientWorld {
     /// argument on `pathable` is an invitation for two hosts to pass two different corpora,
     /// which is this stream's defect wearing a parameter.
     corpus: Option<Arc<Bundle>>,
-    /// **THE clock** — `ticclock`'s estimator, not a second anchor beside it. This field first
-    /// shipped as a `(tic, wall_ms, rate)` tuple with the extrapolation open-coded next to it,
-    /// which meant core carried TWO clocks while the phase that added it existed to remove second
-    /// clocks. The tick audit caught that. It is the estimator now, and `now_tic_at` asks it.
-    tics: crate::ticclock::TicEstimate,
+    /// The engine's current tic, stamped into the model on every fold. **The model owns no
+    /// estimator**: the engine already has THE `TicEstimate`, with its learned rate, its
+    /// poison-streak guards and its re-anchor window, and a second one here would be a second
+    /// clock — which is the defect this phase removes. Two earlier attempts got this wrong (an
+    /// open-coded anchor tuple, then a duplicate estimator); this holds the ANSWER, not a way to
+    /// compute it.
+    tic: Option<u16>,
 }
 
 impl ClientWorld {
@@ -57,22 +59,21 @@ impl ClientWorld {
     /// **What tic is it.** `None` until the estimate has anchored — a caller must BAIL on that,
     /// never substitute 0: tic 0 is a real tic, and reading it as "now" makes every lazy need
     /// evaluate as though the world had just begun.
-    pub fn now_tic_at(&self, now_ms: f64) -> Option<u16> {
-        // Serial FROM tic 0 is the current tic on the wrapping ring — `delta_since` is the one
-        // implementation, and this is its first production caller (P2e).
-        let d = self.tics.delta_since(0, now_ms)?;
-        Some((d.rem_euclid(65536.0)) as u16)
+    pub fn now_tic_at(&self, _now_ms: f64) -> Option<u16> {
+        self.tic
+    }
+
+    /// The engine stamps its estimate here on every fold — see [`ClientWorld::tic`].
+    pub fn set_tic(&mut self, tic: Option<u16>) {
+        if tic.is_some() {
+            self.tic = tic;
+        }
     }
 
     /// The tic the last anchor stated, without extrapolation — what a fold uses, since it is
     /// already running at event receipt.
     pub fn anchored_tic(&self) -> Option<u16> {
-        self.tics.estimate_at(0.0).map(|_| 0).and(self.now_tic_at(0.0))
-    }
-
-    /// The LEARNED rate in tics per second — a shared input a renderer needs to pace its chase.
-    pub fn tics_per_sec(&self) -> f64 {
-        self.tics.tics_per_sec()
+        self.tic
     }
 
     /// **THE fold.** Both engines call this from their single `emit` choke point, so neither host
@@ -81,9 +82,6 @@ impl ClientWorld {
         use crate::api::Event as E;
         use resonantdust_codec::object as obj;
         match ev {
-            E::TicAnchor { tic, .. } => {
-                self.tics.observe(*tic, now_ms);
-            }
             E::StateObject {
                 macro_position, entity_reference, definition_reference,
                 tile_x, tile_y, sub_x, sub_y, facing, tic, removed,
@@ -97,17 +95,22 @@ impl ClientWorld {
                     *tile_x as f64 + f64::from(*sub_x) / 16.0,
                     *tile_y as f64 + f64::from(*sub_y) / 16.0,
                 );
-                let Some(bundle) = self.corpus.clone() else { return };
+                // A missing corpus must NOT drop the row. The position is the WIRE's truth;
+                // only the derived answers (pace, the routed leg) need the corpus, and
+                // `WorldView::pathable` already falls back to the unknown-cell law without one.
+                // Dropping it here made a headless probe report zero movers while five pawns
+                // were streaming — the fold discarding facts it merely could not enrich.
+                let bundle = self.corpus.clone();
                 self.movers.observe_state(
                     *entity_reference, *macro_position, *definition_reference, point, *facing,
-                    *tic, &self.world, &bundle,
+                    *tic, &self.world, bundle.as_deref(),
                 );
             }
             E::MoveIntent { entity_reference, tile_x, tile_y, event_tic, .. } => {
-                let Some(bundle) = self.corpus.clone() else { return };
+                let bundle = self.corpus.clone();
                 self.movers.observe_intent(
                     *entity_reference, (*tile_x as f64, *tile_y as f64), *event_tic,
-                    &self.world, &bundle,
+                    &self.world, bundle.as_deref(),
                 );
             }
             E::PawnParts { entity_reference, macro_position, payload, .. } => {
@@ -168,9 +171,10 @@ impl ClientWorld {
         facing: u8,
         tic: u16,
     ) -> bool {
-        let Some(bundle) = self.corpus.clone() else { return false };
+        let bundle = self.corpus.clone();
         self.movers.observe_state(
-            entity, macro_position, definition_reference, point, facing, tic, &self.world, &bundle,
+            entity, macro_position, definition_reference, point, facing, tic, &self.world,
+            bundle.as_deref(),
         )
     }
 
@@ -181,8 +185,8 @@ impl ClientWorld {
         dest: (f64, f64),
         event_tic: u16,
     ) -> bool {
-        let Some(bundle) = self.corpus.clone() else { return false };
-        self.movers.observe_intent(entity, dest, event_tic, &self.world, &bundle)
+        let bundle = self.corpus.clone();
+        self.movers.observe_intent(entity, dest, event_tic, &self.world, bundle.as_deref())
     }
 
     /// A zone left the subscription. It sends no per-entity delete, so both halves must forget

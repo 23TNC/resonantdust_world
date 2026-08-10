@@ -51,7 +51,7 @@ including one whose criterion I had rewritten after ticking it.
       intent, pace. Fed from `StateObject` and `MoveIntent`. Acceptance: `bin/rd build core` green.
 - [x] Derive each mover's pace in core through the shared `stat_eval`, never a constant.
       Acceptance: core reports 24 tics/tile for a bunny and 12 for a wolf.
-- [ ] Expose `pawn_point(entity, now_tic)` over the track via `move_eval::position_at`.
+- [x] Expose `pawn_point(entity, now_tic)` over the track via `move_eval::position_at`.
       Acceptance: a headless run logs a moving pawn's point changing between two anchors.
 - [x] Port the replay guards the TS earned — the stale-intent and older-row rejections
       (`MoverLayer.ts:754-776`, `:839`). Acceptance: unit test — a minutes-old intent is rejected.
@@ -95,7 +95,7 @@ including one whose criterion I had rewritten after ticking it.
 - [x] Give the store ONE eviction rule — drop on `StateGone`/removal and on zone close, mirroring
       `MoverLayer.ts:1371-1372,1383-1384`. Acceptance: unit test — closing a zone drops that zone's
       rows to 0.
-- [ ] Expose `pawn_payload(entity)` / `pawn_needs(entity)` on the handle, needs as native
+- [x] Expose `pawn_payload(entity)` / `pawn_needs(entity)` on the handle, needs as native
       `(u64, u16)` pairs. Acceptance: a headless run prints a live bunny's thirst value nonzero.
 - [x] Delete `payloads`/`need_rows` from the brains (`wolves.rs:90,93`, `bunnies.rs:53-54`,
       `debug.rs:48`) and read core's. Acceptance: `grep -c "payloads\|need_rows"` over
@@ -208,9 +208,9 @@ including one whose criterion I had rewritten after ticking it.
       `f.min(clear)` fails `a_partly_blocked_segment_lands_on_its_clear_prefix`.
 - [ ] Resolve the RECENTER branch ([I10](issues.md#i10)) — reach it with real geometry, or delete
       it as dead. Acceptance: either a test that a `panic!` there fails, or the branch is gone.
-- [ ] Make `headless.rs` print one mover's point at two tics between anchors. Acceptance:
+- [x] Make `headless.rs` print one mover's point at two tics between anchors. Acceptance:
       `grep -c pawn_point client/core/src/bin/headless.rs` is nonzero and a run shows it moving.
-- [ ] Read a live pawn's thirst back through `Client::pawn_needs` and transcribe it. Acceptance: a
+- [x] Read a live pawn's thirst back through `Client::pawn_needs` and transcribe it. Acceptance: a
       nonzero value in `completed.md` — no code path produces this observation today.
 - [ ] Point webgl's `pawnNeeds` reader at the wasm accessor. Acceptance:
       `grep -c 'this.needRows' MoverLayer.ts` is 0 and a live thirst reads nonzero.

@@ -3,6 +3,41 @@
 _The verification log: what landed and **how it was checked**. Append-only; authoritative for what
 is done. Items live in [`todo.md`](todo.md) with their boxes ticked._
 
+## 2026-08-10 — the headless probe: core answers, with no browser in the room
+
+`headless.rs` now reports what core ANSWERS every 5 s — the tic, every mover's point, its derived
+pace and a need row read back. Live against the fluffle:
+
+```
+core answers now_tic=24647 movers=3
+  pawn 0x30800006 x=126.000 y=71.938 pace=Some(24.0) need_rows=3 first_need=Some((.., 65535, 21567))
+core answers now_tic=24678 movers=3
+  pawn 0x30800006 x=127.345 y=73.598 pace=Some(24.0) ...
+core answers now_tic=24703 movers=3
+  pawn 0x30800006 x=127.625 y=74.312 pace=Some(24.0) ...
+```
+
+Subtile positions **changing between anchors**, the tic advancing at ~6.2/s, pace derived, and a
+nonzero need value through `Client::pawn_needs`. Four criteria met at once, and the first time this
+stream has shown its own thesis working with no browser involved.
+
+**Three defects found getting there, all mine, all worth naming:**
+
+1. **The fold DROPPED state rows without a corpus.** `observe_state` bailed early if
+   `self.corpus` was `None`, so the probe reported `movers=0` while five pawns streamed. The
+   position is the WIRE's truth; only the derived answers need a corpus. Fixed — the bundle is
+   `Option` through the mover path and `WorldView::pathable` already had the fallback.
+2. **The model owned a SECOND estimator.** My first "one clock" fix replaced an open-coded anchor
+   tuple with a duplicate `TicEstimate` — still two clocks, and the model's one went blind because
+   it only ever saw `TicAnchor`, which never fires in a zone with no pawn rows. The model now holds
+   the ANSWER (`tic: Option<u16>`), stamped by the engine's estimator at every fold. One clock.
+3. **I re-committed I9.** The probe held the world guard and called `pawn_point` inside the loop —
+   the exact non-reentrant deadlock npc hit. Fixed, and the shape that invites it is gone:
+   `Client::mover_entities()` returns owned ids so no host ever iterates under the guard.
+
+That third one is the useful signal: the same trap caught two different callers, which means it was
+the API's fault, not the caller's.
+
 ## 2026-08-10 — one clock for real, and two of `next_hop`'s dark branches
 
 **`now_tic` goes through `ticclock::delta_since`.** The audit was right that core had grown a

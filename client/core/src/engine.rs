@@ -100,6 +100,14 @@ impl Client {
         self.world.lock().map(|w| w.pathable(x, y)).unwrap_or(true)
     }
 
+    /// Every tracked entity. Returns owned ids, deliberately: the alternative is a host holding
+    /// the world guard while it iterates, and then calling `pawn_point` inside that loop — which
+    /// re-enters a non-reentrant mutex and hangs. That has now happened twice (I9 in npc's
+    /// scans, then again in the headless probe), so the shape that invites it is gone.
+    pub fn mover_entities(&self) -> Vec<u32> {
+        self.world.lock().map(|w| w.movers.iter().map(|(e, _)| e).collect()).unwrap_or_default()
+    }
+
     /// This pawn's DERIVED pace in tics per tile. `None` until its rows have arrived — a caller
     /// must not substitute a default, which is an 8x error on the pawns it is wrong about (I2).
     pub fn pawn_pace(&self, entity: u32) -> Option<f64> {
@@ -782,7 +790,12 @@ impl Engine {
     fn emit(&self, event: Event) {
         // THE fold, before the host ever sees it (shared-simulation P2c).
         if let Ok(mut w) = self.world.lock() {
-            w.observe_event(&event, now_ms() as f64);
+            // ONE clock: the engine's estimator is the only one. It anchors off every wire tic,
+            // so the model gets the answer even in a zone that fans no pawn rows — which is
+            // exactly where a model-owned estimator went blind (it only ever saw `TicAnchor`).
+            let now = now_ms() as f64;
+            w.set_tic(self.tics.estimate_at(now).map(|t| t.rem_euclid(65536.0) as u16));
+            w.observe_event(&event, now);
         }
         self.sink.emit(event);
     }
