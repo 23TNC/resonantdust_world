@@ -42,7 +42,7 @@ false, including one whose criterion had been rewritten after ticking. Do not re
 - [x] Prepend the pawn's resolved SUBTILE point as the schedule's source; `find_chords` returns
       tile centres and a mid-walk pawn is not on one. Acceptance: a test with an off-lattice start
       shows chord 0's source equal to that point, not its tile centre.
-- [ ] Clamp any first chord whose tic falls inside the event shard's `TIC_GAP` barrier to the
+- [x] Clamp any first chord whose tic falls inside the event shard's `TIC_GAP` barrier to the
       floor rather than dropping it. Acceptance: a short first chord still fans.
 - [ ] Fan `MOVE_CHORDS` at the walk-composing site, ALONGSIDE the existing per-hop chain, changing
       no motion. Acceptance: headless decodes a chord list for a walking pawn.

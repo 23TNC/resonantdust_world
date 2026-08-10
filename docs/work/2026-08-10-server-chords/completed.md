@@ -81,3 +81,29 @@ defect being removed, and the edge names verb 20 as server-only by number.
 The worker has no `CANCEL` arm until P4, so the accepted event is a no-op there — checked
 deliberately, since an unimplemented verb reaching a `match` is how a worker panics. It stayed up
 and logged nothing about it.
+
+## 2026-08-10 — P1: the barrier floor, and a divide-by-zero I had just shipped
+
+The clamp itself was already there — `MIN_LEG_TICS = 4` lifts a short first chord clear of the
+event shard's `TIC_GAP = 3` barrier, and it matters because [P3](todo.md) queues each chord's hop
+with `queue_at(program, chord.tic)`, where a tic inside the barrier is **rejected outright**. The
+floor is what turns that rejection into a carried chord.
+
+**Writing the test found a real defect in the schedule I landed an hour ago.** The tic came from
+`run.ceil().max(MIN_LEG_TICS)`, so two chords whose accumulated runs fall in the same `ceil` bucket
+— and *every* chord under the floor — got the SAME tic. That states a segment whose source and
+destination tics are equal, and the client's lerp is `(now - src) / (dst - src)`: a divide by zero
+on the single arithmetic every interpolation in this design routes through. The floor I added to
+clear one barrier had quietly manufactured a worse failure behind it.
+
+Fixed with a monotonicity law — **every chord spans at least one tic** — and the test asserts it
+pairwise across the whole schedule rather than at one index, since the collision is positional.
+
+The cost is honest and bounded: five 1-tile chords at pace 1 now state 8 tics instead of 5, because
+the floor forbids stating the first four sooner. Only a pace of 1 tic/tile reaches the floor past
+chord 0 at all; the authored paces are 12 (wolf) and 24 (bunny), where a full-tile leg costs 12-24
+tics and the guard never fires. I updated the older test's expectation to 8 and wrote the
+arithmetic into it — its property was "the floor is paid once, not per chord", and that still holds
+(8, not 20).
+
+15 `move_eval` tests pass.

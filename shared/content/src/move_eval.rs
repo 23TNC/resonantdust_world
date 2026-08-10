@@ -260,7 +260,7 @@ pub fn chord_schedule(
     if pace < 1.0 {
         return out;
     }
-    let (mut prev, mut run) = (from, 0.0f64);
+    let (mut prev, mut run, mut last) = (from, 0.0f64, start_tic);
     for &(wx, wy) in chords {
         let next = (f64::from(wx), f64::from(wy));
         let leg = (next.0 - prev.0).hypot(next.1 - prev.1);
@@ -270,9 +270,18 @@ pub fn chord_schedule(
         run += leg * pace;
         // The floor applies to the ACCUMULATED total, so it cannot compound: a run of short
         // chords costs their real time plus one floor, not one floor each.
-        let tic = start_tic.wrapping_add(run.ceil().max(MIN_LEG_TICS) as u16);
+        let mut tic = start_tic.wrapping_add(run.ceil().max(MIN_LEG_TICS) as u16);
+        // **Every chord spans at least one tic.** Two chords whose accumulated runs land in the
+        // same `ceil` bucket — anything sub-tile at a fast pace, and every chord under the
+        // MIN_LEG_TICS floor — would otherwise share a tic, stating a segment with equal source
+        // and destination tics. The client lerps `(now - src) / (dst - src)`: that is a divide by
+        // zero on the one path the whole design routes through. Push it out a tic instead of
+        // collapsing it, so a short chord is CARRIED rather than dropped.
+        if !resonantdust_codec::tic::tic_after(tic, last) {
+            tic = last.wrapping_add(1);
+        }
         out.push(Stamp { point: next, tic });
-        prev = next;
+        (prev, last) = (next, tic);
     }
     out
 }
@@ -479,7 +488,40 @@ mod tests {
         assert_eq!(tiny[1].tic, 100 + MIN_LEG_TICS as u16, "1 tile x pace 1 = 1 tic, floored to 4");
         let many: Vec<(i32, i32)> = (1..=5).map(|i| (10 + i, 10)).collect();
         let m = chord_schedule((10.0, 10.0), &many, 1.0, 100);
-        assert_eq!(m.last().unwrap().tic, 100 + 5, "five 1-tic legs cost 5, not 5 floors");
+        // Raw runs are 1..5; the floor lifts the first four to 4 and monotonicity then separates
+        // them (4,5,6,7,8). Eight, not twenty — the floor is paid ONCE, which is the property.
+        // Only a pace of 1 tic/tile can reach the floor past chord 0 at all; the authored paces
+        // are 12 (wolf) and 24 (bunny), so a full-tile leg costs 12-24 tics and never collides.
+        assert_eq!(m.last().unwrap().tic, 108, "the floor is paid once, not per chord");
+    }
+
+    /// **Every chord spans at least one tic.** A schedule whose stamps share a tic states a
+    /// segment with equal source and destination tics, and the client's lerp divides by that
+    /// difference — the one arithmetic every interpolation in the design runs through.
+    ///
+    /// The criterion is the plan's "a short first chord still fans": it must be CARRIED, at the
+    /// barrier floor, not collapsed onto its neighbour and not skipped.
+    #[test]
+    fn a_short_first_chord_is_carried_and_no_two_stamps_share_a_tic() {
+        // A sub-tile first leg off a subtile point, then ordinary tile-scale chords.
+        let s = chord_schedule((10.9, 10.0), &[(11, 10), (14, 10), (14, 13)], 24.0, 100);
+        assert_eq!(s.len(), 4, "the short first chord is stamped, not dropped");
+        assert_eq!(s[1].point, (11.0, 10.0), "and it is the SHORT one that survives");
+        assert!(
+            s[1].tic >= 100 + MIN_LEG_TICS as u16,
+            "a 0.1-tile leg costs 2.4 tics raw; the floor lifts it clear of the queue barrier"
+        );
+        for w in s.windows(2) {
+            assert!(w[1].tic > w[0].tic, "{} then {} — a zero-duration chord", w[0].tic, w[1].tic);
+        }
+        // The degenerate case the guard exists for: a pace slow enough that whole chords fit in
+        // one tic bucket. Every stamp still separates rather than sharing a tic.
+        let dense: Vec<(i32, i32)> = (1..=6).map(|i| (10 + i, 10)).collect();
+        let d = chord_schedule((10.0, 10.0), &dense, 1.0, 100);
+        assert_eq!(d.len(), 7);
+        for w in d.windows(2) {
+            assert!(w[1].tic > w[0].tic, "{} then {} — a zero-duration chord", w[0].tic, w[1].tic);
+        }
     }
 
     /// An impathable world routes nowhere: the hop reports "step nothing" rather than guessing.
