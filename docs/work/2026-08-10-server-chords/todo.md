@@ -25,21 +25,21 @@ false, including one whose criterion had been rewritten after ticking. Do not re
 - [x] Add `MOVE_CHORDS` to the variable-arity framing list and the `collect_operands` skip list.
       Acceptance: a program with a verb AFTER a `MOVE_CHORDS` still frames; omitting the skip
       panics at the `signature().expect()`, so a test covers it.
-- [ ] Add `MOVE_CHORDS` to `target_routes`' write-less arm and give the worker the same
+- [x] Add `MOVE_CHORDS` to `target_routes`' write-less arm and give the worker the same
       pawn→macro_position fan lookup `QUEUE_STATE` has. Acceptance: the fan reaches a subscriber
       rather than completing zoneless.
-- [ ] Admit `CANCEL` to the edge's `CLIENT_VERBS`; keep `MOVE_CHORDS` out. Acceptance: a browser
+- [x] Admit `CANCEL` to the edge's `CLIENT_VERBS`; keep `MOVE_CHORDS` out. Acceptance: a browser
       `CANCEL` is accepted and a browser `MOVE_CHORDS` is refused as malformed.
 - [ ] Rebuild the codec bind-mount and REDEPLOY the event-shard module. Acceptance: a hand-queued
       `CANCEL` survives the shard's re-validation (the intent-queue-ui lesson).
 
 ## P1 — can the server predict its own arrival? (no motion changes, no deletions)
 
-- [ ] Lift the hop tic schedule (`main.rs` CONTINUE pass, `k = ceil(dist × pace)`) into
+- [x] Lift the hop tic schedule (`main.rs` CONTINUE pass, `k = ceil(dist × pace)`) into
       `move_eval::chord_schedule(from, chords, pace, start_tic) -> Vec<(position, tic)>`,
       accumulating on the RUNNING total so per-chord `ceil` cannot drift the arrival.
       Acceptance: a unit test — 10 chords' last tic equals `start + ceil(total_len × pace)` ±1.
-- [ ] Prepend the pawn's resolved SUBTILE point as the schedule's source; `find_chords` returns
+- [x] Prepend the pawn's resolved SUBTILE point as the schedule's source; `find_chords` returns
       tile centres and a mid-walk pawn is not on one. Acceptance: a test with an off-lattice start
       shows chord 0's source equal to that point, not its tile centre.
 - [ ] Clamp any first chord whose tic falls inside the event shard's `TIC_GAP` barrier to the

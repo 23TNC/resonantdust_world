@@ -28,7 +28,7 @@ use spacetimedb_sdk::{DbContext, Table as _};
 use resonantdust_codec::action::{
     self, Route, BUILD_WALL, CANCEL_INTENT, CREATE, EXECUTE_INTERACTION, GRANT_CONDITION,
     INIT_ZONE, INV_ADD, INV_REMOVE, MOVE_STEP, MOVE_TO, PLACE, PROMOTE, PROMOTE_EVENT,
-    ACTIVATE_TRAIT, QUEUE_STATE, RESTAMP_NEED, SET, SET_NEED, SPAWN_REQUEST,
+    ACTIVATE_TRAIT, MOVE_CHORDS, QUEUE_STATE, RESTAMP_NEED, SET, SET_NEED, SPAWN_REQUEST,
 };
 use resonantdust_codec::object::{
     cold_row_layer_id, cold_row_macro_position, cold_row_subtype, data_rotation, def_kind_id,
@@ -2858,11 +2858,12 @@ async fn main() {
                         zones.push(*z);
                     }
                 }
-                // QUEUE_STATE writes nothing, so its fan zone comes from the PAWN it
-                // describes (intent-queue-ui F1) — without this the promoted event
-                // completes zoneless and never reaches a subscriber.
+                // QUEUE_STATE and MOVE_CHORDS write nothing, so their fan zone comes from the
+                // PAWN they describe (intent-queue-ui F1; server-chords P0) — without this the
+                // promoted event completes zoneless and never reaches a subscriber. Any future
+                // write-less fan needs the same treatment; the shape is "operand 0 is the pawn".
                 for inst in action::program(actions).flatten() {
-                    if inst.action == QUEUE_STATE {
+                    if inst.action == QUEUE_STATE || inst.action == MOVE_CHORDS {
                         if let Some(p) = inst.operands.first() {
                             if let Some(r) =
                                 pawn.db().entity_state().iter().find(|r| r.entity_reference == *p)

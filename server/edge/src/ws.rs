@@ -646,6 +646,11 @@ const CLIENT_VERBS: &[u32] = &[
     resonantdust_codec::action::GRANT_CONDITION,
     // trait-rows-u32 F3: activation is a REQUEST — the worker owns validation.
     resonantdust_codec::action::ACTIVATE_TRAIT,
+    // server-chords F2: CANCEL is the client's formal interrupt — a new player order composes
+    // `CANCEL pawn` then the order in ONE program. MOVE_CHORDS is deliberately ABSENT: it is a
+    // worker-only fan like QUEUE_STATE, and a client that could state its own route is the whole
+    // defect this design removes.
+    resonantdust_codec::action::CANCEL,
     // interactions P3: the client REQUESTS an interaction; the worker resolves + validates
     // it against the corpus and queues the real writes (F4). Same open-door posture as
     // SET_NEED until ownership lands (interactions I4).

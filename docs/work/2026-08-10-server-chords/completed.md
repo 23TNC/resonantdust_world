@@ -2,6 +2,29 @@
 
 _Opened 2026-08-10._
 
+## 2026-08-10 — P0 rest, and P1's schedule
+
+**The fan-zone lookup.** `MOVE_CHORDS` joins `QUEUE_STATE` in the worker's write-less special
+case: a verb with no write set completes **zoneless** and reaches no subscriber, so its fan zone
+comes from the pawn it describes. The comment now names the shape rather than the verb — "operand
+0 is the pawn" — because this is the third time a write-less fan has needed it.
+
+**The edge allowlist.** `CANCEL` admitted, `MOVE_CHORDS` deliberately absent: a client that could
+state its own route is the entire defect this design removes.
+
+**`move_eval::chord_schedule`** — chords in, stamped endpoints out. Two laws, both tested:
+
+- **Tics accumulate on the RUNNING total, never per leg.** Rounding each leg with `ceil` and
+  summing drifts the arrival by up to one tic per chord; ten chords, ten tics, and the error lands
+  exactly where the client's interpolation has to be right — the end.
+  `the_schedule_does_not_accumulate_rounding` pins ten legs against the whole route's time.
+- **The source is the pawn's SUBTILE point.** `find_chords` speaks lattice cells and a mid-walk
+  pawn is not on one; scheduling from its tile centre would state a source it is not at.
+- The 4-tic floor applies to the accumulated total, so a run of short chords costs their real time
+  plus one floor rather than one floor each — `a_short_leg_takes_the_floor_and_the_floor_does_not_compound`.
+
+14 `move_eval` tests, 76 codec tests, worker clean.
+
 ## 2026-08-10 — P0: the two verbs exist on the wire
 
 `MOVE_CHORDS = 20` and `CANCEL = 21` in `shared/codec::action`, with palette rows in

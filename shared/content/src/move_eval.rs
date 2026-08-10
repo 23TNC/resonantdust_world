@@ -228,6 +228,55 @@ pub fn advance_along(
     (from.0 + leg.0 * f, from.1 + leg.1 * f)
 }
 
+/// One scheduled point on a route: where the pawn will be, and WHEN.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Stamp {
+    pub point: (f64, f64),
+    pub tic: u16,
+}
+
+/// The minimum tics any single leg may be scheduled for. The worker floors hop costs at 4 so a
+/// continuation never lands inside the event shard's queue barrier; the same floor applies here,
+/// or a short first chord schedules into a tic the shard will refuse.
+pub const MIN_LEG_TICS: f64 = 4.0;
+
+/// **THE ROUTE SCHEDULE** (server-chords P1): turn a chord list into stamped endpoints.
+///
+/// `chords` are lattice waypoints from [`crate::path_eval::find_chords`]; `from` is the pawn's
+/// actual SUBTILE point, which is not a lattice cell mid-walk — so the first leg is measured from
+/// it, not from its tile centre. The returned list begins with the SOURCE stamp, so `n` chords
+/// yield `n + 1` stamps and consecutive chords share an endpoint.
+///
+/// Tics accumulate on the RUNNING total rather than per leg. Rounding each leg independently and
+/// summing lets `ceil` drift the arrival by up to one tic per chord — ten chords, ten tics, and
+/// the client's interpolation is wrong at exactly the moment it matters most, the end.
+pub fn chord_schedule(
+    from: (f64, f64),
+    chords: &[(i32, i32)],
+    pace: f64,
+    start_tic: u16,
+) -> Vec<Stamp> {
+    let mut out = vec![Stamp { point: from, tic: start_tic }];
+    if pace < 1.0 {
+        return out;
+    }
+    let (mut prev, mut run) = (from, 0.0f64);
+    for &(wx, wy) in chords {
+        let next = (f64::from(wx), f64::from(wy));
+        let leg = (next.0 - prev.0).hypot(next.1 - prev.1);
+        if leg <= f64::EPSILON {
+            continue;
+        }
+        run += leg * pace;
+        // The floor applies to the ACCUMULATED total, so it cannot compound: a run of short
+        // chords costs their real time plus one floor, not one floor each.
+        let tic = start_tic.wrapping_add(run.ceil().max(MIN_LEG_TICS) as u16);
+        out.push(Stamp { point: next, tic });
+        prev = next;
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -391,6 +440,46 @@ mod tests {
         // pace 6 => stride 5.33 tiles, which would carry it to 15.33 — past the wall at x=14.
         assert!(far.point.0 < 14.0, "walked into the wall at x=14: {:?}", far.point);
         assert!(far.point.0 > from.0, "did not move at all: {:?}", far.point);
+    }
+
+    /// The arrival tic must equal the whole route's time, not the sum of per-leg roundings.
+    /// Ten chords rounded independently drift up to ten tics — and the arrival is exactly where a
+    /// client's interpolation has to be right.
+    #[test]
+    fn the_schedule_does_not_accumulate_rounding() {
+        let pace = 24.0;
+        // Ten 1.3-tile legs east: each would round up alone, and the drift would compound.
+        let chords: Vec<(i32, i32)> = (1..=10).map(|i| (10 + i, 10)).collect();
+        let s = chord_schedule((10.0, 10.0), &chords, pace, 100);
+        assert_eq!(s.len(), 11, "n chords yield n+1 stamps — the source is stamp 0");
+        assert_eq!(s[0].tic, 100);
+        let total = 10.0 * pace; // ten whole tiles
+        let want = 100u16.wrapping_add(total.ceil() as u16);
+        assert_eq!(s.last().unwrap().tic, want, "arrival is the whole route's time");
+    }
+
+    /// The first leg is measured from the pawn's SUBTILE point. `find_chords` speaks lattice
+    /// cells; a mid-walk pawn is not standing on one, and scheduling from its tile centre would
+    /// state a source the pawn is not at.
+    #[test]
+    fn the_schedule_starts_at_the_pawns_real_point() {
+        let s = chord_schedule((10.5, 10.25), &[(14, 10)], 24.0, 100);
+        assert_eq!(s[0].point, (10.5, 10.25), "not the tile centre");
+        let leg = (14.0 - 10.5f64).hypot(10.0 - 10.25);
+        assert_eq!(s[1].tic, 100u16.wrapping_add((leg * 24.0).ceil() as u16));
+    }
+
+    /// A very short leg still costs the floor, so it cannot schedule inside the event shard's
+    /// queue barrier — and the floor applies once to the running total, not once per chord.
+    #[test]
+    fn a_short_leg_takes_the_floor_and_the_floor_does_not_compound() {
+        let one = chord_schedule((10.0, 10.0), &[(10, 10)], 24.0, 100);
+        assert_eq!(one.len(), 1, "a zero-length leg is skipped, not stamped");
+        let tiny = chord_schedule((10.0, 10.0), &[(11, 10)], 1.0, 100);
+        assert_eq!(tiny[1].tic, 100 + MIN_LEG_TICS as u16, "1 tile x pace 1 = 1 tic, floored to 4");
+        let many: Vec<(i32, i32)> = (1..=5).map(|i| (10 + i, 10)).collect();
+        let m = chord_schedule((10.0, 10.0), &many, 1.0, 100);
+        assert_eq!(m.last().unwrap().tic, 100 + 5, "five 1-tic legs cost 5, not 5 floors");
     }
 
     /// An impathable world routes nowhere: the hop reports "step nothing" rather than guessing.
