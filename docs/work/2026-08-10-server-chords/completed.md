@@ -171,3 +171,33 @@ chord counts above come from and why they are believable.
 
 The lesson is the reusable part: **a probe over a default-open world reports confident numbers
 about nothing**, and the number it reports is exactly the reassuring one.
+
+## 2026-08-10 — P2: what a player order costs today
+
+50 `EXECUTE_INTERACTION(move_to)` orders from the browser, timed from `queue()` to the arrival of
+the promoted `MoveIntent` naming that pawn AND that destination. Attribution matters: several
+pawns are in play, so a bare "something moved" would time somebody else's order. The intent is the
+right stopping point because speculation arms on it — the render begins moving within the frame.
+
+Idle pawns (npc stopped), short trips (3-6 tiles), n=50, 4 refusals re-drawn:
+
+| p50 | p90 | p99 | min | max |
+|---|---|---|---|---|
+| 1437 ms | 1488 ms | 1767 ms | 1168 ms | 1767 ms |
+
+**8.6 tics at p50, and that corrects this stream's own arithmetic.** The [README](README.md)
+reasoned that cancel-first "adds a barrier round trip ... 6-8 tics (~1.1 s) vs **~4 today**". Today
+is not 4 tics, it is 8.6 — the estimate was out by more than 2x. A cancel that costs another 3-4
+tics is therefore a ~40% increase on an already-slow path, not the doubling the README implied.
+That does not make it free, but it moves the cost from "disqualifying" to "worth what it buys".
+
+**The number that is actually bad is the one this measures on an IDLE pawn.** A busy pawn has no
+preemption today: the order joins the intent queue and waits for the current walk to finish, so
+the player-visible latency is a whole trip — seconds to tens of seconds, unbounded by anything.
+I hit this while measuring, timing out every trial until I stopped the npc. That is the case
+`CANCEL` exists for, and it is why the +3-4 tics is a bargain rather than a regression.
+
+**Also found here:** `EXECUTE_INTERACTION` is verb **12**, not 6. Every trial silently refused
+until I checked, because a malformed program is dropped without a client-visible answer — webgl
+routes `Event::Status` only to the login progress channel, so a post-login `QueueErr` reaches
+nobody (noted in P0, still unfixed, and it cost time twice now).

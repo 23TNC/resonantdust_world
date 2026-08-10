@@ -55,7 +55,7 @@ false, including one whose criterion had been rewritten after ticking. Do not re
 - [x] Histogram `find_chords` over 1000 random pairs × 3 distance bands on the live map.
       Acceptance: a table in `completed.md` including the **fraction needing >10 chords** — that
       fraction is the re-request stutter rate.
-- [ ] Measure player-order latency today: wall ms from command to first rendered displacement,
+- [x] Measure player-order latency today: wall ms from command to first rendered displacement,
       p50/p90, n=50. Acceptance: a baseline row to compare the cancel-first path against.
 - [ ] Run the mover-perf harness at 24 movers with a `BUILD_WALL` burst. Acceptance: a compose-lag
       series against the existing baseline, so P7's interrupt scan has something to regress.
