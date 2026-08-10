@@ -4,6 +4,27 @@ _Where the code departs from the plan (`components/<c>/{design,intent}`). Rows: 
 plan says · what the code does · why · fix/status. Log at the moment of deviating; also log one
 you find._
 
+## D3 — core OWNS the corpus but does not FETCH it
+**2026-08-10 · introduced · OPEN, small.**
+
+**What the plan says.** P2c item 3: *"Give core the corpus: fetch `/content` at login into an
+`Arc<Bundle>` on the engine."*
+
+**What the code does.** `ClientWorld` owns `Option<Arc<Bundle>>` and every derived answer reads it
+from there — the item's acceptance (`derive_paces`/`pathable` no longer take a `&Bundle` from the
+host) is met. But the HTTP GET still happens host-side and arrives via `Client::set_corpus`.
+
+**Why.** The two hosts fetch on different transports — native reqwest against the world server's
+`/content`, browser `fetch` through `contentBoot.ts` — and core has no cross-target HTTP today.
+Writing one would mean a `#[cfg]` split inside core, i.e. two implementations of the fetch, which
+is the defect this stream exists to delete. Handing core the bundle keeps ONE owner of the parsed
+corpus, which is the part that actually mattered: nothing downstream can now be passed a different
+one.
+
+**Fix/status.** OPEN. Worth doing when core grows a transport abstraction it needs for other
+reasons; not worth a `cfg` fork on its own. Recorded so "core fetches the corpus" is not later
+assumed from the ticked box.
+
 ## D2 — `client/core`'s own intent doc already says webgl should be dumb
 **2026-08-10 · found · OPEN → P2b.**
 

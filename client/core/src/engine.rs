@@ -62,6 +62,9 @@ impl std::error::Error for SendError {}
 #[derive(Clone)]
 pub struct Client {
     cmd_tx: mpsc::UnboundedSender<Command>,
+    /// The [`ClientWorld`](crate::client_world::ClientWorld) the engine folds every event
+    /// into — see [`Client::world`].
+    world: crate::client_world::SharedWorld,
 }
 
 impl Client {
@@ -71,11 +74,45 @@ impl Client {
     ///
     /// Must be called from within a tokio runtime (e.g. under `#[tokio::main]`):
     /// it uses [`tokio::spawn`].
+    /// **Ask core.** The read half of the one contract: commands in, events out, and answers on
+    /// request. Without this a host can only be TOLD, so every question it needs answered gets
+    /// folded in the host's own language — which is how this repo grew three composed world
+    /// views, two walks and two clocks.
+    pub fn world(&self) -> &crate::client_world::SharedWorld {
+        &self.world
+    }
+
+    /// Where a pawn is right now, in fractional tiles. `None` = untracked, or the clock has not
+    /// anchored yet.
+    pub fn pawn_point(&self, entity: u32) -> Option<(f64, f64)> {
+        let w = self.world.lock().ok()?;
+        let now = w.now_tic_at(now_ms() as f64)?;
+        w.pawn_point(entity, now)
+    }
+
+    /// What tic it is. `None` until the estimate anchors — BAIL on that, never substitute 0.
+    pub fn now_tic(&self) -> Option<u16> {
+        self.world.lock().ok()?.now_tic_at(now_ms() as f64)
+    }
+
+    /// May a pawn stand on this tile.
+    pub fn pathable(&self, x: i32, y: i32) -> bool {
+        self.world.lock().map(|w| w.pathable(x, y)).unwrap_or(true)
+    }
+
+    /// Hand core the corpus. Until this lands core answers nothing derived.
+    pub fn set_corpus(&self, bundle: std::sync::Arc<resonantdust_content::loader::Bundle>) {
+        if let Ok(mut w) = self.world.lock() {
+            w.set_corpus(bundle);
+        }
+    }
+
     pub fn spawn(config: ClientConfig, sink: impl EventSink) -> Client {
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
-        let engine = Engine::new(config, Arc::new(sink));
+        let world: crate::client_world::SharedWorld = Default::default();
+        let engine = Engine::new(config, Arc::new(sink), world.clone());
         tokio::spawn(engine.run(cmd_rx));
-        Client { cmd_tx }
+        Client { cmd_tx, world }
     }
 
     /// Send a command to the engine. Errors only if the engine has stopped.
@@ -152,6 +189,9 @@ struct Pending {
 struct Engine {
     config: ClientConfig,
     sink: Arc<dyn EventSink>,
+    /// The [`ClientWorld`](crate::client_world::ClientWorld). `emit` folds into it before
+    /// handing the event on, so the fold happens once for every host, not once per host.
+    world: crate::client_world::SharedWorld,
     /// Monotonic source of login correlation ids.
     next_cid: u32,
     /// The connected world server's WS url, retained so [`Event::LoggedIn`] can
@@ -190,10 +230,15 @@ struct Engine {
 }
 
 impl Engine {
-    fn new(config: ClientConfig, sink: Arc<dyn EventSink>) -> Self {
+    fn new(
+        config: ClientConfig,
+        sink: Arc<dyn EventSink>,
+        world: crate::client_world::SharedWorld,
+    ) -> Self {
         Self {
             config,
             sink,
+            world,
             next_cid: 1,
             server_url: None,
             write: None,
@@ -719,6 +764,10 @@ impl Engine {
     }
 
     fn emit(&self, event: Event) {
+        // THE fold, before the host ever sees it (shared-simulation P2c).
+        if let Ok(mut w) = self.world.lock() {
+            w.observe_event(&event, now_ms() as f64);
+        }
         self.sink.emit(event);
     }
 }

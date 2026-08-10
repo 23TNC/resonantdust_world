@@ -62,17 +62,52 @@ impl std::error::Error for SendError {}
 #[derive(Clone)]
 pub struct Client {
     cmd_tx: mpsc::UnboundedSender<Command>,
+    /// The [`ClientWorld`](crate::client_world::ClientWorld) the engine folds every event
+    /// into — see [`Client::world`].
+    world: crate::client_world::SharedWorld,
 }
 
 impl Client {
     /// Spawn a client engine on the current thread's microtask executor (via
     /// [`spawn_local`](wasm_bindgen_futures::spawn_local)) and return its handle.
     /// `sink` receives every [`Event`] the client emits.
+    /// **Ask core.** The read half of the one contract: commands in, events out, and answers on
+    /// request — the same surface the native host has, because "one contract for every host" is
+    /// only true if both hosts can ask the same questions.
+    pub fn world(&self) -> &crate::client_world::SharedWorld {
+        &self.world
+    }
+
+    /// Where a pawn is right now, in fractional tiles.
+    pub fn pawn_point(&self, entity: u32) -> Option<(f64, f64)> {
+        let w = self.world.lock().ok()?;
+        let now = w.now_tic_at(now_ms() as f64)?;
+        w.pawn_point(entity, now)
+    }
+
+    /// What tic it is. `None` until the estimate anchors — BAIL on that, never substitute 0.
+    pub fn now_tic(&self) -> Option<u16> {
+        self.world.lock().ok()?.now_tic_at(now_ms() as f64)
+    }
+
+    /// May a pawn stand on this tile.
+    pub fn pathable(&self, x: i32, y: i32) -> bool {
+        self.world.lock().map(|w| w.pathable(x, y)).unwrap_or(true)
+    }
+
+    /// Hand core the corpus. Until this lands core answers nothing derived.
+    pub fn set_corpus(&self, bundle: std::sync::Arc<resonantdust_content::loader::Bundle>) {
+        if let Ok(mut w) = self.world.lock() {
+            w.set_corpus(bundle);
+        }
+    }
+
     pub fn spawn(config: ClientConfig, sink: impl EventSink) -> Client {
         let (cmd_tx, cmd_rx) = mpsc::unbounded();
-        let (engine, frame_rx) = Engine::new(config, Arc::new(sink));
+        let world: crate::client_world::SharedWorld = Default::default();
+        let (engine, frame_rx) = Engine::new(config, Arc::new(sink), world.clone());
         wasm_bindgen_futures::spawn_local(engine.run(cmd_rx, frame_rx));
-        Client { cmd_tx }
+        Client { cmd_tx, world }
     }
 
     /// Send a command to the engine. Errors only if the engine has stopped.
@@ -199,6 +234,9 @@ enum FrameOutcome {
 struct Engine {
     config: ClientConfig,
     sink: Arc<dyn EventSink>,
+    /// The [`ClientWorld`](crate::client_world::ClientWorld). `emit` folds into it before
+    /// handing the event on, so the fold happens once for every host, not once per host.
+    world: crate::client_world::SharedWorld,
     next_cid: u32,
     server_url: Option<String>,
     /// Write half of the live socket, if connected.
@@ -243,10 +281,12 @@ impl Engine {
     fn new(
         config: ClientConfig,
         sink: Arc<dyn EventSink>,
+        world: crate::client_world::SharedWorld,
     ) -> (Self, mpsc::UnboundedReceiver<(u64, u64, FrameOutcome)>) {
         let (frame_tx, frame_rx) = mpsc::unbounded();
         let engine = Self {
             config,
+            world,
             sink,
             next_cid: 1,
             server_url: None,
@@ -818,6 +858,10 @@ impl Engine {
     }
 
     fn emit(&self, event: Event) {
+        // THE fold, before the host ever sees it (shared-simulation P2c).
+        if let Ok(mut w) = self.world.lock() {
+            w.observe_event(&event, now_ms() as f64);
+        }
         self.sink.emit(event);
     }
 }

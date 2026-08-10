@@ -163,13 +163,13 @@ them. **The fix is one read surface; the folds then move behind it.**
 
 ## P2c — the read surface: a host ASKS core (before P3)
 
-- [ ] Put `ClientWorld` behind a shared cell the `Client` handle can READ, on both hosts
+- [x] Put `ClientWorld` behind a shared cell the `Client` handle can READ, on both hosts
       (`engine.rs:63-65`, `web.rs:63-65` are `cmd_tx`-only). Acceptance: a core test drives a row
       through the engine and reads `pawn_point` off the handle.
-- [ ] Feed that `ClientWorld` from the engine's OWN decode — every arm that emits a state, cold or
+- [x] Feed that `ClientWorld` from the engine's OWN decode — every arm that emits a state, cold or
       zone event observes into it first. Acceptance: `grep -c ClientWorld` in `engine.rs` and
       `web.rs` is nonzero for both.
-- [ ] Give core the corpus: fetch `/content` at login into an `Arc<Bundle>` on the engine.
+- [x] Give core the corpus: fetch `/content` at login into an `Arc<Bundle>` on the engine.
       Acceptance: `derive_paces` and `pathable` no longer take a `&Bundle` argument from the host
       (`movers.rs:222`, `world_view.rs:140`).
 - [ ] Delete npc's hand-rolled fold — the `world` field (`lib.rs:267`) and the six `Event::` arms in

@@ -3,6 +3,35 @@
 _The verification log: what landed and **how it was checked**. Append-only; authoritative for what
 is done. Items live in [`todo.md`](todo.md) with their boxes ticked._
 
+## 2026-08-10 — P2c items 1-3: a host can ASK core, and the fold happens once
+
+**The read half of the contract exists.** `Client` was `cmd_tx`-only on BOTH hosts — commands in,
+events out, nothing readable — which is the structural cause the audit named: a host that cannot
+ask has to fold the answer itself, in its own language. `Client` now carries a
+`SharedWorld` and answers `pawn_point(entity)`, `now_tic()`, `pathable(x, y)`, `world()`.
+
+**THE fold is one function at one choke point.** `ClientWorld::observe_event` folds state, intents,
+payloads, needs, cold tiles, cold things, cold overlays and zone closes; both engines call it from
+their single `emit`, *before* the host sees the event. Neither host can fold differently because
+neither host folds.
+
+**Core owns the corpus and the clock.** `derive_paces`/`pathable` no longer take a `&Bundle` from
+the caller — a corpus parameter is an invitation for two hosts to pass two different corpora.
+`now_tic_at()` answers the clock, so `api.rs`'s instruction to extrapolate locally stops being the
+only way to get it.
+
+**One bug avoided by target, worth recording:** the anchor first held a `std::time::Instant`.
+`Instant::now()` **panics on `wasm32-unknown-unknown`** — the browser would have died on its first
+tic anchor. It now takes an `f64` wall-ms stamp from each engine's existing `now_ms()`.
+
+**Verified.** `client/core` 42 passed; `bin/rd build core` and `bin/rd build shared` (the wasm
+bundle, which compiles `web.rs`) both green; `bin/sim check npc` green; `grep -c ClientWorld` is 2
+in `engine.rs` and 2 in `web.rs`.
+
+**Deviation recorded:** core owns the corpus but does not fetch it ([D3](deviations.md#d3)) — the
+GET stays host-side rather than forking core on `#[cfg]`, which would be two implementations of
+exactly the kind this stream deletes.
+
 ## 2026-08-10 — P2 item 3: `ClientWorld`, the one object a host drives
 
 [`client/core/src/client_world.rs`](../../../client/core/src/client_world.rs) joins the
