@@ -259,22 +259,16 @@ pub struct Bot {
     /// engine's LEARNED rate estimate (never raw `TIC_HZ`), stamped at event receipt. Feeds
     /// [`Bot::now_tic`], which is what lets a brain evaluate lazy needs (needs-moodlets F4).
     tic_anchor: Option<(u16, std::time::Instant, f64)>,
-    /// The known-zone TILE map (interactions P4): zone → 256 `kind_reference` slots (index =
-    /// `pack_tile_reference(x, y)`), from the layer-0 `ColdTiles` baseline. What
-    /// [`Bot::nearest_tile`] scans — a brain's "where is water" question.
-    tiles: std::collections::HashMap<u16, Vec<u16>>,
+    /// The composed WORLD VIEW — baseline tiles ⊕ overlays ⊕ the thing layer — now owned by
+    /// [`client::world_view::WorldView`] in `client/core` (shared-simulation P2b). The Bot held
+    /// its own copy of all three maps, and `client/webgl` held a SECOND copy in TypeScript; the
+    /// accessors below are thin delegations so there is one composed view for every host, as
+    /// core's intent doc always specified.
+    world: client::world_view::WorldView,
     /// Known PAWN positions (npc-host F11): `entity → world tile`, from `StateObject`
     /// events (removed = gone). What a hosted brain adopts from when the OWNERSHIP frame
     /// loses the race against a resting pawn's one-shot snapshot replay.
     pawns: std::collections::HashMap<u32, (i32, i32)>,
-    /// Cold OVERLAY overrides (built walls etc.): `(zone, cell)` → `kind_reference`.
-    tile_overlays: std::collections::HashMap<(u16, u8), u16>,
-    /// The composed THING view (food-chain F8, closing pathfinding F8's successor):
-    /// `(zone, cell) → kind_reference` — ColdThings baselines fill, ColdState THING
-    /// overrides upsert (kind 0 stored = SUPPRESSED — a felled tree / eaten meat
-    /// vanishes from the scans). Last-write-wins is npc-grade (I4: a stale scan
-    /// self-corrects at the offer re-validation).
-    things: std::collections::HashMap<(u16, u8), u16>,
 }
 
 impl Bot {
@@ -291,10 +285,8 @@ impl Bot {
             paused: false,
             server_url: None,
             tic_anchor: None,
-            tiles: std::collections::HashMap::new(),
+            world: client::world_view::WorldView::new(),
             pawns: std::collections::HashMap::new(),
-            tile_overlays: std::collections::HashMap::new(),
-            things: std::collections::HashMap::new(),
         };
         if bot.client.login(name).is_err() {
             tracing::error!("client engine failed to start");
@@ -385,12 +377,7 @@ impl Bot {
             // zone streams ONE ROW PER BIOME (subtype), each carrying only its own cells —
             // so rows MERGE cell-wise, nonzero winning (seen live: zone 99 = 3 rows).
             Event::ColdTiles { macro_position, layer_id: 0, tiles, .. } => {
-                let slot = self.tiles.entry(*macro_position).or_insert_with(|| vec![0; 256]);
-                for (i, &kr) in tiles.iter().enumerate().take(slot.len()) {
-                    if kr != 0 {
-                        slot[i] = kr;
-                    }
-                }
+                self.world.observe_cold_tiles(*macro_position, 0, tiles);
             }
             // The known-zone THING baselines (food-chain F8): sparse kind_pos entries.
             Event::ColdThings { macro_position, things, .. } => {
@@ -398,9 +385,7 @@ impl Bot {
                 for &kp in things {
                     let cell = ((kp >> 8) & 0xff) as u8; // tile_reference byte
                     let kr = obj::kind_pos_ref_kind_reference(kp);
-                    if kr != 0 {
-                        self.things.entry((*macro_position, cell)).or_insert(kr);
-                    }
+                    self.world.observe_thing_baseline(*macro_position, cell, kr);
                 }
             }
             Event::ColdState {
@@ -414,10 +399,11 @@ impl Bot {
                 let cell = (obj::position_micro(*position_reference) >> 8) as u8;
                 if obj::def_type_id(*definition_reference) == obj::TYPE_BIOME_TILE {
                     if *removed {
-                        self.tile_overlays.remove(&(*macro_position, cell));
+                        self.world.remove_tile_overlay(*macro_position, cell);
                     } else {
-                        self.tile_overlays.insert(
-                            (*macro_position, cell),
+                        self.world.observe_tile_overlay(
+                            *macro_position,
+                            cell,
                             obj::def_kind_reference(*definition_reference),
                         );
                     }
@@ -425,13 +411,11 @@ impl Bot {
                 if obj::def_type_id(*definition_reference) == obj::TYPE_BIOME_THING {
                     // An override WINS the cell; kind 0 stored = suppressed (F8).
                     let kr = if *removed { 0 } else { obj::def_kind_reference(*definition_reference) };
-                    self.things.insert((*macro_position, cell), kr);
+                    self.world.observe_thing(*macro_position, cell, kr);
                 }
             }
             Event::ZoneClosed { macro_position } => {
-                self.tiles.remove(macro_position);
-                self.tile_overlays.retain(|(z, _), _| z != macro_position);
-                self.things.retain(|(z, _), _| z != macro_position);
+                self.world.forget_zone(*macro_position);
             }
             _ => {}
         }
@@ -440,66 +424,20 @@ impl Bot {
     /// The composed `kind_id` (baseline ⊕ overlay) of the known tile at world `at`, or
     /// `None` if its zone hasn't streamed.
     pub fn tile_kind_at(&self, at: (i32, i32)) -> Option<u16> {
-        use resonantdust_codec::object as obj;
-        for (&zone, slots) in &self.tiles {
-            let (ox, oy) = obj::macro_world_origin(zone);
-            let (dx, dy) = (at.0 - ox, at.1 - oy);
-            if !(0..16).contains(&dx) || !(0..16).contains(&dy) {
-                continue;
-            }
-            let cell = obj::pack_tile_reference(dx as u8, dy as u8);
-            let kr = self
-                .tile_overlays
-                .get(&(zone, cell))
-                .copied()
-                .unwrap_or_else(|| slots.get(cell as usize).copied().unwrap_or(0));
-            return (kr != 0).then_some(kr >> 4);
-        }
-        None
+        self.world.tile_kind_at(at)
     }
 
     /// The nearest known tile (Chebyshev, world coords) whose composed `kind_id`
     /// (baseline ⊕ overlay) satisfies `pred` — the brain's "nearest water" scan
     /// (interactions P4). `None` while no zone has streamed or nothing matches.
     pub fn nearest_tile(&self, from: (i32, i32), pred: impl Fn(u16) -> bool) -> Option<(i32, i32)> {
-        use resonantdust_codec::object as obj;
-        let mut best: Option<((i32, i32), i32)> = None;
-        for (&zone, slots) in &self.tiles {
-            let (ox, oy) = obj::macro_world_origin(zone);
-            for x in 0u8..16 {
-                for y in 0u8..16 {
-                    let cell = obj::pack_tile_reference(x, y);
-                    let kr = self
-                        .tile_overlays
-                        .get(&(zone, cell))
-                        .copied()
-                        .unwrap_or_else(|| slots.get(cell as usize).copied().unwrap_or(0));
-                    if kr == 0 || !pred(kr >> 4) {
-                        continue;
-                    }
-                    let world = (ox + i32::from(x), oy + i32::from(y));
-                    let d = (world.0 - from.0).abs().max((world.1 - from.1).abs());
-                    if best.is_none_or(|(_, bd)| d < bd) {
-                        best = Some((world, d));
-                    }
-                }
-            }
-        }
-        best.map(|(w, _)| w)
+        self.world.nearest_tile(from, pred)
     }
 
     /// The composed THING kind_id at world `at` (food-chain F8) — baseline ⊕ overrides,
     /// kind-0 suppressed. `None` = empty cell or an unstreamed zone.
     pub fn thing_kind_at(&self, at: (i32, i32)) -> Option<u16> {
-        use resonantdust_codec::object as obj;
-        for (&(zone, cell), &kr) in &self.things {
-            let (ox, oy) = obj::macro_world_origin(zone);
-            let (dx, dy) = (obj::ref_hi(cell) as i32, obj::ref_lo(cell) as i32);
-            if (ox + dx, oy + dy) == at {
-                return (kr != 0).then_some(kr >> 4);
-            }
-        }
-        None
+        self.world.thing_kind_at(at)
     }
 
     /// The nearest known THING (Chebyshev, world coords) whose composed kind_id AND world
@@ -512,20 +450,7 @@ impl Bot {
         from: (i32, i32),
         pred: impl Fn((i32, i32), u16) -> bool,
     ) -> Option<(i32, i32)> {
-        use resonantdust_codec::object as obj;
-        let mut best: Option<((i32, i32), i32)> = None;
-        for (&(zone, cell), &kr) in &self.things {
-            let (ox, oy) = obj::macro_world_origin(zone);
-            let world = (ox + obj::ref_hi(cell) as i32, oy + obj::ref_lo(cell) as i32);
-            if kr == 0 || !pred(world, kr >> 4) {
-                continue;
-            }
-            let d = (world.0 - from.0).abs().max((world.1 - from.1).abs());
-            if best.is_none_or(|(_, bd)| d < bd) {
-                best = Some((world, d));
-            }
-        }
-        best.map(|(w, _)| w)
+        self.world.nearest_thing(from, pred)
     }
 
     /// A known pawn's world tile, or `None` if it never streamed (or was removed).
@@ -776,19 +701,25 @@ mod def_fixture {
         // input-rework F8: the `speed` field is gone — the wolf's pace is the DERIVED
         // `ground_speed` from its walks binding. 12 tics/tile is the value every stored trip
         // was spaced by; this pin catches a corpus retune moving it silently.
+        // shared-simulation P2: this test had rotted against trait-rows-u32 (which DELETED
+        // `TraitBind::level` in favour of the reference's variant nibble) and had been failing
+        // `bin/sim check npc` since. Rewritten onto `move_eval::ground_speed` — THE pace, the
+        // same call the worker spaces its hops with — so it now pins the value through the
+        // shared path instead of a local reassembly of it.
         let Some(bundle) = corpus() else { return };
         let kind = bundle.thing_object_id("wolf").expect("wolf kind");
-        let rows: Vec<u32> = bundle
-            .thing_traits(kind)
-            .iter()
-            .map(|b| {
-                resonantdust_codec::object::pack_row(
-                    bundle.gameplay_reference("trait", &b.name).expect("trait ref"),
-                    b.level,
-                )
-            })
-            .collect();
-        let v = resonantdust_content::stat_eval::stat_value(&bundle, "ground_speed", &rows, &[]);
+        let mut payload: Vec<u32> = Vec::new();
+        for b in bundle.thing_traits(kind) {
+            let Some(cat) = bundle.trait_category(&b.name) else { continue };
+            let Some(cat_name) = resonantdust_codec::object::gameplay_category(cat) else {
+                continue;
+            };
+            if let Some(r0) = bundle.gameplay_reference(cat_name, &b.name) {
+                let r = (r0 & !0xF) | (u32::from(b.variant) & 0xF);
+                payload.extend_from_slice(&resonantdust_codec::payload::trait_entry(r, 0));
+            }
+        }
+        let v = resonantdust_content::move_eval::ground_speed(&bundle, kind, &payload, &[], 0);
         assert_eq!(v, 12.0);
     }
 }

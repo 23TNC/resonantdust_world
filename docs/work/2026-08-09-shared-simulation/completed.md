@@ -3,6 +3,39 @@
 _The verification log: what landed and **how it was checked**. Append-only; authoritative for what
 is done. Items live in [`todo.md`](todo.md) with their boxes ticked._
 
+## 2026-08-10 — P2b COMPLETE: npc reads core's view; the duplicate is gone
+
+`client/npc`'s `tiles` / `tile_overlays` / `things` maps are **deleted**. The Bot holds a
+`client::world_view::WorldView`, its four event handlers delegate to it, and
+`tile_kind_at` / `nearest_tile` / `thing_kind_at` / `nearest_thing` are one-line delegations.
+`grep -c 'self.tiles\|self.things\|self.tile_overlays'` is **0**.
+
+**Two things the rewire caught that a straight lift would have shipped broken.**
+
+1. **`ColdTiles` rows MERGE cell-wise, nonzero winning** — a zone streams one row per BIOME, each
+   carrying only its own cells (zone 99 arrives as three). My first `observe_cold_tiles` did an
+   `insert`, which would have kept whichever biome streamed last and blanked the rest. Caught by
+   reading the real handler rather than trusting the lifted shape; now pinned by
+   `cold_tile_rows_merge_cell_wise`.
+2. **A THING baseline must not clobber an override** — a `ColdThings` row arriving after a felling
+   would resurrect the tree. Split into `observe_thing_baseline` (first write wins) and
+   `observe_thing` (override wins, 0 suppresses), pinned by
+   `a_thing_baseline_never_clobbers_an_override`.
+
+`nearest_thing`'s predicate also had to widen to take the world CELL, not just the kind: brains
+refuse unreachable food that way (meat in a lake), and without it a brain oscillates forever
+between the worker's refusal and its own wander.
+
+**A pre-existing failure fixed in passing.** `bin/sim check npc` was already broken —
+`the_wolfs_derived_ground_speed_is_the_old_authored_pace` still used `TraitBind::level`, deleted by
+trait-rows-u32, so the npc test target had not compiled since that migration. Rewritten onto
+`move_eval::ground_speed`, so it now pins 12.0 tics/tile **through the shared path** instead of a
+local reassembly of it. Not my breakage, but squarely this stream's subject.
+
+**Verified.** `client/core` 40 passed, `client/npc` 3 passed, `bin/sim check npc` green. Rebuilt
+and put back on the live world: pawns adopted, group counts written, move intents flowing across
+zones, **0 errors or panics**.
+
 ## 2026-08-10 — P2b items 1-3: core holds the world, and the unknown-cell law is pinned
 
 **Landed** [`client/core/src/world_view.rs`](../../../client/core/src/world_view.rs) — npc's

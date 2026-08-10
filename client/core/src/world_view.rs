@@ -46,10 +46,20 @@ impl WorldView {
         Self::default()
     }
 
-    /// A `ColdTiles` baseline. Only layer 0 is the ground the walk cares about.
-    pub fn observe_cold_tiles(&mut self, zone: u16, layer_id: u8, tiles: Vec<u16>) {
-        if layer_id == 0 {
-            self.tiles.insert(zone, tiles);
+    /// A `ColdTiles` baseline row. Only layer 0 is the ground the walk cares about.
+    ///
+    /// Rows **merge cell-wise, nonzero winning** — a zone streams ONE ROW PER BIOME (subtype),
+    /// each carrying only its own cells (seen live: zone 99 arrives as 3 rows). Replacing instead
+    /// of merging silently keeps whichever biome streamed last and blanks the rest.
+    pub fn observe_cold_tiles(&mut self, zone: u16, layer_id: u8, tiles: &[u16]) {
+        if layer_id != 0 {
+            return;
+        }
+        let slot = self.tiles.entry(zone).or_insert_with(|| vec![0; 256]);
+        for (i, &kr) in tiles.iter().enumerate().take(slot.len()) {
+            if kr != 0 {
+                slot[i] = kr;
+            }
         }
     }
 
@@ -58,7 +68,21 @@ impl WorldView {
         self.tile_overlays.insert((zone, cell), kind_reference);
     }
 
-    /// One composed THING cell. `0` SUPPRESSES whatever the baseline had there.
+    /// That overlay was removed — the baseline shows through again.
+    pub fn remove_tile_overlay(&mut self, zone: u16, cell: u8) {
+        self.tile_overlays.remove(&(zone, cell));
+    }
+
+    /// A THING **baseline** cell (`ColdThings`). First write wins: a baseline arriving after an
+    /// override must not resurrect a felled tree.
+    pub fn observe_thing_baseline(&mut self, zone: u16, cell: u8, kind_reference: u16) {
+        if kind_reference != 0 {
+            self.things.entry((zone, cell)).or_insert(kind_reference);
+        }
+    }
+
+    /// A THING **override** — it WINS the cell. `0` SUPPRESSES: a felled tree or eaten meat
+    /// vanishes from the scans, which is why absent and zero cannot mean the same thing.
     pub fn observe_thing(&mut self, zone: u16, cell: u8, kind_reference: u16) {
         self.things.insert((zone, cell), kind_reference);
     }
@@ -134,13 +158,17 @@ impl WorldView {
         self.nearest(from, |v, at| v.tile_kind_at(at).is_some_and(&pred))
     }
 
-    /// The nearest known THING cell whose composed kind satisfies `pred`.
+    /// The nearest known THING cell whose composed kind AND world cell satisfy `pred`.
+    ///
+    /// The CELL is in the predicate on purpose: a brain must be able to refuse UNREACHABLE food
+    /// (a drowned pawn's meat in the lake). The worker refuses impathable destinations, and a
+    /// brain that keeps picking one oscillates forever between the refusal and its wander.
     pub fn nearest_thing(
         &self,
         from: (i32, i32),
-        pred: impl Fn(u16) -> bool,
+        pred: impl Fn((i32, i32), u16) -> bool,
     ) -> Option<(i32, i32)> {
-        self.nearest(from, |v, at| v.thing_kind_at(at).is_some_and(&pred))
+        self.nearest(from, |v, at| v.thing_kind_at(at).is_some_and(|k| pred(at, k)))
     }
 
     /// Shared scan over every streamed cell, Chebyshev-nearest wins. Ties break on the lowest
@@ -184,8 +212,32 @@ mod tests {
     /// Zone 0's origin is (0,0); fill it with `kind_reference` `kr` everywhere.
     fn zone0(kr: u16) -> WorldView {
         let mut v = WorldView::new();
-        v.observe_cold_tiles(0, 0, vec![kr; 256]);
+        v.observe_cold_tiles(0, 0, &vec![kr; 256]);
         v
+    }
+
+    /// A zone streams one row per BIOME, each carrying only its own cells. Rows must merge —
+    /// replacing keeps whichever biome arrived last and blanks the others.
+    #[test]
+    fn cold_tile_rows_merge_cell_wise() {
+        let mut v = WorldView::new();
+        let mut a = vec![0u16; 256];
+        a[obj::pack_tile_reference(1, 1) as usize] = 0x10;
+        let mut b = vec![0u16; 256];
+        b[obj::pack_tile_reference(2, 2) as usize] = 0x20;
+        v.observe_cold_tiles(0, 0, &a);
+        v.observe_cold_tiles(0, 0, &b);
+        assert_eq!(v.tile_kind_at((1, 1)), Some(1), "the first biome row survived the second");
+        assert_eq!(v.tile_kind_at((2, 2)), Some(2));
+    }
+
+    /// A baseline arriving after an override must not resurrect a felled tree.
+    #[test]
+    fn a_thing_baseline_never_clobbers_an_override() {
+        let mut v = zone0(0x10);
+        v.observe_thing(0, 5, 0); // felled
+        v.observe_thing_baseline(0, 5, 0x50); // the baseline streams in late
+        assert_eq!(v.thing_kind_at((5, 0)), None, "still felled");
     }
 
     #[test]
@@ -237,8 +289,8 @@ mod tests {
         for (x, y) in [(5u8, 5u8), (5, 7)] {
             v.observe_thing(0, obj::pack_tile_reference(x, y), 0x50);
         }
-        assert_eq!(v.nearest_thing((5, 6), |k| k == 5), Some((5, 5)), "equidistant → lowest (x,y)");
-        assert_eq!(v.nearest_thing((5, 9), |k| k == 5), Some((5, 7)));
-        assert_eq!(v.nearest_thing((5, 6), |k| k == 99), None);
+        assert_eq!(v.nearest_thing((5, 6), |_, k| k == 5), Some((5, 5)), "equidistant → lowest (x,y)");
+        assert_eq!(v.nearest_thing((5, 9), |_, k| k == 5), Some((5, 7)));
+        assert_eq!(v.nearest_thing((5, 6), |_, k| k == 99), None);
     }
 }

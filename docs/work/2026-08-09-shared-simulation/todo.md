@@ -59,7 +59,7 @@ so P2 must have landed. Do not reorder.
 - [x] Decide and pin the unstreamed-cell rule in ONE place — the client reads unknown as OPEN, the
       worker does not. Acceptance: a unit test asserts the chosen rule; the divergence is logged
       in [`issues.md`](issues.md).
-- [ ] Replace `client/npc`'s own `tiles`/`tile_overlays`/thing view with reads of core's.
+- [x] Replace `client/npc`'s own `tiles`/`tile_overlays`/thing view with reads of core's.
       Acceptance: no composed-view maps remain in `client/npc/src/lib.rs`.
 
 ## P3 — the headless clients see motion again
