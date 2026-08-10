@@ -124,6 +124,16 @@ export class LiveEditPanel extends DomPanel {
     root.appendChild(this.contentEl);
     this.setBody(root);
     this.applyTabStyles();
+    // The preview is NOT mounted yet — see live-edit `blockers.md`. A second `Viewport` has its
+    // own GL context and camera but NO CONTENT: `MoverLayer` and `WorldBridge` each hold ONE
+    // viewport and push every prim into it, so a second instance renders empty space. Mounting
+    // a live-but-blank canvas here would read as a broken panel, so the region says what it is
+    // waiting for instead. `PreviewViewport` is built and ready for whichever way that call goes.
+    const pending = document.createElement("div");
+    pending.style.cssText =
+      "font:var(--ui-font)/1.5 monospace;color:#7a7a8a;text-align:center;padding:var(--ui-pad);";
+    pending.textContent = "preview — pending a content feed (see blockers)";
+    this.previewEl.appendChild(pending);
 
     this.unsubSel = selection.subscribe(() => this.refresh(true));
     // Needs decay and conditions expire while a pawn is selected, and the selection event only

@@ -62,6 +62,10 @@ export interface LiveEditSnapshot {
   key: string;
   /** The object's TOML name, for the panel's own header. */
   name: string;
+  /** The object's world position, for the preview camera to follow (F1). Absent for a
+   *  non-pawn selection, which leaves the preview where it was rather than jumping. */
+  worldX?: number;
+  worldY?: number;
   traits: TraitRow[];
   needs: NeedRow[];
   /** Reused verbatim from the conditions surface — same rows, same order, same pie slices. The

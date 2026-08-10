@@ -329,6 +329,10 @@ export class WorldScene extends Scene {
             emotionRows.map((x) => `${x.index}:${x.value}`).join(","),
           ].join("|"),
           name: info.name,
+          // The pawn's world point, so the preview camera can follow it. `tileX/tileY` are
+          // tiles; the camera works in world units.
+          worldX: (info.tileX + 0.5) * SQUARE,
+          worldY: (info.tileY + 0.5) * SQUARE,
           traits: traitRows,
           needs: needRows,
           conditions: info.conditions,

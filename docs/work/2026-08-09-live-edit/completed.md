@@ -135,3 +135,29 @@ if the preview proves heavy.
 Also this pass: the needs bar and rate gained hover tooltips spelling the unit out in words
 ("units per wall-clock hour") — `/h` is doing a lot of work for two characters, and "is that per
 tic?" was the first question asked of it.
+
+## 2026-08-09 — P5: the preview stops at a design decision
+
+`PreviewViewport.ts` is written: the singleton `Viewport` under F1's constraint (created lazily,
+reused forever, never per-open), mounted into the panel's preview region, with wheel-zoom,
+drag-pan, and a `follow` that yields once the user pans — because yanking the camera back on the
+next 500 ms poll would fight them.
+
+It renders nothing, and the reason is [I10](issues.md#i10): **a `Viewport` is a renderer, not a
+world.** `MoverLayer` takes ONE viewport in its constructor and pushes every pawn prim into it;
+`WorldBridge` does the same for terrain and things. A second instance has a GL context, a camera,
+and an empty scene. Verified live — world context alive, preview canvas healthy, nothing drawn.
+
+So candidate A's real price is duplicating the **content feed**, not just the context. That is a
+decision about the renderer's shape rather than about this panel, and it is recorded in
+`blockers.md` with three costed options and a recommendation (**B** — a narrow object preview:
+the preview's job is "which object am I looking at", not "render the world twice").
+
+The panel shows a one-line placeholder in the preview region rather than a live-but-blank canvas,
+because a black rectangle reads as a broken panel. Everything else in the stream is complete and
+independent of this: `/edit`, all four tabs, and the client typecheck at **zero errors**.
+
+**What the spike got right and wrong**, since it is the interesting part: it produced a hard
+number (eviction at the 16th extra context, with every request granted and nothing thrown) and a
+real constraint that still stands. But it answered the question I framed — "can we afford a second
+context" — which presupposed that a second context was *sufficient*. It was not.

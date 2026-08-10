@@ -88,3 +88,23 @@ to `Float64Array` (a JS number holds the 48 significant bits exactly, under THE 
 
 Kept in this stream rather than deferred to the standing task chip because it *blocked* P4: a
 needs tab that reads every need as 0 is not a needs tab.
+
+## I10 — the spike measured the CONTEXT and missed the CONTENT feed
+
+_Found 2026-08-09 at P5, building the preview the spike had approved._ A second `Viewport` was
+affordable in exactly the way [F1](forks.md#f1) measured — one extra WebGL2 context, world
+viewport still alive — and it renders **nothing**, because a `Viewport` is a renderer, not a
+world. The content pipeline is bound to ONE instance: `MoverLayer` takes a single `viewport` in
+its constructor and pushes every pawn prim into it (`warmGetPrim` / `warmRemovePrim` /
+`setSpriteScale` / `setSubframe`), and `WorldBridge` does the same for terrain and things. A
+second instance has a GL context, a camera and an empty scene.
+
+So candidate A's real cost is not "a context plus duplicate atlases" — it is **duplicating the
+content feed**, i.e. every prim pushed to two viewports every frame. That is a different and much
+larger proposition than the one the spike priced, and it is a decision about the renderer's shape
+rather than about the panel.
+
+The spike was still worth running — it produced a hard number (eviction at 16) and a real
+constraint — but it answered the question I framed rather than the question that decides the
+work. Framing it as "can we afford a second context" presupposed that a second context was
+sufficient.

@@ -69,8 +69,9 @@ week of work.
 - [x] SPIKE: instantiate a second `Viewport`, measure context creation, texture residency and
       frame cost, and check repeated open/close for context leaks (F1/I1). Acceptance: numbers in
       completed.md and a recorded decision between A and B.
-- [ ] Build the preview per the spike's verdict, centred above the tabs, showing the selected
-      object. Acceptance: the selected pawn is visible in it.
+- [ ] BLOCKED — build the preview. The spike's verdict was necessary but not sufficient: a second
+      `Viewport` has no CONTENT ([I10](issues.md#i10)). Three costed options + a recommendation in
+      `blockers.md`; needs the user's call on the renderer's shape.
 - [ ] Zoom and pan on the preview. Acceptance: both work without disturbing the world viewport's
       own camera.
 - [ ] Non-pawn selections degrade gracefully (I6). Acceptance: selecting a tile or thing leaves
