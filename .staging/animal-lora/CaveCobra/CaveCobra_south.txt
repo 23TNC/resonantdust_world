@@ -1,1 +1,0 @@
-rd_style, rd_animal, rd_legless, rd_south, front view, facing the viewer, facing forward, cave cobra, single creature, full body

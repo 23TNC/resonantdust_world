@@ -1,33 +1,48 @@
-# Resonant Dust — world
+# Resonant Dust — world (0.3.0)
 
-A multiplayer world game: a SpacetimeDB server backend, a shared Rust core
-compiled both native (server) and to wasm (client), and a PixiJS browser client.
-Per-area notes live in scoped `AGENTS.md` files (e.g. `shared/AGENTS.md`) and in
-`docs/`.
+A multiplayer world game on a SpacetimeDB backend. **0.3.0 is a rewrite**: the
+0.2.3 tree was removed wholesale and the layout below is a scaffold, not a
+port. Prior art is on the `0.2.3` branch (`git show 0.2.3:<path>`) and in the
+working copy at `../resonantdust_world_old` — read from either freely, but
+nothing carries over by default.
 
-## Art style — READ FIRST before touching any art
+## Layout
 
-Full spec: **[docs/art-style.md](docs/art-style.md)**. The essentials:
+```
+client/                 the browser client
+server/
+  edge/                 client-facing process (ws, subscriptions, worldgen)
+  gateway/              entrypoint; routes a player to a server
+  master/               authoritative clock
+  orchestrator/         event framing + promotion
+  spacetime/            SpacetimeDB stack: daemon + module crates  ← populated
+  worker/               event execution
+bin/st                  the SpacetimeDB driver
+```
 
-- **Look:** RimWorld / Prison Architect — flat, simple, hand-painted, minimal cel
-  shading, bold clean outlines. Native to **SDXL**; avoid photoreal models
-  (FLUX-base over-renders and fights the flat look) for base generation.
-- **Perspective: oblique 3/4 top-down (pseudo-isometric).** The world grid is
-  top-down, but characters/objects show their **front or sides** — NOT a true
-  bird's-eye overhead, NOT true isometric. Rendering a creature from directly
-  above is WRONG.
-- **Directional facings:** East = side profile facing right; West = mirror of
-  East; **South = front view** (faces viewer); **North = back view** (faces away).
-  East/West are easy (side profiles, in-distribution); South/North are hard
-  (SDXL defaults to side view — needs an edit model or organic reference to turn).
-- **Tint regions:** author three isolable color regions — primary (main body),
-  secondary (markings), detail (eyes/trim) — as normal colored art, not RGB masks.
-- **Cutout:** deliver transparent alpha cutouts. The old magenta `0xFF00FF` key is
-  retired for generated art — `rembg` gives alpha directly; `bin/art` consumes it.
+Only `server/spacetime/` has content: a pinned daemon, a module template, and the
+`bin/st` driver. Every other folder is an empty placeholder — a `.gitkeep` is all
+that's in it.
 
-## Art tooling
+## The one thing that exists
 
-- `bin/art` — slice/key/master sprite sheets; masters normalize to power-of-two.
-- `bin/marigold` — ML maps (albedo/normal/depth) for the renderer lighting pass.
-- Sprite generation (in progress): ComfyUI + SDXL + ControlNet + rembg — see the
-  `sprite-gen-pipeline` memory.
+```bash
+bin/st up && bin/st publish template && bin/st sql template "SELECT * FROM clock"
+```
+
+See [server/spacetime/README.md](server/spacetime/README.md) for the module
+workflow, the daemon/crate version pinning, and why a publish wipes data.
+
+## Notes for the rewrite
+
+- **Database names take no underscores.** The daemon rejects them. A module
+  directory may be `event_shard`; its database is `resonantdust-dev-event-shard-0`.
+- **Docker and uid 1000.** The spacetime image runs as uid 1000, matching the host
+  user, which is the only reason host-owned bind mounts work. But docker
+  auto-creates a *missing* mount target as root, and other images (`rust:slim`)
+  run as root outright — so build output can land root-owned and resist `rm -rf`
+  from the host. Clear that from a container: `docker run --rm -v $PWD:/repo
+  busybox rm -rf /repo/<path>`.
+- **The docs-authority system is gone**, along with `bin/rd`, `docs/`, `content/`,
+  and `shared/`. Reintroduce what earns its place; don't restore it wholesale
+  because 0.2.3 had it.

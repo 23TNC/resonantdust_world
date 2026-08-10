@@ -1,1 +1,0 @@
-rd_style, rd_animal, rd_quadruped, rd_winged, rd_east, side profile, side view, facing right, griffon, single creature, full body

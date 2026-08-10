@@ -1,1 +1,0 @@
-rd_style, rd_animal, rd_multiped, rd_south, front view, facing the viewer, facing forward, redback, single creature, full body

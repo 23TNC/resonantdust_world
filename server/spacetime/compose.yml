@@ -1,31 +1,46 @@
+# Local SpacetimeDB stack. Driven by `bin/st` — see that script for the command
+# surface (up / down / build / publish / sql / call / logs).
+#
+# Three services over one pinned image:
+#   start    — the long-lived daemon (the database host)
+#   build    — one-shot per-module wasm build
+#   bindings — one-shot per-module client-binding codegen
+#
+# Only `start` is persistent; the other two are `run --rm` one-shots.
 networks:
   resonantdust:
     external: true
 
+volumes:
+  # CARGO_HOME for the one-shot build services. Without it every `st build`
+  # re-downloads and recompiles the whole spacetimedb dependency tree — about
+  # three minutes for a one-line change. Docker pre-populates the volume from the
+  # image on first use, which is what keeps the ownership right for the image's
+  # non-root `spacetime` user.
+  cargo-cache:
+
 services:
+  # The daemon. Pinned to v2.3.0 to match the `spacetimedb = "=2.1.0"` crate the
+  # modules build against. `latest` currently resolves to 2.5.0, which spins at
+  # 99% CPU on `start` and never initializes — do not float this tag.
   start:
-    # Pinned to v2.3.0 to match the modules/gate/client wire+ABI. `latest`
-    # currently resolves to 2.5.0, which spins at 99% CPU on `start` and never
-    # initializes — do not float this tag.
     image: clockworklabs/spacetime:v2.3.0
     networks:
       - resonantdust
     ports:
       - "3000:3000"
     volumes:
+      # JWT signing keypair — identity stability across restarts depends on it.
       - ./keys:/etc/spacetimedb
+      # CLI config (server list + the daemon-issued token `spacetime` uses when
+      # invoked *inside* this container, which is how `bin/st publish` publishes).
       - ./config:/home/spacetime/.config/spacetime
+      # Durable database state. Wiped only by an explicit `--delete-data` publish.
       - ./data:/home/spacetime/.local/share/spacetime/data
-      - ./server:/workspace/server
-      # `spacetime publish` (st publish/republish/delete) compiles the module
-      # INSIDE this container, so it needs the shared workspace mounted — modules
-      # path-ref ../../../shared/{codec,state}. (Missing here broke all publishing
-      # after the shared lift-out.) No `../content` mount: no module path-deps the
-      # content crate anymore (the packed/valid_at helpers moved to shared/codec;
-      # content/DSL is a server-runtime concern now). No game-server mount
-      # either: modules don't depend on the server — only the `bindings` service
-      # bind-mounts it (to write generated bindings there).
-      - ../../shared:/workspace/shared
+      # Module sources. `bin/st publish` builds the wasm locally and ships it with
+      # `--bin-path`, so this mount is not on the publish path — it's here so an
+      # in-container `spacetime publish <module-path>` also works.
+      - ./modules:/workspace/server/modules
     working_dir: /workspace/server
     command:
       - start
@@ -36,34 +51,29 @@ services:
       - /etc/spacetimedb/id_ecdsa.pub
 
   # Per-module wasm build. `bin/st build [<module>]` invokes this with
-  # `--workdir /workspace/server/modules/<module>` so `cargo build` targets the
-  # right crate. Only the shared workspace is mounted — modules path-ref
-  # ../../../shared/{codec,state} and nothing else from the repo.
+  # `--workdir /workspace/server/modules/<module>` so cargo targets the right
+  # crate. Output lands in `modules/<module>/target/` on the host.
   build:
     image: clockworklabs/spacetime:v2.3.0
     volumes:
-      - ./server:/workspace/server
-      - ../../shared:/workspace/shared
+      - ./modules:/workspace/server/modules
+      - cargo-cache:/usr/local/cargo
     working_dir: /workspace/server
     command:
       - build
 
-  # Per-module Rust bindings codegen for the game server. `rd build spacetime`
-  # invokes `generate-bindings.sh <module>`, which fans out the spacetime
-  # generate call per module path. Output lands under `server/src/bindings/
-  # <module>/`, so this is the one service that bind-mounts the game server. The
-  # spacetime modules workspace already owns /workspace/server inside the
-  # container, so the game server (host `../edge`) mounts at /workspace/game-
-  # server to avoid the clash.
-  # (TS bindings were dropped — the webgl client carries its own minimal row
-  # types; only the legacy client consumed generated TS.)
+  # Per-module binding codegen for the native server. `bin/st bindings <module>`
+  # runs scripts/generate-bindings.sh, which emits Rust bindings into
+  # `server/edge/src/bindings/<module>/`. The edge mounts at /workspace/game-server
+  # (not /workspace/server) because the module workspace already owns that path.
   bindings:
     image: clockworklabs/spacetime:v2.3.0
     volumes:
-      - ./server:/workspace/server
-      - ../../shared:/workspace/shared
+      - ./modules:/workspace/server/modules
+      - ./scripts:/workspace/scripts
       - ../edge:/workspace/game-server
+      - cargo-cache:/usr/local/cargo
     working_dir: /workspace/server
     entrypoint: ["/bin/bash"]
     command:
-      - generate-bindings.sh
+      - /workspace/scripts/generate-bindings.sh

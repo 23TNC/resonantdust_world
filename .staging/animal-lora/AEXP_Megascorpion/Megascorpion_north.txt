@@ -1,1 +1,0 @@
-rd_style, rd_animal, rd_multiped, rd_north, back view, facing away, seen from behind, megascorpion, single creature, full body

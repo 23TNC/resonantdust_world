@@ -1,0 +1,24 @@
+[package]
+name = "resonantdust_template"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# Pinned. The crate version and the daemon image tag in ../../compose.yml move
+# together — a mismatch is an ABI mismatch, and the failure surfaces at publish
+# time as an opaque module-validation error.
+spacetimedb = { version = "=2.1.0" }
+
+# A module that needs shared wire layouts adds a path-dep here, e.g.
+#   resonantdust-codec = { path = "../../../../shared/codec" }
+# and ../../compose.yml grows a matching `../../../shared:/workspace/shared`
+# mount on every service — the path is container-relative, so a dep the container
+# can't see breaks the build, not just the codegen.
+
+[profile.release]
+# wasm wants small over fast; the reducer bodies are integer work either way.
+opt-level = "s"
+lto = true

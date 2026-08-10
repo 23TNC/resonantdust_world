@@ -1,1 +1,0 @@
-rd_style, rd_animal, rd_quadruped, rd_north, back view, facing away, seen from behind, canine, corgi, single creature, full body

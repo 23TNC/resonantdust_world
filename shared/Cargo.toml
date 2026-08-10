@@ -1,8 +1,0 @@
-[workspace]
-resolver = "2"
-# One folder per shared piece, carved by responsibility. The server-side
-# consumers (gateway, spacetime modules) link only the rlibs they need; the
-# client gets the whole surface as one wasm bundle via the `wasm` crate, which
-# re-exports the pieces. Add each new crate's folder here as it appears
-# (codec / state / protocol / rules …).
-members = ["core", "codec", "content", "wasm", "geometry"]

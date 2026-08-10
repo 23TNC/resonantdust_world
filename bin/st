@@ -1,0 +1,184 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# st — the SpacetimeDB driver. One entrypoint for the local stack defined by
+# server/spacetime/compose.yml.
+#
+#   st up | down | ps                 daemon lifecycle (up creates the network)
+#   st logs [-f]                      daemon logs
+#   st build [<module>...]            per-module wasm (default: every module)
+#   st publish <module> [--keep]      build + publish (default WIPES the db)
+#   st bindings <module>              codegen into server/edge/src/bindings/
+#   st sql <module> "<query>"         run SQL against the module's db
+#   st call <module> <reducer> [args] invoke a reducer
+#   st cli <args>...                  raw `spacetime` in the running daemon
+#   st modules                        list module directories
+#
+# ST_ENV (default: dev) selects the database family — a module publishes to
+# `resonantdust-<env>-<module>-0`. Underscores in a module name are hyphenated
+# for the db name: the daemon rejects underscores in database names.
+
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ST_DIR="$REPO/server/spacetime"
+MODULES_DIR="$ST_DIR/modules"
+ST_ENV="${ST_ENV:-dev}"
+NETWORK="resonantdust"
+
+log()  { printf '\033[36m[st]\033[0m %s\n' "$*" >&2; }
+warn() { printf '\033[33m[st]\033[0m %s\n' "$*" >&2; }
+die()  { printf '\033[31m[st]\033[0m %s\n' "$*" >&2; exit 1; }
+
+# Compose runner. --project-directory keeps the relative volume paths in
+# compose.yml resolving against server/spacetime/ regardless of the caller's cwd.
+dc()  { docker compose -f "$ST_DIR/compose.yml" --project-directory "$ST_DIR" "$@"; }
+# The spacetime CLI *inside* the running daemon. This is the one identity-stable
+# path: the container's server-issued token lives in config/cli.toml, so
+# ownership of a published database never drifts between deploys.
+stc() { dc exec -T start spacetime "$@"; }
+
+list_modules() {
+  [[ -d "$MODULES_DIR" ]] || return 0
+  find "$MODULES_DIR" -mindepth 2 -maxdepth 2 -name Cargo.toml -printf '%h\n' \
+    | xargs -r -n1 basename | sort
+}
+
+require_module() {
+  local m="${1:-}"
+  [[ -n "$m" ]] || die "need a module name (have: $(list_modules | tr '\n' ' '))"
+  [[ -f "$MODULES_DIR/$m/Cargo.toml" ]] \
+    || die "no module '$m' under server/spacetime/modules/ (have: $(list_modules | tr '\n' ' '))"
+}
+
+# resonantdust-<env>-<module>-<idx>, underscores hyphenated.
+db_for() { printf 'resonantdust-%s-%s-%s\n' "$ST_ENV" "${1//_/-}" "${2:-0}"; }
+
+ensure_network() {
+  docker network inspect "$NETWORK" >/dev/null 2>&1 && return 0
+  log "creating docker network: $NETWORK"
+  docker network create "$NETWORK" >/dev/null
+}
+
+ensure_keys() {
+  [[ -f "$ST_DIR/keys/id_ecdsa" ]] || die "missing JWT key at server/spacetime/keys/id_ecdsa — see server/spacetime/README.md"
+}
+
+# Create the bind-mount targets BEFORE compose does. Docker auto-creates a
+# missing bind-mount path as root:root, but the daemon image runs as uid 1000
+# (`spacetime`) — so an auto-created data/ makes it die on startup with
+# "Permission denied ... /data/.tmpXXXX". Pre-creating them as the host user
+# (also uid 1000 here) is what keeps that from happening.
+ensure_dirs() {
+  mkdir -p "$ST_DIR/data" "$ST_DIR/config"
+  local owner; owner="$(stat -c '%u' "$ST_DIR/data")"
+  [[ "$owner" == "$(id -u)" ]] || warn "server/spacetime/data is owned by uid $owner, not $(id -u) — the daemon (uid 1000) may not be able to write it"
+}
+
+st_up() {
+  ensure_keys
+  ensure_dirs
+  ensure_network
+  log "up: spacetime daemon (http://127.0.0.1:3000)"
+  dc up -d start >/dev/null
+  dc ps
+}
+
+st_down() { log "down: spacetime daemon"; dc stop start >/dev/null 2>&1 || true; }
+
+# Build one module's wasm via the `build` one-shot. --workdir points cargo at the
+# crate; output lands in modules/<m>/target/ on the host.
+st_build() {
+  local mods=("$@")
+  if [[ ${#mods[@]} -eq 0 ]]; then
+    mapfile -t mods < <(list_modules)
+    [[ ${#mods[@]} -gt 0 ]] || die "no modules found under server/spacetime/modules/"
+  fi
+  for m in "${mods[@]}"; do
+    require_module "$m"
+    log "build module: $m"
+    dc run --rm --workdir "/workspace/server/modules/$m" build
+  done
+}
+
+# Path to a module's built wasm. `spacetime build` emits <crate>.opt.wasm with the
+# crate name underscored, which is why we read it out of Cargo.toml rather than
+# guessing from the directory name.
+wasm_path() {
+  local m="$1" crate
+  crate="$(grep -m1 '^name' "$MODULES_DIR/$m/Cargo.toml" | sed -E 's/.*"([^"]+)".*/\1/')"
+  printf '%s/%s/target/wasm32-unknown-unknown/release/%s.opt.wasm\n' "$MODULES_DIR" "$m" "${crate//-/_}"
+}
+
+# Build locally, copy the wasm into the daemon, publish from in there. Keeps the
+# toolchain off the daemon and the publishing identity stable.
+#
+# A publish WIPES the database by default: this is a pre-1.0 world with no
+# migrations, and a schema change against retained data fails confusingly.
+# --keep retains data — use it only when the schema is genuinely unchanged.
+st_publish() {
+  local m="" keep=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --keep) keep=1; shift ;;
+      -*) die "publish: unknown flag '$1'" ;;
+      *) [[ -z "$m" ]] || die "publish takes one module"; m="$1"; shift ;;
+    esac
+  done
+  require_module "$m"
+  ensure_keys
+  st_build "$m"
+  local wasm; wasm="$(wasm_path "$m")"
+  [[ -f "$wasm" ]] || die "no wasm produced at $wasm"
+  local db incontainer; db="$(db_for "$m")"; incontainer="/tmp/$(basename "$wasm")"
+  log "publish $m → $db $([[ $keep == 1 ]] && echo '(keeping data)' || echo '(WIPING data)')"
+  dc cp "$wasm" "start:$incontainer"
+  local delete=()
+  [[ $keep == 0 ]] && delete=(--delete-data=always)
+  stc publish --yes --server local --bin-path "$incontainer" "${delete[@]}" "$db"
+}
+
+st_bindings() {
+  local m="${1:-}"; require_module "$m"
+  log "bindings: $m → server/edge/src/bindings/$m/"
+  dc run --rm bindings "/workspace/scripts/generate-bindings.sh" "$m"
+}
+
+usage() {
+  cat >&2 <<EOF
+usage: st <command> [args...]
+
+  up | down | ps                 daemon lifecycle (up ensures the '$NETWORK' network)
+  logs [-f]                      daemon logs
+  build [<module>...]            per-module wasm (default: all)
+  publish <module> [--keep]      build + publish; WIPES the db unless --keep
+  bindings <module>              codegen into server/edge/src/bindings/
+  sql <module> "<query>"         SQL against the module's database
+  call <module> <reducer> [args] invoke a reducer
+  cli <args>...                  raw \`spacetime\` inside the daemon
+  modules                        list module directories
+
+env: ST_ENV=$ST_ENV   →  databases named resonantdust-$ST_ENV-<module>-0
+
+first run:
+  st up                 # network + daemon
+  st publish template   # build + publish the template module
+  st sql template "SELECT * FROM clock"
+EOF
+}
+
+cmd="${1:-}"
+[[ -n "$cmd" ]] && shift || true
+case "$cmd" in
+  up)       st_up ;;
+  down)     st_down ;;
+  ps)       dc ps ;;
+  logs)     dc logs "$@" start ;;
+  build)    st_build "$@" ;;
+  publish)  st_publish "$@" ;;
+  bindings) st_bindings "$@" ;;
+  sql)      m="${1:-}"; require_module "$m"; shift; stc sql "$(db_for "$m")" "$@" ;;
+  call)     m="${1:-}"; require_module "$m"; shift; stc call "$(db_for "$m")" "$@" ;;
+  cli)      stc "$@" ;;
+  modules)  list_modules ;;
+  -h|--help|help|"") usage ;;
+  *) warn "unknown command '$cmd'"; usage; exit 1 ;;
+esac

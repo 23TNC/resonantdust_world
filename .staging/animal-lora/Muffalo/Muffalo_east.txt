@@ -1,1 +1,0 @@
-rd_style, rd_animal, rd_quadruped, rd_east, side profile, side view, facing right, cattle, muffalo, single creature, full body

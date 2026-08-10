@@ -1,1 +1,0 @@
-rd_style, rd_animal, rd_quadruped, rd_east, side profile, side view, facing right, rodent, guinea pig 1, single creature, full body

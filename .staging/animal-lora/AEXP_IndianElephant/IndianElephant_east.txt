@@ -1,1 +1,0 @@
-rd_style, rd_animal, rd_quadruped, rd_east, side profile, side view, facing right, pachyderm, indian elephant, single creature, full body
