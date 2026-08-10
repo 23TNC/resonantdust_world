@@ -212,7 +212,7 @@ including one whose criterion I had rewritten after ticking it.
       `grep -c pawn_point client/core/src/bin/headless.rs` is nonzero and a run shows it moving.
 - [x] Read a live pawn's thirst back through `Client::pawn_needs` and transcribe it. Acceptance: a
       nonzero value in `completed.md` — no code path produces this observation today.
-- [ ] Point webgl's `pawnNeeds` reader at the wasm accessor. Acceptance:
+- [x] Point webgl's `pawnNeeds` reader at the wasm accessor. Acceptance:
       `grep -c 'this.needRows' MoverLayer.ts` is 0 and a live thirst reads nonzero.
 - [ ] Add `queueEntries` and `busy` to the wasm surface, with a webgl caller each. Acceptance:
       both exist and `grep -rn` finds a caller in `client/webgl/src`.
@@ -226,13 +226,13 @@ including one whose criterion I had rewritten after ticking it.
 - [ ] Grow the wasm read surface ONCE — `WorldClient` (`shared/wasm/src/lib.rs:1226`) is write-only
       today. Add `nowTic`, `pawnPayload`, `pawnNeeds`, `queueEntries`, `busy` beside `pawnPoint`.
       Acceptance: `npm run typecheck` + `npm run build` green.
-- [ ] Return needs as stride-2 `Float64Array`, NEVER `Uint32Array` — the documented truncation at
+- [x] Return needs as stride-2 `Float64Array`, NEVER `Uint32Array` — the documented truncation at
       `MoverLayer.ts:805-812` cut `0xa4fb80010020` to `0x80010020` and every need read 0.
       Acceptance: a live pawn's thirst reads nonzero through the accessor.
 - [ ] Collapse webgl's eight hand-rolled u16 now-tic conversions onto `nowTic()` with ONE null
       policy — bail. Acceptance: `grep -rn "0x10000) + 0x10000" client/webgl/src` is 0, killing
       `now = 0` at `WorldScene.ts:298,:359` and `MoverLayer.ts:858`.
-- [ ] Point `MoverLayer`'s `payloads`/`needRows` (`:382`, `:385`) and every `WorldScene` reader
+- [x] Point `MoverLayer`'s `payloads`/`needRows` (`:382`, `:385`) and every `WorldScene` reader
       (`:158-159`, `:284`, `:296`, `:879-894`, `:933-934`) at the accessors. Acceptance:
       `grep -c "this.payloads\|this.needRows" MoverLayer.ts` is 0.
 - [ ] Reduce `IntentQueues.ts` to change notification over core's queue track. Acceptance: the file

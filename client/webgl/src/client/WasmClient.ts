@@ -668,6 +668,16 @@ export class WasmClient {
     return p >= 1 ? p : null;
   }
 
+  /** This entity's need rows from core, stride-2 `[row, setTic, …]`. */
+  pawnNeeds(entity: number): Float64Array {
+    return Float64Array.from(this.world?.pawnNeeds(entity) ?? []);
+  }
+
+  /** This entity's raw payload opcode stream from core. */
+  pawnPayload(entity: number): Uint32Array {
+    return Uint32Array.from(this.world?.pawnPayload(entity) ?? []);
+  }
+
   /** Core's tic. `null` until the estimate anchors — BAIL, never substitute 0. */
   coreNowTic(): number | null {
     const t = this.world?.nowTic();

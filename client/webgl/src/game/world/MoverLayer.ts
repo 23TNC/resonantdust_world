@@ -327,12 +327,9 @@ export class MoverLayer {
   /** Payload part slots per entity (`slot → def`), joined from `PawnParts` events — either
    *  side of the join may arrive first (human-pawns P3). */
   private readonly pawnDefs = new Map<number, Map<number, number>>();
-  /** The latest RAW payload stream per entity (needs-moodlets P5) — same lifecycle as
-   *  {@link pawnDefs}; see {@link pawnPayload}. */
-  private readonly payloads = new Map<number, Uint32Array>();
-  /** The `needs` sub-table rows per entity (stat-model F2): `need_key → [packed, setTic]` —
-   *  a sip lands as exactly one update here; see {@link pawnNeeds}. */
-  private readonly needRows = new Map<number, Map<number, [number, number]>>();
+  // The payload and need rows are CORE's (shared-simulation P2d/P4). This layer used to keep
+  // a parallel copy of the same fan — the fifth of five in the tree — and now reads them back
+  // through the client, so the browser and a headless brain answer from one store.
 
   /** The world-view pathability probe (pathfinding I1), injected by the scene (the layer
    *  never reaches for the bridge). `null` = pathless speculation (the greedy line). */
@@ -361,16 +358,9 @@ export class MoverLayer {
     this.refreshTables();
     this.unsubs.push(client.onStateObject((obj) => this.onStateObject(obj)));
     this.unsubs.push(client.onPawnParts((p) => this.onPawnParts(p)));
-    this.unsubs.push(client.onPawnNeed((n) => {
-      let rows = this.needRows.get(n.entityReference);
-      if (!rows) this.needRows.set(n.entityReference, (rows = new Map()));
-      // The row is the ONE u64 (trait-rows-u32 F1) as a 48-bit-safe number; the key is
-      // its FULL reference — split by MODULO, never bitwise (THE 48-BIT LAW: `&`/`>>>`
-      // truncate at 32 bits and would silently mangle anything wider).
-      // THE 48-bit law has one spelling; core keys these through `codec::object::row_reference`
-      // and this is the last place that re-spelled it (P2d).
-      rows.set(rowReference(n.need), [n.need, n.setTic]);
-    }));
+    // `onPawnNeed` no longer folds here: core keys these rows by
+    // `codec::object::row_reference` (P2d) and this layer reads them back. The old fold
+    // re-spelled the 48-bit law as `need % 0x100000000` — one law, one spelling.
     this.unsubs.push(client.onMoveIntent((intent) => this.onMoveIntent(intent)));
     // A zone leaving the subscription sends no per-entity delete, so drop its movers.
     this.unsubs.push(client.onZoneClosed((macroPosition) => this.onZoneClosed(macroPosition)));
@@ -390,8 +380,6 @@ export class MoverLayer {
     }
     this.movers.clear();
     this.pawnDefs.clear();
-    this.payloads.clear();
-    this.needRows.clear();
   }
 
   /** Wall-clock of the previous {@link tick} — the chase integrates real dt. */
@@ -402,7 +390,7 @@ export class MoverLayer {
    *  record. `hot` is FORCED — a mover's light anchor moves every frame, whatever the
    *  corpus says. `fall_off` (slot 5) is authored-not-yet-consumed (I10). */
   private moverLights(kind: number, entity: number): PrimitiveLight[] {
-    const payload = this.payloads.get(entity) ?? new Uint32Array(0);
+    const payload = this.client.pawnPayload(entity);
     const flat = this.content.objectLights(kind, payload);
     const out: PrimitiveLight[] = [];
     for (let i = 0; i + 8 < flat.length; i += 9) {
@@ -737,7 +725,6 @@ export class MoverLayer {
     const map = new Map<number, number>();
     for (const e of p.parts) map.set(e.slot, e.def);
     this.pawnDefs.set(p.entityReference, map);
-    this.payloads.set(p.entityReference, p.payload);
     const m = this.movers.get(p.entityReference);
     if (m) this.applyVisual(m, p.entityReference, m.kind, m.def, m.rx, m.ry, m.facing, m.macroPosition);
   }
@@ -745,7 +732,8 @@ export class MoverLayer {
   /** The latest RAW payload opcode stream fanned for `entity`, or null — the details
    *  panel's eval input (needs-moodlets P5). */
   pawnPayload(entity: number): Uint32Array | null {
-    return this.payloads.get(entity) ?? null;
+    const p = this.client.pawnPayload(entity);
+    return p.length ? p : null;
   }
 
   /** The entity's `needs` rows, flattened stride-2 `[packed, setTic, …]` (stat-model F2) —
@@ -760,15 +748,9 @@ export class MoverLayer {
    *  the live-edit needs bars were all empty. Found 2026-08-09 by probing the raw rows when
    *  those bars read zero on a healthy pawn (live-edit I9). */
   pawnNeeds(entity: number): Float64Array {
-    const rows = this.needRows.get(entity);
-    if (!rows) return new Float64Array(0);
-    const out = new Float64Array(rows.size * 2);
-    let i = 0;
-    for (const [, [packed, setTic]] of rows) {
-      out[i++] = packed;
-      out[i++] = setTic;
-    }
-    return out;
+    // Stride-2 `Float64Array` still, for the reason recorded above — a need row is a u64 and the
+    // u32 container truncated it, so every need read zero. The ROWS now come from core.
+    return this.client.pawnNeeds(entity);
   }
 
   // ── internals ───────────────────────────────────────────────────────
@@ -1248,8 +1230,6 @@ export class MoverLayer {
       this.movers.delete(key);
     }
     this.pawnDefs.delete(key);
-    this.payloads.delete(key);
-    this.needRows.delete(key);
     this.pendingIntents.delete(key);
   }
 
@@ -1260,8 +1240,6 @@ export class MoverLayer {
         for (const id of m.lightPrims) this.viewport.warmRemovePrim(id);
         this.movers.delete(key);
         this.pawnDefs.delete(key);
-        this.payloads.delete(key);
-        this.needRows.delete(key);
         this.pendingIntents.delete(key);
       }
     }

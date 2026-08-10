@@ -3,6 +3,26 @@
 _The verification log: what landed and **how it was checked**. Append-only; authoritative for what
 is done. Items live in [`todo.md`](todo.md) with their boxes ticked._
 
+## 2026-08-10 — webgl's parallel row stores are deleted
+
+`MoverLayer`'s `payloads` and `needRows` maps are gone — `grep -c` is 0 — along with the
+`onPawnNeed` fold that filled one of them and re-spelled the 48-bit law as `need % 0x100000000`.
+`rowReference` is exported from the codec through wasm so there is one spelling; `pawnNeeds` and
+`pawnPayload` read core.
+
+**Verified live in the browser**, which is the criterion the audit said had never been run: 5
+movers, needs **3 pairs each with a nonzero value (65535)** read back through core, payloads 15
+words (bunny) / 18 (wolf), pace **24 / 12** derived in Rust, positions subtile
+(`126.717, 76.605`), `nowTic` 29824.
+
+That is the fifth and last copy of the row store. The count over this stream: `MoverLayer.ts`,
+`wolves.rs`, `bunnies.rs`, `debug.rs`, and — briefly, and by me — `Mover` itself.
+
+**A method note, because I wasted two edits on it:** multi-line regex deletion over TypeScript
+over-cut twice, silently eating a neighbouring interface both times. Exact-string anchors only for
+these files; the regex is fine for Rust where the shapes are more regular, and even there it
+clobbered a struct field once.
+
 ## 2026-08-10 — P3 item 1: npc's last duplicate pawn store is gone
 
 `Bot::pawns` (`entity -> (tile_x, tile_y)`) deleted. `pawn_at` floors core's answer and a new
