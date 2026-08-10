@@ -193,9 +193,7 @@ impl Brain for Debug {
                     self.outstanding = self.outstanding.saturating_sub(1);
                 }
             }
-            Event::PawnParts { entity_reference, payload, .. } => {
-                // P2d: core folded this at `emit`; the brain reads it back.
-            }
+
             _ => {}
         }
     }

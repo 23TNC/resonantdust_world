@@ -2,6 +2,27 @@
 
 _Problems hit, candidate solutions, which we chose and why. Chronological append._
 
+## I12 — the I9 fix left a live deadlock in the wolf path, and the compiler said so
+**2026-08-10. Fixed.**
+
+I9's fix changed `nearest_*` to hand the view INTO the predicate so a caller could not re-enter
+the world lock. The wolf's food scan took the new `view` parameter and **ignored it**, still
+calling `self.cell_open(bot, cell)` — which calls `bot.tile_kind_at`, which locks. Inside a
+predicate that is already holding that lock. A latent hang, shipped, in the path a hungry wolf
+takes.
+
+**It was reported the whole time**: `warning: unused variable: view` at `wolves.rs:428`. I read
+past it because the crate had a dozen pre-existing warnings and I had stopped looking at them.
+
+`cell_open` now takes `&WorldView`, so the mistake cannot be made — the type says where the answer
+comes from. Its other caller, `pick_pathable_dest`, takes the guard once for its whole retry loop
+instead of once per probe.
+
+**The lesson is not "be careful with locks":** it is that a signature change without a body change
+compiles, runs, and only hangs when a wolf gets hungry near food. The unused-parameter warning is
+the tell, and a crate with warnings I have learned to skim is a crate where that tell is free to
+hide.
+
 ## I11 — the unstreamed-cell rule, pinned; and the divergence it was written against
 **2026-08-10. Resolved for the clients; the worker never had the question.**
 

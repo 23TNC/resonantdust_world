@@ -72,8 +72,11 @@ pub struct Wolves {
     attack_ref: u32,
     /// The hit (the PREY binding's signed magnitude — the corpus is the authority).
     attack_magnitude: f64,
-    /// Live prey positions from the zone fan — the hunt's scan (removed = dropped).
-    prey: HashMap<u32, (i32, i32)>,
+    /// The prey the hunt is TRACKING — identity only. Their positions come from core's mover
+    /// track (shared-simulation P3); this used to hold `entity -> (tile_x, tile_y)` copied off
+    /// the zone fan, which made it the last duplicate pawn store in the tree AND tile-granular,
+    /// so a wolf chased a bunny's last whole tile while the bunny was mid-chord elsewhere.
+    prey: std::collections::HashSet<u32>,
     /// The bunny a hunt order is chasing, if hunger drove one.
     hunt_target: Option<u32>,
     /// Consecutive re-fires at the SAME prey (attack I3): a LATE frame can re-insert a
@@ -162,7 +165,7 @@ impl Wolves {
             prey_def: 0,
             attack_ref: 0,
             attack_magnitude: 0.0,
-            prey: HashMap::new(),
+            prey: std::collections::HashSet::new(),
             hunt_target: None,
             hunt_strikes: 0,
             hunt_until: std::time::Instant::now(),
@@ -209,9 +212,12 @@ impl Wolves {
     /// Unknown tiles read OPEN (the shared degrade law); eight rolls then give up —
     /// the worker's gate stays the authority.
     fn pick_pathable_dest(&mut self, bot: &Bot) -> (i32, i32) {
+        // Take the guard ONCE for the whole retry loop rather than per probe — and never while a
+        // predicate of ours is running (I9).
+        let Ok(w) = bot.client.world().lock() else { return self.pick_dest() };
         for _ in 0..8 {
             let d = self.pick_dest();
-            if self.cell_open(bot, d) {
+            if self.cell_open(&w.world, d) {
                 return d;
             }
         }
@@ -221,8 +227,14 @@ impl Wolves {
     /// A world cell the worker would let us WALK ONTO — the wander's tile-pathability
     /// rule (pathfinding I7), shared by the food scan so a drowned pawn's lake meat is
     /// never picked (the worker would refuse the trip forever). Unknown tiles read OPEN.
-    fn cell_open(&self, bot: &Bot, cell: (i32, i32)) -> bool {
-        bot.tile_kind_at(cell)
+    /// Is this cell walkable, asked THROUGH a view the caller already holds.
+    ///
+    /// It took `&Bot` and called `bot.tile_kind_at` — which locks the world. Called from inside a
+    /// `nearest_thing` predicate, which is already holding that lock, that is the I9 deadlock,
+    /// and it survived the I9 fix because only the closure's signature changed, not its body. The
+    /// unused-`view` warning was the tell. Taking the view makes the mistake impossible to make.
+    fn cell_open(&self, view: &client::world_view::WorldView, cell: (i32, i32)) -> bool {
+        view.tile_kind_at(cell)
             .is_none_or(|k| self.bundle.as_ref().is_none_or(|b| b.tile_pathable(k)))
     }
 
@@ -423,7 +435,7 @@ impl Wolves {
         // skipping food on impathable ground (lake meat: refused-forever, see cell_open).
         // The view comes IN (I9) — see the bunny scan.
         let target = bot.nearest_thing(self.at, |view, cell, kind| {
-            self.cell_open(bot, cell) && self.usable_eat_kind(kind, now)
+            self.cell_open(view, cell) && self.usable_eat_kind(kind, now)
         });
         match target {
             Some(t) => {
@@ -457,9 +469,12 @@ impl Wolves {
         if self.hunt_target.is_some() && std::time::Instant::now() < self.hunt_until {
             return; // the chase is in flight
         }
-        let Some((&victim, &vat)) = self
+        // Nearest prey by CORE's answer, not a remembered tile — the wolf chases where the
+        // bunny IS, including mid-chord, instead of where it last anchored (P3).
+        let Some((victim, vat)) = self
             .prey
             .iter()
+            .filter_map(|&e| bot.pawn_at(e).map(|p| (e, p)))
             .min_by_key(|(_, p)| (p.0 - self.at.0).abs().max((p.1 - self.at.1).abs()))
         else {
             tracing::debug!("hungry but no known prey in the streamed zones");
@@ -844,7 +859,7 @@ impl Brain for Wolves {
                     self.hunt_target = None; // the kill landed — mind_eat takes the meat
                 }
             } else {
-                self.prey.insert(*entity_reference, (*tile_x, *tile_y));
+                self.prey.insert(*entity_reference);
             }
         }
         if *removed {

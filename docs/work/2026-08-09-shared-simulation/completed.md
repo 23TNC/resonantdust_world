@@ -3,6 +3,25 @@
 _The verification log: what landed and **how it was checked**. Append-only; authoritative for what
 is done. Items live in [`todo.md`](todo.md) with their boxes ticked._
 
+## 2026-08-10 — P3 item 1: npc's last duplicate pawn store is gone
+
+`Bot::pawns` (`entity -> (tile_x, tile_y)`) deleted. `pawn_at` floors core's answer and a new
+`pawn_point` returns the fractional one — so a brain sees where a pawn IS mid-chord, not where it
+last anchored up to a full stride ago.
+
+`wolves.rs`'s `prey` map went the same way: it is a `HashSet<u32>` of identities now, and the hunt
+picks the nearest by asking core, so a wolf chases the bunny's real position instead of a
+remembered tile. `grep -rn 'HashMap<u32, (i32, i32)>' client/npc/src` is **0**.
+
+**Found doing it — a live deadlock I had shipped** ([I12](issues.md#i12)): the I9 fix changed
+`nearest_*` to pass the view into the predicate, and the wolf's food scan took the parameter and
+ignored it, still calling `bot.tile_kind_at` inside the guard. `cell_open` takes the view now, so
+the mistake cannot be made. The compiler had been printing `unused variable: view` the entire time
+and I skimmed past it in a crate that already had a dozen warnings.
+
+Live after the change: **33 move intents in 45 s, 0 errors**, log still advancing — a deadlock here
+shows as the log simply stopping, which is how the first one was caught.
+
 ## 2026-08-10 — the unstreamed-cell law pinned, the rate seeded, the recenter carved out
 
 **P2b item 3.** `pathable_reads_an_unstreamed_cell_as_open` pins the law through the FUNCTION, not

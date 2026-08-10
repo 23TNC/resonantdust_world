@@ -269,10 +269,6 @@ pub struct Bot {
     /// The world server this session logged into (from [`Event::LoggedIn`]) — the base URL its
     /// `/content` corpus is fetched from (the def-id authority, first-pawns F5).
     pub server_url: Option<String>,
-    /// Known PAWN positions (npc-host F11): `entity → world tile`, from `StateObject`
-    /// events (removed = gone). What a hosted brain adopts from when the OWNERSHIP frame
-    /// loses the race against a resting pawn's one-shot snapshot replay.
-    pawns: std::collections::HashMap<u32, (i32, i32)>,
 }
 
 impl Bot {
@@ -288,7 +284,6 @@ impl Bot {
             events,
             paused: false,
             server_url: None,
-            pawns: std::collections::HashMap::new(),
         };
         if bot.client.login(name).is_err() {
             tracing::error!("client engine failed to start");
@@ -361,9 +356,9 @@ impl Bot {
         match event {
             Event::StateObject { entity_reference, tile_x, tile_y, removed, .. } => {
                 if *removed {
-                    self.pawns.remove(entity_reference);
+
                 } else {
-                    self.pawns.insert(*entity_reference, (*tile_x, *tile_y));
+
                 }
             }
             Event::Paused { paused } => {
@@ -415,9 +410,21 @@ impl Bot {
         self.client.world().lock().ok()?.world.nearest_thing(from, pred)
     }
 
-    /// A known pawn's world tile, or `None` if it never streamed (or was removed).
+    /// A known pawn's world TILE, from core's mover track (shared-simulation P3).
+    ///
+    /// The Bot used to keep its own `entity -> (tile_x, tile_y)` map, which was the last place a
+    /// headless brain's idea of "where is that pawn" came from somewhere other than core — and it
+    /// was tile-granular, so between anchors a brain saw a pawn frozen on a whole tile while it
+    /// was really mid-chord up to a full stride away. Core answers the SUBTILE point; this floors
+    /// it for callers that still want a tile.
     pub fn pawn_at(&self, entity: u32) -> Option<(i32, i32)> {
-        self.pawns.get(&entity).copied()
+        let (x, y) = self.pawn_point(entity)?;
+        Some((x.floor() as i32, y.floor() as i32))
+    }
+
+    /// A known pawn's fractional world POINT — where it actually is, between anchors included.
+    pub fn pawn_point(&self, entity: u32) -> Option<(f64, f64)> {
+        self.client.pawn_point(entity)
     }
 
     /// The current sim tic, extrapolated from the latest anchor at its LEARNED rate — `None`

@@ -515,12 +515,8 @@ impl Brain for Bunnies {
                     }
                 }
             }
-            Event::PawnParts { entity_reference, payload, .. } => {
-                // P2d: core folded this already; the brain reads it.
-            }
-            Event::PawnNeed { entity_reference, need, set_tic, .. } => {
-                let key = resonantdust_codec::object::row_reference(*need);
-            }
+            // P2d: `PawnParts` and `PawnNeed` are core's to fold; the brain reads them back
+            // through the handle rather than keeping a copy, so there is nothing to do here.
             _ => {}
         }
     }

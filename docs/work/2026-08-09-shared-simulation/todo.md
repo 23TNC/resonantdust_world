@@ -118,7 +118,7 @@ including one whose criterion I had rewritten after ticking it.
 
 ## P3 — the headless clients see motion again
 
-- [ ] Replace npc's tile-only `pawns` map ([`lib.rs:266`](../../../client/npc/src/lib.rs)) with
+- [x] Replace npc's tile-only `pawns` map ([`lib.rs:266`](../../../client/npc/src/lib.rs)) with
       reads of core's track. Acceptance: no `HashMap<u32, (i32, i32)>` pawn store remains.
 - [ ] Re-check the wolf chase against live subtile positions. Acceptance: a wolf closes on a
       moving bunny without overshoot across a 10-minute soak.
