@@ -22,9 +22,9 @@ so P2 must have landed. Do not reorder.
 
 ## P1 — the shared module; the worker becomes a caller
 
-- [ ] Create `shared/content/src/move_eval.rs`, exported from `lib.rs`, holding `REANCHOR_TICS`
+- [x] Create `shared/content/src/move_eval.rs`, exported from `lib.rs`, holding `REANCHOR_TICS`
       and `CHORD_CAP_TILES`. Acceptance: `bin/sim check worker` green.
-- [ ] Move `hop_stride_tiles` into `move_eval` verbatim. Acceptance: unit test covers the clamp at
+- [x] Move `hop_stride_tiles` into `move_eval` verbatim. Acceptance: unit test covers the clamp at
       both ends — pace 1 → 8 tiles, pace 240 → 1 tile.
 - [ ] Add `move_eval::next_hop(from, dest, pace, pathable) -> (landing, tics)` carrying the chord
       step, the `clear_point_fraction` clamp and the recenter. Acceptance: unit test reproduces 20

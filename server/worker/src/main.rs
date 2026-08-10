@@ -380,17 +380,12 @@ struct Payload {
     base_tic: u16,
 }
 
-/// The re-anchor cadence in tics (chord-movement F4/F8): hops fire — and PROMOTE — at
-/// most this far apart, so observer drift without a start anchor stays bounded.
-const REANCHOR_TICS: f64 = 32.0;
-/// The chord-segment cap in tiles (chord-movement I7): bounds a single hop's window.
-const CHORD_CAP_TILES: f64 = 8.0;
-
-/// One hop's stride in tiles (chord-movement F8): the re-anchor cadence translated to
-/// distance at this pawn's pace, clamped to [1, CHORD_CAP_TILES].
-fn hop_stride_tiles(tics_per_tile: f64) -> f64 {
-    (REANCHOR_TICS / tics_per_tile.max(1.0)).clamp(1.0, CHORD_CAP_TILES)
-}
+// The re-anchor cadence, the chord cap and the hop stride live in
+// `resonantdust_content::move_eval` (shared-simulation P1) — THE walk, shared with every
+// client so the worker's hops and an observer's belief cannot drift. The worker is a
+// CALLER here, not the owner; it was the owner, privately, and that is the defect the
+// shared-simulation stream exists to remove.
+use resonantdust_content::move_eval::hop_stride_tiles;
 
 /// What movement composition needs beyond scratch (chord-movement F2/F3): the pathability
 /// probe, the pawn's ACTIVE walk `(obj, stamped_serial) → dest` — read from the OLD

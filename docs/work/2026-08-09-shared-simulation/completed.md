@@ -3,6 +3,33 @@
 _The verification log: what landed and **how it was checked**. Append-only; authoritative for what
 is done. Items live in [`todo.md`](todo.md) with their boxes ticked._
 
+## 2026-08-10 — P1 items 1–2: the shared module exists, and the worker is a caller
+
+**Landed.** [`shared/content/src/move_eval.rs`](../../../shared/content/src/move_eval.rs) — THE
+walk, beside `path_eval`/`stat_eval`/`needs_eval` per [F1](forks.md#f1). Holds `REANCHOR_TICS`,
+`CHORD_CAP_TILES` and `hop_stride_tiles`, exported from `lib.rs`. `server/worker/src/main.rs`'s
+private constants and function are **deleted**; it now `use`s the shared one, so the cadence and
+the stride have exactly one definition in the tree. The only surviving mention of `REANCHOR_TICS`
+under `server/` is a prose comment.
+
+**Verified.** `cargo test -p resonantdust-content move_eval::` — 3 passed, 0 failed:
+
+- `stride_clamps_at_both_ends` — pace 240 → 1 tile, pace 1 → 8 tiles (the item's criterion
+  literally), plus the zero-pace divide guard and the exact cap boundary at pace 4.
+- `stride_matches_the_authored_paces` — 24/12/6 (`walks` levels 1–3) pin 4/3, 8/3 and 16/3 tiles,
+  so a `walks` retune cannot change the fan rate silently.
+- `the_cadence_bounds_every_hop_except_a_floored_one` — the honest statement of the promise, and
+  it caught my own first draft: I asserted the cadence bounds *every* hop, which is false for a
+  pawn slower than one tile per cadence, where the one-tile floor wins and the hop necessarily
+  overruns. **That case matters to this stream directly** — a divergence probe that assumes 32
+  tics between anchors will mis-read a slow pawn as a stalled one.
+
+`bin/sim check worker` green (one pre-existing unrelated `unused import` warning).
+
+**Not done in this phase.** Items 3–5 (`next_hop`, `position_at`, the `MOVE_STEP` rewrite) are
+blocked with P0: their acceptance is "reproduces 20 landings **recorded from the live worker**",
+and there is no live worker to record from ([B2](blockers.md#b2)).
+
 ## 2026-08-10 — P0 probe code landed; acceptance BLOCKED on a live world
 
 **No items ticked.** The code is in and verified as far as it can be without a running sim; the

@@ -12,12 +12,15 @@
 //!   - [`loader`] — the materialized [`Bundle`]: every registry + flat table the
 //!     consumers query, plus the declarative biome classifier (`generate`).
 //!   - [`needs_eval`] — THE needs→conditions evaluation (npc + client share it).
+//!   - [`move_eval`] — THE walk: cadence, stride, and where a walking pawn IS at a
+//!     given tic (shared-simulation P1). Server and every client, one rule.
 //!   - [`content`] — read the on-disk `content/` tree into loader sources
 //!     (native/server only).
 
 pub mod content;
 pub mod emotion_eval;
 pub mod loader;
+pub mod move_eval;
 pub mod needs_eval;
 pub mod path_eval;
 pub mod stat_eval;
