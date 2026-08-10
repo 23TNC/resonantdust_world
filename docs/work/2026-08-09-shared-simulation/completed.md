@@ -3,6 +3,31 @@
 _The verification log: what landed and **how it was checked**. Append-only; authoritative for what
 is done. Items live in [`todo.md`](todo.md) with their boxes ticked._
 
+## 2026-08-10 — P2 item 3: `ClientWorld`, the one object a host drives
+
+[`client/core/src/client_world.rs`](../../../client/core/src/client_world.rs) joins the
+[`WorldView`](../../../client/core/src/world_view.rs) and the
+[`MoverTrack`](../../../client/core/src/movers.rs) behind one surface: `observe_state`,
+`observe_intent`, `close_zone`, `derive_paces`, `pathable`, and **`pawn_point(entity, now)`**.
+
+Written because the join itself is a thing that can be got wrong twice. Which probe feeds the
+track, when paces re-derive, what a closing zone drops — a host wiring those together itself would
+be the third copy of exactly the logic this stream is deleting. `close_zone` is the sharp one: it
+must clear BOTH halves, since a mover left in a closed zone is a ghost that never moves again and
+a stale tile row is a wall that is no longer there.
+
+**What it deliberately does not do is smooth.** `pawn_point` returns where the pawn IS — a step
+function corrected at each anchor. Making that pleasant to look at is the viewer's job, which is
+[F2](forks.md#f2)'s line and why the render-chase stays in webgl.
+
+**Verified.** `a_host_can_ask_where_a_pawn_is_between_anchors` drives the real contract against the
+real corpus: an unpaced pawn HOLDS at its anchor; once its payload is minted the pace derives to
+24.0; and 48 tics later it has advanced exactly two tiles. Plus `closing_a_zone_clears_both_halves`.
+42 tests pass in `client/core`.
+
+**P2 is complete.** Core can answer "where is that pawn" and "may one stand here" without a
+browser, which is the whole of what webgl will consume in P4.
+
 ## 2026-08-10 — P2b COMPLETE: npc reads core's view; the duplicate is gone
 
 `client/npc`'s `tiles` / `tile_overlays` / `things` maps are **deleted**. The Bot holds a

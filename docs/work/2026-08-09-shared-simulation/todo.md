@@ -44,7 +44,7 @@ so P2 must have landed. Do not reorder.
       intent, pace. Fed from `StateObject` and `MoveIntent`. Acceptance: `bin/rd build core` green.
 - [x] Derive each mover's pace in core through the shared `stat_eval`, never a constant.
       Acceptance: core reports 24 tics/tile for a bunny and 12 for a wolf.
-- [ ] Expose `pawn_point(entity, now_tic)` over the track via `move_eval::position_at`.
+- [x] Expose `pawn_point(entity, now_tic)` over the track via `move_eval::position_at`.
       Acceptance: a headless run logs a moving pawn's point changing between two anchors.
 - [x] Port the replay guards the TS earned — the stale-intent and older-row rejections
       (`MoverLayer.ts:754-776`, `:839`). Acceptance: unit test — a minutes-old intent is rejected.

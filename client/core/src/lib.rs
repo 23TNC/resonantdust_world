@@ -42,6 +42,7 @@ pub mod api;
 pub mod clock;
 pub mod config;
 pub mod gateway;
+pub mod client_world;
 pub mod movers;
 pub mod world_view;
 pub mod protocol;
