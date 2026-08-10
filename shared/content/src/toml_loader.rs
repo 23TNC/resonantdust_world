@@ -511,6 +511,10 @@ struct TraitToml {
   name: String,
   #[serde(default)]
   label: Option<String>,
+  /// `#rrggbb` — the live-edit traits-tab square (live-edit F2). Optional: unauthored
+  /// renders neutral.
+  #[serde(default)]
+  color: Option<String>,
   /// Per-LEVEL stat contributions (stat-model F5) — walks' tics/tile table.
   #[serde(default)]
   stats: Vec<LevelStatToml>,
@@ -1277,6 +1281,7 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
         }
         (t.name.clone(), TraitParams {
           label: t.label.clone().unwrap_or_else(|| t.name.clone()),
+          color: color(&t.color, &format!("trait `{}`", t.name), &mut errors),
           levels,
           tags: t.tags.clone(),
           emit_light,

@@ -82,6 +82,7 @@ winner = "min"
 [[pawn_trait_passive]]
 name = "biological_lifeform"
 label = "Biological Lifeform"
+color = "#4a8a5a"
 stats = [ { stat = "metabolism", add = [1] } ]
 
 # The leveled locomotion skill (stat-model F5): level 1 lumbers, level 2 is the wolf's
@@ -89,12 +90,14 @@ stats = [ { stat = "metabolism", add = [1] } ]
 [[pawn_trait_passive]]
 name = "walks"
 label = "Walks"
+color = "#3a6ee8"
 stats = [ { stat = "ground_speed", add = [24, 12, 6] } ]
 
 # The tree-feller (lumberjack F4/F7): level 1 is all the gate needs today.
 [[pawn_trait_passive]]
 name = "lumberjack"
 label = "Lumberjack"
+color = "#c08a3a"
 stats = [ { stat = "logging", add = [1] } ]
 
 # The HEALTH cap (food-chain F2, the user's shape): ONE leveled trait owns corpus's
@@ -103,6 +106,7 @@ stats = [ { stat = "logging", add = [1] } ]
 [[pawn_trait_passive]]
 name = "corpus"
 label = "Corpus"
+color = "#3f7a52"
 needs = [ { need = "corpus", max = [1.0, 2.0] } ]
 
 # ORDER IS LAW (attack I1, learned the hard way): gameplay defs are numbered by
@@ -115,21 +119,25 @@ needs = [ { need = "corpus", max = [1.0, 2.0] } ]
 [[pawn_trait_passive]]
 name = "forager"
 label = "Forager"
+color = "#b8a34a"
 stats = [ { stat = "foraging", add = [1] } ]
 
 [[pawn_trait_passive]]
 name = "herbivore"
 label = "Herbivore"
+color = "#6b7a8a"
 stats = [ { stat = "plant_eating", add = [1] } ]
 
 [[pawn_trait_passive]]
 name = "carnivore"
 label = "Carnivore"
+color = "#6b7a8a"
 stats = [ { stat = "meat_eating", add = [1] } ]
 
 [[pawn_trait_passive]]
 name = "omnivore"
 label = "Omnivore"
+color = "#6b7a8a"
 stats = [ { stat = "plant_eating", add = [1] }, { stat = "meat_eating", add = [1] } ]
 
 # The BITE (attack F1, the user's generalization): a capability TAG, not a stat —
@@ -138,6 +146,7 @@ stats = [ { stat = "plant_eating", add = [1] }, { stat = "meat_eating", add = [1
 [[pawn_trait_passive]]
 name = "bite"
 label = "Bite"
+color = "#d8342c"
 tags = ["attack"]
 
 # The CARRYING capacity (inventory F1, the user's shape): ONE leveled trait provides
@@ -147,6 +156,7 @@ tags = ["attack"]
 [[pawn_trait_passive]]
 name = "inventory"
 label = "Inventory"
+color = "#6b7a8a"
 needs = [ { need = "inventory", max = [6.0] } ]
 
 # trait-lights F4: light is a per-LEVEL trait PARAMETER — nothing hard-codes which
@@ -157,6 +167,7 @@ needs = [ { need = "inventory", max = [6.0] } ]
 [[pawn_trait_constant]]
 name = "emit_light"
 label = "Emits Light"
+color = "#e8c23a"
 emit_light = [
   { color = [1.0, 0.85, 0.55], intensity = 1.0, reach = 16.0, radius = 0.35, elevation = 2.5, flicker = true },
   { color = [0.55, 0.75, 1.0], intensity = 1.0, reach = 16.0, radius = 0.35, elevation = 2.5, flicker = true },

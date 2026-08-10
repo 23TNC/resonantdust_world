@@ -307,6 +307,11 @@ pub struct TraitLevel {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TraitParams {
   pub label: String,
+  /// `0xRRGGBB` — the square's fill in the live-edit traits tab (live-edit F2). Authored
+  /// per trait so the corpus decides how its own concepts look, exactly as emotions do.
+  /// `None` = unauthored, which renders NEUTRAL rather than refusing: a half-coloured
+  /// corpus must still show you what a pawn carries.
+  pub color: Option<u32>,
   /// The per-level modifier tables, index = level − 1. Never empty (a marker trait with
   /// no modifiers still has one empty level).
   pub levels: Vec<TraitLevel>,

@@ -275,8 +275,21 @@ export class WorldScene extends Scene {
         // NO second eval (live-edit F5): everything below is sliced from the ONE read the
         // shared provider already did for this pawn at this tic.
         const emotionRows = [];
+        const traitRows = [];
         try {
           const c = getContent();
+          // Traits are the CONSTANT half of gameplay state — stride-2 `[reference, color]`,
+          // colour `-1` when the trait authors none so we render neutral rather than guess.
+          const payload = this.moverLayer.pawnPayload(entity) ?? new Uint32Array(0);
+          const flat = c.pawnTraits(info.kind, payload);
+          for (let i = 0; i + 1 < flat.length; i += 2) {
+            const reference = flat[i];
+            traitRows.push({
+              reference,
+              label: c.traitLabelOf(reference) ?? `#${reference.toString(16)}`,
+              color: flat[i + 1] >= 0 ? flat[i + 1] : 0x6b7a8a,
+            });
+          }
           for (let idx = 0; idx < info.emotionMagnitudes.length; idx++) {
             const value = info.emotionMagnitudes[idx];
             if (value === 0 && idx !== info.emotion.index) continue; // only what's actually felt
@@ -293,11 +306,12 @@ export class WorldScene extends Scene {
           // Identity of the CONTENT, so a poll that changes nothing skips the rebuild.
           key: [
             info.name,
+            traitRows.map((x) => x.reference).join(","),
             info.conditions.map((x) => `${x.id}:${x.remaining}`).join(","),
             emotionRows.map((x) => `${x.index}:${x.value}`).join(","),
           ].join("|"),
           name: info.name,
-          traits: [],   // P3 — needs a `pawn_traits` accessor + authored trait colour
+          traits: traitRows,
           needs: [],    // P4 — needs the (value, min, max, rate) accessor + authored need colour
           conditions: info.conditions,
           emotions: emotionRows,

@@ -42,13 +42,13 @@ week of work.
 
 ## P3 — trait colour and the traits tab
 
-- [ ] `color` on the trait def: loader field, `#rrggbb` parse, neutral fallback when unauthored
+- [x] `color` on the trait def: loader field, `#rrggbb` parse, neutral fallback when unauthored
       (F2). Acceptance: unit/load green; an unauthored trait loads.
-- [ ] `trait_color` + a `pawn_traits` accessor returning `(reference, label, colour)`, mirroring
+- [x] `trait_color` + a `pawn_traits` accessor returning `(reference, label, colour)`, mirroring
       `pawn_conditions` (F2/I2). Acceptance: a drill pawn's traits come back with labels.
-- [ ] Author a colour on every trait in `content/`; golden fixture re-blessed with ONLY the new
+- [x] Author a colour on every trait in `content/`; golden fixture re-blessed with ONLY the new
       column moving (I5). Acceptance: registry seeds with zero divergence.
-- [ ] Traits tab: colour squares in a grid, name on hover. Acceptance: a pawn's traits render with
+- [x] Traits tab: colour squares in a grid, name on hover. Acceptance: a pawn's traits render with
       authored colours; capture.
 
 ## P4 — need colour, bounds and the live rate

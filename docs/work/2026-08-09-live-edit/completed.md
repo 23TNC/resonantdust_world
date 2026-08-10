@@ -43,3 +43,32 @@ second eval, no new call site, no growth in the error baseline.
   500ms — i.e. live-edit adds **no** eval of its own.
 
 Typecheck holds at the 7-error baseline; build green.
+
+## 2026-08-09 — P3: trait colour and the traits tab
+
+The first of the two expensive tabs, and it went exactly as the survey predicted: a loader field,
+a wasm accessor, a corpus pass.
+
+`TraitParams` gains `color: Option<u32>`, parsed from `#rrggbb` by the **existing** `color()`
+helper that emotions already use — so the authoring convention is identical rather than parallel.
+Unauthored is not an error: it resolves to `None` and renders neutral, because a half-coloured
+corpus must still show you what a pawn carries.
+
+Two accessors, deliberately mirroring `pawn_conditions` so the two grids read alike in the code as
+well as on screen: **`pawnTraits(kind, payload)`** returning stride-2 `[reference, color, …]`
+(colour `-1` when unauthored, so the caller renders neutral rather than guessing), and
+**`traitLabelOf(reference)`** — labels resolve BY REF, never by position.
+
+All **11** traits coloured, grouped so the grid reads at a glance rather than being eleven
+arbitrary hues: locomotion blue, biology green, combat red, craft amber, light gold, meta grey.
+
+**One thing the audit caught.** My insertion script skipped `emit_light` — it saw the
+`color = [1.0, 0.85, 0.55]` *inside* that trait's light tuples and concluded the trait was already
+coloured. A per-trait coverage check found it; without that check it would have shipped as the one
+grey square in the grid and looked like an authoring oversight rather than a script bug.
+
+**Verified live** after a wasm rebuild + client reload: the traits tab shows **5 squares** at
+35×35 for a bunny, coloured `rgb(74,138,90)` / `rgb(58,110,232)` / `rgb(63,122,82)` /
+`rgb(107,122,138)` / `rgb(184,163,74)` — the authored palette plus one neutral fallback — and
+hovering them names them: **Biological Lifeform, Walks, Corpus, Herbivore, Forager**. Typecheck at
+the 7-error baseline; `rd content-check` clean.

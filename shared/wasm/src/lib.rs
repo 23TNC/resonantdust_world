@@ -354,6 +354,39 @@ impl Content {
         out
     }
 
+    /// The pawn's ACTIVE TRAITS (live-edit F2/I2) — flat stride-2 `[reference, color, …]`.
+    ///
+    /// Mirrors [`Self::pawn_conditions`] deliberately: the live-edit panel shows traits and
+    /// conditions as the same kind of grid, so the two accessors should read alike. Traits are
+    /// the CONSTANT half of the pawn's gameplay state — `object_trait_rows` already merges the
+    /// kind's derived constant binds with the stored payload rows, so this is identity only
+    /// (the row's data half is reserved-zero today).
+    ///
+    /// `color` is `-1` when the trait authors none, so the caller renders a neutral rather than
+    /// guessing. Labels come back through [`Self::trait_label_of`] by reference, never by
+    /// position.
+    #[wasm_bindgen(js_name = pawnTraits)]
+    pub fn pawn_traits(&self, kind: u16, payload: Vec<u32>) -> Vec<f64> {
+        let (traits, _conditions) = decode_payload(&self.bundle, kind, &payload);
+        let mut out = Vec::with_capacity(traits.len() * 2);
+        for row in &traits {
+            let reference = resonantdust_codec::object::row_reference(*row);
+            let color = self
+                .bundle
+                .trait_params_by_ref(reference)
+                .and_then(|p| p.color)
+                .map_or(-1.0, f64::from);
+            out.extend_from_slice(&[f64::from(reference), color]);
+        }
+        out
+    }
+
+    /// A trait's authored label, BY REFERENCE (live-edit F2). `None` for an unknown ref.
+    #[wasm_bindgen(js_name = traitLabelOf)]
+    pub fn trait_label_of(&self, reference: u32) -> Option<String> {
+        self.bundle.trait_params_by_ref(reference).map(|p| p.label)
+    }
+
     /// The pawn's ACTIVE EMOTION at `now_tic` (emotions F3): flat 17 f64s —
     /// `[active_index, sum0..sum15]` (index = the u4 declaration order; empty → 0 = fine).
     /// The ONE `emotion_eval` argmax every consumer shares.
