@@ -93,7 +93,12 @@ def jittered_fill(fill, jitter, key):
 def _subject_frac(img):
     """Longer side of the non-white bbox, as a fraction of the frame."""
     import numpy as _np
-    g = _np.asarray(img.convert("L")); m = (g < 250)
+    # THRESHOLD 235, not 250. ESRGAN leaves plate noise at 238-249, so a <250 cut catches stray
+    # corner pixels, reports the bbox as the FULL FRAME, and makes this function return 1.0 for
+    # every image — which silently disabled the collapse guard below (it can never see got < want).
+    # Measured on a known-good beaver east: <250 gives 1.000, <235 gives 0.896 against want 0.898.
+    # That is why the 2026-08-02 build shipped 52% corrupt with the assertion "in place".
+    g = _np.asarray(img.convert("L")); m = (g < 235)
     ys, xs = _np.where(m)
     if not len(ys): return 0.0
     return max(ys.max()-ys.min()+1, xs.max()-xs.min()+1) / float(g.shape[0])
@@ -151,7 +156,17 @@ def normalise(im, size, fill, mode, use_esrgan, allow_degraded=False):
                                      f"Refusing to mix upscalers; see --allow-degraded / --upscale lanczos.")
                 print(f"    esrgan failed ({e}); LANCZOS for this one [--allow-degraded]", flush=True)
         out = rgb.resize((size, size), Image.LANCZOS)
-        _assert_subject_preserved(im, out, allow_degraded)
+        # The upscale fails INTERMITTENTLY on the same input (I2), so a collapse is worth retrying
+        # before aborting a 701-image build. Bounded, and it still aborts if the retries do not take.
+        for attempt in range(3):
+            try:
+                _assert_subject_preserved(im, out, allow_degraded); break
+            except SystemExit:
+                if attempt == 2: raise
+                print(f"    subject collapsed; retrying upscale ({attempt+1}/2)", flush=True)
+                r = plate.convert("RGB")
+                while max(r.size) < size: r = esrgan(r)
+                out = r.resize((size, size), Image.LANCZOS)
         return out
 
     a = im.convert("RGBA")

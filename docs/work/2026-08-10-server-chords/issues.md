@@ -61,3 +61,38 @@ either document.
 
 It cost me several minutes of reading a framing failure as a bug in my own change, which is the
 argument for closing it rather than leaving the two authorities disagreeing.
+
+
+## I4 — the map is one zone: P2's chord histogram cannot be measured yet
+**2026-08-10. Open — blocks [P2](todo.md)'s first item at the long bands.**
+
+The chord survey (`headless <name> chords <x> <y>`) reports:
+
+```
+generated terrain in reach  known=256  impathable="7 (2.73%)"  extent="112..127 x 64..79"
+chords band="3-12 tiles"   n=1000 p50=1 p90=2 p99=3 max=4  over_cap="0 (0.00%)"
+chords band="12-40 tiles"  n=1000 p50=1 p90=2 p99=3 max=4  over_cap="0 (0.00%)"
+band produced no routes    lo=40 hi=96 tried=200000
+```
+
+**256 cells is exactly one 16×16 zone.** The world generates on demand and nothing has walked far
+enough to make more. Ten `cold tiles` fans arrive at an anchor with `cold: 8`, so zones are being
+SUBSCRIBED without being GENERATED — an empty zone streams all-zero cells, which `tile_kind_at`
+reports as unseen.
+
+**The first version of this survey did not notice, and confidently reported `p50 = 1, 0% over
+cap` across all three bands from a square that was 99.3% unknown.** `pathable` treats an unknown
+cell as OPEN, so every pair string-pulled to one straight chord: a precise number about nothing,
+and exactly the false green the tick audit exists to catch. The harness now draws pairs only from
+cells the view actually holds, prints the extent, and warns below 2000 known cells.
+
+**What the partial result says.** Inside the one generated zone, at 2.73% impathable, trips need
+1 chord at p50 and 4 at worst — nowhere near a cap of 10. That is a genuine measurement of THIS
+terrain and it points the right way, but it cannot answer the band the design actually worries
+about, and open grass is the easy case: a corridor or a wall maze is where chord counts explode.
+
+**Chosen path:** carry it into P2 as work rather than a blocker. The survey needs terrain, so P2's
+first item grows a step — sweep an anchor across a grid to force generation, verify `known` grows
+past the single zone, THEN histogram. If anchoring turns out not to generate beyond the active
+radius, the fallback is to build a wall maze in a known zone and measure the hard case directly,
+which is the number that matters anyway.

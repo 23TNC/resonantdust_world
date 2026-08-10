@@ -37,7 +37,14 @@ async fn main() -> ExitCode {
     // subscribes the zones around (0,0) — exercising the terrain seed + row relay so the
     // ZoneTiles / ZoneThings events show in the log (a full round-trip smoke test, not
     // just login).
-    let anchor = std::env::args().nth(2).as_deref() == Some("anchor");
+    let mode = std::env::args().nth(2).unwrap_or_default();
+    let anchor = mode == "anchor" || mode == "chords";
+    // `chords`: the server-chords P2 survey — once the terrain is in, run `find_chords` over
+    // random pairs in three distance bands against core's OWN composed view (the same view the
+    // worker's pathability derives from) and report the chord-count distribution. The number the
+    // design turns on is the fraction needing more than the queue depth: that fraction IS the
+    // re-request stutter rate.
+    let survey = mode == "chords";
     // Where to anchor. (0,0) subscribes terrain but fans NO pawn rows, so a probe there sees a
     // world with no movers — and, before the engine started stamping its estimate in, no tic at
     // all. Default to the fluffle so the read surface has something to answer about.
@@ -81,9 +88,18 @@ async fn main() -> ExitCode {
     let mut report = tokio::time::interval(std::time::Duration::from_secs(5));
     report.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
+    // The survey runs ONCE, after the terrain has had time to stream in.
+    let survey_at = survey.then(|| std::time::Instant::now() + std::time::Duration::from_secs(20));
+
     let code = loop {
         tokio::select! {
             _ = report.tick(), if logged_in => {
+                if let Some(at) = survey_at {
+                    if std::time::Instant::now() >= at {
+                        chord_survey(&client, anchor_x, anchor_y);
+                        break ExitCode::SUCCESS;
+                    }
+                }
                 let Some(now) = client.now_tic() else {
                     info!("core has no tic yet — the estimate has not anchored");
                     continue;
@@ -148,6 +164,120 @@ async fn main() -> ExitCode {
     };
 
     code
+}
+
+/// **The chord-count survey** (server-chords P2): how many chords does a real trip need?
+///
+/// The design queues a route into a bounded intent queue, so a trip needing more chords than the
+/// queue holds must be TRUNCATED and re-requested mid-walk. That re-request is a stutter, and its
+/// frequency is the fraction of trips over the cap — not a number worth guessing, because a
+/// plausible value (most trips need more than 10) makes this design worse than what it replaces.
+///
+/// Pathability comes from core's composed view, which is the same derivation the worker uses
+/// (corpus flags × composed cells, unknown = OPEN), so this measures the map the pawns walk.
+fn chord_survey(client: &Client, home_x: i32, home_y: i32) {
+    // Bands in tiles: within a zone, across a zone, across several.
+    const BANDS: [(i32, i32); 3] = [(3, 12), (12, 40), (40, 96)];
+    const PER_BAND: usize = 1000;
+    const CAP: usize = 10; // the proposed queue depth
+
+    let pathable = |x: i32, y: i32| client.pathable(x, y);
+
+    // **Sample only cells the view actually HAS.** The world is generated on demand, so most of
+    // the coordinate space around any anchor has never existed; `pathable` calls an unknown cell
+    // OPEN, and a pair drawn from that space string-pulls to one straight chord no matter what
+    // the real terrain would be. The first run of this survey reported "p50 = 1 chord, 0% over
+    // cap" from a square that was 99.3% unknown — a confident number about nothing.
+    let known: Vec<(i32, i32)> = {
+        let mut v = Vec::new();
+        if let Ok(w) = client.world().lock() {
+            for dx in -96i32..=96 {
+                for dy in -96i32..=96 {
+                    let at = (home_x + dx, home_y + dy);
+                    if w.world.tile_kind_at(at).is_some() {
+                        v.push(at);
+                    }
+                }
+            }
+        }
+        v
+    };
+    let blocked = known.iter().filter(|(x, y)| !pathable(*x, *y)).count();
+    let (ex0, ex1) = (
+        known.iter().map(|c| c.0).min().unwrap_or(0),
+        known.iter().map(|c| c.0).max().unwrap_or(0),
+    );
+    let (ey0, ey1) = (
+        known.iter().map(|c| c.1).min().unwrap_or(0),
+        known.iter().map(|c| c.1).max().unwrap_or(0),
+    );
+    info!(
+        known = known.len(),
+        impathable = format!("{blocked} ({:.2}%)", 100.0 * blocked as f64 / known.len().max(1) as f64),
+        extent = format!("{ex0}..{ex1} x {ey0}..{ey1}"),
+        "generated terrain in reach — pairs are drawn ONLY from these cells",
+    );
+    if known.len() < 2000 {
+        warn!(
+            known = known.len(),
+            "too little generated terrain for a meaningful survey — the long bands cannot be \
+             sampled at all; treat any result below as provisional",
+        );
+    }
+    // A fixed multiplicative-congruential stream: the survey must be RE-RUNNABLE against a
+    // changed map and give a comparable answer, which a wall-clock seed would not.
+    let mut s: u64 = 0x2545_F491_4F6C_DD1D;
+    let mut rnd = move |n: i32| -> i32 {
+        s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        ((s >> 33) % (n as u64).max(1)) as i32
+    };
+
+    info!(home_x, home_y, "chord survey — {PER_BAND} pairs per band");
+    for (lo, hi) in BANDS {
+        let (mut counts, mut refused, mut trivial) = (Vec::new(), 0usize, 0usize);
+        let mut tried = 0usize;
+        // Sampling is rejection-based: a pair whose endpoints are not both standable is not a
+        // trip any pawn could be given, so it is re-drawn rather than counted as a refusal.
+        while counts.len() + refused < PER_BAND && tried < PER_BAND * 200 {
+            tried += 1;
+            if known.is_empty() {
+                break;
+            }
+            let a = known[rnd(known.len() as i32) as usize];
+            let b = known[rnd(known.len() as i32) as usize];
+            let d = (((b.0 - a.0).pow(2) + (b.1 - a.1).pow(2)) as f64).sqrt();
+            if d < lo as f64 || d > hi as f64 {
+                continue;
+            }
+            if !pathable(a.0, a.1) || !pathable(b.0, b.1) {
+                continue;
+            }
+            match resonantdust_content::path_eval::find_chords(a, b, 0, &pathable) {
+                Some(c) if c.is_empty() => trivial += 1,
+                Some(c) => counts.push(c.len()),
+                None => refused += 1,
+            }
+        }
+        if counts.is_empty() {
+            warn!(lo, hi, tried, refused, "band produced no routes");
+            continue;
+        }
+        counts.sort_unstable();
+        let pct = |p: usize| counts[(p * (counts.len() - 1)) / 100];
+        let over = counts.iter().filter(|&&c| c > CAP).count();
+        info!(
+            band = format!("{lo}-{hi} tiles"),
+            n = counts.len(),
+            refused,
+            trivial,
+            p50 = pct(50),
+            p90 = pct(90),
+            p99 = pct(99),
+            max = counts[counts.len() - 1],
+            over_cap = format!("{over} ({:.2}%)", 100.0 * over as f64 / counts.len() as f64),
+            "chords",
+        );
+    }
 }
 
 /// Render an event as a log line.
