@@ -2,6 +2,25 @@
 
 _Problems hit, candidate solutions, which we chose and why. Chronological append._
 
+## I15 — `pawn_point` answers `None` until the clock anchors, and callers read that as "no pawn"
+**2026-08-10. Open — found at the end of the I14 chase; the remaining half of npc's silence.**
+
+Adoption now logs `positioned=false` for every pawn. That is not a missing row: `Client::pawn_point`
+does `let now = w.now_tic_at(..)?` and the tic estimate has not anchored one second after boot, so
+it returns `None` for pawns whose rows core is holding perfectly well.
+
+**The shape of the mistake is worth more than the fix.** `None` is doing two jobs — "I don't track
+this pawn" and "I can't date the answer yet" — and every caller collapses them to "no pawn". The
+adopt gate did exactly that and emptied the fluffle.
+
+Two candidate fixes, and the second is better: return the last authoritative point when the clock
+is unanchored (a position that is merely un-advanced beats no position), or split the API so
+"where is it" and "where is it AT TIC T" are different questions. The second matches
+[F9](forks.md#f9), where positions arrive stamped and the client never asks "where is it now".
+
+**Still unexplained:** with adoption fixed and the stale-walk bound in, npc issues 0 move intents.
+The gate is somewhere after the busy check in `Bunnies::tick`. Not chased — F9 re-plumbs this path.
+
 ## I14 — npc adopts NO pawns; `minds` stays empty (NOT a deadlock — I misdiagnosed it twice)
 **2026-08-10. OPEN, root cause identified, fix not written.**
 

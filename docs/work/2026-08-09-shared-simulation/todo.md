@@ -128,6 +128,12 @@ including one whose criterion I had rewritten after ticking it.
       adjacency test reads core's subtile point, and a unit test pins cheb ≤ 1 against a pawn
       mid-chord (the case a tile-granular read got wrong).
 
+> **⚠ SUPERSEDED IN PART BY [F9](forks.md#f9) (2026-08-10).** The chord-queue direction re-plumbs
+> movement: the server issues tic-stamped chords, a CANCEL verb provides the formal interrupt, and
+> the client interpolates rather than predicts. Items below that infer, bound or estimate a walk
+> CLIENT-SIDE are obsolete — do not execute them without re-planning. The queue store, the replay
+> dedup and the refusal signal survive; the ETA/busy inference does not.
+
 ## P3b — the intent queue is STATE, not a picture
 
 - [x] Add `client/core/src/intents.rs` — entity → its `QueueState` entries, replaced whole per fan,
