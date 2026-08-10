@@ -53,3 +53,31 @@ than fixed in passing, since changing a verb's arity is a wire change.
 came to need checking by hand.
 
 76 codec tests pass.
+
+## 2026-08-10 — P0 closed: the verbs are live on the wire
+
+Redeployed every module against the new codec (the codec is a bind-mount; a shard links its own
+copy, so an un-redeployed shard would reject verb 21 outright). Rebuilt and restarted the sim —
+`build` then `run`, per the stale-binary lesson — and re-adopted a fluffle at `124,75`.
+
+**Verified with a raw WebSocket probe** against the edge at `ws://localhost:8473/ws`, logging in as
+`ProbeP0` and queuing both verbs on one connection, because the criterion needs the *shard's*
+verdict and webgl throws that verdict away (`Event::Status` is wired only to the login progress
+channel, so a post-login `QueueErr` never reaches the console — noted, not fixed):
+
+| queued | reply |
+|---|---|
+| `[CANCEL, pawn]` | `queue_ok` |
+| `[MOVE_CHORDS, pawn, 7, 4, 11, 22, 33, 44]` | `queue_err — "server-only verb: 20"` |
+
+**`queue_ok` is the shard's answer, not the edge's.** The edge replies from inside
+`queue_then`'s reducer callback, and `queue_common` re-parses the program with its own linked
+codec; `arity()` returns `None` for an unknown verb, so a stale module would have answered
+`bad program: UnknownAction(21)`. It did not — the acceptance criterion, met at the layer it names.
+
+The refusal is the other half of the design: a client that can state its own route is precisely the
+defect being removed, and the edge names verb 20 as server-only by number.
+
+The worker has no `CANCEL` arm until P4, so the accepted event is a no-op there — checked
+deliberately, since an unimplemented verb reaching a `match` is how a worker panics. It stayed up
+and logged nothing about it.

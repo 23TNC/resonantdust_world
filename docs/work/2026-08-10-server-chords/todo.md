@@ -30,7 +30,7 @@ false, including one whose criterion had been rewritten after ticking. Do not re
       rather than completing zoneless.
 - [x] Admit `CANCEL` to the edge's `CLIENT_VERBS`; keep `MOVE_CHORDS` out. Acceptance: a browser
       `CANCEL` is accepted and a browser `MOVE_CHORDS` is refused as malformed.
-- [ ] Rebuild the codec bind-mount and REDEPLOY the event-shard module. Acceptance: a hand-queued
+- [x] Rebuild the codec bind-mount and REDEPLOY the event-shard module. Acceptance: a hand-queued
       `CANCEL` survives the shard's re-validation (the intent-queue-ui lesson).
 
 ## P1 — can the server predict its own arrival? (no motion changes, no deletions)
