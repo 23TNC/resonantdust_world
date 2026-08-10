@@ -13,11 +13,11 @@ so P2 must have landed. Do not reorder.
 
 ## P0 — the measurement, so the fix is provable
 
-- [ ] Extend `__teleportProbe` with a divergence tally: per-kind reseed error and tiles-per-anchor,
+- [x] Extend `__teleportProbe` with a divergence tally: per-kind reseed error and tiles-per-anchor,
       kept as sorted samples. Acceptance: one console read prints p50/p90 for both, per kind.
-- [ ] Make the probe survive a page reload by parking samples in `sessionStorage`. Acceptance: a
+- [x] Make the probe survive a page reload by parking samples in `sessionStorage`. Acceptance: a
       reload mid-soak keeps the running counts.
-- [ ] Record a 10-minute baseline off the live fluffle into [`completed.md`](completed.md).
+- [x] Record a 10-minute baseline off the live fluffle into [`completed.md`](completed.md).
       Acceptance: a dated row with reseed p50/p90, anchor stride p50, RENDER-teleports per minute.
 
 ## P1 — the shared module; the worker becomes a caller

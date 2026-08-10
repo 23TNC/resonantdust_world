@@ -3,6 +3,45 @@
 _The verification log: what landed and **how it was checked**. Append-only; authoritative for what
 is done. Items live in [`todo.md`](todo.md) with their boxes ticked._
 
+## 2026-08-10 — P0 complete: the BASELINE, on a reset world
+
+World reset (`bin/rd redeploy --run`, all module DBs wiped, all four sim crates rebuilt and
+restarted). Worker **in step** throughout: lag +1/+2 across the whole run, never the ±1400 of
+[I6](issues.md#i6). Population is small on a fresh world — 3 bunnies, 2 wolves — so this is a
+per-pawn baseline, not a load baseline. ~15 minutes, **551 samples**.
+
+| | bunny (pace 24) | wolf (pace 12) |
+|---|---|---|
+| implied pace, p50 (p10 / p90) | **24.26** (23.77 / 28.44) | **12.07** (11.91 / 15.41) |
+| anchor stride p50 / predicted | 1.326 / 1.333 | 2.652 / 2.667 |
+| anchor gap, p50 tics | 32 | 32 |
+| reseed error p50 / p90 / max | **1.25** / 4.60 / 12.53 | **2.13** / 8.00 / 20.00 |
+| reseeds past `CHASE_SNAP_TILES` | 45 of 387 (**11.6%**) | 24 of 160 (**15.0%**) |
+| RENDER teleports (chase snaps) | 0 | 0 |
+
+**Read it carefully, because it says two things and they pull in opposite directions.**
+
+*The pace agrees.* Implied vs client pace matches to ~1% at the median, and the observed stride
+matches the predicted one to within 0.015 tiles for both species. This is what retracts
+[I1](issues.md#i1)'s 2× premise.
+
+*The belief still drifts multiple tiles.* With the pace correct and the cadence exactly 32 tics,
+the client's speculated position is still a median **1.25–2.13 tiles** from truth when the
+authoritative row lands, with a p90 of 4.6–8.0 and a worst case of 12–20 tiles. **Between one in
+nine and one in seven reseeds exceeds the render-chase's give-up distance.** The chase absorbed all
+of them in this window (0 RENDER teleports) — so the world currently *looks* fine — but a client
+whose belief is routinely 2 tiles wrong is not simulating the same world the server is, and the
+margin protecting the viewer from that is one constant.
+
+So the divergence is real and it is **not** a pacing divergence: it is geometry, path consumption,
+or lifecycle. That is the target for the rest of the stream, and P4 re-runs exactly this table.
+
+**Method note.** Per-kind bucketing is the whole reason this baseline says something the first one
+didn't. Pooling species produced the 2× that sent me chasing pace for an evening
+([I1](issues.md#i1)); a bunny at 24 and a wolf at 12 in one distribution describe nothing real.
+Reload persistence verified live mid-soak: 1058 samples before `location.reload()`, 1082 after,
+still climbing.
+
 ## 2026-08-10 — P1 items 3–4: `next_hop` and `position_at`, the walk in one place
 
 **Landed** in [`move_eval.rs`](../../../shared/content/src/move_eval.rs): `next_hop` (the worker's
