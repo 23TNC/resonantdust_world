@@ -28,6 +28,7 @@
 [[need]]
 name = "thirst"
 label = "Thirst"
+color = "#3a9ed6"
 min = 0
 max = 100
 deplete = 21600.0
@@ -78,6 +79,7 @@ needs = [ { need = "thirst", rate = 0.5 } ]
 [[need]]
 name = "hunger"
 label = "Hunger"
+color = "#d69a3a"
 min = 0
 max = 100
 deplete = 43200.0
@@ -112,6 +114,7 @@ priority = 30
 [[need]]
 name = "corpus"
 label = "Corpus"
+color = "#d6503a"
 min = 0
 max = 2
 
@@ -124,5 +127,6 @@ max = 2
 [[need]]
 name = "inventory"
 label = "Inventory"
+color = "#8a93a6"
 min = 0
 max = 16

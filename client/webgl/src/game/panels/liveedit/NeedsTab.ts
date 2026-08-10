@@ -26,11 +26,19 @@ function fill(n: NeedRow): number {
   return Math.min(1, Math.max(0, (n.value - n.min) / span));
 }
 
-/** `+1.4` / `-0.6` / `0` — always signed, so the sign is the reading. */
-function formatRate(rate: number): string {
-  if (rate === 0) return "0";
-  const s = Math.abs(rate) >= 10 ? rate.toFixed(0) : rate.toFixed(1);
-  return rate > 0 ? `+${s}` : s;
+/** Tics per wall hour at the project's 6 Hz tic (`codec::tic::TIC_HZ`). The accessor returns
+ *  the rate per TIC — the honest unit, but unreadable: thirst drains at 0.0023/tic, which any
+ *  sane rounding shows as "-0.0". Per HOUR is what the corpus authors in (`deplete = 21600`
+ *  means "the whole domain in one hour"), so it is the unit the numbers can be compared to. */
+const TICS_PER_HOUR = 6 * 60 * 60;
+
+/** `+50/h` / `-12.5/h` / `0` — always signed, because the sign IS the reading. */
+function formatRate(ratePerTic: number): string {
+  const perHour = ratePerTic * TICS_PER_HOUR;
+  if (Math.abs(perHour) < 0.05) return "0";
+  const mag = Math.abs(perHour);
+  const s = (mag >= 100 ? perHour.toFixed(0) : mag >= 10 ? perHour.toFixed(1) : perHour.toFixed(2));
+  return `${perHour > 0 ? "+" : ""}${s}/h`;
 }
 
 export class NeedsTab implements LiveEditTab {
@@ -72,7 +80,7 @@ export class NeedsTab implements LiveEditTab {
 
       const rate = document.createElement("span");
       rate.style.cssText =
-        "flex:0 0 auto;min-width:calc(var(--ui-row) * 1.4);text-align:right;" +
+        "flex:0 0 auto;min-width:calc(var(--ui-row) * 2.4);text-align:right;" +
         `font-variant-numeric:tabular-nums;color:${n.rate < 0 ? RATE_DOWN : RATE_UP};`;
       rate.textContent = formatRate(n.rate);
 

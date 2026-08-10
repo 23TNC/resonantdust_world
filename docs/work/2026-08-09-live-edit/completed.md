@@ -72,3 +72,41 @@ grey square in the grid and looked like an authoring oversight rather than a scr
 `rgb(107,122,138)` / `rgb(184,163,74)` — the authored palette plus one neutral fallback — and
 hovering them names them: **Biological Lifeform, Walks, Corpus, Herbivore, Forager**. Typecheck at
 the 7-error baseline; `rd content-check` clean.
+
+## 2026-08-09 — P4: need colour, the effective clamp, and the live rate
+
+`NeedParams` gains `color`, parsed by the same helper. Four needs coloured so a glance at the bars
+reads: water blue, food amber, life red, capacity grey.
+
+**`needs_eval::need_state`** returns `(value, min, max, rate)` from ONE evaluation — the whole
+point of F3/I3. The bounds are `need_bounds`' EFFECTIVE clamp (narrowed by traits and conditions,
+not the authored domain) and the rate is `segment_rate` sampled at the current elapsed: the same
+instantaneous rate the integrator averages over, rather than a second implementation of it. The
+sign is flipped at the source so `rate` means *change in satisfaction* — negative is losing, for
+every need including inverted domains — which lets the panel colour it blindly (I4).
+
+Exposed as `needState(kind, payload, needs, need, now)` → `[value, min, max, rate, color]`, plus
+`kindNeedNames` and `needLabel` so the tab iterates what a kind actually carries rather than
+guessing.
+
+**The rate needed a unit.** Per-tic is the honest number and unreadable: thirst drains at
+0.0023/tic, which any sane rounding shows as `-0.0`. The panel formats **per hour**, because that
+is what the corpus authors in — `deplete = 21600` means "the whole domain in one hour" — so the
+displayed figure is directly comparable to the TOML. Thirst reads `-100/h` and hunger `-50.0/h`,
+which are exactly their authored `21600` and `43200`.
+
+### The bug this phase uncovered
+
+See [I9](issues.md#i9). The bars rendered perfectly and every value was **0**, on a living pawn.
+`pawnNeeds` was flattening 48-bit rows into a `Uint32Array`, cutting off the `data` half — the
+value. It fed `pawnConditions` and `pawnEmotion` too, so **band-derived conditions had never fired
+on the client**: the same pawn that showed `Scared`/`Uncomfortable` before the fix shows
+`Dehydrated`/`Quenched` after it.
+
+It was also the root of all **7 pre-existing type errors**. `Float64Array` took the client
+typecheck to **zero errors** — green for the first time in this session, and the standing task
+chip for those errors is now redundant.
+
+**Verified live**: the needs tab shows `Thirst [100%] -100/h`, `Hunger [100%] -50.0/h`,
+`Corpus [0%] -12.0/h` — bars in the authored blue / amber / red, rates red for losing, tooltips
+carrying the raw `value / min..max`. Traits, conditions and emotions all still render.

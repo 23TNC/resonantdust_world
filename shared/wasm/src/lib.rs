@@ -687,6 +687,60 @@ impl Content {
         out
     }
 
+    /// One need read WHOLE for a display surface (live-edit F3/I3): flat
+    /// `[value, min, max, rate, color]`, or empty when the pawn carries no row for it.
+    ///
+    /// The four numbers come from ONE evaluation deliberately — the authored bounds are the
+    /// need's domain, but traits and conditions NARROW the effective clamp while the rate is a
+    /// product over those same modifiers, so assembling them from separate calls yields a
+    /// display that is individually plausible and jointly wrong.
+    ///
+    /// `rate` is the signed change in SATISFACTION per tic: negative = losing = red, positive =
+    /// gaining = green, for every need including inverted domains. `color` is `-1` when the
+    /// need authors none.
+    #[wasm_bindgen(js_name = needState)]
+    pub fn need_state(
+        &self,
+        kind: u16,
+        payload: Vec<u32>,
+        needs: Vec<f64>,
+        need: String,
+        now_tic: u16,
+    ) -> Vec<f64> {
+        let (traits, conditions) = decode_payload(&self.bundle, kind, &payload);
+        let need_rows = decode_need_rows(&needs);
+        let Some((value, min, max, rate)) = resonantdust_content::needs_eval::need_state(
+            &self.bundle, &need, &traits, &need_rows, &conditions, now_tic,
+        ) else {
+            return Vec::new();
+        };
+        let color = self
+            .bundle
+            .need_params(&need)
+            .and_then(|p| p.color)
+            .map_or(-1.0, f64::from);
+        vec![value, min, max, rate, color]
+    }
+
+    /// A need's authored label, by NAME (live-edit F2).
+    #[wasm_bindgen(js_name = needLabel)]
+    pub fn need_label(&self, need: String) -> Option<String> {
+        self.bundle.need_params(&need).map(|p| p.label)
+    }
+
+    /// The NAMES of the needs a kind carries (live-edit F5) — the needs tab iterates these
+    /// rather than guessing, and resolves each through [`Self::need_state`].
+    #[wasm_bindgen(js_name = kindNeedNames)]
+    pub fn kind_need_names(&self, object_id: u16) -> Vec<String> {
+        self.bundle
+            .thing_needs(object_id)
+            .iter()
+            .filter_map(|r| self.bundle.gameplay_lookup(*r))
+            .filter(|(c, _)| c == "need")
+            .map(|(_, n)| n)
+            .collect()
+    }
+
     /// A gameplay def's u32 `definition_reference` (registry-first, seed fallback) — the
     /// menu's event composer resolves interaction refs through this.
     #[wasm_bindgen(js_name = gameplayReference)]

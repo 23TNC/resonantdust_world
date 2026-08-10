@@ -615,11 +615,20 @@ export class MoverLayer {
   }
 
   /** The entity's `needs` rows, flattened stride-2 `[packed, setTic, …]` (stat-model F2) —
-   *  the second eval input; fed verbatim to `pawnConditions`/`pawnEmotion`. */
-  pawnNeeds(entity: number): Uint32Array {
+   *  the second eval input; fed verbatim to `pawnConditions`/`pawnEmotion`/`needState`.
+   *
+   *  **Float64Array, not Uint32Array.** A need row is the ONE u64 shape
+   *  `dead:16 | data:16 | reference:32` (trait-rows-u32 F1) — 48 significant bits, which a JS
+   *  number holds exactly under THE 48-BIT LAW but a `Uint32Array` silently truncates. It used
+   *  to be `Uint32Array`, which cut `0xa4fb80010020` down to `0x80010020` and threw away the
+   *  `data` half — i.e. the need's VALUE. Every consumer therefore read every need as 0, so
+   *  band-derived conditions (thirsty / hungry / starving) could never fire on the client and
+   *  the live-edit needs bars were all empty. Found 2026-08-09 by probing the raw rows when
+   *  those bars read zero on a healthy pawn (live-edit I9). */
+  pawnNeeds(entity: number): Float64Array {
     const rows = this.needRows.get(entity);
-    if (!rows) return new Uint32Array(0);
-    const out = new Uint32Array(rows.size * 2);
+    if (!rows) return new Float64Array(0);
+    const out = new Float64Array(rows.size * 2);
     let i = 0;
     for (const [, [packed, setTic]] of rows) {
       out[i++] = packed;

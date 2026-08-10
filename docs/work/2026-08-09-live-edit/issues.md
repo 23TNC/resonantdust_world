@@ -65,3 +65,26 @@ duplicates it, or (b) uses `setBody` with a hand-rolled tab strip beneath the pr
 almost certainly right — the preview must persist across tab switches — but it means the tab strip
 is this panel's own widget rather than the built-in one, and it should look like the built-in one
 so the app stays coherent.
+
+## I9 — FOUND: `pawnNeeds` truncated every need row to 32 bits (fixed)
+
+_Found 2026-08-09 at P4, by looking at numbers that were individually plausible._ The needs tab
+rendered its bars correctly and every value was **0** — including `corpus` (health) on a living
+pawn. Probing the raw rows explained it: a need row is the ONE u64 shape
+`dead:16 | data:16 | reference:32`, and `MoverLayer.pawnNeeds` flattened them into a
+**`Uint32Array`**. So `0xa4fb80010020` arrived as `0x80010020` — the `data` half, which IS the
+need's value, cut off entirely.
+
+The blast radius was much wider than this stream. `pawnNeeds` feeds `pawnConditions` and
+`pawnEmotion` too, so **every client-side need read 0**, which means **band-derived conditions
+could never fire on the client**: no thirsty, no hungry, no starving, no dehydrated. Before the
+fix a pawn showed `Scared` / `Uncomfortable`; after it, the same pawn shows `Dehydrated` /
+`Quenched`.
+
+It was also the root of all **7 pre-existing type errors** (`2026-08-09-panel-grid` I11) — every
+one was a `Uint32Array` being passed where the binding wants `Float64Array`. Fixing the container
+to `Float64Array` (a JS number holds the 48 significant bits exactly, under THE 48-BIT LAW)
+**took the typecheck to zero errors**, the first time in this session it has been green.
+
+Kept in this stream rather than deferred to the standing task chip because it *blocked* P4: a
+needs tab that reads every need as 0 is not a needs tab.

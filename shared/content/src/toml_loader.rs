@@ -339,6 +339,9 @@ struct NeedToml {
   name: String,
   #[serde(default)]
   label: Option<String>,
+  /// `#rrggbb` — the live-edit needs-tab bar fill (live-edit F2). Optional.
+  #[serde(default)]
+  color: Option<String>,
   /// The authored value domain (interactions F7) — min may be negative (deficit);
   /// defaults `0..1` (the pre-F7 fractional domain). ALSO the fixed-point encoding
   /// domain (stat-model F4).
@@ -996,6 +999,7 @@ pub(crate) fn load_toml(sources: &[(String, String)]) -> Result<Bundle, Vec<Load
       let min_wins = parse_winner(&n.winner, "need", &n.name, &mut errors);
       (n.name.clone(), NeedParams {
         label: n.label.clone().unwrap_or_else(|| n.name.clone()),
+        color: color(&n.color, &format!("need `{}`", n.name), &mut errors),
         min: n.min,
         max: n.max,
         min_wins,

@@ -53,14 +53,14 @@ week of work.
 
 ## P4 — need colour, bounds and the live rate
 
-- [ ] `color` on the need def, same ritual as the trait colour (F2). Acceptance: load green.
-- [ ] One accessor returning a need's live `(value, min, max, rate)` from a single evaluation —
+- [x] `color` on the need def, same ritual as the trait colour (F2). Acceptance: load green.
+- [x] One accessor returning a need's live `(value, min, max, rate)` from a single evaluation —
       effective clamp, not authored bounds (F3/I3). Acceptance: a pawn under a rate-modifying
       condition reports a different rate from one without.
-- [ ] Fix the rate's sign convention in the accessor so "down is red" holds for every need
+- [x] Fix the rate's sign convention in the accessor so "down is red" holds for every need
       including inverted domains (I4). Acceptance: thirst and inventory both read correctly.
-- [ ] Author a colour on every need; golden re-blessed (I5). Acceptance: registry seeds clean.
-- [ ] Needs tab: label + bar filled from value against the EFFECTIVE clamp + signed rate, red
+- [x] Author a colour on every need; golden re-blessed (I5). Acceptance: registry seeds clean.
+- [x] Needs tab: label + bar filled from value against the EFFECTIVE clamp + signed rate, red
       negative / green positive (F3). Acceptance: drinking visibly moves the bar and flips the
       rate's sign; capture.
 

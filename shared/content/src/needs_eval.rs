@@ -354,6 +354,44 @@ fn eval_need_row(
     Some((reference, np, sat))
 }
 
+/// One need read WHOLE, for a display surface (live-edit F3/I3): its current satisfaction, the
+/// EFFECTIVE clamp it lives inside, and the INSTANTANEOUS rate that clamp is moving under.
+///
+/// These four come from ONE evaluation on purpose. The authored `min`/`max` are the need's
+/// domain, but trait levels and stored conditions narrow the effective clamp, and the live rate
+/// is a product over those same modifiers — so a caller assembling them from separate helpers
+/// would get numbers that are individually right and jointly wrong (a bar reading full while the
+/// effective max is 60).
+///
+/// `rate` is the signed change in SATISFACTION per tic: **negative = losing, positive = gaining**,
+/// for every need including inverted domains. `depletion` is positive when a need drains, so the
+/// sign flips here — fixing the convention once, at the source, means every display can colour it
+/// blindly instead of special-casing each need.
+///
+/// `None` when the pawn carries no row for this need.
+pub fn need_state(
+    bundle: &Bundle,
+    need: &str,
+    trait_rows: &[u64],
+    need_rows: &[(u64, u16)],
+    condition_rows: &[(u64, u16)],
+    now: u16,
+) -> Option<(f64, f64, f64, f64)> {
+    let nref = bundle.gameplay_reference("need", need)?;
+    let &(row, set_tic) = need_rows.iter().find(|(row, _)| row_reference(*row) == nref)?;
+    let np = bundle.need_params_by_ref(nref)?;
+    let value = f64::from(dequantize(row_data(row), np.min as f32, np.max as f32));
+    let windows = rate_windows(bundle, need, trait_rows, condition_rows, need_rows, set_tic);
+    let sat = satisfaction_at(value, set_tic, &np, now, &windows);
+    let (lo, hi) = need_bounds(bundle, need, &np, trait_rows, condition_rows, now);
+    // The rate the need is moving under RIGHT NOW — the same segment rate the integrator
+    // samples, evaluated at the current elapsed rather than integrated over it.
+    let base_rate = if np.deplete > 0.0 { (np.max - np.min) / np.deplete } else { 0.0 };
+    let elapsed = elapsed_guarded(set_tic, now);
+    let rate = -segment_rate(base_rate, &windows, elapsed);
+    Some((sat, lo, hi, rate))
+}
+
 /// Every condition active at `now`: band-DERIVED conditions from the need rows + unexpired
 /// stored rows. Rows naming an unknown need/condition are skipped (a corpus/state version
 /// skew reads as "no condition", never a panic).

@@ -276,6 +276,7 @@ export class WorldScene extends Scene {
         // shared provider already did for this pawn at this tic.
         const emotionRows = [];
         const traitRows = [];
+        const needRows = [];
         try {
           const c = getContent();
           // Traits are the CONSTANT half of gameplay state — stride-2 `[reference, color]`,
@@ -288,6 +289,22 @@ export class WorldScene extends Scene {
               reference,
               label: c.traitLabelOf(reference) ?? `#${reference.toString(16)}`,
               color: flat[i + 1] >= 0 ? flat[i + 1] : 0x6b7a8a,
+            });
+          }
+          // Needs: the kind declares which it carries; each resolves through ONE call
+          // returning value + EFFECTIVE clamp + live rate together (live-edit F3/I3).
+          const needFan = this.moverLayer.pawnNeeds(entity);
+          const d2 = this.ctx.client.ticDelta(0);
+          const now2 = d2 === null ? 0 : ((Math.floor(d2) % 0x10000) + 0x10000) % 0x10000;
+          for (const needName of c.kindNeedNames(info.kind)) {
+            const st = c.needState(info.kind, payload, needFan, needName, now2);
+            if (st.length < 5) continue; // the pawn carries no row for this need
+            const ref = c.gameplayReference("need", needName) ?? 0;
+            needRows.push({
+              reference: ref,
+              label: c.needLabel(needName) ?? needName,
+              value: st[0], min: st[1], max: st[2], rate: st[3],
+              color: st[4] >= 0 ? st[4] : 0x8a93a6,
             });
           }
           for (let idx = 0; idx < info.emotionMagnitudes.length; idx++) {
@@ -307,12 +324,13 @@ export class WorldScene extends Scene {
           key: [
             info.name,
             traitRows.map((x) => x.reference).join(","),
+            needRows.map((x) => `${x.label}:${x.value.toFixed(2)}:${x.rate.toFixed(4)}`).join(","),
             info.conditions.map((x) => `${x.id}:${x.remaining}`).join(","),
             emotionRows.map((x) => `${x.index}:${x.value}`).join(","),
           ].join("|"),
           name: info.name,
           traits: traitRows,
-          needs: [],    // P4 — needs the (value, min, max, rate) accessor + authored need colour
+          needs: needRows,
           conditions: info.conditions,
           emotions: emotionRows,
         };

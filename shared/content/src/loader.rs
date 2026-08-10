@@ -178,6 +178,10 @@ pub struct NeedBand {
 pub struct NeedParams {
   /// Display label ("Thirst") — authoring/debug only. The need itself is NEVER shown.
   pub label: String,
+  /// `0xRRGGBB` — the bar fill in the live-edit needs tab (live-edit F2). `None` = unauthored,
+  /// which renders neutral. NOTE this is the only place a need's scalar is ever shown: the
+  /// PLAYER sees conditions, never the number (conditions F1). This is a tuning surface.
+  pub color: Option<u32>,
   /// The authored domain floor — depletion's resting point AND the fixed-point encoding
   /// floor (stat-model F4). `min` may be negative: min/max IS the sign treatment (F7).
   pub min: f64,
