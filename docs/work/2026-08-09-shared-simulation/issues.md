@@ -3,7 +3,39 @@
 _Problems hit, candidate solutions, which we chose and why. Chronological append._
 
 ## I1 — the server walks bunnies at ~2× the pace the client speculates
-**2026-08-09. Open — measured, deliberately not isolated ([F5](forks.md#f5)).**
+**2026-08-09. 2026-08-10: NOT REPRODUCIBLE — the premise was mine and it was wrong.**
+
+Re-measured on a freshly reset world with the new per-kind tally, and the paces **agree**:
+
+| kind | client pace | implied by the server's own rows (p50) | anchor stride | predicted |
+|---|---|---|---|---|
+| bunny | 24 | **24.27** | 1.318 | 1.333 |
+| wolf | 12 | **12.14** | 2.354 | 2.667 |
+
+**Where the 2× came from: I pooled two species.** The original figure was a single distribution
+over all movers. I checked that 86 of 90 were bunnies and concluded the pool was therefore
+bunny-dominated — but the pool counted *moving* samples, not pawns, and I never verified that
+bunnies contributed samples in proportion to their number. Per kind, each side's stride matches its
+own pace. I cannot now separate "pooling artifact" from "artifact of a sim that was hours old and
+about to fall over" ([I6](#i6)), and I am not going to invent a clean story: **the honest statement
+is that the number does not reproduce on a healthy world, and I should not have reported it as a
+measured divergence without splitting by kind first.**
+
+**What survives, and it is not nothing.** On that same healthy world, spec reseed error still runs
+p50 1.31 tiles (bunny) / 2.25 (wolf) with a p90 of 5.8 / 8.0 and a max over 15, and **~15% of
+reseeds exceed `CHASE_SNAP_TILES`**. So the client's belief still drifts multiple tiles from truth
+between anchors with the pace correct — the divergence is real, it is just **not** a pacing
+divergence. Geometry, path consumption or lifecycle; the running `walk-divergence` analysis is
+aimed there.
+
+**What this does and does not change.** It does not touch the stream's thesis: the rule being
+written twice is a structural defect whether or not today's two copies happen to agree, and the
+headless clients hold no position track at all. The user made exactly that point when this
+correction landed — *"even if this is for whatever reason somewhat performing correctly, it is very
+likely still incorrect and requires changes."* It does demote measurement: P0 is a **regression
+check**, not a gate ([F6](forks.md#f6)).
+
+_Original entry, kept because the ruling-out work below still stands:_
 
 Live, 86 bunnies + 3 wolves. The client derives **24 tics/tile** for a bunny, which is correct:
 `walks` is a leveled passive (`ground_speed add = [24, 12, 6]`, `content/interactions.toml:92`) and

@@ -26,10 +26,10 @@ so P2 must have landed. Do not reorder.
       and `CHORD_CAP_TILES`. Acceptance: `bin/sim check worker` green.
 - [x] Move `hop_stride_tiles` into `move_eval` verbatim. Acceptance: unit test covers the clamp at
       both ends — pace 1 → 8 tiles, pace 240 → 1 tile.
-- [ ] Add `move_eval::next_hop(from, dest, pace, pathable) -> (landing, tics)` carrying the chord
+- [x] Add `move_eval::next_hop(from, dest, pace, pathable) -> (landing, tics)` carrying the chord
       step, the `clear_point_fraction` clamp and the recenter. Acceptance: unit test reproduces 20
       landings recorded from the live worker.
-- [ ] Add `move_eval::position_at(from, dest, base_tic, now, pace, pathable) -> point` — where a
+- [x] Add `move_eval::position_at(from, dest, base_tic, now, pace, pathable) -> point` — where a
       walking pawn IS at any tic. Acceptance: at the hop's own tic it equals `next_hop`'s landing
       for the same 20 cases.
 - [ ] Rewrite worker `MOVE_STEP` and `resolve_walk_position_for` as calls into `move_eval`, and

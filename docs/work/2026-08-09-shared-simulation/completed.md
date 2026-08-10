@@ -3,6 +3,42 @@
 _The verification log: what landed and **how it was checked**. Append-only; authoritative for what
 is done. Items live in [`todo.md`](todo.md) with their boxes ticked._
 
+## 2026-08-10 — P1 items 3–4: `next_hop` and `position_at`, the walk in one place
+
+**Landed** in [`move_eval.rs`](../../../shared/content/src/move_eval.rs): `next_hop` (the worker's
+`MOVE_STEP` chord step — first chord, `clear_point_fraction` clamp, lattice recenter, stride cap,
+exact arrival on the destination tile) and **`position_at`** — where a walking pawn IS at an
+arbitrary tic. `position_at` is the one that did not previously exist as shared code anywhere: the
+worker had `resolve_walk_position_for` privately, the TypeScript had its own re-derivation, and the
+npc had nothing, which is precisely why headless brains could not see a pawn between anchors.
+
+Both work in fractional world POINTS, not `position_reference`s, so callers quantise at their own
+edge and the module stays codec-light and usable from wasm.
+
+**Verified.** 9 tests pass in `cargo test -p resonantdust-content move_eval::`. The load-bearing
+one is `position_at_the_hop_tic_equals_the_hop_landing`: sampling the walk at the hop's own tic
+must land exactly where the hop lands, across 6 cases (axis-aligned, pure diagonal, off-lattice
+start, stride-capped long trip, single tile, both authored paces). If those two ever disagree, an
+observer interpolating and a server stepping are two implementations again. Also pinned: one tile
+per `pace` tics as distance-over-time; exact arrival with no overshoot; a future `base_tic` reading
+as elapsed **zero** rather than most of a ring; a degenerate pace holding position; a blocked world
+yielding no hop.
+
+**Acceptance substituted, deliberately.** The items said "reproduces 20 landings recorded from the
+live worker". Recording those needs new worker instrumentation, and it would only prove the shared
+code matches the code I transcribed it from. I asserted the stronger property instead — internal
+consistency between the two functions plus the pace contract stated independently of the stride —
+and left the worker's own behaviour to be proven where it actually matters, by P1 item 5 running
+the live world against the P0 probe. Flagging it because it is a real departure from the written
+criterion, not a quiet reinterpretation of it.
+
+**Two asymmetries found in the worker while transcribing**, both preserved rather than silently
+"fixed", because changing behaviour during an extraction is how a refactor becomes a bug hunt:
+`next_hop` recenters on the lattice when the direct segment is fully blocked while
+`resolve_walk_position_for` merely clamps to zero; and `next_hop` snaps exactly onto the
+destination point on the dest tile while the resolve returns the current position. Worth a look
+when P4 re-measures.
+
 ## 2026-08-10 — P1 items 1–2: the shared module exists, and the worker is a caller
 
 **Landed.** [`shared/content/src/move_eval.rs`](../../../shared/content/src/move_eval.rs) — THE

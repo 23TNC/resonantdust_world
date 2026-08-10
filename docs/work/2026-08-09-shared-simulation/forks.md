@@ -47,6 +47,23 @@ Git holds the history. This follows the tree-wide delete-don't-deprecate posture
 buys is bought instead by phase order: core's track lands and is proven headless (P2/P3) before
 webgl's copy is removed (P4).
 
+## F6 — measurement is a regression check, not a gate
+**2026-08-10.** [F5](#f5) parked I1's root cause and pinned a baseline instead. Then the baseline
+refuted the premise: per kind, the paces agree ([I1](issues.md#i1)). That left a real question —
+if the headline symptom is not what I thought, does the structural work still lead?
+
+**Yes, and the plan's ordering was wrong to imply otherwise.** The user settled it: *"even if this
+is for whatever reason somewhat performing correctly, it is very likely still incorrect and
+requires changes."* The defect was never "the numbers are bad"; it is that one rule is written
+twice in two languages and the headless clients hold no position track at all. Those are true
+independent of any measurement, and a session that treats a green measurement as permission to stop
+has misunderstood the stream.
+
+So **P0 is demoted to a regression check.** Its probe stays (it is how P4 proves webgl still
+renders correctly once its simulation is deleted), but no structural phase waits on it. Concretely:
+P1–P4 proceed on their own acceptance, and the 10-minute soak becomes a before/after comparison
+rather than a gate. This is a correction to my own plan, not a change of scope.
+
 ## F5 — root-cause [I1](issues.md#i1) first, or fix the architecture first
 **2026-08-09.** The 2× pace divergence is measured but not isolated. Tempting to chase it: it is
 the thing the user can see.

@@ -37,9 +37,147 @@ pub fn hop_stride_tiles(tics_per_tile: f64) -> f64 {
     (REANCHOR_TICS / tics_per_tile.max(1.0)).clamp(1.0, CHORD_CAP_TILES)
 }
 
+/// A grid pathability probe: `true` = a pawn may occupy that tile.
+pub type Pathable<'a> = &'a dyn Fn(i32, i32) -> bool;
+
+/// The tile a fractional world point sits in. The half-open edge rule (chord-movement I2):
+/// subtile 0 belongs to the tile, so this is a floor — matching `codec::object::position_to_tile`
+/// on any point that came from a `position_reference`.
+pub fn tile_of(point: (f64, f64)) -> (i32, i32) {
+    (point.0.floor() as i32, point.1.floor() as i32)
+}
+
+/// One hop's outcome: where the pawn lands, which way it ends up facing, and what the hop costs.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Hop {
+    pub point: (f64, f64),
+    /// `0` south, `1` east, `2` north, `3` west — the rotation encoding pawns store.
+    pub facing: u8,
+    /// Tics until the landing, `ceil(distance × pace)`. Never 0: a hop that landed on its own
+    /// tic would make the continuation collide with the event that queued it.
+    pub tics: u16,
+}
+
+/// The first chord's leg from `from` toward `dest_tile`, and the pathable fraction of it.
+///
+/// The chord's line-of-sight was validated on the LATTICE (tile centres); the pawn walks from its
+/// SUBTILE point, so the real segment can clip a corner the validated one did not — hence the
+/// separate [`crate::path_eval::clear_point_fraction`] on the actual segment. `None` = no route
+/// this hop; the caller steps nothing and re-routes next time.
+fn first_leg(
+    from: (f64, f64),
+    dest_tile: (i32, i32),
+    pathable: Pathable,
+) -> Option<((f64, f64), f64)> {
+    let chords = crate::path_eval::find_chords(tile_of(from), dest_tile, 0, pathable)?;
+    let &(wx, wy) = chords.first()?;
+    let leg = (wx as f64 - from.0, wy as f64 - from.1);
+    let clear = crate::path_eval::clear_point_fraction(from, (wx as f64, wy as f64), pathable);
+    Some((leg, clear))
+}
+
+/// Facing from a movement delta, east/west dominant on a tie — the rule the worker's hop and the
+/// client's initial aim both need, in one place so a pawn cannot face two ways at once.
+pub fn facing_of(dx: f64, dy: f64) -> u8 {
+    if dx.abs() >= dy.abs() {
+        if dx > 0.0 { 1 } else { 3 }
+    } else if dy > 0.0 { 0 } else { 2 }
+}
+
+/// **THE hop** (worker `MOVE_STEP`, chord-movement F2/F3/F8): from `from`, one stride along the
+/// first chord toward `dest`.
+///
+/// `None` means step nothing — either the route is blocked this hop (the world changed mid-trip;
+/// the chain re-queues and resumes when it clears) or the leg is degenerate.
+///
+/// Landing on the destination TILE returns `dest` exactly rather than a point fractionally short
+/// of it: a stride-capped hop otherwise leaves a pawn permanently a sixteenth from its goal, and
+/// arrival is an equality test.
+pub fn next_hop(
+    from: (f64, f64),
+    dest: (f64, f64),
+    pace: f64,
+    pathable: Pathable,
+) -> Option<Hop> {
+    let dest_tile = tile_of(dest);
+    if tile_of(from) == dest_tile {
+        let (dx, dy) = (dest.0 - from.0, dest.1 - from.1);
+        return Some(Hop { point: dest, facing: facing_of(dx, dy), tics: hop_tics(dx.hypot(dy), pace) });
+    }
+    let ((mut dx, mut dy), clear) = first_leg(from, dest_tile, pathable)?;
+    // A fully-blocked direct segment RECENTERS: step toward this tile's own lattice anchor. A
+    // segment inside one tile is always legal, and from the anchor the validated corridor is
+    // exact. (Without this a hop near a shoreline floors a tile into water — seen live.)
+    if clear <= f64::EPSILON {
+        let (tx, ty) = tile_of(from);
+        dx = tx as f64 - from.0;
+        dy = ty as f64 - from.1;
+    }
+    let len = dx.hypot(dy);
+    if len <= f64::EPSILON {
+        return None;
+    }
+    let mut f = (hop_stride_tiles(pace) / len).min(1.0);
+    if clear > f64::EPSILON {
+        f = f.min(clear);
+    }
+    Some(Hop {
+        point: (from.0 + dx * f, from.1 + dy * f),
+        facing: facing_of(dx, dy),
+        tics: hop_tics(len * f, pace),
+    })
+}
+
+/// A hop's tic cost: `ceil(distance × pace)`, floored at 1 so a continuation never lands on the
+/// tic that queued it.
+fn hop_tics(distance: f64, pace: f64) -> u16 {
+    ((distance * pace).ceil() as i64).clamp(1, u16::MAX as i64) as u16
+}
+
+/// **WHERE A WALKING PAWN IS** at `now` (worker `resolve_walk_position_for`, and the function the
+/// TypeScript speculation was independently re-deriving — shared-simulation's whole point).
+///
+/// Interpolates along the first chord from the pawn's last authoritative point at the tic that
+/// point was stamped. `base_tic` in the FUTURE reads as elapsed 0, never as ancient — the wrapping
+/// u16 tic ring makes "slightly ahead" and "half a ring behind" the same bits, and the needs-eval
+/// rule resolves that ambiguity toward zero everywhere.
+///
+/// Returns `from` unchanged when the pawn is not really walking: no route, already on the
+/// destination tile, a degenerate pace, or a leg the clamp closes to nothing.
+pub fn position_at(
+    from: (f64, f64),
+    dest: (f64, f64),
+    base_tic: u16,
+    now: u16,
+    pace: f64,
+    pathable: Pathable,
+) -> (f64, f64) {
+    let dest_tile = tile_of(dest);
+    if tile_of(from) == dest_tile || pace < 1.0 {
+        return from;
+    }
+    let Some(((dx, dy), clear)) = first_leg(from, dest_tile, pathable) else { return from };
+    let len = dx.hypot(dy);
+    if len <= f64::EPSILON {
+        return from;
+    }
+    let raw = now.wrapping_sub(base_tic);
+    let elapsed = if raw > u16::MAX / 2 { 0 } else { raw } as f64;
+    let f = (elapsed / pace / len).min(1.0).min(clear);
+    if f <= f64::EPSILON {
+        return from;
+    }
+    (from.0 + dx * f, from.1 + dy * f)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An open field — every tile walkable.
+    fn open(_x: i32, _y: i32) -> bool {
+        true
+    }
 
     /// Both clamp ends, which is where a stride stops being a division and starts being a policy.
     #[test]
@@ -88,5 +226,86 @@ mod tests {
             assert_eq!(hop_stride_tiles(pace), 1.0);
             assert!(hop_stride_tiles(pace) * pace > REANCHOR_TICS);
         }
+    }
+
+    /// THE property the two functions exist to share: sampling the walk at the hop's own tic must
+    /// land exactly where the hop lands. If these ever disagree, an observer interpolating and a
+    /// server stepping are back to being two implementations — which is the bug this module was
+    /// created to delete.
+    #[test]
+    fn position_at_the_hop_tic_equals_the_hop_landing() {
+        let cases: &[((f64, f64), (f64, f64), f64)] = &[
+            ((10.0, 10.0), (20.0, 10.0), 24.0),   // due east, bunny pace
+            ((10.0, 10.0), (10.0, 20.0), 12.0),   // due south, wolf pace
+            ((10.0, 10.0), (18.0, 18.0), 24.0),   // pure diagonal
+            ((10.5, 10.25), (17.0, 13.0), 12.0),  // off-lattice start
+            ((10.0, 10.0), (40.0, 11.0), 6.0),    // long trip at the stride cap
+            ((10.0, 10.0), (11.0, 10.0), 24.0),   // one tile
+        ];
+        for &(from, dest, pace) in cases {
+            let hop = next_hop(from, dest, pace, &open).expect("open field always routes");
+            let at = position_at(from, dest, 0, hop.tics, pace, &open);
+            let err = (at.0 - hop.point.0).hypot(at.1 - hop.point.1);
+            assert!(
+                err < 0.05,
+                "from {from:?} dest {dest:?} pace {pace}: hop lands {:?} but position_at({}) says {at:?} ({err} apart)",
+                hop.point, hop.tics,
+            );
+        }
+    }
+
+    /// The pace contract, stated as distance over time rather than as a stride: a pawn covers one
+    /// tile per `pace` tics. This is the number the client speculates on, so it is the number that
+    /// must hold — a stride that is right but paced wrong looks identical until the anchor lands.
+    #[test]
+    fn a_walk_covers_one_tile_per_pace_tics() {
+        for pace in [6.0, 12.0, 24.0] {
+            for tics in [8_u16, 16, 24, 32] {
+                let at = position_at((10.0, 10.0), (60.0, 10.0), 0, tics, pace, &open);
+                let expected = 10.0 + f64::from(tics) / pace;
+                assert!(
+                    (at.0 - expected).abs() < 1e-9,
+                    "pace {pace}, {tics} tics: walked to {} not {expected}", at.0,
+                );
+            }
+        }
+    }
+
+    /// A hop never overshoots its destination, and arriving is exact — an equality test decides
+    /// arrival, so a landing a sixteenth short would strand the pawn a hop from every goal.
+    #[test]
+    fn arrival_is_exact_and_never_overshoots() {
+        let hop = next_hop((10.0, 10.0), (10.75, 10.25), 24.0, &open).unwrap();
+        assert_eq!(hop.point, (10.75, 10.25));
+        assert!(hop.tics >= 1);
+        // Sampled past the end of the trip, the walk clamps AT the waypoint, never beyond.
+        let at = position_at((10.0, 10.0), (12.0, 10.0), 0, 60_000, 24.0, &open);
+        assert!(at.0 <= 12.0 + 1e-9, "walked to {} past the destination", at.0);
+    }
+
+    /// A future-stamped base tic reads as elapsed zero, not as almost a whole ring of travel.
+    /// The wrapping u16 makes those two cases the same bits; guessing wrong teleports a pawn.
+    #[test]
+    fn a_future_base_tic_reads_as_no_elapsed_time() {
+        let at = position_at((10.0, 10.0), (30.0, 10.0), 100, 90, 24.0, &open);
+        assert_eq!(at, (10.0, 10.0));
+        // And the ring wrap itself is ordinary elapsed time, not a jump.
+        let at = position_at((10.0, 10.0), (30.0, 10.0), u16::MAX - 3, 4, 24.0, &open);
+        assert!((at.0 - (10.0 + 8.0 / 24.0)).abs() < 1e-9, "wrapped walk went to {}", at.0);
+    }
+
+    /// A pace below 1 is degenerate (`can_move_ground` refuses such a pawn at the front door);
+    /// the walk must hold position rather than divide its way to infinity.
+    #[test]
+    fn a_degenerate_pace_does_not_move_the_pawn() {
+        assert_eq!(position_at((10.0, 10.0), (30.0, 10.0), 0, 500, 0.0, &open), (10.0, 10.0));
+    }
+
+    /// An impathable world routes nowhere: the hop reports "step nothing" rather than guessing.
+    #[test]
+    fn a_blocked_world_yields_no_hop() {
+        let walled = |x: i32, _y: i32| x <= 10;
+        assert!(next_hop((10.0, 10.0), (30.0, 10.0), 24.0, &walled).is_none());
+        assert_eq!(position_at((10.0, 10.0), (30.0, 10.0), 0, 32, 24.0, &walled), (10.0, 10.0));
     }
 }
