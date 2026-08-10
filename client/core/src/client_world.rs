@@ -309,9 +309,13 @@ mod tests {
         // No TicAnchor yet: the clock has not anchored, so there is NO tic to answer at.
         assert_eq!(cw.now_tic_at(1000.0), None, "an unanchored clock must answer None, not 0");
 
+        // The ENGINE stamps the tic (it owns the only `TicEstimate`); the model holds the
+        // answer. Observing a `TicAnchor` here must NOT conjure one — that would be the second
+        // clock again, in the model, which is what this design removed.
         cw.observe_event(&Event::TicAnchor { tic: 100, wall_ms: 0.0, tics_per_sec: 6.0 }, 0.0);
+        assert_eq!(cw.now_tic_at(0.0), None, "the model must not derive a tic of its own");
+        cw.set_tic(Some(100));
         assert_eq!(cw.now_tic_at(0.0), Some(100));
-        assert_eq!(cw.now_tic_at(2000.0), Some(112), "12 tics in 2 s at 6 Hz");
 
         cw.observe_event(&Event::StateObject {
             macro_position: 0, entity_reference: 1, definition_reference: 0,
