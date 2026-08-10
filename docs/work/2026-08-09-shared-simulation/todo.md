@@ -153,13 +153,13 @@ including one whose criterion I had rewritten after ticking it.
 
 ## P3c — one door: the input BINDER
 
-- [ ] Add `bind_interaction(bundle, name, ctx)` to `shared/content/src/loader.rs` beside
+- [x] Add `bind_interaction(bundle, name, ctx)` to `shared/content/src/loader.rs` beside
       `interaction_params` (`:1681`). Acceptance: `attack`'s `["pawn","target","amount"]`
       (`interactions.toml:333`) binds in corpus order; a missing `target` refuses.
 - [ ] Move `INTENT_FRESH`/`INTENT_COMPLETION`/`INTENT_ADVANCED` (`worker/src/main.rs:504-506`) into
       `shared/codec::action`, so nine packers stop writing a bare `0`. Acceptance:
       `grep -rn "const INTENT_FRESH" server/` is 0.
-- [ ] Rewrite the three Rust binders as calls — `wolves.rs:579-613`, `bunnies.rs:215-235` and the
+- [x] Rewrite the three Rust binders as calls — `wolves.rs:579-613`, `bunnies.rs:215-235` and the
       SERVER's own copy at `worker/src/main.rs:1596-1615`. Acceptance: `grep -rn '"amount" =>'` over
       `server/worker/src client/npc/src` is 0.
 - [ ] Expose it through `shared/wasm`, superseding `composeInteraction` (`lib.rs:62-72`), and point

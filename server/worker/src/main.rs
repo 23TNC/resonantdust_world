@@ -1592,25 +1592,25 @@ async fn main() {
                         };
                         // Bind the input signature exactly as the pie menu would.
                         let mut inputs = Vec::with_capacity(ip.inputs.len());
-                        let mut bindable = true;
-                        for name in &ip.inputs {
-                            match name.as_str() {
-                                "pawn" => inputs.push(*obj),
-                                "destination" => inputs.push(pack_position_reference(
-                                    prow.macro_position_reference,
-                                    prow.micro_position_reference,
-                                )),
-                                "amount" => inputs.push((bind.magnitude as f32).to_bits()),
-                                other => {
-                                    tracing::warn!(interaction = %bind.name, input = other,
-                                        "need-trigger: unbindable input — not fired");
-                                    bindable = false;
-                                }
-                            }
-                        }
-                        if !bindable {
+                        // THE binder (shared-simulation P3c) — the same call the brains and the
+                        // pie menu make. The server had its own copy of the reserved-input
+                        // vocabulary here, which is the last place anyone looks for a client
+                        // defect and the first place a positional operand quietly shifts.
+                        let ctx = resonantdust_content::loader::InputBinding {
+                            pawn: Some(*obj),
+                            destination: Some(pack_position_reference(
+                                prow.macro_position_reference,
+                                prow.micro_position_reference,
+                            )),
+                            amount: Some(bind.magnitude),
+                            ..Default::default()
+                        };
+                        let Some(bound) = bundle.bind_interaction(&bind.name, &ctx) else {
+                            tracing::warn!(interaction = %bind.name,
+                                "need-trigger: unbindable input — not fired");
                             continue;
-                        }
+                        };
+                        inputs.extend_from_slice(&bound);
                         let mut program =
                             vec![EXECUTE_INTERACTION, iref, INTENT_FRESH, inputs.len() as u32];
                         program.extend_from_slice(&inputs);
@@ -1907,7 +1907,7 @@ async fn main() {
                         continue;
                     }
                     use resonantdust_content::loader::Operand;
-                    use resonantdust_codec::object::{pack_row, row_data};
+                    use resonantdust_codec::object::row_data;
                     // The acting PAWN: the reserved `pawn` input FIRST (input-rework F5) —
                     // an effect's target can name ANOTHER pawn now (attack F2: satisfy
                     // hits `@target`, the VICTIM), so binding the actor from the effect

@@ -3,6 +3,28 @@
 _The verification log: what landed and **how it was checked**. Append-only; authoritative for what
 is done. Items live in [`todo.md`](todo.md) with their boxes ticked._
 
+## 2026-08-10 — P3c: ONE input binder, including the server's own
+
+`Bundle::bind_interaction(name, &InputBinding)` resolves the reserved vocabulary — `pawn`,
+`destination`, `target`, `amount`, `slot`, `item` — into an `EXECUTE_INTERACTION`'s operand words.
+It replaces **four** hand-rolled copies: `wolves.rs`, `bunnies.rs`, and — the one the audit called
+out and the one I'd have looked for last — **the worker's own need-trigger**. A server with its
+own spelling of a client-facing vocabulary is the last place anyone looks when an operand shifts.
+
+`grep -c '"pawn" =>'` across `client/npc/src/brains/` and `server/worker/src/main.rs` is **0**.
+
+Two tests against the real corpus: the binder follows each interaction's AUTHORED input order for
+every interaction in the corpus (the property four positional binders each had to get right
+separately, unchecked), and a caller missing an input gets `None` rather than a short program —
+because the operands are positional, so a hole is read as a different binding, not as an error.
+
+Verified live: worker and npc rebuilt and running, 0 errors on either.
+
+**One behaviour change recorded rather than smoothed over** ([F8](forks.md#f8)): wiring the brains
+onto `pawn_busy` cut the observed move-intent rate to about a third. That is the fix working — the
+old guess let a brain re-order over its own walk, which is [I4](issues.md#i4)'s 63%-of-orders
+interrupt storm seen from the other side.
+
 ## 2026-08-10 — the brains stop guessing when they are busy
 
 `busy_until: Option<Instant>` is deleted from both brains, along with both

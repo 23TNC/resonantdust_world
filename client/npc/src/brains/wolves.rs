@@ -602,30 +602,22 @@ impl Wolves {
     fn fire_interaction(&self, bot: &Bot, act: &client::Client, interaction: &str, magnitude: f64, dest: (i32, i32)) {
         let Some(wolf) = self.wolf else { return };
         let Some(bundle) = &self.bundle else { return };
-        let (Some(iref), Some(ip)) = (
-            bundle.gameplay_reference("interaction", interaction),
-            bundle.interaction_params(interaction),
-        ) else {
+        let Some(iref) = bundle.gameplay_reference("interaction", interaction) else {
             tracing::warn!(%interaction, "fire_interaction: unresolvable interaction");
             return;
         };
-        let mut inputs = Vec::with_capacity(ip.inputs.len());
-        for name in &ip.inputs {
-            match name.as_str() {
-                "pawn" => inputs.push(wolf),
-                // The CARRIER cell (pathfinding: water is impathable, so the wolf
-                // drinks FROM THE SHORE — adjacency is cheb ≤ 1 inclusive, and the
-                // destination names the water, not where the wolf stands).
-                "destination" => inputs
-                    .push(resonantdust_codec::object::tile_to_position(dest.0, dest.1)),
-                "amount" => inputs.push((magnitude as f32).to_bits()),
-                other => {
-                    tracing::warn!(%interaction, input = other,
-                                   "fire_interaction: unbindable input — not fired");
-                    return;
-                }
-            }
-        }
+        // THE binder (P3c). `destination` is the CARRIER cell, not where the wolf stands:
+        // water is impathable, so the wolf drinks FROM THE SHORE and adjacency is cheb ≤ 1.
+        let ctx = resonantdust_content::loader::InputBinding {
+            pawn: Some(wolf),
+            destination: Some(resonantdust_codec::object::tile_to_position(dest.0, dest.1)),
+            amount: Some(magnitude),
+            ..Default::default()
+        };
+        let Some(inputs) = bundle.bind_interaction(interaction, &ctx) else {
+            tracing::warn!(%interaction, "fire_interaction: unbindable input — not fired");
+            return;
+        };
         let mut program = vec![EXECUTE_INTERACTION, iref, 0, inputs.len() as u32];
         program.extend_from_slice(&inputs);
         if act.queue(program).is_err() {

@@ -869,6 +869,19 @@ pub struct Bundle {
   gameplay_registry: Option<std::collections::HashMap<(String, String), u32>>,
 }
 
+/// What a caller can offer [`Bundle::bind_interaction`]. Every field optional: an interaction
+/// asks for what it needs, and a caller that cannot supply one gets `None` rather than a
+/// program with a hole in it.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct InputBinding {
+  pub pawn: Option<u32>,
+  pub destination: Option<u32>,
+  pub target: Option<u32>,
+  pub amount: Option<f64>,
+  pub slot: Option<u32>,
+  pub item: Option<u32>,
+}
+
 impl Bundle {
   /// Supply the registry's `name → kind_id` resolution, keyed `(is_tile, name)`.
   ///
@@ -1681,6 +1694,34 @@ impl Bundle {
   pub fn interaction_params(&self, name: &str) -> Option<InteractionParams> {
     self.interactions.iter().find(|(n, _)| n == name).map(|(_, p)| p.clone())
   }
+  /// **THE input binder** (shared-simulation P3c): resolve an interaction's declared `inputs`
+  /// vocabulary into the operand words an `EXECUTE_INTERACTION` program carries.
+  ///
+  /// The reserved names — `pawn`, `destination`, `target`, `amount`, `slot`, `item` — were bound
+  /// by hand in five places: three npc brains, the webgl pie menu, and **the server's own
+  /// need-trigger** (`worker/src/main.rs`). Five spellings of one vocabulary, each free to
+  /// silently omit or reorder an operand the other side then reads positionally.
+  ///
+  /// `None` means an input this caller cannot supply — the caller must NOT fire a partially
+  /// bound program, because the operands are positional and a short list is read as a different
+  /// binding rather than as an error.
+  pub fn bind_interaction(&self, name: &str, ctx: &InputBinding) -> Option<Vec<u32>> {
+    let ip = self.interaction_params(name)?;
+    let mut out = Vec::with_capacity(ip.inputs.len());
+    for input in &ip.inputs {
+      out.push(match input.as_str() {
+        "pawn" => ctx.pawn?,
+        "destination" => ctx.destination?,
+        "target" => ctx.target?,
+        "amount" => (ctx.amount? as f32).to_bits(),
+        "slot" => ctx.slot?,
+        "item" => ctx.item?,
+        _ => return None,
+      });
+    }
+    Some(out)
+  }
+
   /// An interaction's params by gameplay `definition_reference` — the worker's resolution
   /// of an `EXECUTE_INTERACTION` event's first operand.
   pub fn interaction_params_by_ref(&self, reference: u32) -> Option<InteractionParams> {
@@ -1736,5 +1777,53 @@ mod tests {
     assert_ne!(tile_rand(42, 6), tile_rand(43, 6));
     let r = tile_rand(123456789, 9);
     assert!((0.0..1.0).contains(&r));
+  }
+}
+
+#[cfg(test)]
+mod bind_tests {
+  use super::*;
+
+  fn corpus() -> Bundle {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
+    let src = crate::content::read_content_dir(&root).expect("content/");
+    crate::load(&src).expect("corpus loads")
+  }
+
+  /// The binder resolves the declared vocabulary in the interaction's OWN order — which is the
+  /// property five hand-rolled binders each had to get right separately, positionally, with no
+  /// check (shared-simulation P3c).
+  #[test]
+  fn the_binder_follows_the_authored_input_order() {
+    let b = corpus();
+    let ctx = InputBinding { pawn: Some(0xAA), destination: Some(0xBB), amount: Some(3.0), ..Default::default() };
+    for name in b.interaction_names() {
+      let Some(ip) = b.interaction_params(name) else { continue };
+      let Some(bound) = b.bind_interaction(name, &ctx) else { continue };
+      assert_eq!(bound.len(), ip.inputs.len(), "`{name}` bound a different arity");
+      for (word, input) in bound.iter().zip(&ip.inputs) {
+        let expect = match input.as_str() {
+          "pawn" => 0xAA,
+          "destination" => 0xBB,
+          "amount" => 3.0f32.to_bits(),
+          _ => continue,
+        };
+        assert_eq!(*word, expect, "`{name}` bound `{input}` to the wrong operand");
+      }
+    }
+  }
+
+  /// A caller that cannot supply an input gets NOTHING, not a short program. The operands are
+  /// positional, so a missing one is read as a different binding rather than as an error.
+  #[test]
+  fn a_missing_input_refuses_the_whole_binding() {
+    let b = corpus();
+    let needs_pawn = b
+      .interaction_names()
+      .iter()
+      .find(|n| b.interaction_params(n).is_some_and(|p| p.inputs.iter().any(|i| i == "pawn")))
+      .cloned()
+      .expect("some interaction binds `pawn`");
+    assert!(b.bind_interaction(&needs_pawn, &InputBinding::default()).is_none());
   }
 }

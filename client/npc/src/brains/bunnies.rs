@@ -222,25 +222,19 @@ impl Bunnies {
         }
     }
 
-    fn fire(&self, bot: &Bot, act: &client::Client, id: u32, interaction: &str, magnitude: f64, dest: (i32, i32)) {
+    fn fire(&self, _bot: &Bot, act: &client::Client, id: u32, interaction: &str, magnitude: f64, dest: (i32, i32)) {
         let Some(bundle) = &self.bundle else { return };
-        let (Some(iref), Some(ip)) = (
-            bundle.gameplay_reference("interaction", interaction),
-            bundle.interaction_params(interaction),
-        ) else {
-            return;
+        // The binder resolves the params; only the reference is still needed here.
+        let Some(iref) = bundle.gameplay_reference("interaction", interaction) else { return };
+        // THE binder (P3c) — the same call the wolf, the pie menu and the SERVER's own
+        // need-trigger make, instead of a fourth spelling of the same vocabulary.
+        let ctx = resonantdust_content::loader::InputBinding {
+            pawn: Some(id),
+            destination: Some(tile_to_position(dest.0, dest.1)),
+            amount: Some(magnitude),
+            ..Default::default()
         };
-        let mut inputs = Vec::with_capacity(ip.inputs.len());
-        for name in &ip.inputs {
-            match name.as_str() {
-                "pawn" => inputs.push(id),
-                "destination" => {
-                    inputs.push(tile_to_position(dest.0, dest.1));
-                }
-                "amount" => inputs.push((magnitude as f32).to_bits()),
-                _ => return,
-            }
-        }
+        let Some(inputs) = bundle.bind_interaction(interaction, &ctx) else { return };
         let mut program = vec![EXECUTE_INTERACTION, iref, 0, inputs.len() as u32];
         program.extend_from_slice(&inputs);
         let _ = act.queue(program);

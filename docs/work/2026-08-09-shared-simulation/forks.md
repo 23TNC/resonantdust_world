@@ -47,6 +47,21 @@ Git holds the history. This follows the tree-wide delete-don't-deprecate posture
 buys is bought instead by phase order: core's track lands and is proven headless (P2/P3) before
 webgl's copy is removed (P4).
 
+## F8 — a WALK counts as busy, and that reduced the order rate on purpose
+**2026-08-10.** `IntentQueues::busy` treats a phase-1 (walking) entry as committed. Wiring the
+brains onto it dropped observed move intents to roughly a third of the wall-clock guess's rate,
+which looked like a regression and is not.
+
+The old guess only held during a DURATION act; a walking pawn read as idle, so a brain re-ordered
+over its own walk. That is [I4](issues.md#i4)'s measurement from the other end: **63% of move
+orders arrived while the pawn was already walking**, and each one restarted the trip. The new hold
+is the server's own answer — the walk is in the queue fan — so the redundant re-orders stop.
+
+Kept, because the alternative is worse in both directions: reading a walking pawn as idle is what
+produced the interrupt storm, and `fire_tic 0` on a phase-1 entry means a naive "has it fired?"
+check calls every walking pawn idle. Watch it in the P6 soak — if pawns visibly dither or stop
+reaching destinations, the fix is a supersede rule, not going back to a clock.
+
 ## F7 — the composed WORLD VIEW is the same defect, one layer up
 **2026-08-10.** Asked why `client/core` has no world view and how the npc manages without one, I
 checked instead of defending, and the answer refutes what I had said.
