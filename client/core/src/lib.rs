@@ -44,6 +44,7 @@ pub mod config;
 pub mod gateway;
 pub mod client_world;
 pub mod gameplay_rows;
+pub mod intents;
 pub mod movers;
 pub mod world_view;
 pub mod protocol;

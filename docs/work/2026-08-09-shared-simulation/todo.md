@@ -127,22 +127,22 @@ including one whose criterion I had rewritten after ticking it.
 
 ## P3b — the intent queue is STATE, not a picture
 
-- [ ] Add `client/core/src/intents.rs` — entity → its `QueueState` entries, replaced whole per fan,
+- [x] Add `client/core/src/intents.rs` — entity → its `QueueState` entries, replaced whole per fan,
       deduped on `event_tic` with `codec::tic::tic_after`. Acceptance: unit test — a replayed older
       fan does not roll the snapshot back.
-- [ ] Settle the tic-ring comparison ONCE: delete `movers.rs:34`'s local `tic_newer` and call the
+- [x] Settle the tic-ring comparison ONCE: delete `movers.rs:34`'s local `tic_newer` and call the
       codec (`tic.rs:41`). Acceptance: `grep -rn "fn tic_newer\|function ticAfter\|function
       ticNewer"` over `client/` is 0.
 - [ ] Add the LOCAL OPTIMISTIC ARM — `arm_pending(entity, ref, at_tic, duration)` stamped when the
       host queues its own `EXECUTE_INTERACTION`, superseded by the next fan. Acceptance: unit test
       — busy at T+1 with no fan, idle past its tic deadline.
-- [ ] Add `busy(entity, now_tic)` — true for phase 2 until `fire_tic`, and for an unsuperseded arm
+- [x] Add `busy(entity, now_tic)` — true for phase 2 until `fire_tic`, and for an unsuperseded arm
       until its deadline — plus `fires_at(entity)`. Acceptance: unit test covers both arms and
       `fires_at` is `None` for a phase-1 entry.
 - [ ] Bound phase 1 with the mover track's own ETA (dest + pace) — `fan_program` gives a walking
       entry no end tic (`worker/src/main.rs:473-475`). Acceptance: unit test — a pawn whose walk
       stops advancing reads idle past its ETA, not frozen.
-- [ ] Clear the arm when a fan arrives with NO entry for that pawn — the REFUSAL signal brains
+- [x] Clear the arm when a fan arrives with NO entry for that pawn — the REFUSAL signal brains
       cannot see today. Acceptance: unit test — arm, then an empty fan, `busy` false immediately.
 - [ ] Delete `busy_until` (`wolves.rs:65`, `bunnies.rs:35`) and both `dur / 6.0 + 3.0` conversions
       (`wolves.rs:409-412`, `bunnies.rs:365-369`) for `busy(id, now)`. Acceptance:

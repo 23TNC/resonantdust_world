@@ -103,6 +103,23 @@ impl Client {
         self.world.lock().map(|w| w.movers.iter().map(|(e, _)| e).collect()).unwrap_or_default()
     }
 
+    /// Is this pawn committed to something right now — see [`crate::intents::IntentQueues::busy`].
+    pub fn pawn_busy(&self, entity: u32) -> bool {
+        let Ok(w) = self.world.lock() else { return false };
+        let Some(now) = w.now_tic_at(0.0) else { return false };
+        w.intents.busy(entity, now)
+    }
+
+    /// When this pawn's running act completes, if one is running.
+    pub fn pawn_fires_at(&self, entity: u32) -> Option<u16> {
+        self.world.lock().ok()?.intents.fires_at(entity)
+    }
+
+    /// This pawn's committed queue entries.
+    pub fn pawn_queue(&self, entity: u32) -> Vec<crate::intents::QueueEntry> {
+        self.world.lock().map(|w| w.intents.entries(entity).to_vec()).unwrap_or_default()
+    }
+
     /// This pawn's DERIVED pace in tics per tile. `None` until its rows have arrived — a caller
     /// must not substitute a default, which is an 8x error on the pawns it is wrong about (I2).
     pub fn pawn_pace(&self, entity: u32) -> Option<f64> {

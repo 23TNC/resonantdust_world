@@ -30,10 +30,9 @@ use std::collections::HashMap;
 /// replaying history, not a live order. A live one trails by roughly the queue barrier (~4-5).
 const INTENT_STALE_BEHIND_AUTH_TICS: i32 = 16;
 
-/// Serial u16 comparison on the wrapping tic ring: is `a` strictly newer than `b`?
-fn tic_newer(a: u16, b: u16) -> bool {
-    ((a.wrapping_sub(b)) as i16) > 0
-}
+/// Serial u16 comparison on the wrapping tic ring. The codec owns it
+/// (`codec::tic::tic_after`); this crate kept a second spelling until P3b settled it.
+use resonantdust_codec::tic::tic_after as tic_newer;
 
 /// Signed distance from `b` forward to `a` on the tic ring.
 fn tic_delta(a: u16, b: u16) -> i32 {

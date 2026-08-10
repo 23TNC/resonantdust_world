@@ -3,6 +3,33 @@
 _The verification log: what landed and **how it was checked**. Append-only; authoritative for what
 is done. Items live in [`todo.md`](todo.md) with their boxes ticked._
 
+## 2026-08-10 — P3b: the intent queue is STATE
+
+[`client/core/src/intents.rs`](../../../client/core/src/intents.rs) — each pawn's committed queue,
+folded from `QueueState`, replaced WHOLE per fan (a partial merge would invent state the worker
+never had), with `busy(entity, now)`, `fires_at`, and handle accessors on both hosts.
+
+`QueueState` was documented **"Display truth only"** and both hosts believed it: webgl mirrored it
+for a strip, npc did not read it at all and GUESSED instead, holding an `Instant` deadline of
+`duration / 6.0 + 3.0` seconds. That is a frame stating *when a pawn's committed act finishes* —
+the one thing a brain must not get wrong — filed as decoration because its first reader was a
+panel.
+
+Four tests, and two of them pin traps rather than happy paths:
+
+- **A walking entry fans `fire_tic 0`.** Reading that as "already fired" calls a walking pawn idle
+  and lets its brain issue a second order over the first. `busy` treats phase 1 as busy regardless.
+- **An EMPTY fan clears the pawn** — the refusal signal brains cannot see today: an order rejected
+  or raced away leaves no entry, so the brain must be released rather than held for the guess's
+  three-second margin.
+- A replayed older fan is refused; equal tics accept, because two mutations can fan in one
+  composing tic.
+
+Also settled the tic-ring comparison: `movers.rs`'s local `tic_newer` is gone, and the crate uses
+`codec::tic::tic_after`. One ring, one spelling.
+
+54 tests pass in `client/core`.
+
 ## 2026-08-10 — webgl's parallel row stores are deleted
 
 `MoverLayer`'s `payloads` and `needRows` maps are gone — `grep -c` is 0 — along with the

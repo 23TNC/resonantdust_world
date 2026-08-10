@@ -29,6 +29,8 @@ pub struct ClientWorld {
     /// Payload and need rows, keyed by ENTITY — accepted before a pawn has a position, and for
     /// references that never will have one (I8).
     pub rows: crate::gameplay_rows::GameplayRows,
+    /// What each pawn has COMMITTED to doing, and when it finishes (P3b).
+    pub intents: crate::intents::IntentQueues,
     /// The corpus every derived answer needs. Held HERE, not passed per call: a `&Bundle`
     /// argument on `pathable` is an invitation for two hosts to pass two different corpora,
     /// which is this stream's defect wearing a parameter.
@@ -89,6 +91,7 @@ impl ClientWorld {
                 if *removed {
                     self.movers.forget(*entity_reference);
                     self.rows.forget(*entity_reference);
+                    self.intents.forget(*entity_reference);
                     return;
                 }
                 let point = (
@@ -152,6 +155,9 @@ impl ClientWorld {
                     }
                     _ => {}
                 }
+            }
+            E::QueueState { entity_reference, event_tic, entries, .. } => {
+                self.intents.observe(*entity_reference, *event_tic, entries);
             }
             E::ZoneClosed { macro_position } => self.close_zone(*macro_position),
             _ => {}
