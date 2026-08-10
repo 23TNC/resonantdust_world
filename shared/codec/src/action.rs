@@ -144,6 +144,28 @@ pub const RESTAMP_NEED: u32 = 18;
 /// inactive — sprint's cooldown gate) and queues the def's authored condition GRANTS.
 pub const ACTIVATE_TRAIT: u32 = 19;
 
+/// `MOVE_CHORDS pawn entry_id count chord×count` — the STAMPED ROUTE fan (server-chords F1),
+/// **WORKER-ONLY** and always `PROMOTE_EVENT`-prefixed so it reaches the zone's subscribers.
+///
+/// The fifth variable-arity verb; `count` sits third like the other four, because the reader
+/// reads it at a fixed offset. Writes NOTHING — every operand is imm and it carries no sets.
+///
+/// A chord is a straight segment crossing no impathable tile, spelled with BOTH endpoints so it
+/// is self-contained: a client interpolates between two stated points and never derives a route,
+/// a pace, or a position of its own. That is the whole design — the client's belief cannot drift
+/// from the server's because the client holds no belief, only two numbers and a clock.
+pub const MOVE_CHORDS: u32 = 20;
+
+/// `CANCEL obj` — **THE FORMAL INTERRUPT** (server-chords F2). Bumps the pawn's trip serial so
+/// every queued hop dies at the predicate it already checks, RESOLVES the pawn's position from
+/// the current tic, writes it, and drops the intent queue.
+///
+/// Distinct from [`CANCEL_INTENT`] and it cannot be folded into it: that verb's operands are both
+/// `Imm`, so the pawn is no write target — it neither joins the pawn's write group nor serialises
+/// against its in-flight hops, and it writes nothing. A verb that PLACES a pawn must be a write,
+/// and a signature cannot be conditional on an operand's value.
+pub const CANCEL: u32 = 21;
+
 /// Compose a [`SPAWN_REQUEST`] program (spawn-authority F1) — ONE packer shared by every
 /// client so the words cannot drift. `def` is a full `definition_reference` whose variant
 /// nibble is IGNORED (variants ride the nibble vec); `variants[i]` = part i's u4.
@@ -230,6 +252,9 @@ pub fn signature(action: u32) -> Option<&'static [OperandKind]> {
         INV_REMOVE => &[Write, Imm], // obj, slot index (inventory F3)
         SPAWN_REQUEST => &[Imm, Imm, Imm], // xy, rot_def, variants — a pure request, no write set
         RESTAMP_NEED => &[Write, Imm], // obj, need_reference — the crossing re-stamp (survival D1)
+        // CANCEL: the pawn is a WRITE so the cancel groups and serialises against its own
+        // in-flight hops, and a Read so the worker sees the row it resolves from (server-chords F2).
+        CANCEL => &[ReadWrite],
         _ => return None,
     })
 }
@@ -287,6 +312,7 @@ impl<'a> Iterator for Program<'a> {
             || action == CREATE
             || action == EXECUTE_INTERACTION
             || action == QUEUE_STATE
+            || action == MOVE_CHORDS
         {
             match self.words.get(self.pos + 3) {
                 Some(&count) => 3 + count as usize,
@@ -345,7 +371,10 @@ fn collect_operands(
         // not an operand) — it contributes nothing to either set. EXECUTE_INTERACTION likewise:
         // its inputs are UNTYPED words (an f32 bit pattern can alias any nibble), and its real
         // writes ride the typed verbs the worker queues (interactions F4).
-        if inst.action == CREATE || inst.action == EXECUTE_INTERACTION || inst.action == QUEUE_STATE
+        if inst.action == CREATE
+            || inst.action == EXECUTE_INTERACTION
+            || inst.action == QUEUE_STATE
+            || inst.action == MOVE_CHORDS
         {
             // QUEUE_STATE: a display fan — every operand imm, no sets (intent-queue-ui F1).
             continue;
@@ -418,7 +447,8 @@ pub fn target_routes(words: &[u32]) -> Result<Vec<(u32, Route)>, ProgramError> {
             // EXECUTE_INTERACTION — no routed target either: untyped inputs, queued-verb writes.
             EXECUTE_INTERACTION => {}
             // QUEUE_STATE — a display fan; CANCEL_INTENT — worker-memory resolution. Neither routes.
-            QUEUE_STATE | CANCEL_INTENT => {}
+            // MOVE_CHORDS joins them: a stamped-route fan, every operand imm.
+            QUEUE_STATE | CANCEL_INTENT | MOVE_CHORDS => {}
             // Hot verbs: every Write/ReadWrite operand routes by its own nibble.
             _ => {
                 let sig = signature(inst.action).expect("parsed, so known");
@@ -639,5 +669,56 @@ mod tests {
         assert_eq!((x, y, rot), (110, 68, 2));
         assert_eq!(d, def & !0xF, "the def reconstructs with variant 0");
         assert_eq!(&n[..3], &[5, 12, 0], "part nibbles in order, tail zero");
+    }
+}
+
+#[cfg(test)]
+mod chord_tests {
+    use super::*;
+
+    /// `CANCEL` must make the pawn a WRITE, or it neither groups nor serialises against the hops
+    /// it is cancelling — the reason it cannot reuse `CANCEL_INTENT` (server-chords F2).
+    #[test]
+    fn cancel_writes_the_pawn() {
+        assert_eq!(arity(CANCEL), Some(1));
+        let prog = [CANCEL, 0x3080_0001];
+        assert!(write_targets(&prog).unwrap().contains(&0x3080_0001), "the pawn must be a write");
+        assert!(read_targets(&prog).unwrap().contains(&0x3080_0001), "and a read — it resolves");
+    }
+
+    /// `MOVE_CHORDS` is variable-arity, so `count` sits at operand index 2 and the reader frames
+    /// from there. If it is missing from the framing list, everything AFTER it in a program is
+    /// mis-framed with no re-sync point — so the test puts a verb after it.
+    #[test]
+    fn move_chords_frames_and_a_verb_after_it_survives() {
+        let prog = [
+            MOVE_CHORDS, 0x3080_0001, 7, 4, 11, 22, 33, 44, // pawn, entry_id, count=4, payload
+            CANCEL, 0x3080_0002, // a fixed-arity verb AFTER it — the mis-framing canary
+        ];
+        let insts: Vec<_> = program(&prog)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap_or_else(|e| panic!("framing failed: {e:?}"));
+        assert_eq!(insts.len(), 2, "the trailing verb survived the variable-arity read");
+        assert_eq!(insts[1].action, CANCEL);
+        assert_eq!(insts[0].operands.len(), 7);
+    }
+
+    /// A display fan carries no sets. Omitting it from the skip list panics inside
+    /// `collect_operands` at the `signature().expect("parsed, so known")`, so this covers it.
+    #[test]
+    fn move_chords_contributes_no_read_or_write_set() {
+        let prog = [MOVE_CHORDS, 0x3080_0001, 7, 2, 11, 22];
+        assert!(write_targets(&prog).unwrap().is_empty());
+        assert!(read_targets(&prog).unwrap().is_empty());
+        assert!(target_routes(&prog).unwrap().is_empty(), "a fan routes nowhere");
+    }
+
+    /// Append-only: the two new ids must not collide with anything already allocated.
+    #[test]
+    fn the_new_ids_are_free() {
+        assert_eq!((MOVE_CHORDS, CANCEL), (20, 21));
+        for id in 0..=19u32 {
+            assert!(id != MOVE_CHORDS && id != CANCEL);
+        }
     }
 }

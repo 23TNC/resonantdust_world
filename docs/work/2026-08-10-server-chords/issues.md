@@ -42,3 +42,22 @@ remove.
 **Likely answer:** keep stride-cadence anchor writes UNDERNEATH the chords — they cost what they
 cost today and they are what the estimate eats. [P3](todo.md) carries it with an explicit
 acceptance: anchor age p90 unchanged against the P2 baseline.
+
+
+## I3 — `SET_NEED`'s arity: docs say 2, code says 3
+**2026-08-10. Open — found while testing the new framing; not fixed in passing.**
+
+`docs/ACTIONS.md` states "**Arity 3→2 with the stat-model reshape** (the def-ref + f32-bits form is
+gone)". `shared/codec::action`'s signature table gives it three operands, and the framer agrees:
+a two-operand `SET_NEED` yields `Truncated { action: 10, want: 3, got: 2 }`.
+
+Docs outrank code, so the code is nominally the bug — but a verb's arity is a WIRE contract and
+every existing packer writes whatever it writes today. Changing it is a codec change plus an
+event-shard redeploy plus an audit of every producer, which is not a passing fix.
+
+**Chosen path:** record it, leave both as they are, and settle it when P0's redeploy is happening
+anyway. Whoever takes it must check which form the live producers actually emit before believing
+either document.
+
+It cost me several minutes of reading a framing failure as a bug in my own change, which is the
+argument for closing it rather than leaving the two authorities disagreeing.

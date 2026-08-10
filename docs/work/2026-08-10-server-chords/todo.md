@@ -17,12 +17,12 @@ false, including one whose criterion had been rewritten after ticking. Do not re
 
 ## P0 — the wire
 
-- [ ] Add `MOVE_CHORDS = 20` and `CANCEL = 21` to `shared/codec::action` and to the palette in
+- [x] Add `MOVE_CHORDS = 20` and `CANCEL = 21` to `shared/codec::action` and to the palette in
       `docs/ACTIONS.md`. Acceptance: `docs-check` green; ids follow the append-only law.
-- [ ] Give `CANCEL` the signature `&[ReadWrite]` (obj) so the pawn is a write target and the verb
+- [x] Give `CANCEL` the signature `&[ReadWrite]` (obj) so the pawn is a write target and the verb
       groups and serialises against its own in-flight hops. Acceptance: a unit test asserts the
       arity and that `collect_operands` yields the pawn as a write.
-- [ ] Add `MOVE_CHORDS` to the variable-arity framing list and the `collect_operands` skip list.
+- [x] Add `MOVE_CHORDS` to the variable-arity framing list and the `collect_operands` skip list.
       Acceptance: a program with a verb AFTER a `MOVE_CHORDS` still frames; omitting the skip
       panics at the `signature().expect()`, so a test covers it.
 - [ ] Add `MOVE_CHORDS` to `target_routes`' write-less arm and give the worker the same
@@ -140,7 +140,7 @@ false, including one whose criterion had been rewritten after ticking. Do not re
 - [ ] Rewrite `docs/ACTIONS.md` §Movement: it currently declares stateless per-hop recompute and
       "no stored route" as LAW, and this inverts it. Acceptance: docs-check green, no doc
       contradicting the code.
-- [ ] Add the missing palette rows for `INV_ADD` 15, `INV_REMOVE` 16 and `ACTIVATE_TRAIT` 19, found
+- [x] Add the missing palette rows for `INV_ADD` 15, `INV_REMOVE` 16 and `ACTIVATE_TRAIT` 19, found
       absent while allocating 20/21. Acceptance: the table matches the codec.
 - [ ] Re-measure the predecessor's reseed table. Acceptance: reseed p50 under 0.5 tiles and zero
       RENDER teleports over a foreground soak — the number the whole line of work chased.
