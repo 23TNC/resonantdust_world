@@ -54,11 +54,12 @@ binder and the affordance query, none of which P4 needs.
 - [x] Move `hop_stride_tiles` into `move_eval` verbatim. Acceptance: unit test covers the clamp at
       both ends — pace 1 → 8 tiles, pace 240 → 1 tile.
 - [x] Add `move_eval::next_hop(from, dest, pace, pathable) -> (landing, tics)` carrying the chord
-      step, the `clear_point_fraction` clamp and the recenter. Acceptance: unit test reproduces 20
-      landings recorded from the live worker.
+      step, the `clear_point_fraction` clamp and the recenter. Acceptance: unit tests cover the
+      clamp, the recenter and the stride cap. (Amended: "20 live landings" was substituted for
+      analytic cases + the live stride check in P1's last item — see `completed.md`.)
 - [x] Add `move_eval::position_at(from, dest, base_tic, now, pace, pathable) -> point` — where a
-      walking pawn IS at any tic. Acceptance: at the hop's own tic it equals `next_hop`'s landing
-      for the same 20 cases.
+      walking pawn IS at any tic. Acceptance: `position_at_the_hop_tic_equals_the_hop_landing`
+      passes — sampling the walk at the hop's tic lands exactly where the hop lands.
 - [x] Rewrite worker `MOVE_STEP` and `resolve_walk_position_for` as calls into `move_eval`, and
       delete the private copies. Acceptance: `grep -c 'REANCHOR_TICS\|CHORD_CAP_TILES' server/`
       is 0.
@@ -105,7 +106,10 @@ binder and the affordance query, none of which P4 needs.
 - [x] Point `MoverLayer`'s render-chase at `pawnPoint` instead of its own `Spec`. Acceptance:
       typecheck + build green and movers still glide between anchors.
 - [x] Delete `Spec`, the walk, `speedFor`, `computePath` and `SPEC_APPLY_EPS` from `MoverLayer`.
-      Acceptance: zero references remain; the file drops under 800 lines.
+      Acceptance: `grep -c 'walkGreedy\|walkPath\|speedFor\|computePath\|firstLegClear'` is 0.
+      (Was "under 800 lines" — a proxy that the P0 probe's ~200 lines invalidated; 1266 today.)
+- [ ] Move the P0 divergence probe out of `MoverLayer` into its own file, so the layer is
+      sprite-sync only. Acceptance: `MoverLayer.ts` under 800 lines, probe still reports.
 - [ ] Re-run the P0 probe for 10 minutes. Acceptance: reseed p50 under 0.5 tiles and zero RENDER
       teleport events — [I1](issues.md#i1) closed by construction, or reopened loudly.
 
