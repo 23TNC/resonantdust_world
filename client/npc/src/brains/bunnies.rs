@@ -32,7 +32,8 @@ struct Mind {
     eat_issued: bool,
     /// Hold-still window while a DURATION act runs (eat = 20 tics): wandering off
     /// mid-act no-ops the completion (lumberjack F1). Expiry re-arms the eat latch.
-    busy_until: Option<Instant>,
+    /// The eat latch — the HOLD is `Client::pawn_busy`; see the wolf's note (P3b).
+    eat_latched: bool,
     active: Vec<u32>,
     active_set: Vec<ActiveCondition>,
 }
@@ -301,12 +302,12 @@ impl Bunnies {
         }
         // A DURATION act in flight: hold still until it completes (the wolves' busy
         // gate) — expiry re-arms the eat latch so a no-opped completion retries.
-        if let Some(t) = self.minds[&id].busy_until {
-            if Instant::now() < t {
-                return;
-            }
+        if bot.client.pawn_busy(id) {
+            return;
+        }
+        if self.minds[&id].eat_latched {
             if let Some(m) = self.minds.get_mut(&id) {
-                m.busy_until = None;
+                m.eat_latched = false;
                 m.eat_issued = false;
             }
         }
@@ -373,9 +374,7 @@ impl Bunnies {
                             self.fire(bot, act, id, &i, mag, c);
                             if let Some(m) = self.minds.get_mut(&id) {
                                 m.eat_issued = true;
-                                m.busy_until = Some(
-                                    Instant::now() + Duration::from_secs_f64(dur / 6.0 + 3.0),
-                                );
+                                m.eat_latched = true;
                             }
                             return;
                         }
@@ -484,7 +483,7 @@ impl Brain for Bunnies {
                                 deadline: Instant::now(),
                                 drink_issued: false,
                                 eat_issued: false,
-                                busy_until: None,
+                                eat_latched: false,
                                 active: Vec::new(),
                                 active_set: Vec::new(),
                             }
@@ -508,7 +507,7 @@ impl Brain for Bunnies {
                             deadline: Instant::now(),
                             drink_issued: false,
                             eat_issued: false,
-                            busy_until: None,
+                            eat_latched: false,
                             active: Vec::new(),
                             active_set: Vec::new(),
                         });

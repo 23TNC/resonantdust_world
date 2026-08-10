@@ -3,6 +3,22 @@
 _The verification log: what landed and **how it was checked**. Append-only; authoritative for what
 is done. Items live in [`todo.md`](todo.md) with their boxes ticked._
 
+## 2026-08-10 — the brains stop guessing when they are busy
+
+`busy_until: Option<Instant>` is deleted from both brains, along with both
+`Duration::from_secs_f64(dur / 6.0 + 3.0)` conversions. The hold is
+`Client::pawn_busy(entity)` — core's answer, from the server's own queue fan.
+
+What the guess cost, now that it is measurable: the `+ 3.0` was margin for the fire→fan round
+trip, so a wolf **over-held by ~2.6 s on every meal**, and a refused or raced-away order was
+invisible — the brain sat out the full margin instead of being released by the empty fan. What
+remains in the brains is the `eat_latched` re-arm, which is policy (what to do when released) and
+belongs to them.
+
+Live after the change: **23 move intents in 50 s, 0 errors**, log advancing.
+
+`grep -rn 'busy_until\|dur / 6.0 + 3.0' client/npc/src` is 0.
+
 ## 2026-08-10 — P3b: the intent queue is STATE
 
 [`client/core/src/intents.rs`](../../../client/core/src/intents.rs) — each pawn's committed queue,

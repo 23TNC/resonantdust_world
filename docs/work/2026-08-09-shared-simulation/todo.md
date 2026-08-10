@@ -144,7 +144,7 @@ including one whose criterion I had rewritten after ticking it.
       stops advancing reads idle past its ETA, not frozen.
 - [x] Clear the arm when a fan arrives with NO entry for that pawn — the REFUSAL signal brains
       cannot see today. Acceptance: unit test — arm, then an empty fan, `busy` false immediately.
-- [ ] Delete `busy_until` (`wolves.rs:65`, `bunnies.rs:35`) and both `dur / 6.0 + 3.0` conversions
+- [x] Delete `busy_until` (`wolves.rs:65`, `bunnies.rs:35`) and both `dur / 6.0 + 3.0` conversions
       (`wolves.rs:409-412`, `bunnies.rs:365-369`) for `busy(id, now)`. Acceptance:
       `grep -rn "busy_until\|dur / 6.0" client/npc/src/brains` is 0.
 - [ ] Replace the three wall-clock `deadline` watchdogs (`wolves.rs:929-937`, `bunnies.rs:201-211`,

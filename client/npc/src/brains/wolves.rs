@@ -62,7 +62,12 @@ pub struct Wolves {
     /// Hold-still window while a DURATION act runs (eat_meat = 20 tics): the wander
     /// must not walk the wolf off mid-act or the completion no-ops. Expiry re-arms
     /// the eat latch (a no-opped completion gets its retry).
-    busy_until: Option<std::time::Instant>,
+    /// The eat latch, re-armed when core reports the pawn released. The HOLD itself is
+    /// `Client::pawn_busy` now — this used to be an `Instant` deadline of `duration/6.0 + 3.0`
+    /// seconds, a wall-clock guess at a TIC-denominated fact the server was already fanning
+    /// (P3b). The +3 s was margin for the fire→fan round trip, so the wolf over-held by ~2.6 s
+    /// on every meal and could not see a refusal at all.
+    eat_latched: bool,
     /// The meat cell an eat trip is heading to, if hunger drove it there.
     eat_target: Option<(i32, i32)>,
     // ── the HUNT (attack F3) ──
@@ -160,7 +165,7 @@ impl Wolves {
             thirst: 0,
             hunger: 0,
             eat_issued: false,
-            busy_until: None,
+            eat_latched: false,
             eat_target: None,
             prey_def: 0,
             attack_ref: 0,
@@ -422,10 +427,8 @@ impl Wolves {
                         self.fire_interaction(bot, act, &interaction, magnitude, c);
                         self.eat_issued = true;
                         self.eat_target = None;
-                        self.busy_until = Some(
-                            std::time::Instant::now()
-                                + Duration::from_secs_f64(dur / 6.0 + 3.0),
-                        );
+                        let _ = dur; // the duration is the SERVER's to time (P3b)
+                        self.eat_latched = true;
                         return;
                     }
                 }
@@ -949,12 +952,16 @@ impl Brain for Wolves {
         // walking off mid-act makes the completion no-op ("pawn left the carrier's
         // range", lumberjack F1) and the latch would strand the need. On expiry,
         // re-arm the eat latch so a no-opped completion retries.
-        if let Some(t) = self.busy_until {
-            if std::time::Instant::now() < t {
+        // Core knows whether the act is still running — it is in the queue fan. An empty fan
+        // (a refusal, or a completion) releases immediately instead of after a fixed margin.
+        if let Some(wolf) = self.wolf {
+            if bot.client.pawn_busy(wolf) {
                 return;
             }
-            self.busy_until = None;
-            self.eat_issued = false;
+            if self.eat_latched {
+                self.eat_latched = false;
+                self.eat_issued = false;
+            }
         }
         self.mind_drink(bot, act);
         self.mind_eat(bot, act);
