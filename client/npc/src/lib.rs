@@ -381,9 +381,18 @@ impl Bot {
     pub fn nearest_tile(
         &self,
         from: (i32, i32),
-        pred: impl Fn(&client::world_view::WorldView, u16) -> bool,
+        pred: impl Fn(u16) -> bool,
     ) -> Option<(i32, i32)> {
-        self.client.world().lock().ok()?.world.nearest_tile(from, pred)
+        // SNAPSHOT, then release the lock, then filter. The predicate is the caller's and may
+        // ask core anything — rows, a position, the tile under a candidate — and doing that
+        // under this lock is a deadlock (I12, three times). Owning the candidates removes the
+        // hazard rather than documenting it.
+        let cells = { self.client.world().lock().ok()?.world.tile_cells() };
+        cells
+            .into_iter()
+            .filter(|&(_, k)| pred(k))
+            .min_by_key(|&(at, _)| ((at.0 - from.0).abs().max((at.1 - from.1).abs()), at))
+            .map(|(at, _)| at)
     }
 
     /// The composed THING kind_id at world `at` (food-chain F8) — baseline ⊕ overrides,
@@ -400,9 +409,14 @@ impl Bot {
     pub fn nearest_thing(
         &self,
         from: (i32, i32),
-        pred: impl Fn(&client::world_view::WorldView, (i32, i32), u16) -> bool,
+        pred: impl Fn((i32, i32), u16) -> bool,
     ) -> Option<(i32, i32)> {
-        self.client.world().lock().ok()?.world.nearest_thing(from, pred)
+        let cells = { self.client.world().lock().ok()?.world.thing_cells() };
+        cells
+            .into_iter()
+            .filter(|&(at, k)| pred(at, k))
+            .min_by_key(|&(at, _)| ((at.0 - from.0).abs().max((at.1 - from.1).abs()), at))
+            .map(|(at, _)| at)
     }
 
     /// A known pawn's world TILE, from core's mover track (shared-simulation P3).

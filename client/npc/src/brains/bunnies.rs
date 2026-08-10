@@ -245,8 +245,27 @@ impl Bunnies {
 
     /// The first satisfying interaction `kind` (a THING) offers that this bunny may use.
     fn usable_eat(&self, id: u32, kind: u16, now: u16) -> Option<(String, f64)> {
+        let rows = self.rows_of(id);
+        self.usable_eat_with(&rows, id, kind, now)
+    }
+
+    /// The same question with the pawn's rows ALREADY FETCHED.
+    ///
+    /// Fetching them reaches into core, which takes the world lock — and this predicate runs
+    /// INSIDE `nearest_thing`, which is already holding it. That deadlocked the whole npc process
+    /// (I12's class, third occurrence: the lock-taking moved into `rows_of` when P2d pointed it
+    /// at core, and the closure that calls it was written before that). Hoisting the fetch out of
+    /// the scan fixes it by construction — and is faster besides, since the rows are per-PAWN and
+    /// were being re-read per candidate CELL.
+    fn usable_eat_with(
+        &self,
+        rows: &(Vec<u64>, Vec<(u64, u16)>, Vec<(u64, u16)>),
+        id: u32,
+        kind: u16,
+        now: u16,
+    ) -> Option<(String, f64)> {
         let bundle = self.bundle.as_ref()?;
-        let (traits, needs, conds) = self.rows_of(id);
+        let (traits, needs, conds) = rows;
         let active = self.minds.get(&id).map(|m| m.active_set.clone()).unwrap_or_default();
         bundle
             .thing_interactions(kind)
@@ -254,7 +273,7 @@ impl Bunnies {
             .find(|b| {
                 bundle.interaction_params(&b.name).is_some_and(|ip| ip.satisfy.is_some())
                     && stat_eval::interaction_available(
-                        bundle, &b.name, &traits, &needs, &conds, &active, now,
+                        bundle, &b.name, traits, needs, conds, &active, now,
                     )
             })
             .map(|b| (b.name, b.magnitude))
@@ -262,8 +281,21 @@ impl Bunnies {
 
     /// Same, over TILE kinds (the drink source).
     fn usable_drink(&self, id: u32, kind: u16, now: u16) -> Option<(String, f64)> {
+        let rows = self.rows_of(id);
+        self.usable_drink_with(&rows, id, kind, now)
+    }
+
+    /// The rows-already-fetched form — see [`Bunnies::usable_eat_with`] for why the fetch must
+    /// not happen inside a scan predicate.
+    fn usable_drink_with(
+        &self,
+        rows: &(Vec<u64>, Vec<(u64, u16)>, Vec<(u64, u16)>),
+        id: u32,
+        kind: u16,
+        now: u16,
+    ) -> Option<(String, f64)> {
         let bundle = self.bundle.as_ref()?;
-        let (traits, needs, conds) = self.rows_of(id);
+        let (traits, needs, conds) = rows;
         let active = self.minds.get(&id).map(|m| m.active_set.clone()).unwrap_or_default();
         bundle
             .tile_interactions(kind)
@@ -271,7 +303,7 @@ impl Bunnies {
             .find(|b| {
                 bundle.interaction_params(&b.name).is_some_and(|ip| ip.satisfy.is_some())
                     && stat_eval::interaction_available(
-                        bundle, &b.name, &traits, &needs, &conds, &active, now,
+                        bundle, &b.name, traits, needs, conds, &active, now,
                     )
             })
             .map(|b| (b.name, b.magnitude))
@@ -326,8 +358,9 @@ impl Bunnies {
                     }
                 }
             }
+            let drink_rows = self.rows_of(id); // hoisted out of the scan (I12)
             if let Some(t) =
-                bot.nearest_tile(at, |_, kind| self.usable_drink(id, kind, now).is_some())
+                bot.nearest_tile(at, |kind| self.usable_drink_with(&drink_rows, id, kind, now).is_some())
                     .filter(|c| self.in_area(*c))
             {
                 let pathable = |c: (i32, i32)| {
@@ -376,13 +409,17 @@ impl Bunnies {
             // trip forever and the bunny would oscillate (the wolves' cell_open rule).
             // The view comes IN (I9): asking `bot` for the tile here would re-enter the lock
             // this query already holds, and a non-reentrant mutex answers that by hanging.
-            if let Some(t) = bot.nearest_thing(at, |view, cell, kind| {
+            // Rows fetched BEFORE the scan: the predicate runs while `nearest_thing` holds the
+            // world lock, and fetching rows would re-enter it (I12).
+            let rows = self.rows_of(id);
+            if let Some(t) = bot.nearest_thing(at, |cell, kind| {
                 if !self.in_area(cell) {
                     return false;
                 }
-                view.tile_kind_at(cell)
+                // Safe to ask the Bot again: the scan snapshotted and released the lock.
+                bot.tile_kind_at(cell)
                     .is_none_or(|k| self.bundle.as_ref().is_none_or(|b| b.tile_pathable(k)))
-                    && self.usable_eat(id, kind, now).is_some()
+                    && self.usable_eat_with(&rows, id, kind, now).is_some()
             }) {
                 self.issue_move(bot, act, id, t);
                 return;

@@ -2,6 +2,48 @@
 
 _Problems hit, candidate solutions, which we chose and why. Chronological append._
 
+## I14 — npc DEADLOCKS on the world lock; the tree is not runnable
+**2026-08-10. OPEN — this is the state I am handing back in. Narrowed, not caught.**
+
+`rd-npc` stops emitting ~1 s after boot and sits at **0.06% CPU** — a lock wait, not a spin. It
+does not recover. Reproduces with a single module (`bunny_fluffle` alone), so it is not a
+cross-module interaction.
+
+**Where it stops:** immediately after the per-second `module's own player-pawn row` line and
+before anything else in `Bunnies::tick`. The group-count block above it is skipped (the count is
+unchanged), so the first thing it actually reaches is the per-pawn loop — whose first call into
+core is `Client::pawn_busy`.
+
+**Three re-entrancy sites found and fixed on the way, none of which was it:**
+
+1. `Bunnies::usable_eat` → `rows_of` → `pawn_payload` → locks, called inside `nearest_thing`'s
+   predicate while that scan holds the lock. Hoisted the row fetch out of the scan.
+2. The same shape in `Wolves::usable_eat` via `payload_of`. Same fix (`eval_rows`).
+3. Then I stopped patching call sites and removed the hazard: `nearest_tile`/`nearest_thing` now
+   SNAPSHOT candidates (`WorldView::tile_cells`/`thing_cells`), drop the lock, and filter. A
+   predicate can call anything.
+
+It still hangs. So the remaining holder is something other than a scan predicate.
+
+**What I have not ruled out**, in the order I would look:
+- `Engine::emit` holds the world guard while calling `sink.emit`; if any sink path re-enters the
+  handle the engine and the bot deadlock against each other. The npc sink is an unbounded channel
+  send, which should not block — *should* is doing work in that sentence.
+- A guard held across an `.await` somewhere in the engine task.
+- `Client::pawn_busy`/`arm_pending`'s early-return paths (`let ... else { return }` inside an
+  `if let Ok(mut w)`).
+
+**It predates today's uncommitted work.** After `git stash`, HEAD alone still hangs — so it is in
+one of the P2d–P3c commits, all of which were verified live at the time. The most likely candidate
+is the commit that made brains call `pawn_busy` per pawn per tick, since that is the first
+per-pawn lock npc had ever taken.
+
+**Bisect not run** — that is the next step and it is cheap: check out the `arm_pending` commit
+(verified at 13 intents/40 s) and walk forward.
+
+The stash `P3b ETA busy-join — wedges every pawn` also holds a SECOND, separate defect: that join
+froze every pawn by reading a never-cleared `dest` as permanently committed. Do not restore it.
+
 ## I13 — the wolf-chase criterion cannot be met in a 10-minute soak, by construction
 **2026-08-10. PLAN ERROR — criterion reworded; the underlying check still owed.**
 

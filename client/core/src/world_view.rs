@@ -148,6 +148,45 @@ impl WorldView {
         }
     }
 
+    /// Every known TILE cell as `(world, kind)`. Snapshotting lets a caller drop the world lock
+    /// before it filters — see [`WorldView::thing_cells`].
+    pub fn tile_cells(&self) -> Vec<((i32, i32), u16)> {
+        use resonantdust_codec::object as obj;
+        let mut out = Vec::new();
+        for &zone in self.tiles.keys() {
+            let (ox, oy) = obj::macro_world_origin(zone);
+            for dx in 0..16 {
+                for dy in 0..16 {
+                    let at = (ox + dx, oy + dy);
+                    if let Some(k) = self.tile_kind_at(at) {
+                        out.push((at, k));
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Every known THING cell as `(world, kind)`.
+    ///
+    /// Exists so a caller can SNAPSHOT and then release the lock before filtering. A predicate
+    /// run while the view's lock is held may reach back through its own handle — for rows, for a
+    /// position, for the tile under a candidate — and re-enter a non-reentrant mutex. That hung
+    /// the npc process three separate times (I12), each in a different predicate, because the
+    /// rule "don't touch the handle in here" has to be re-obeyed by every closure ever written.
+    /// Handing back owned data instead makes the rule unnecessary.
+    pub fn thing_cells(&self) -> Vec<((i32, i32), u16)> {
+        use resonantdust_codec::object as obj;
+        self.things
+            .iter()
+            .filter(|(_, &kr)| kr != 0)
+            .map(|(&(zone, cell), &kr)| {
+                let (ox, oy) = obj::macro_world_origin(zone);
+                ((ox + i32::from(obj::ref_hi(cell)), oy + i32::from(obj::ref_lo(cell))), kr >> 4)
+            })
+            .collect()
+    }
+
     /// The nearest known tile (Chebyshev) whose composed kind satisfies `pred` — a brain's
     /// "where is the nearest water".
     ///

@@ -237,6 +237,12 @@ impl Wolves {
     /// `nearest_thing` predicate, which is already holding that lock, that is the I9 deadlock,
     /// and it survived the I9 fix because only the closure's signature changed, not its body. The
     /// unused-`view` warning was the tell. Taking the view makes the mistake impossible to make.
+    /// The Bot-facing form, safe now that the scans snapshot and release before filtering.
+    fn cell_open_via(&self, bot: &Bot, cell: (i32, i32)) -> bool {
+        bot.tile_kind_at(cell)
+            .is_none_or(|k| self.bundle.as_ref().is_none_or(|b| b.tile_pathable(k)))
+    }
+
     fn cell_open(&self, view: &client::world_view::WorldView, cell: (i32, i32)) -> bool {
         view.tile_kind_at(cell)
             .is_none_or(|k| self.bundle.as_ref().is_none_or(|b| b.tile_pathable(k)))
@@ -436,8 +442,11 @@ impl Wolves {
         // Otherwise walk to the nearest edible thing's OWN cell (meat is pathable) —
         // skipping food on impathable ground (lake meat: refused-forever, see cell_open).
         // The view comes IN (I9) — see the bunny scan.
-        let target = bot.nearest_thing(self.at, |view, cell, kind| {
-            self.cell_open(view, cell) && self.usable_eat_kind(kind, now)
+        // Rows hoisted out of the scan: the predicate runs under `nearest_thing`'s world lock
+        // and fetching them would re-enter it (I12).
+        let rows = self.eval_rows();
+        let target = bot.nearest_thing(self.at, |cell, kind| {
+            self.cell_open_via(bot, cell) && self.usable_eat_kind_with(&rows, kind, now)
         });
         match target {
             Some(t) => {
@@ -520,16 +529,36 @@ impl Wolves {
 
     /// The first hunger-SATISFYING interaction thing kind `kind` offers that this wolf
     /// may use (the usable_drink pattern, over thing bindings).
+    /// This wolf's eval rows, fetched ONCE.
+    ///
+    /// The fetch reaches into core and takes the world lock, so it must never happen inside a
+    /// scan predicate — `nearest_thing` is already holding that lock and the process hangs
+    /// (I12's class, and this is its third site). Callers inside a scan hoist this out first.
+    fn eval_rows(&self) -> (Vec<u64>, Vec<(u64, u16)>, Vec<(u64, u16)>) {
+        let Some(bundle) = &self.bundle else { return Default::default() };
+        let Some(wolf) = self.wolf else { return Default::default() };
+        let payload = self.payload_of(wolf);
+        (
+            bundle.object_trait_rows(def_kind_id(self.def), &payload_traits(&payload)),
+            self.wolf_needs(),
+            payload_conditions(&payload),
+        )
+    }
+
     fn usable_eat(&self, kind: u16, now: u16) -> Option<(String, f64)> {
+        let rows = self.eval_rows();
+        self.usable_eat_with(&rows, kind, now)
+    }
+
+    /// The rows-already-fetched form — see [`Wolves::eval_rows`].
+    fn usable_eat_with(
+        &self,
+        rows: &(Vec<u64>, Vec<(u64, u16)>, Vec<(u64, u16)>),
+        kind: u16,
+        now: u16,
+    ) -> Option<(String, f64)> {
         let bundle = self.bundle.as_ref()?;
-        let wolf = self.wolf?;
-        let trait_rows = bundle.object_trait_rows(
-            def_kind_id(self.def),
-            &payload_traits(&self.payload_of(wolf)),
-        );
-        let cond_rows =
-            payload_conditions(&self.payload_of(wolf));
-        let need_rows = self.wolf_needs();
+        let (trait_rows, need_rows, cond_rows) = rows;
         bundle
             .thing_interactions(kind)
             .into_iter()
@@ -538,9 +567,9 @@ impl Wolves {
                     && stat_eval::interaction_available(
                         bundle,
                         &b.name,
-                        &trait_rows,
-                        &need_rows,
-                        &cond_rows,
+                        trait_rows,
+                        need_rows,
+                        cond_rows,
                         &self.active_set,
                         now,
                     )
@@ -548,8 +577,13 @@ impl Wolves {
             .map(|b| (b.name, b.magnitude))
     }
 
-    fn usable_eat_kind(&self, kind: u16, now: u16) -> bool {
-        self.usable_eat(kind, now).is_some()
+    fn usable_eat_kind_with(
+        &self,
+        rows: &(Vec<u64>, Vec<(u64, u16)>, Vec<(u64, u16)>),
+        kind: u16,
+        now: u16,
+    ) -> bool {
+        self.usable_eat_with(rows, kind, now).is_some()
     }
 
     fn is_thirsty(&self) -> bool {
@@ -569,13 +603,9 @@ impl Wolves {
     fn usable_drink(&self, kind: u16, now: u16) -> Option<(String, f64)> {
         let bundle = self.bundle.as_ref()?;
         let wolf = self.wolf?;
-        let trait_rows = bundle.object_trait_rows(
-            def_kind_id(self.def),
-            &payload_traits(&self.payload_of(wolf)),
-        );
-        let cond_rows =
-            payload_conditions(&self.payload_of(wolf));
-        let need_rows = self.wolf_needs();
+        let (trait_rows, need_rows, cond_rows) = self.eval_rows();
+        let (trait_rows, need_rows, cond_rows) = (&trait_rows, &need_rows, &cond_rows);
+        let _ = wolf;
         bundle
             .tile_interactions(kind)
             .into_iter()
@@ -584,9 +614,9 @@ impl Wolves {
                     && stat_eval::interaction_available(
                         bundle,
                         &b.name,
-                        &trait_rows,
-                        &need_rows,
-                        &cond_rows,
+                        trait_rows,
+                        need_rows,
+                        cond_rows,
                         &self.active_set,
                         now,
                     )
@@ -665,7 +695,7 @@ impl Wolves {
         // PATHABLE cell in the carrier's 3×3 by the tile mirror — deterministic pick
         // (nearest to the wolf, ties by (y, x)). All-water surroundings = no shore known;
         // leave the wolf to its wander, never a spin.
-        let target = bot.nearest_tile(self.at, |_, kind| self.usable_drink(kind, now).is_some());
+        let target = bot.nearest_tile(self.at, |kind| self.usable_drink(kind, now).is_some());
         match target {
             Some(t) => {
                 if self.drink_target != Some(t) || self.dest.is_none() {
