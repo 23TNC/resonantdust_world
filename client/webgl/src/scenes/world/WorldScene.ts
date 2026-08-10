@@ -117,6 +117,8 @@ export class WorldScene extends Scene {
     };
     // Pawns (the wolves): synced from the tick pipeline's mobile entities into the viewport's WARM cache.
     this.moverLayer = new MoverLayer(ctx.client, ctx.content, this.panel.view);
+    // The BOOT corpus, before any hot-swap: core answers nothing derived without it.
+    ctx.client.setCorpus(ctx.content);
     // The speculation's pathability probe (pathfinding I1): the client's composed view —
     // tile kind ∧ thing occupancy through the corpus flags, unknown/unstreamed reads OPEN
     // (the shared degrade law). The glide then traces the worker's detour, not the chord.
@@ -407,6 +409,9 @@ export class WorldScene extends Scene {
       const c = getContent();
       this.bridge.setContent(c);
       this.moverLayer.setContent(c);
+      // Core answers nothing DERIVED without the corpus — pace, pathability, every stat read
+      // (shared-simulation P4). A hot-swap must re-hand it, or core keeps the old one.
+      this.ctx.client.setCorpus(c);
     });
 
     // Seed the INITIAL anchor from `?focus=x,y` BEFORE the first subscription, so it opens at the

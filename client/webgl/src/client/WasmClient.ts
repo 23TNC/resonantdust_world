@@ -12,6 +12,7 @@
 //! reaches for; they return no-op unsubscribes until those subsystems return.
 
 import { WorldClient, ticHz, defaultTicsPerTile, tileToPosition, composeInteraction, packSpawnRequest } from "./wasm";
+import type { Content as WasmContent } from "./wasm";
 
 export { ticHz, defaultTicsPerTile, tileToPosition, composeInteraction, packSpawnRequest };
 import { assetBaseFromServerUrl } from "./environments";
@@ -650,6 +651,25 @@ export class WasmClient {
   onPawnInventory(cb: PawnInventoryHandler): () => void {
     this.pawnInventoryCbs.add(cb);
     return () => this.pawnInventoryCbs.delete(cb);
+  }
+
+  /** **Where a pawn is**, from core (shared-simulation P4) — `[x, y]` fractional tiles, or
+   *  `null` when untracked or the clock has not anchored. THE position: the same answer
+   *  `client/npc` gets, off the same model, computed by the same shared walk. */
+  pawnPoint(entity: number): [number, number] | null {
+    const p = this.world?.pawnPoint(entity);
+    return p && p.length === 2 ? [p[0], p[1]] : null;
+  }
+
+  /** Core's tic. `null` until the estimate anchors — BAIL, never substitute 0. */
+  coreNowTic(): number | null {
+    const t = this.world?.nowTic();
+    return t === undefined || t === null ? null : t;
+  }
+
+  /** Hand core the corpus; nothing derived answers until it has one. */
+  setCorpus(content: WasmContent): void {
+    this.world?.setCorpus(content);
   }
 
   /** Subscribe to promoted movement INTENTS (`ACTIONS.md` §Movement — the channel speculation

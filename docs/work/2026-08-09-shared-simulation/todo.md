@@ -100,9 +100,9 @@ binder and the affordance query, none of which P4 needs.
 
 ## P4 — webgl becomes a display
 
-- [ ] Expose core's track to the browser through `shared/wasm` as `pawnPoint(entity, nowTic)`.
+- [x] Expose core's track to the browser through `shared/wasm` as `pawnPoint(entity, nowTic)`.
       Acceptance: at an anchor tic it equals the point that anchor's row carries.
-- [ ] Point `MoverLayer`'s render-chase at `pawnPoint` instead of its own `Spec`. Acceptance:
+- [x] Point `MoverLayer`'s render-chase at `pawnPoint` instead of its own `Spec`. Acceptance:
       typecheck + build green and movers still glide between anchors.
 - [ ] Delete `Spec`, the walk, `speedFor`, `computePath` and `SPEC_APPLY_EPS` from `MoverLayer`.
       Acceptance: zero references remain; the file drops under 800 lines.
@@ -284,10 +284,10 @@ old signature would re-import the leak on arrival. Also: **`ticsPerSec()` stays 
 webgl** — `MoverLayer.ts:667` caps the render chase with it, which is [F2](forks.md#f2)
 presentation. The RATE is a shared input; only the evaluation INSTANT becomes core's answer.
 
-- [ ] Grow the wasm read surface ONCE — `WorldClient` (`shared/wasm/src/lib.rs:1226`) is write-only
+- [x] Grow the wasm read surface ONCE — `WorldClient` (`shared/wasm/src/lib.rs:1226`) is write-only
       today. Add `nowTic`, `pawnPayload`, `pawnNeeds`, `queueEntries`, `busy` beside `pawnPoint`.
       Acceptance: `npm run typecheck` + `npm run build` green.
-- [ ] Return needs as stride-2 `Float64Array`, NEVER `Uint32Array` — the documented truncation at
+- [x] Return needs as stride-2 `Float64Array`, NEVER `Uint32Array` — the documented truncation at
       `MoverLayer.ts:805-812` cut `0xa4fb80010020` to `0x80010020` and every need read 0.
       Acceptance: a live pawn's thirst reads nonzero through the accessor.
 - [ ] Collapse webgl's eight hand-rolled u16 now-tic conversions onto `nowTic()` with ONE null

@@ -3,6 +3,27 @@
 _The verification log: what landed and **how it was checked**. Append-only; authoritative for what
 is done. Items live in [`todo.md`](todo.md) with their boxes ticked._
 
+## 2026-08-10 — P4: webgl READS ITS POSITIONS FROM CORE
+
+`WorldClient` was write-only — commands in, events out through a callback, nothing askable, which
+is why the browser folded its own world view, its own walk and its own clock. It now answers
+`nowTic`, `pawnPoint`, `pathable`, `pawnPayload`, `pawnNeeds`, and takes `setCorpus`.
+
+`MoverLayer`'s per-frame target is now `this.client.pawnPoint(key)` — **core's walk, through
+`move_eval`, the same answer `client/npc` gets**. The TypeScript walk no longer decides where
+anything is. The render-chase stays, because how fast a sprite ADMITS a correction is the only
+part of this a viewer owns ([F2](forks.md#f2)).
+
+Needs cross the boundary as stride-2 `Float64Array`, never `Uint32Array`: a need row is a u64 and
+the u32 form truncated `0xa4fb80010020` to `0x80010020`, after which every need read zero.
+
+**Verified live in the browser**, not just compiled: 5 movers, **core answered a position for all
+5**, all 5 moved over a 6-second sample, positions subtile (`125.04, 72.12`), `coreNowTic` 3236.
+`npm run typecheck` + `npm run build` green.
+
+Still open in P4: deleting the now-unused `Spec`/`walkGreedy`/`walkPath`/`speedFor`/`computePath`
+machinery, and pointing the panel readers at the row accessors.
+
 ## 2026-08-10 — P2e items 1-3: one clock
 
 `Client::now_tic()` is the answer; `Bot::now_tic` delegates and npc's `tic_anchor` field, its

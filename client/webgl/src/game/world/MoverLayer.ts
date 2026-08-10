@@ -637,22 +637,18 @@ export class MoverLayer {
       let tx = m.authX;
       let ty = m.authY;
       let facing = m.facing;
-      const s = m.spec;
-      if (s) {
-        const d = this.client.ticDelta(s.eventTic);
-        if (d !== null && d > 0) {
-          // speculative-direction P1: the walk's facing is NOT consumed here — it is
-          // spec-space and disagrees with the render at reseeds, stair-steps and while the
-          // chase corrects (I1). Facing derives from the RENDERED delta below; the walk's
-          // only facing role left is the arm-time initial aim (onMoveIntent).
-          const prog = d / s.ticsPerTile;
-          const p = s.path
-            ? walkPath(s.fromX, s.fromY, s.path, prog)
-            : walkGreedy(s.fromX, s.fromY, s.destX, s.destY, prog);
-          tx = p.x;
-          ty = p.y;
-          s.appliedX = p.x; // spec-space bookkeeping — landing error still measures the SPEC
-          s.appliedY = p.y;
+      // WHERE THE PAWN IS comes from CORE (shared-simulation P4). This was a TypeScript
+      // re-implementation of the worker's walk under a comment claiming it "mirrored EXACTLY"
+      // — a claim nothing checked, and false in at least five ways (`walk-divergence.md`).
+      // What remains below is the chase, because how fast a sprite ADMITS a correction is the
+      // only part of this a viewer legitimately owns (F2).
+      const core = this.client.pawnPoint(key);
+      if (core) {
+        tx = core[0];
+        ty = core[1];
+        if (m.spec) {
+          m.spec.appliedX = core[0]; // the probe still measures belief-vs-truth
+          m.spec.appliedY = core[1];
         }
       }
       // Chase: close the render→target gap at ≤ CHASE_CAP × true speed, leaning harder the

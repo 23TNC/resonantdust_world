@@ -1245,6 +1245,64 @@ impl WorldClient {
         WorldClient { inner }
     }
 
+    // ── the READ surface (shared-simulation P4) ────────────────────────────────────────────
+    //
+    // `WorldClient` was write-only: commands in, events out through the callback, nothing
+    // askable. So the browser folded every answer it needed in TypeScript — a second world view,
+    // a second walk, a second clock. These are the same answers `client/npc` gets, off the same
+    // model, because "one contract for every host" only means something if both hosts can ask.
+
+    /// **What tic is it.** `undefined` until the estimate anchors — BAIL on that, never
+    /// substitute 0: tic 0 is a real tic, and reading it as "now" evaluates every lazy need as
+    /// though the world had just begun.
+    #[wasm_bindgen(js_name = nowTic)]
+    pub fn now_tic(&self) -> Option<u16> {
+        self.inner.now_tic()
+    }
+
+    /// **Where a pawn is**, as `[x, y]` in fractional tiles — core's walk, not the caller's.
+    /// Empty when the pawn is untracked or the clock has not anchored.
+    #[wasm_bindgen(js_name = pawnPoint)]
+    pub fn pawn_point(&self, entity: u32) -> Vec<f64> {
+        match self.inner.pawn_point(entity) {
+            Some((x, y)) => vec![x, y],
+            None => Vec::new(),
+        }
+    }
+
+    /// May a pawn stand on this tile — the composed view through the corpus's own flags.
+    #[wasm_bindgen(js_name = pathable)]
+    pub fn pathable(&self, x: i32, y: i32) -> bool {
+        self.inner.pathable(x, y)
+    }
+
+    /// This entity's raw payload opcode stream.
+    #[wasm_bindgen(js_name = pawnPayload)]
+    pub fn pawn_payload(&self, entity: u32) -> Vec<u32> {
+        self.inner.pawn_payload(entity)
+    }
+
+    /// This entity's need rows, **stride-2 `Float64Array`** — `[row, set_tic, row, set_tic, …]`.
+    ///
+    /// `f64` and never `Uint32Array`: a need row is a u64 and the u32 form silently truncated
+    /// `0xa4fb80010020` to `0x80010020`, after which every need read zero. The lane is wider than
+    /// 32 bits and the container has to admit it.
+    #[wasm_bindgen(js_name = pawnNeeds)]
+    pub fn pawn_needs(&self, entity: u32) -> Vec<f64> {
+        self.inner
+            .pawn_needs(entity)
+            .into_iter()
+            .flat_map(|(row, tic)| [row as f64, f64::from(tic)])
+            .collect()
+    }
+
+    /// Hand core the corpus (the browser fetches `/content` itself today — see D3). Until this
+    /// lands core answers nothing derived: no pace, no pathability.
+    #[wasm_bindgen(js_name = setCorpus)]
+    pub fn set_corpus(&self, content: &Content) {
+        self.inner.set_corpus(std::sync::Arc::new(content.bundle.clone()));
+    }
+
     /// Log in as `name` (trust-on-first-use). Drives the login event sequence.
     pub fn login(&self, name: String) {
         let _ = self.inner.login(name);
