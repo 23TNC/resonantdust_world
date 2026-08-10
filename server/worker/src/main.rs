@@ -627,6 +627,15 @@ async fn main() {
     // re-derives schedules from live rows every tic, so a bounce loses nothing but a
     // few duplicate (harmless, re-validating) re-stamps.
     let mut crossing_slots: HashMap<(u32, u32), u16> = HashMap::new();
+    // server-chords P1 (THE GATE): what the route CLAIMED, keyed `(pawn, trip serial)` →
+    // `(stated arrival tic, chord count, tiles)`. The claim is compared against the tic the chain
+    // actually arrives at, and the delta is the number the whole design rests on.
+    //
+    // Measured HERE rather than by scraping a client, deliberately: a subscribed client loses
+    // zones as pawns move and silently stops seeing the very arrivals being counted — three
+    // capture attempts each went blind partway through and reported a third of the trips they
+    // had driven. The worker cannot miss its own chain ending.
+    let mut chord_claims: HashMap<(u32, u32), (u16, usize, f64)> = HashMap::new();
     // The DISPLAY identity mint (intent-queue-ui) — never 0, ephemeral like the queue.
     let mut intent_entry_seq: u32 = 0;
     // Cancelled EXECUTING intents (intent-queue-ui F3): `(pawn, fire_tic)` — consumed
@@ -1696,11 +1705,25 @@ async fn main() {
                                 ) {
                                     tracing::warn!(%err, tic = t, obj = format!("{obj:#010x}"), "chord fan queue failed");
                                 } else {
+                                    let claim = stamps.last().map(|s| s.tic).unwrap_or(t);
+                                    let tiles = (f64::from(dx) - from.0)
+                                        .hypot(f64::from(dy) - from.1);
+                                    // A pawn has at most ONE live route: drop any earlier claim
+                                    // before recording this one. The trip serial is 6 bits and
+                                    // aliases every 64 trips, so keying on `(pawn, serial)` alone
+                                    // let a claim from a superseded trip survive and match a
+                                    // LATER arrival — which produced "arrivals" 195 tics before
+                                    // their own order, a physical impossibility that is the
+                                    // README's predicted aliasing showing up in the measurement
+                                    // before it shows up in the simulation.
+                                    chord_claims.retain(|(p, _), _| *p != obj);
+                                    chord_claims
+                                        .insert((obj, serial), (claim, stamps.len() - 1, tiles));
                                     tracing::debug!(
                                         tic = t,
                                         obj = format!("{obj:#010x}"),
                                         chords = stamps.len() - 1,
-                                        dest_tic = stamps.last().map(|s| s.tic),
+                                        dest_tic = claim,
                                         "chord route stated"
                                     );
                                 }
@@ -1710,6 +1733,20 @@ async fn main() {
                     let (cx, cy) = position_to_tile(p.position_reference);
                     let (tx, ty) = position_to_tile(dest);
                     if (cx, cy) == (tx, ty) && p.position_reference == dest {
+                        // THE GATE (server-chords P1): the chain has arrived, and `t` is the tic
+                        // it landed on — the hop that wrote this position applied in this pass.
+                        if let Some((stated, chords, tiles)) = chord_claims.remove(&(obj, serial)) {
+                            tracing::info!(
+                                obj = format!("{obj:#010x}"),
+                                serial,
+                                chords,
+                                tiles = format!("{tiles:.1}"),
+                                stated,
+                                actual = t,
+                                err = i32::from(t as i16 - stated as i16),
+                                "chord arrival",
+                            );
+                        }
                         continue; // arrived — the chain ends
                     }
                     // The next hop lands one STRIDE along the first chord (chord-movement

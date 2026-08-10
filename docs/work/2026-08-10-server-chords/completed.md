@@ -201,3 +201,61 @@ I hit this while measuring, timing out every trial until I stopped the npc. That
 until I checked, because a malformed program is dropped without a client-visible answer — webgl
 routes `Event::Status` only to the login progress channel, so a post-login `QueueErr` reaches
 nobody (noted in P0, still unfixed, and it cost time twice now).
+
+## 2026-08-10 — P1 THE GATE: measured, and it misses its own threshold by one tic
+
+`|stated dest tic − actual arrival tic|`, **n = 56** driven trips (the criterion asks 50):
+
+| p50 | p90 | p99 | max | within 2 tics | within 5 tics | signed mean |
+|---|---|---|---|---|---|---|
+| 1 | **3** | 5 | 47 | 43/56 (77%) | 55/56 (98%) | +0.71 |
+
+```
+  0 tics  14 ##############
+  1 tics  19 ###################
+  2 tics  10 ##########
+  3 tics   8 ########
+  4 tics   2 ##
+  5 tics   2 ##
+ >8 tics   1 [47]      <- the only 2-chord trip in the sample
+```
+
+**The criterion is p90 ≤ 2. It is 3. The box stays unticked** — see [F3](forks.md#f3) for what that
+means and why the next step is still P3 rather than a re-design.
+
+### Measuring it took four attempts, and the first three lied
+
+1. **One trip per pawn per entity.** A brain issues its next order the moment the pawn arrives, so
+   supersession lands within a tic or two of the stated arrival — and dropping superseded trips
+   discarded every accurate trip while keeping the inaccurate ones.
+2. **"First state row on the destination tile" as arrival.** Log order is not tic order (a zone
+   replay re-delivers old rows late) and a mid-route anchor can sit on the destination tile. The
+   sound test is `dest tile AND subtile (0,0)` — the same `position == dest` the worker uses to end
+   the chain — matched in TIC order. This produced the "arrivals" one tic after their own order.
+3. **Scraping a subscribed client.** Three captures each went blind partway through: pawns walk out
+   of the anchor's zones, `movers` falls to 0, and the observer keeps writing a log that no longer
+   contains the arrivals being counted. It reported 16 arrivals for 28 driven trips.
+
+The measurement now lives **in the worker**, which cannot miss its own chain ending: the route's
+claim is recorded when it is fanned and compared when the CONTINUE pass sees `arrived`.
+
+4. **And the instrumentation itself aliased.** Keyed on `(pawn, trip serial)` it reported arrivals
+   **195 tics before their own order** — impossible, and the cause is the README's own watch-list
+   item: the trip serial is 6 bits and wraps every 64 trips, so a superseded claim survived to
+   match a later arrival. Fixed by dropping any prior claim for a pawn when a new route is stated
+   (a pawn has at most one live route). That aliasing is going to bite the SIMULATION exactly the
+   same way once cancel churn is routine — [P4](todo.md) already carries widening it, and this is
+   the first hard evidence that it must actually happen.
+
+### Where the residual 1-3 tics comes from
+
+The claim and the motion are computed by **two different mechanisms**: `chord_schedule` accumulates
+on the running total and rounds once, while the per-hop chain re-paths every hop and rounds each
+`k = ceil(dist × pace)` up. A full-stride hop costs exactly `REANCHOR_TICS`, so it contributes no
+rounding — but every CORNER and the final partial hop can each add a tic. The distribution matches:
+55 single-chord trips give p90 = 3 and max 5, and the one 2-chord trip in the sample is the 47-tic
+outlier.
+
+That is the gap between the OLD chain and the NEW schedule — and [P3](todo.md) deletes the old
+chain, making each hop's write the literal chord endpoint. After P3 the two cannot disagree,
+because there is only one of them.
