@@ -72,6 +72,50 @@ present exactly as a backward snap.
 `position_at` (P1) is the function that answers this properly for both sides. Re-measure after P1;
 if the resolve rate stays this low with a shared implementation, it is real and gets its own item.
 
+## I6 — the worker's view of the master tic froze; it ground a backlog it could never finish
+**2026-08-10. Hit during P0. Cleared by restart; root cause NOT found.**
+
+P0's baseline run returned **zero `StateObject` rows in 30 s** with 90 movers resident. Not an
+instrumentation fault — the sim had wedged:
+
+- `rd-master` was **healthy**: `achieved_hz 5.9–6.2`, `bump_confirmed=360`, `bump_failed=0` every
+  minute, continuously.
+- `rd-worker`'s `master=` reading was **frozen at 33461 for 12+ minutes**, over which the master
+  bumped ~4,300 tics. Every `composed component` line in that window read `master=33461`.
+- The worker sat at **115% CPU** the whole time, composing components at tics *behind* where it
+  had already been (33098 at 01:34 → 32036 at 01:52), i.e. grinding a backlog whose end had
+  stopped moving toward it.
+- Onset was a **cliff, not a ramp**: lag sat at 0 ±2 for the whole preceding period, hit 29, then
+  2333 on the next sample, then drained steadily (~160 tics per sample block).
+
+So the worker's *subscription to the index clock* died while its compose loop kept running — it
+did not crash, log an error, or self-heal. That last part is the interesting bit: the tree has
+rebuild-on-next-use uplinks specifically for this (`sim-self-heal`), and they did not fire, because
+nothing here *failed* — a frozen-but-live subscription reads as a quiet clock, and a quiet clock is
+indistinguishable from a paused world.
+
+**Chosen action:** restarted the worker to get a measurable world, and recorded this rather than
+chasing it — it is not this stream's subject and P0 is blocked without a live sim. **Flagged for
+the user** in [`blockers.md`](blockers.md#b1): a silent clock-subscription freeze is a durability
+bug that belongs to whoever owns the uplink, and the honest detection story is that *I only
+noticed because a probe returned zero* — nothing alarmed.
+
+**Two things the restart taught, both mine to own:**
+
+1. `bin/sim run worker` runs the **already-built** binary. The one on disk predated
+   [`live-edit` P4](../2026-08-09-live-edit/README.md)'s loader change, so it rejected the `color`
+   field that stream had since authored onto trait defs — the worker crash-looped on
+   `unknown field 'color'` until I ran `bin/sim build worker` first. The corpus was fine; the
+   parser was old. **Restarting a sim process is `build` then `run`, never `run` alone** — the
+   long-lived process is the only thing hiding a stale binary, and killing it is exactly when that
+   stops being true.
+2. A **second session is committing to this branch concurrently** (live-edit P3/P4/P5 landed while
+   this stream's opening commit was being written). Nothing in this stream conflicts with it, but
+   it means the tree is not mine alone: re-read before assuming, and never rebase or force.
+
+Watch for a recurrence during the P4 re-measure; if it repeats on a timescale of hours it will
+corrupt any long soak this stream depends on.
+
 ## I5 — 936 duplicate work-group WARNs in 10 minutes
 **2026-08-09. Open — noted, out of this stream's scope.**
 

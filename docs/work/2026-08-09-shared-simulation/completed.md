@@ -3,6 +3,33 @@
 _The verification log: what landed and **how it was checked**. Append-only; authoritative for what
 is done. Items live in [`todo.md`](todo.md) with their boxes ticked._
 
+## 2026-08-10 — P0 probe code landed; acceptance BLOCKED on a live world
+
+**No items ticked.** The code is in and verified as far as it can be without a running sim; the
+acceptance criteria all require live samples and the world cannot currently produce them
+([B2](blockers.md#b2)). Recording it so a resuming session does not rewrite it.
+
+**Landed** in [`MoverLayer.ts`](../../../client/webgl/src/game/world/MoverLayer.ts): a per-kind
+divergence tally on `__teleportProbe` — `reseedErr`, `anchorStride`, `anchorGap` and `impliedPace`
+as bounded sample arrays, plus `report()` (quantiles per kind, with the client's `clientPace`
+printed beside the `impliedPace` the server's own rows imply — the comparison
+[I1](issues.md#i1) turns on) and `reset()`. Mirrored to `sessionStorage` on a 2 s throttle and
+flushed on `pagehide`, because the dev server's reloads had already silently restarted two
+measurement runs.
+
+**Verified:** `npm run typecheck` and `npm run build` green. `reset()` writes the expected shape to
+`sessionStorage` (`{"divergence":{},"auth":0,"render":0}`), and the restore path runs at
+construction — so the persistence *mechanism* works, though it has not yet carried a **non-zero**
+count across a reload, which is what item 2's criterion actually asks.
+
+**Not verified:** `report()` printing quantiles off real samples, and the 10-minute baseline. The
+first attempt returned **zero `StateObject` rows in 30 s** with 90 movers resident — which is what
+uncovered [I6](issues.md#i6) and [B2](blockers.md#b2) rather than any fault in the probe.
+
+**Also learned, the expensive way** — `bin/sim run <crate>` runs the *already-built* binary, so
+restarting a long-lived sim process is `build` then `run`; and a second session is committing to
+this branch concurrently. Both written up in [I6](issues.md#i6).
+
 ## 2026-08-09 — the survey that opened the stream
 
 Not a plan item; the diagnosis P0 will re-measure against. Recorded because it is the evidence the

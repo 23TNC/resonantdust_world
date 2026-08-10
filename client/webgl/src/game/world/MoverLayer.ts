@@ -287,12 +287,52 @@ interface TeleportEvent {
   specActive: boolean;
 }
 
+/** shared-simulation P0: one KIND's divergence samples — the numbers that say whether the
+ *  client's walk and the server's still agree. Kept PER KIND because pace is per kind (a
+ *  bunny at 24 tics/tile and a wolf at 12 pooled into one distribution hide each other),
+ *  and as raw samples because the quantiles are the point — a mean over a bimodal split
+ *  reads as "mildly off" when the truth is "two populations, one of them broken". */
+interface KindDivergence {
+  /** The client's DERIVED pace when the sample was taken (tics/tile) — its own belief. */
+  pace: number;
+  /** `|spec belief − authoritative point|` at each reseed, in tiles (Chebyshev, the metric
+   *  the chase uses to decide whether to snap). */
+  reseedErr: number[];
+  /** Tiles between consecutive authoritative points — one re-anchor's observed stride.
+   *  Euclidean, because the worker's own stride is a `hypot`. */
+  anchorStride: number[];
+  /** Tics between those same two rows — the re-anchor cadence as OBSERVED, not assumed. */
+  anchorGap: number[];
+  /** `gap / stride` per sample: the pace the server's own rows imply. Compared against
+   *  {@link KindDivergence.pace}, this is the whole of shared-simulation I1 in one number. */
+  impliedPace: number[];
+  reseeds: number;
+  /** Reseeds whose error exceeded {@link CHASE_SNAP_TILES} — the visible teleports. */
+  snaps: number;
+  landings: number;
+}
+
 /** The probe's ring buffer + counters, exposed as `__teleportProbe`. */
 interface TeleportProbe {
   auth: number;
   render: number;
   events: TeleportEvent[];
+  /** shared-simulation P0: per-kind divergence samples; {@link TeleportProbe.report}
+   *  prints their quantiles, {@link TeleportProbe.reset} starts a fresh soak. */
+  divergence: Record<number, KindDivergence>;
+  report: () => Record<string, unknown>;
+  reset: () => void;
 }
+
+/** Per-kind sample cap. Quantiles over the most recent N are representative and the arrays
+ *  stay bounded across a long soak (90 movers re-anchoring every ~32 tics is ~17 rows/s). */
+const DIVERGENCE_CAP = 4000;
+/** shared-simulation P0: how often the tally mirrors into `sessionStorage` (ms). The webgl
+ *  dev server full-reloads on HMR, which silently restarted the distribution mid-soak and
+ *  cost two measurement runs — the tally now resumes instead. */
+const DIVERGENCE_SAVE_MS = 2000;
+/** The `sessionStorage` key the tally survives a reload in. */
+const DIVERGENCE_KEY = "rd.divergence";
 
 /** The fastest legal authoritative pace the probe allows (tiles/tic) — comfortably above
  *  any authored ground_speed (the fastest pawns run ~8 tics/tile = 0.125). */
@@ -316,7 +356,16 @@ export class MoverLayer {
   private readonly pendingIntents = new Map<number, MoveIntent>();
   private readonly unsubs: Array<() => void> = [];
   /** The teleport probe (spawn-authority P5) — see {@link TeleportProbe}. */
-  private readonly teleportProbe: TeleportProbe = { auth: 0, render: 0, events: [] };
+  private readonly teleportProbe: TeleportProbe = {
+    auth: 0,
+    render: 0,
+    events: [],
+    divergence: {},
+    report: () => this.divergenceReport(),
+    reset: () => this.divergenceReset(),
+  };
+  /** Wall-clock of the last `sessionStorage` mirror — throttles {@link saveDivergence}. */
+  private lastDivergenceSaveMs = 0;
   /** Per-kind texture-stem / size / packed-channel tables from the content bundle, indexed by
    *  `objKind - 1` (same tables + indexing WorldBridge uses for cold things). Refreshed on
    *  hot-swap. */
@@ -354,6 +403,11 @@ export class MoverLayer {
     // `__teleportProbe` in the console; the drill script polls it.
     (globalThis as unknown as { __teleportProbe: TeleportProbe }).__teleportProbe =
       this.teleportProbe;
+    // shared-simulation P0: resume the divergence tally across a reload, and flush on the
+    // way out so the last window isn't lost. `pagehide` (not `beforeunload`) — it fires on
+    // the bfcache path too, which is how a dev-server HMR reload leaves.
+    this.restoreDivergence();
+    addEventListener("pagehide", () => this.saveDivergence(true));
     this.refreshTables();
     this.unsubs.push(client.onStateObject((obj) => this.onStateObject(obj)));
     this.unsubs.push(client.onPawnParts((p) => this.onPawnParts(p)));
@@ -429,6 +483,137 @@ export class MoverLayer {
       `(${e.fromX.toFixed(2)},${e.fromY.toFixed(2)})->(${e.toX.toFixed(2)},${e.toY.toFixed(2)}) ` +
       `dist=${e.dist.toFixed(2)} spec=${e.specActive} tic=${e.tic}`,
     );
+  }
+
+  // ── the divergence tally (shared-simulation P0) ────────────────────────────────────────
+  //
+  // The client walks a pawn from one authoritative row to the next; the worker walks the same
+  // pawn from its own copy of the same rule. These samples are how we tell whether the two
+  // still agree — and, once the rule lives in `shared/`, how we prove the fix.
+
+  /** This kind's bucket, created on first sample. `pace` tracks the client's CURRENT belief
+   *  (a pawn's derived speed moves with its conditions), not the first one it ever held. */
+  private divergenceFor(kind: number, pace: number): KindDivergence {
+    const d = this.teleportProbe.divergence;
+    const k = d[kind] ?? (d[kind] = {
+      pace, reseedErr: [], anchorStride: [], anchorGap: [], impliedPace: [],
+      reseeds: 0, snaps: 0, landings: 0,
+    });
+    k.pace = pace;
+    return k;
+  }
+
+  /** Push a sample, dropping the oldest past {@link DIVERGENCE_CAP}. */
+  private static push(a: number[], v: number): void {
+    if (!Number.isFinite(v)) return;
+    a.push(v);
+    if (a.length > DIVERGENCE_CAP) a.splice(0, a.length - DIVERGENCE_CAP);
+  }
+
+  /** Quantile of an UNSORTED sample array — sorts a copy, because the report is read by
+   *  hand and the samples are written thousands of times more often than they're read. */
+  private static quantile(a: number[], f: number): number | null {
+    if (!a.length) return null;
+    const s = [...a].sort((x, y) => x - y);
+    return +s[Math.min(s.length - 1, Math.floor(f * s.length))].toFixed(3);
+  }
+
+  /** One authoritative row landing on a pawn that already had one: the observed stride and
+   *  cadence, plus the pace those two imply. Skips the resting case — a pawn that didn't
+   *  move carries no information about pace and would drag every quantile to zero. */
+  private noteAnchor(kind: number, pace: number, stride: number, gap: number): void {
+    if (gap <= 0 || stride < 0.05) return;
+    const d = this.divergenceFor(kind, pace);
+    MoverLayer.push(d.anchorStride, stride);
+    MoverLayer.push(d.anchorGap, gap);
+    MoverLayer.push(d.impliedPace, gap / stride);
+    this.saveDivergence();
+  }
+
+  /** One reseed or landing: how far the client's belief had drifted when truth arrived. */
+  private noteReseed(kind: number, pace: number, err: number, landed: boolean): void {
+    const d = this.divergenceFor(kind, pace);
+    MoverLayer.push(d.reseedErr, err);
+    if (landed) d.landings += 1; else d.reseeds += 1;
+    if (err > CHASE_SNAP_TILES) d.snaps += 1;
+    this.saveDivergence();
+  }
+
+  /** `__teleportProbe.report()` — the divergence quantiles per kind, in one read.
+   *  `clientPace` vs `impliedPace` is the comparison the whole stream turns on: equal means
+   *  the two walks agree, and a ratio means they don't. */
+  divergenceReport(): Record<string, unknown> {
+    const Q = MoverLayer.quantile;
+    const live: Record<number, number> = {};
+    for (const m of this.movers.values()) live[m.kind] = (live[m.kind] ?? 0) + 1;
+    const out: Record<string, unknown> = {};
+    for (const [key, d] of Object.entries(this.teleportProbe.divergence)) {
+      const kind = Number(key);
+      out[`${kind} · ${this.thingStems[kind - 1] ?? "unknown"}`] = {
+        movers: live[kind] ?? 0,
+        clientPace: d.pace,
+        impliedPace: { p10: Q(d.impliedPace, 0.1), p50: Q(d.impliedPace, 0.5), p90: Q(d.impliedPace, 0.9) },
+        anchorStride: { p50: Q(d.anchorStride, 0.5), p90: Q(d.anchorStride, 0.9) },
+        anchorGapTics: { p50: Q(d.anchorGap, 0.5), p90: Q(d.anchorGap, 0.9) },
+        reseedErrTiles: { p50: Q(d.reseedErr, 0.5), p90: Q(d.reseedErr, 0.9), max: Q(d.reseedErr, 1) },
+        reseeds: d.reseeds,
+        landings: d.landings,
+        pastSnapThreshold: d.snaps,
+        pastSnapPct: d.reseeds + d.landings
+          ? +((100 * d.snaps) / (d.reseeds + d.landings)).toFixed(1) : 0,
+        samples: d.anchorStride.length,
+      };
+    }
+    // Named away from `auth`/`render` here: these read as a verdict, not as the probe's
+    // internal field names, and one of them trips console-tooling key filters.
+    out._teleports = { rowJumps: this.teleportProbe.auth, chaseSnaps: this.teleportProbe.render };
+    return out;
+  }
+
+  /** `__teleportProbe.reset()` — start a fresh soak, storage included. */
+  divergenceReset(): void {
+    this.teleportProbe.divergence = {};
+    this.teleportProbe.auth = 0;
+    this.teleportProbe.render = 0;
+    this.teleportProbe.events.length = 0;
+    this.saveDivergence(true);
+    console.info("[divergence] tally reset");
+  }
+
+  /** Mirror the tally into `sessionStorage`, throttled to {@link DIVERGENCE_SAVE_MS}. */
+  private saveDivergence(force = false): void {
+    const now = Date.now();
+    if (!force && now - this.lastDivergenceSaveMs < DIVERGENCE_SAVE_MS) return;
+    this.lastDivergenceSaveMs = now;
+    try {
+      sessionStorage.setItem(DIVERGENCE_KEY, JSON.stringify({
+        divergence: this.teleportProbe.divergence,
+        auth: this.teleportProbe.auth,
+        render: this.teleportProbe.render,
+      }));
+    } catch {
+      // Quota, or a session with storage denied. The tally is a probe: never load-bearing.
+    }
+  }
+
+  /** Resume a tally left by the previous page. A shape change from an older build starts
+   *  clean rather than throwing — a stale probe must never break the client. */
+  private restoreDivergence(): void {
+    try {
+      const raw = sessionStorage.getItem(DIVERGENCE_KEY);
+      if (!raw) return;
+      const s = JSON.parse(raw) as
+        { divergence?: Record<number, KindDivergence>; auth?: number; render?: number };
+      if (!s.divergence) return;
+      this.teleportProbe.divergence = s.divergence;
+      this.teleportProbe.auth = s.auth ?? 0;
+      this.teleportProbe.render = s.render ?? 0;
+      const n = Object.values(s.divergence)
+        .reduce((a, d) => a + (d.anchorStride?.length ?? 0), 0);
+      if (n) console.info(`[divergence] resumed ${n} anchor sample(s) across a reload`);
+    } catch {
+      this.teleportProbe.divergence = {};
+    }
   }
 
   /** Per-frame: re-evaluate held intents whose preconditions now hold, then advance every
@@ -860,6 +1045,8 @@ export class MoverLayer {
     if (m?.spec) {
       const s = m.spec;
       const err = Math.max(Math.abs(s.appliedX - ax), Math.abs(s.appliedY - ay));
+      // shared-simulation P0: how far the client's belief had drifted when truth arrived.
+      this.noteReseed(m.kind, s.ticsPerTile, err, obj.tileX === s.destX && obj.tileY === s.destY);
       if (obj.tileX === s.destX && obj.tileY === s.destY) {
         console.debug(
           `[mover] spec landed e=${err.toFixed(2)} tiles entity=${key.toString(16)} tic=${obj.tic}`,
@@ -901,6 +1088,15 @@ export class MoverLayer {
           fromX: m.authX, fromY: m.authY, toX: ax, toY: ay,
           dist: authJump, specActive: m.spec !== null,
         });
+      }
+      // shared-simulation P0: the observed stride + cadence between two authoritative
+      // points. EUCLIDEAN, because the worker's own hop stride is a `hypot` — measuring it
+      // Chebyshev like the jump probe above would under-report every diagonal by up to 30%.
+      if (m.authTic !== null) {
+        this.noteAnchor(
+          m.kind, this.speedFor(key), Math.hypot(ax - m.authX, ay - m.authY),
+          authDt < 0x8000 ? authDt : 0,
+        );
       }
       m.authX = ax;
       m.authY = ay;
