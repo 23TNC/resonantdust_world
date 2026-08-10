@@ -107,3 +107,34 @@ arithmetic into it — its property was "the floor is paid once, not per chord",
 (8, not 20).
 
 15 `move_eval` tests pass.
+
+## 2026-08-10 — P1: the route is on the wire, alongside the chain
+
+**Fanned on the SEED, not the hop.** The CONTINUE pass runs for both `MOVE_TO` (the order) and
+`MOVE_STEP` (each hop); the route is stated once per ORDER, which is what the design means by one
+route computation and what P3 will make literally true. The per-hop chain is untouched — this
+changes no motion, by construction: a separate promoted event that nothing steers from yet.
+
+Payload `MOVE_CHORDS pawn serial count [position, tic]×n`. Consecutive stamps share an endpoint, so
+`n` stamps spell `n-1` chords and stamp 0 is the pawn's own subtile source. The operand is the
+**trip serial**, not a queue-entry id — the serial is what `CANCEL` bumps and what lets a client
+refuse a route belonging to a superseded trip, which P5's replay guards need.
+
+Queued at `master + 4`, not `t + 1`: a tic the clock has already passed is rejected async and the
+fan silently vanishes (the BUILD_WALL lesson, already written into this file's neighbours).
+
+**Verified live.** Worker at `debug`, a bunny fluffle wandering at `124,75`:
+
+```
+chord route entity=0x30800004 serial=38 chords=2 src="112,72@5815" dest="123,71@5953"
+move intent entity=813694980 tile_x=123 tile_y=71 event_tic=5815
+```
+
+`813694980 = 0x30800004`, and the chord route's stated destination is the same tile as the order's
+— a free cross-check that the route describes the trip it belongs to, not a stale one. 13 routes
+fanned in 35 s; headless decoded every one.
+
+Core carries it as `Event::MoveChords` with the payload **verbatim** — decode only, no fold into
+`MoverTrack`. Deciding what a route MEANS is P5; P1 only has to prove the wire carries it.
+
+`bin/sim check worker` and `bin/rd build core` clean.

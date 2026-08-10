@@ -65,6 +65,24 @@ pub fn move_intents(zone: u16, event_tic: u16, actions: &[u32]) -> Vec<Event> {
             }
             continue;
         }
+        if inst.action == resonantdust_codec::action::MOVE_CHORDS {
+            // MOVE_CHORDS pawn serial count [position, tic]×n — the stated route (server-chords
+            // P1). Carried VERBATIM: core decodes the frame, and only `MoverTrack` decides what a
+            // route means. An odd payload is a truncated fan — refuse it whole rather than lerp
+            // toward a half-read endpoint.
+            if let [pawn, serial, _count, stamps @ ..] = inst.operands {
+                if stamps.len() >= 4 && stamps.len() % 2 == 0 {
+                    out.push(Event::MoveChords {
+                        macro_position: zone,
+                        entity_reference: *pawn,
+                        serial: *serial,
+                        event_tic,
+                        stamps: stamps.to_vec(),
+                    });
+                }
+            }
+            continue;
+        }
         if inst.action != MOVE_TO {
             continue;
         }

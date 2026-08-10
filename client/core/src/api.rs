@@ -258,6 +258,22 @@ pub enum Event {
         tile_y: i32,
         event_tic: u16,
     },
+    /// **THE STATED ROUTE** (server-chords F1): the server has said where this pawn will be and
+    /// when. `stamps` is the flat stride-2 payload verbatim — `[position_reference, tic] × n`,
+    /// where stamp `i`→`i+1` is one chord, stamp 0 is the pawn's source point at `serial`'s start
+    /// and the last is the destination. `serial` is the pawn's trip serial, so a route belonging
+    /// to a superseded trip can be refused rather than interpolated.
+    ///
+    /// A client picks the chord bracketing `now` and lerps. It does not pathfind, derive a pace,
+    /// or extrapolate past the final stamp — there is nothing here to disagree with the server
+    /// about, which is the entire point of the frame.
+    MoveChords {
+        macro_position: u16,
+        entity_reference: u32,
+        serial: u32,
+        event_tic: u16,
+        stamps: Vec<u32>,
+    },
     /// A pawn's INTENT-QUEUE snapshot reached a subscribed zone (intent-queue-ui F1 —
     /// the details panel's strip; `ACTIONS.md` § palette `QUEUE_STATE`). `entries` is
     /// the flat stride-4 payload verbatim: `[entry_id, interaction_ref, phase,

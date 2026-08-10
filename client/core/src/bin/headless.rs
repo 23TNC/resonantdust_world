@@ -245,6 +245,24 @@ fn log_event(event: &Event) {
         Event::MoveIntent { macro_position, entity_reference, tile_x, tile_y, event_tic } => {
             info!(macro_position, entity_reference, tile_x, tile_y, event_tic, "move intent")
         }
+        // The stated route (server-chords P1). Logged with its ENDPOINTS decoded, because the
+        // whole P1 gate is `stated dest tic` vs the arrival that actually lands — a chord count
+        // alone would not answer it.
+        Event::MoveChords { macro_position, entity_reference, serial, event_tic, stamps } => {
+            use resonantdust_codec::object::position_to_tile;
+            let (sx, sy) = position_to_tile(stamps[0]);
+            let (dx, dy) = position_to_tile(stamps[stamps.len() - 2]);
+            info!(
+                macro_position = format!("{macro_position:#06x}"),
+                entity_reference = format!("{entity_reference:#010x}"),
+                serial,
+                event_tic,
+                chords = stamps.len() / 2 - 1,
+                src = format!("{sx},{sy}@{}", stamps[1]),
+                dest = format!("{dx},{dy}@{}", stamps[stamps.len() - 1]),
+                "chord route"
+            )
+        }
         Event::QueueState { macro_position, entity_reference, event_tic, entries } => {
             info!(macro_position, entity_reference, event_tic,
                 intents = entries.len() / 4, "intent-queue snapshot")

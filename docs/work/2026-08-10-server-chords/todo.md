@@ -44,7 +44,7 @@ false, including one whose criterion had been rewritten after ticking. Do not re
       shows chord 0's source equal to that point, not its tile centre.
 - [x] Clamp any first chord whose tic falls inside the event shard's `TIC_GAP` barrier to the
       floor rather than dropping it. Acceptance: a short first chord still fans.
-- [ ] Fan `MOVE_CHORDS` at the walk-composing site, ALONGSIDE the existing per-hop chain, changing
+- [x] Fan `MOVE_CHORDS` at the walk-composing site, ALONGSIDE the existing per-hop chain, changing
       no motion. Acceptance: headless decodes a chord list for a walking pawn.
 - [ ] **The gate:** measure `|stated dest tic − observed StateObject arrival tic|` over 50 trips.
       Acceptance: p90 ≤ 2 tics, recorded in `completed.md`. If it fails, STOP and re-plan — the

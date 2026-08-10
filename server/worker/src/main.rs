@@ -34,7 +34,8 @@ use resonantdust_codec::object::{
     cold_row_layer_id, cold_row_macro_position, cold_row_subtype, data_rotation, def_kind_id,
     def_type_id, kind_pos_ref_data, kind_pos_ref_kind_reference, kind_pos_ref_tile,
     pack_cold_row_reference, pack_kind_reference, pack_pawn_data, pack_position_reference,
-    pawn_trip_serial, position_macro, position_micro, position_to_tile, tile_to_position,
+    pawn_trip_serial, point_to_position, position_macro, position_micro, position_to_point,
+    position_to_tile, tile_to_position,
     TYPE_BIOME_THING, TYPE_BIOME_TILE, TYPE_PAWN, TYPE_PLAYER,
 };
 use resonantdust_codec::speed;
@@ -1638,14 +1639,73 @@ async fn main() {
             for (event_reference, actions) in &events {
                 for inst in action::program(actions) {
                     let Ok(inst) = inst else { break };
-                    let (obj, dest, serial) = match (inst.action, inst.operands) {
-                        (MOVE_TO, [obj, dest]) => (*obj, *dest, event_reference & 0x3F),
-                        (MOVE_STEP, [obj, dest, serial]) => (*obj, *dest, *serial & 0x3F),
+                    let (obj, dest, serial, is_seed) = match (inst.action, inst.operands) {
+                        (MOVE_TO, [obj, dest]) => (*obj, *dest, event_reference & 0x3F, true),
+                        (MOVE_STEP, [obj, dest, serial]) => (*obj, *dest, *serial & 0x3F, false),
                         _ => continue,
                     };
                     let Some(p) = scratch.get(&obj) else { continue };
                     if u32::from(pawn_trip_serial(p.data)) != serial {
                         continue; // superseded — the chain ends (apply logged the death)
+                    }
+                    // ── THE STAMPED ROUTE (server-chords P1) ── on the SEED only, so it is one
+                    // fan per ORDER rather than one per hop. Runs ALONGSIDE the per-hop chain and
+                    // steers nothing yet: P1 exists to measure whether the tic this states is the
+                    // tic the pawn actually arrives at, with the client untouched, before any of
+                    // the extrapolation it would replace is deleted.
+                    if is_seed {
+                        let from = position_to_point(p.position_reference);
+                        let (dx, dy) = position_to_tile(dest);
+                        let pace = f64::from(ground_speed_tics(obj, t));
+                        if let Some(chords) = resonantdust_content::path_eval::find_chords(
+                            position_to_tile(p.position_reference),
+                            (dx, dy),
+                            0,
+                            &cell_pathable,
+                        ) {
+                            // The schedule's source is the pawn's SUBTILE point, not its tile
+                            // centre — `find_chords` speaks lattice cells and a mid-walk pawn is
+                            // not standing on one.
+                            let stamps =
+                                    resonantdust_content::move_eval::chord_schedule(
+                                        from, &chords, pace, t,
+                                    );
+                            if stamps.len() > 1 {
+                                let mut words: Vec<u32> = Vec::with_capacity(stamps.len() * 2);
+                                for s in &stamps {
+                                    words.push(point_to_position(s.point.0, s.point.1));
+                                    words.push(u32::from(s.tic));
+                                }
+                                let mut prog = vec![
+                                    PROMOTE_EVENT,
+                                    MOVE_CHORDS,
+                                    obj,
+                                    serial,
+                                    words.len() as u32,
+                                ];
+                                prog.extend_from_slice(&words);
+                                // master+4, not t+1: a tic the clock has already passed is
+                                // rejected async and the fan just vanishes (the BUILD_WALL
+                                // lesson). Best-effort like every other fan in this pass — a
+                                // lost route costs the client its interpolation for one order,
+                                // and P1 changes no motion, so nothing else depends on it.
+                                if let Err(err) = event.reducers().queue_at(
+                                    prog,
+                                    tic_add(master, 4),
+                                    0,
+                                ) {
+                                    tracing::warn!(%err, tic = t, obj = format!("{obj:#010x}"), "chord fan queue failed");
+                                } else {
+                                    tracing::debug!(
+                                        tic = t,
+                                        obj = format!("{obj:#010x}"),
+                                        chords = stamps.len() - 1,
+                                        dest_tic = stamps.last().map(|s| s.tic),
+                                        "chord route stated"
+                                    );
+                                }
+                            }
+                        }
                     }
                     let (cx, cy) = position_to_tile(p.position_reference);
                     let (tx, ty) = position_to_tile(dest);
