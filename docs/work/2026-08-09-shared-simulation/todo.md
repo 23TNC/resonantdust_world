@@ -1,44 +1,23 @@
 # Plan — shared-simulation
 
 _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decisions in
-[`forks.md`](forks.md) (F#), the issue inventory in [`issues.md`](issues.md) (I#)._
+[`forks.md`](forks.md) (F#), the issue inventory in [`issues.md`](issues.md) (I#), and the
+2026-08-10 tick audit in [`tick-audit.md`](tick-audit.md)._
 
-**How acceptance is measured.** Rust: `bin/sim check <crate>` / `bin/sim test <crate>` and
-`bin/rd build core`. Browser: `npm run typecheck` + `npm run build` in `client/webgl`, plus the
-live fluffle at `:5174/?user=Claude&focus=124,75&zoom=1` read through the console probe P0 builds.
-Server behaviour: `bin/sim logs worker` and `spacetime sql resonantdust-dev-pawn-0`.
+**How acceptance is measured.** Rust: `bin/sim check <crate>` / `bin/sim test <crate>`,
+`bin/rd build core`, and `cargo test` in `client/core` via the sim builder image. Browser:
+`npm run typecheck` + `npm run build` in `client/webgl`, plus the live world at
+`:5174/?user=Claude&focus=124,75&zoom=1&ambient=0.6`. Server: `bin/sim logs worker`.
 
-**Phase order is load-bearing, and FILE ORDER IS NOT EXECUTION ORDER.** The 2026-08-10 amendment
-appended its phases at the end because items never move, but they *insert* at the numbers they
-carry. A session that works this file top-to-bottom will run P3 before the read surface P3 depends
-on, and will build P4 item 4's `pawnPoint(entity, nowTic)` — the signature the amendment exists to
-prevent. `rd work brief` reports the first phase with open items in FILE order, so it will point at
-P3; check this list instead.
+**Phases run in the order below — file order IS execution order.** The 2026-08-10 amendment
+originally appended its phases at the end, which sent a resuming session at P3 before the read
+surface P3 depends on; they are merged into place here and `rd work brief` follows the same order.
 
-**EXECUTION ORDER**
+**The rule the tick audit bought us:** a box goes `[x]` only when its stated criterion has been
+RUN, not when the work looks done. Fifteen of thirty-four ticks failed that test on 2026-08-10 —
+including one whose criterion I had rewritten after ticking it.
 
-| # | phase | what it delivers | gates |
-|---|---|---|---|
-| 1 | **P2c** | the read surface — a host ASKS core; core owns the corpus | everything after it |
-| 2 | **P2d** | the pawn's gameplay ROWS are core's answer ([I8](issues.md#i8)) | P3, P4 |
-| 3 | **P2e** | one clock — core answers "what tic is it" | P4's `nowTic()` |
-| 4 | **P3** | npc reads the mover track | P3b |
-| 5 | **P3b** | the intent queue is STATE, not a picture | — |
-| 6 | **P3c** | one door: the input BINDER | P3d |
-| 7 | **P3d** | one door: the AFFORDANCE query | — |
-| 8 | **P4** + amendments | webgl becomes a display | P5, P6 |
-| 9 | **P5** + amendments | the guard, and the labels that caused this | — |
-| 10 | **P6** + amendments | the exit | — |
-
-**The one hard dependency to keep in view:** P4's original item 4 says `pawnPoint(entity, nowTic)`;
-the amendment supersedes it with `pawnPoint(entity)` plus `nowTic()`. Build the original signature
-and the leak returns on arrival. Read `## P4 — amendments` BEFORE starting `## P4`.
-
-**Scale.** 56 open items. That is a large stream and splitting was offered; the user's call was to
-handle them here. P3b/P3c/P3d are the separable third if that changes — they are the queue, the
-binder and the affordance query, none of which P4 needs.
-
-## P0 — the measurement, so the fix is provable
+## P0 — the measurement (the regression check, not a gate — [F6](forks.md#f6))
 
 - [x] Extend `__teleportProbe` with a divergence tally: per-kind reseed error and tiles-per-anchor,
       kept as sorted samples. Acceptance: one console read prints p50/p90 for both, per kind.
@@ -90,109 +69,9 @@ binder and the affordance query, none of which P4 needs.
 - [x] Replace `client/npc`'s own `tiles`/`tile_overlays`/thing view with reads of core's.
       Acceptance: no composed-view maps remain in `client/npc/src/lib.rs`.
 
-## P3 — the headless clients see motion again
+## P2c — the read surface — a host ASKS core
 
-- [ ] Replace npc's tile-only `pawns` map ([`lib.rs:266`](../../../client/npc/src/lib.rs)) with
-      reads of core's track. Acceptance: no `HashMap<u32, (i32, i32)>` pawn store remains.
-- [ ] Re-check the wolf chase against live subtile positions. Acceptance: a wolf closes on a
-      moving bunny without overshoot across a 10-minute soak.
-- [ ] Re-check bunny forage adjacency, which asks cheb ≤ 1 of a moving pawn. Acceptance: forage
-      completions per minute do not drop against the P0 baseline.
-
-## P4 — webgl becomes a display
-
-- [x] Expose core's track to the browser through `shared/wasm` as `pawnPoint(entity, nowTic)`.
-      Acceptance: at an anchor tic it equals the point that anchor's row carries.
-- [ ] Point `MoverLayer`'s render-chase at `pawnPoint` instead of its own `Spec`. Acceptance:
-      typecheck + build green and movers still glide between anchors.
-- [x] Delete `Spec`, the walk, `speedFor`, `computePath` and `SPEC_APPLY_EPS` from `MoverLayer`.
-      Acceptance: `grep -c 'walkGreedy\|walkPath\|speedFor\|computePath\|firstLegClear'` is 0.
-      (Was "under 800 lines" — a proxy that the P0 probe's ~200 lines invalidated; 1266 today.)
-- [ ] Move the P0 divergence probe out of `MoverLayer` into its own file, so the layer is
-      sprite-sync only. Acceptance: `MoverLayer.ts` under 800 lines, probe still reports.
-- [ ] Re-run the P0 probe for 10 minutes. Acceptance: reseed p50 under 0.5 tiles and zero RENDER
-      teleport events — [I1](issues.md#i1) closed by construction, or reopened loudly.
-
-## P4c — what the tick audit found (2026-08-10)
-
-_Nine ticked items were unticked after an adversarial re-run of their own criteria; these are the
-gaps that had no item at all. Full findings in [`tick-audit.md`](tick-audit.md)._
-
-- [x] Add a core test that feeds a `StateObject` through `Engine::emit` and reads `pawn_point` off
-      the handle, covering the anchor-less `None` path. Acceptance: the test exists and passes.
-- [ ] Cover `next_hop`'s blocked-path branches. Acceptance: a `panic!` inserted in the recenter
-      (`clear == 0`) or in the sub-1 `clear` clamp fails a test; today neither branch is reached.
-- [ ] Make `headless.rs` print one mover's point at two tics between anchors. Acceptance:
-      `grep -c pawn_point client/core/src/bin/headless.rs` is nonzero and a run shows it moving.
-- [ ] Read a live pawn's thirst back through `Client::pawn_needs` and transcribe it. Acceptance: a
-      nonzero value in `completed.md` — no code path produces this observation today.
-- [ ] Point webgl's `pawnNeeds` reader at the wasm accessor. Acceptance:
-      `grep -c 'this.needRows' MoverLayer.ts` is 0 and a live thirst reads nonzero.
-- [ ] Add `queueEntries` and `busy` to the wasm surface, with a webgl caller each. Acceptance:
-      both exist and `grep -rn` finds a caller in `client/webgl/src`.
-- [ ] Reconcile the two stale-intent rules: core rejects past a flat 16 tics, `MoverLayer.ts:837`
-      scales with the destination span. Acceptance: both hosts reject the same intent set.
-- [ ] Delete the worker's private hop tic-cost re-derivation (`main.rs:1662-1675`) — it applies
-      `hop_stride_tiles` without the clamp and floors at 4.0, so `k` can disagree with `Hop::tics`.
-      Acceptance: the scheduler calls `move_eval`.
-- [ ] Run the foreground soak P4 keeps deferring. Acceptance: a dated row naming duration, sample
-      count and mover population, with reseed p50/p90 and RENDER teleports per MINUTE.
-
-## P5 — the guard, so it cannot come back
-
-- [ ] Add a `rd docs-check` rule failing on a simulation constant or stepping rule defined outside
-      `shared/`. Acceptance: it fires on a deliberately reintroduced copy, green otherwise.
-- [ ] Write the simulation-vs-presentation line into `docs/components/client/webgl/intent/`:
-      shared answers move, webgl only smooths them. Acceptance: docs-check link integrity green.
-
-## P6 — the exit
-
-- [ ] Confirm [I2](issues.md#i2)'s pre-fan fallback is gone — core knows the pace before it moves
-      anything. Acceptance: no mover ever reports `DEFAULT_TICS_PER_TILE` during a cold load.
-- [ ] User watches the fluffle at `:5174/?user=Claude&focus=124,75&zoom=1`. Acceptance: no bunny
-      visibly jumps.
-- [ ] Write the exit record and the memory line. Acceptance: docs-check green.
-
----
-
-# Amendment — 2026-08-10: core becomes the headless client
-
-_User: **"amend the work so that core operates as our headless client as intended. It seems a lot
-got leaked into webgl/npc that should have been unified at core."** An audit against
-[`components/client/core/intent/client.md`](../../components/client/core/intent/client.md)
-("a headless Rust library — all logic, no rendering… one contract for every host") found five more
-instances of the walk's defect. Phases below **insert** into the order above at the numbers they
-carry; they append here because items never move._
-
-## The shape of the leak
-
-Every item below is the same move made five times, and the move is structural, not careless:
-**`client/core`'s boundary was drawn at DECODE, not at ANSWER.**
-[`api.rs`](../../../client/core/src/api.rs) is a wire vocabulary,
-[`world.rs`](../../../client/core/src/world.rs) is 158 lines of `StateRow` →
-tuples, and the `Client` handle a host actually holds is a bare `cmd_tx` on **both** hosts
-([`engine.rs:63-65`](../../../client/core/src/engine.rs),
-[`web.rs:63-65`](../../../client/core/src/web.rs)) — commands in, events out, **nothing readable**.
-A host therefore cannot *ask* core anything; it can only be *told*. So every question a client
-genuinely needs answered — where is that pawn, what is at this cell, what rows does it carry, is it
-busy, what tic is it, what may it do here, how do I say so — has to be reconstructed by folding the
-event stream **in the host, in the host's language**. The first host to need each answer wrote the
-fold; because core retained nothing, the second host wrote it again in TypeScript and the third
-guessed it from `Instant::now()`. Two things kept it invisible. **The label follows the first
-reader**: a fact whose first consumer happened to be a panel got stamped decoration —
-`QueueState` is documented "Display truth only" ([`api.rs:257`](../../../client/core/src/api.rs)),
-[`IntentQueues.ts:2`](../../../client/webgl/src/game/world/IntentQueues.ts) says "DISPLAY TRUTH
-ONLY", [`ACTIONS.md:308`](../../ACTIONS.md) says "Presentation only" — of a frame that states when
-a pawn's committed act finishes, which is the one thing a brain must not get wrong. And **one leak
-is written into the contract as an instruction**: `api.rs:236-240` tells hosts to extrapolate the
-tic locally and hands them the formula. P2/P2b already proved that building the model is not the
-fix: `ClientWorld`, `WorldView` and `MoverTrack` all exist and **`grep -rn ClientWorld` outside its
-own tests returns zero** — neither engine holds one. The answers are in core and no host can reach
-them. **The fix is one read surface; the folds then move behind it.**
-
-## P2c — the read surface: a host ASKS core (before P3)
-
-- [ ] Put `ClientWorld` behind a shared cell the `Client` handle can READ, on both hosts
+- [x] Put `ClientWorld` behind a shared cell the `Client` handle can READ, on both hosts
       (`engine.rs:63-65`, `web.rs:63-65` are `cmd_tx`-only). Acceptance: a core test drives a row
       through the engine and reads `pawn_point` off the handle.
 - [x] Feed that `ClientWorld` from the engine's OWN decode — every arm that emits a state, cold or
@@ -205,7 +84,7 @@ them. **The fix is one read surface; the folds then move behind it.**
       `Bot::note` (`lib.rs:358-420`) become reads of the handle. Acceptance:
       `grep -c world_view::WorldView client/npc/src/lib.rs` is 0.
 
-## P2d — the pawn's gameplay ROWS are core's answer, not each host's (before P3)
+## P2d — the pawn's gameplay ROWS are core's answer ([I8](issues.md#i8))
 
 - [x] Move `payload`/`needs` off `Mover` (`movers.rs:66-69`) into an entity-keyed store on
       `ClientWorld` that accepts rows for entities with no position row yet. Acceptance: unit test —
@@ -222,9 +101,9 @@ them. **The fix is one read surface; the folds then move behind it.**
       `debug.rs:48`) and read core's. Acceptance: `grep -c "payloads\|need_rows"` over
       `client/npc/src/brains/` is 0 — the `< 64` cap goes with them.
 
-## P2e — one clock: core answers "what tic is it" (before P3)
+## P2e — one clock — core answers "what tic is it"
 
-- [ ] Add `now_tic()` to the read surface off `ticclock::delta_since` (`ticclock.rs:182`) — its
+- [x] Add `now_tic()` to the read surface off `ticclock::delta_since` (`ticclock.rs:182`) — its
       first production caller ever. Acceptance: `grep -rn delta_since client/core/src` returns a
       non-test caller.
 - [x] Demote `Event::TicAnchor` to DIAGNOSTIC and delete the extrapolation formula from
@@ -237,11 +116,16 @@ them. **The fix is one read surface; the folds then move behind it.**
       headless host has ever called it. Acceptance: `grep -rn seed_tic_rate client/npc/src` is
       nonzero.
 
-## P3b — the intent queue is STATE, not a picture (after P3)
+## P3 — the headless clients see motion again
 
-_Not a hotfix. At the authored durations (`eat_meat`/`eat_plant_matter` = 20 tics,
-`content/interactions.toml:272,284`) the brains' `dur / 6.0 + 3.0` hold is 6.33 s for a 3.70 s act —
-it OVER-holds by ~2.6 s today. The walk-off this closes is a refusal/race case, not a drift case._
+- [ ] Replace npc's tile-only `pawns` map ([`lib.rs:266`](../../../client/npc/src/lib.rs)) with
+      reads of core's track. Acceptance: no `HashMap<u32, (i32, i32)>` pawn store remains.
+- [ ] Re-check the wolf chase against live subtile positions. Acceptance: a wolf closes on a
+      moving bunny without overshoot across a 10-minute soak.
+- [ ] Re-check bunny forage adjacency, which asks cheb ≤ 1 of a moving pawn. Acceptance: forage
+      completions per minute do not drop against the P0 baseline.
+
+## P3b — the intent queue is STATE, not a picture
 
 - [ ] Add `client/core/src/intents.rs` — entity → its `QueueState` entries, replaced whole per fan,
       deduped on `event_tic` with `codec::tic::tic_after`. Acceptance: unit test — a replayed older
@@ -267,7 +151,7 @@ it OVER-holds by ~2.6 s today. The walk-off this closes is a refusal/race case, 
       `debug.rs:116-125`) with the same track ETA. Acceptance: `grep -rn deadline
       client/npc/src/brains` is 0.
 
-## P3c — one door: the input BINDER (after P2c, before P3d)
+## P3c — one door: the input BINDER
 
 - [ ] Add `bind_interaction(bundle, name, ctx)` to `shared/content/src/loader.rs` beside
       `interaction_params` (`:1681`). Acceptance: `attack`'s `["pawn","target","amount"]`
@@ -288,7 +172,7 @@ it OVER-holds by ~2.6 s today. The walk-off this closes is a refusal/race case, 
       Acceptance: no host packs an action program — `grep -rn "EXECUTE_INTERACTION\|
       composeInteraction" client/webgl/src client/npc/src` is 0.
 
-## P3d — one door: the AFFORDANCE query (after P3 and P3c)
+## P3d — one door: the AFFORDANCE query
 
 - [ ] Add `affordance_eval::carrier_options` to `shared/content`, lifting
       `shared/wasm/src/lib.rs:1131-1161` minus the js_sys packing. Acceptance: unit test — an `on`
@@ -305,14 +189,38 @@ it OVER-holds by ~2.6 s today. The walk-off this closes is a refusal/race case, 
       composer walks a destination-bearing order (`main.rs:2251-2281`). Acceptance: no cheb-ranked
       cell pick remains; drink completions/min hold vs P0.
 
-## P4 — amendments (webgl becomes a display)
+## P4 — webgl becomes a display
 
-**Item 1 is AMENDED, not appended.** Its signature was `pawnPoint(entity, nowTic)`; with P2e core
-owns the clock, so it becomes **`pawnPoint(entity)`** and gains **`nowTic()`**. Recorded because the
-old signature would re-import the leak on arrival. Also: **`ticsPerSec()` stays readable by
-webgl** — `MoverLayer.ts:667` caps the render chase with it, which is [F2](forks.md#f2)
-presentation. The RATE is a shared input; only the evaluation INSTANT becomes core's answer.
-
+- [x] Expose core's track to the browser through `shared/wasm` as `pawnPoint(entity, nowTic)`.
+      Acceptance: at an anchor tic it equals the point that anchor's row carries.
+- [ ] Point `MoverLayer`'s render-chase at `pawnPoint` instead of its own `Spec`. Acceptance:
+      typecheck + build green and movers still glide between anchors.
+- [x] Delete `Spec`, the walk, `speedFor`, `computePath` and `SPEC_APPLY_EPS` from `MoverLayer`.
+      Acceptance: `grep -c 'walkGreedy\|walkPath\|speedFor\|computePath\|firstLegClear'` is 0.
+      (Was "under 800 lines" — a proxy that the P0 probe's ~200 lines invalidated; 1266 today.)
+- [ ] Move the P0 divergence probe out of `MoverLayer` into its own file, so the layer is
+      sprite-sync only. Acceptance: `MoverLayer.ts` under 800 lines, probe still reports.
+- [ ] Re-run the P0 probe for 10 minutes. Acceptance: reseed p50 under 0.5 tiles and zero RENDER
+      teleport events — [I1](issues.md#i1) closed by construction, or reopened loudly.
+- [x] Add a core test that feeds a `StateObject` through `Engine::emit` and reads `pawn_point` off
+      the handle, covering the anchor-less `None` path. Acceptance: the test exists and passes.
+- [ ] Cover `next_hop`'s blocked-path branches. Acceptance: a `panic!` inserted in the recenter
+      (`clear == 0`) or in the sub-1 `clear` clamp fails a test; today neither branch is reached.
+- [ ] Make `headless.rs` print one mover's point at two tics between anchors. Acceptance:
+      `grep -c pawn_point client/core/src/bin/headless.rs` is nonzero and a run shows it moving.
+- [ ] Read a live pawn's thirst back through `Client::pawn_needs` and transcribe it. Acceptance: a
+      nonzero value in `completed.md` — no code path produces this observation today.
+- [ ] Point webgl's `pawnNeeds` reader at the wasm accessor. Acceptance:
+      `grep -c 'this.needRows' MoverLayer.ts` is 0 and a live thirst reads nonzero.
+- [ ] Add `queueEntries` and `busy` to the wasm surface, with a webgl caller each. Acceptance:
+      both exist and `grep -rn` finds a caller in `client/webgl/src`.
+- [ ] Reconcile the two stale-intent rules: core rejects past a flat 16 tics, `MoverLayer.ts:837`
+      scales with the destination span. Acceptance: both hosts reject the same intent set.
+- [ ] Delete the worker's private hop tic-cost re-derivation (`main.rs:1662-1675`) — it applies
+      `hop_stride_tiles` without the clamp and floors at 4.0, so `k` can disagree with `Hop::tics`.
+      Acceptance: the scheduler calls `move_eval`.
+- [ ] Run the foreground soak P4 keeps deferring. Acceptance: a dated row naming duration, sample
+      count and mover population, with reseed p50/p90 and RENDER teleports per MINUTE.
 - [ ] Grow the wasm read surface ONCE — `WorldClient` (`shared/wasm/src/lib.rs:1226`) is write-only
       today. Add `nowTic`, `pawnPayload`, `pawnNeeds`, `queueEntries`, `busy` beside `pawnPoint`.
       Acceptance: `npm run typecheck` + `npm run build` green.
@@ -328,8 +236,12 @@ presentation. The RATE is a shared input; only the evaluation INSTANT becomes co
 - [ ] Reduce `IntentQueues.ts` to change notification over core's queue track. Acceptance: the file
       holds no entries map and `IntentStrip.ts` still draws the ring from `started_tic`/`fire_tic`.
 
-## P5 — amendments (the guard, and the labels that caused this)
+## P5 — the guard, so it cannot come back
 
+- [ ] Add a `rd docs-check` rule failing on a simulation constant or stepping rule defined outside
+      `shared/`. Acceptance: it fires on a deliberately reintroduced copy, green otherwise.
+- [ ] Write the simulation-vs-presentation line into `docs/components/client/webgl/intent/`:
+      shared answers move, webgl only smooths them. Acceptance: docs-check link integrity green.
 - [ ] Extend the docs-check rule with a second case: an AFFORDANCE decision or an input BINDING
       composed outside `shared/`. Acceptance: it fires on a reintroduced
       `match name.as_str() { "pawn" => … }` in a host, green otherwise.
@@ -345,45 +257,15 @@ presentation. The RATE is a shared input; only the evaluation INSTANT becomes co
       contract is commands IN, events OUT **and answers on request** — the read surface is part of
       it. Acceptance: docs-check link integrity green.
 
-## P6 — amendments (the exit)
+## P6 — the exit
 
+- [ ] Confirm [I2](issues.md#i2)'s pre-fan fallback is gone — core knows the pace before it moves
+      anything. Acceptance: no mover ever reports `DEFAULT_TICS_PER_TILE` during a cold load.
+- [ ] User watches the fluffle at `:5174/?user=Claude&focus=124,75&zoom=1`. Acceptance: no bunny
+      visibly jumps.
+- [ ] Write the exit record and the memory line. Acceptance: docs-check green.
 - [ ] Confirm no host folds a fanned row into its own model. Acceptance: `client/npc` holds no
       `HashMap<u32, …>` entity store and `client/webgl` holds no `Map<number, …>` entity store of a
       fanned row.
 - [ ] Run a 10-minute soak with **no browser open**, answering position, rows, busy and now-tic from
       core alone. Acceptance: eat and drink completions per minute hold against the P0 baseline.
-
-## Explicitly OUT of scope
-
-1. **The rejection receipt.** A refused or dropped order fans NOTHING —
-   `worker/src/main.rs:1889-1899` logs and drops, and a dropped order never enters `intent_queues`,
-   so no `QUEUE_STATE` ever describes it. `hunt_until` + the three-strikes ghost cap
-   (`wolves.rs:463-494`) and the `eat_issued`/`drink_issued` latches exist to cover exactly that
-   hole and **cannot** be replaced by folding a fan that does not exist. A rejection lane is a new
-   server verb with its own zone-routing question: **its own stream.**
-2. **Brain POLICY.** What a brain does *while* busy, the wander yield, the retry latches, the
-   `INTENT_CAP` back-off. Those are decisions, not answers. Moving them into core is this stream's
-   defect inverted — core would start deciding for hosts that legitimately differ.
-3. **Joining `Content` and `WorldClient` in wasm** so core answers `pawnConditions(entity, now)` /
-   `pawnGroundSpeed(entity, now)` directly instead of handing ROWS across the boundary. That is the
-   real end state — it *closes* the 48-bit seam rather than moving it — but it re-signatures every
-   eval call site in webgl and needs core to own the evals as well as the corpus. This stream ships
-   the stride-2 accessor; **the join is its own stream.**
-4. **Presentation, unchanged** ([F2](forks.md#f2)): the render-chase, facing-from-rendered-delta,
-   prim caches, atlases, lighting, panels, camera — plus `IntentStrip`'s circle geometry, the
-   `queue = {…}` TOML visuals, tooltip text, and the per-frame ring fraction with its `0x8000`
-   display clamp (`IntentStrip.ts:170-186`). A frame-stale arc is a look, not a behaviour.
-5. **The carrier SEARCH.** `tile_kind_at` / `thing_kind_at` / `nearest_tile` / `nearest_thing` are a
-   spatial query over the streamed view and already landed in P2b. `carrier_options` answers "what
-   may I do with THIS carrier", never "which carrier". Keeping the two apart is what stops P3d from
-   swallowing P2b.
-6. **`client/pixijs`.** Legacy-to-retire and it holds none of these stores (`grep payloads` is
-   clean). It gets no work and is not a blocker.
-7. **Durable state in core.** Core stays a live model of what the wire said; nothing here persists
-   and a reconnect re-folds. The only persisted thing remains the tic-rate HINT, which is the host's
-   medium by design (`ticclock.rs:159-166` owns the rule, not the storage).
-8. **[I5](issues.md#i5)** (duplicate work-group WARNs) and **[I6](issues.md#i6)** (the frozen clock
-   subscription) — already other owners'.
-9. **A general "no host may fold" lint.** P5 gets three named, greppable cases. A rule that catches
-   *any* future fold is a static-analysis project, not a docs-check rule — naming the cases is what
-   actually ships.

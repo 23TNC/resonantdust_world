@@ -55,8 +55,46 @@ async fn main() -> ExitCode {
     }
 
     let mut logged_in = false;
+    // shared-simulation P2c/P2d: the READ surface, exercised. This binary is the only place a
+    // headless consumer's view of core can be observed without a brain in the way, so it reports
+    // what core ANSWERS — where each pawn is, at what tic, and one of its need rows — rather than
+    // only what the wire said. Two of the stream's acceptance criteria are this output.
+    let mut report = tokio::time::interval(std::time::Duration::from_secs(5));
+    report.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
     let code = loop {
         tokio::select! {
+            _ = report.tick(), if logged_in => {
+                let Some(now) = client.now_tic() else {
+                    info!("core has no tic yet — the estimate has not anchored");
+                    continue;
+                };
+                let movers: Vec<(u32, (f64, f64))> = {
+                    let w = client.world().lock().expect("world");
+                    w.movers.iter().map(|(e, _)| e).collect::<Vec<_>>()
+                        .into_iter()
+                        .filter_map(|e| client.pawn_point(e).map(|p| (e, p)))
+                        .collect()
+                };
+                info!(now_tic = now, movers = movers.len(), "core answers");
+                for (entity, (x, y)) in movers.iter().take(4) {
+                    let pace = client.pawn_pace(*entity);
+                    // One need row read back through the handle — the value, not the row count,
+                    // because "the accessor exists" and "the accessor answers" are different
+                    // claims and only the second one is worth a tick.
+                    let needs = client.pawn_needs(*entity);
+                    let first = needs.first().map(|(row, tic)| {
+                        (resonantdust_codec::object::row_reference(*row),
+                         resonantdust_codec::object::row_data(*row), *tic)
+                    });
+                    info!(
+                        entity = format!("{entity:#010x}"),
+                        x = format!("{x:.3}"), y = format!("{y:.3}"),
+                        ?pace, need_rows = needs.len(), first_need = ?first,
+                        "  pawn",
+                    );
+                }
+            }
             event = ev_rx.recv() => match event {
                 Some(event) => {
                     log_event(&event);

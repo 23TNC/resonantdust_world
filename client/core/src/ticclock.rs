@@ -22,9 +22,11 @@
 //! "implausibly behind" (the poisoned-cold-anchor case — the garbage got in first), a streak
 //! counter hard-resets to the live stream ([`POISON_STREAK`]).
 //!
-//! The engines emit re-anchors to the host ([`crate::api::Event::TicAnchor`]) carrying the
-//! learned rate; a host computes fractional deltas locally
-//! (`serial(anchor.tic − t) + (now − anchor.wall) · tics_per_sec / 1000`).
+//! The engines emit re-anchors to the host ([`crate::api::Event::TicAnchor`]) as a DIAGNOSTIC.
+//! A host does NOT rebuild the estimate from them — it asks `Client::now_tic()`, which reads this
+//! estimator through [`TicEstimate::delta_since`]. Handing hosts the formula is what produced two
+//! clocks (npc kept its own anchor, webgl hand-rolled the conversion eight times); the rate stays
+//! readable because a renderer legitimately needs it to pace a smoothing chase.
 
 use resonantdust_codec::tic::TIC_HZ;
 
@@ -56,14 +58,7 @@ const POISON_BAND: f64 = 900.0;
 const POISON_STREAK: u32 = 8;
 
 /// The best-known wall↔tic anchor + learned rate. See the module docs for the rules.
-/// **THE tic extrapolation** — the anchor tic advanced by the wall time since it was stamped, at
-/// the LEARNED rate. One spelling, because every host that re-derived this got a slightly
-/// different answer and `api.rs` used to hand out the formula (P2e).
-pub fn extrapolate(anchor_tic: u16, anchor_ms: f64, tics_per_sec: f64, now_ms: f64) -> u16 {
-    let elapsed = ((now_ms - anchor_ms).max(0.0) / 1000.0) * tics_per_sec;
-    anchor_tic.wrapping_add(elapsed as u16)
-}
-
+#[derive(Debug)]
 pub struct TicEstimate {
     /// The live anchor `(tic, wall_ms)`.
     anchor: Option<(u16, f64)>,

@@ -33,14 +33,11 @@ pub struct ClientWorld {
     /// argument on `pathable` is an invitation for two hosts to pass two different corpora,
     /// which is this stream's defect wearing a parameter.
     corpus: Option<Arc<Bundle>>,
-    /// The latest tic anchor `(tic, wall_ms_at_receipt, tics_per_sec)` — core's answer to "what
-    /// tic is it", so no host re-derives it. `api.rs` used to hand hosts the extrapolation
-    /// formula; that instruction WAS the leak.
-    ///
-    /// Wall time arrives as a `f64` millisecond stamp rather than an `Instant` because
-    /// `Instant::now()` PANICS on `wasm32-unknown-unknown` — the browser host would have crashed
-    /// on the first tic anchor, and each engine already has a `now_ms()` for its own target.
-    anchor: Option<(u16, f64, f64)>,
+    /// **THE clock** — `ticclock`'s estimator, not a second anchor beside it. This field first
+    /// shipped as a `(tic, wall_ms, rate)` tuple with the extrapolation open-coded next to it,
+    /// which meant core carried TWO clocks while the phase that added it existed to remove second
+    /// clocks. The tick audit caught that. It is the estimator now, and `now_tic_at` asks it.
+    tics: crate::ticclock::TicEstimate,
 }
 
 impl ClientWorld {
@@ -61,17 +58,21 @@ impl ClientWorld {
     /// never substitute 0: tic 0 is a real tic, and reading it as "now" makes every lazy need
     /// evaluate as though the world had just begun.
     pub fn now_tic_at(&self, now_ms: f64) -> Option<u16> {
-        // ONE clock (P2e): the extrapolation is `ticclock`'s, not a second copy of it here. Core
-        // briefly carried two — this method open-coded the same arithmetic off its own anchor,
-        // which is the defect this phase exists to remove, committed inside the fix for it.
-        let (tic, at_ms, rate) = self.anchor?;
-        Some(crate::ticclock::extrapolate(tic, at_ms, rate, now_ms))
+        // Serial FROM tic 0 is the current tic on the wrapping ring — `delta_since` is the one
+        // implementation, and this is its first production caller (P2e).
+        let d = self.tics.delta_since(0, now_ms)?;
+        Some((d.rem_euclid(65536.0)) as u16)
     }
 
     /// The tic the last anchor stated, without extrapolation — what a fold uses, since it is
     /// already running at event receipt.
     pub fn anchored_tic(&self) -> Option<u16> {
-        self.anchor.map(|(t, _, _)| t)
+        self.tics.estimate_at(0.0).map(|_| 0).and(self.now_tic_at(0.0))
+    }
+
+    /// The LEARNED rate in tics per second — a shared input a renderer needs to pace its chase.
+    pub fn tics_per_sec(&self) -> f64 {
+        self.tics.tics_per_sec()
     }
 
     /// **THE fold.** Both engines call this from their single `emit` choke point, so neither host
@@ -80,8 +81,8 @@ impl ClientWorld {
         use crate::api::Event as E;
         use resonantdust_codec::object as obj;
         match ev {
-            E::TicAnchor { tic, tics_per_sec, .. } => {
-                self.anchor = Some((*tic, now_ms, *tics_per_sec));
+            E::TicAnchor { tic, .. } => {
+                self.tics.observe(*tic, now_ms);
             }
             E::StateObject {
                 macro_position, entity_reference, definition_reference,
