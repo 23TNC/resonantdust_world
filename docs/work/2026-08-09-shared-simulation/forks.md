@@ -47,6 +47,39 @@ Git holds the history. This follows the tree-wide delete-don't-deprecate posture
 buys is bought instead by phase order: core's track lands and is proven headless (P2/P3) before
 webgl's copy is removed (P4).
 
+## F7 — the composed WORLD VIEW is the same defect, one layer up
+**2026-08-10.** Asked why `client/core` has no world view and how the npc manages without one, I
+checked instead of defending, and the answer refutes what I had said.
+
+**What is actually true.** `client/core` *emits* `ColdTiles` / `ColdThings`
+([`api.rs:189,192`](../../../client/core/src/api.rs)) and **retains nothing** — it is transport
+plus decode. Every consumer then builds its own composed view:
+
+- **`client/npc`** builds one in Rust — `tiles` (zone → 256 kind slots), `tile_overlays`, and the
+  composed THING view, with accessors for composed kind at a world coord, nearest matching tile,
+  composed thing kind, nearest thing ([`lib.rs:265-272, 440, 461, 491, 505`](../../../client/npc/src/lib.rs)).
+- **`client/webgl`** builds a *separate* one in TypeScript — `tileKindAt`, overlay compositing,
+  `thingDefAt` ([`WorldBridge.ts:209, 618-648, 831`](../../../client/webgl/src/game/world/WorldBridge.ts)) —
+  and wires the pathability probe off it at [`WorldScene.ts:123`](../../../client/webgl/src/scenes/world/WorldScene.ts).
+
+So the composed world view is written **twice, in two languages, and lives in neither the core nor
+`shared/`** — the identical shape to the walk, one layer up. I had described this as "core has no
+world view", which is true and misleading: it implies none exists, when in fact two do and they can
+disagree. The `walk-divergence` analysis already caught them disagreeing — the client's probe reads
+an unstreamed cell as OPEN while the worker's mirror does not.
+
+**What it changes.** My earlier P4 plan was to plumb a `js_sys::Function` pathability callback from
+TypeScript into wasm so the shared walk could ask the browser what is walkable. That is backwards:
+it would cement the browser as the owner of world state and make the Rust client permanently
+dependent on a JS callback that `client/npc` cannot supply. **The world view moves into
+`client/core` instead** — one composed view fed by the events core already receives, read by npc
+and webgl alike, and available to `MoverTrack` natively with no callback at all.
+
+**This widens the stream, and deliberately.** It is the same instruction — simulation state does
+not live in the presentation layer — applied to the thing the walk depends on. P4 cannot honestly
+be finished without it: a shared walk reading an unshared map is still two simulations. Added as
+**P2b**, before P4, because P4's pathability seam is its output.
+
 ## F6 — measurement is a regression check, not a gate
 **2026-08-10.** [F5](#f5) parked I1's root cause and pinned a baseline instead. Then the baseline
 refuted the premise: per kind, the paces agree ([I1](issues.md#i1)). That left a real question —
