@@ -2,6 +2,33 @@
 
 _Problems hit, candidate solutions, which we chose and why. Chronological append._
 
+## I8 — `MoverTrack` drops payload/need rows that arrive before the pawn's first anchor
+**2026-08-10. Open — a real bug in code THIS STREAM shipped today, found by the leak audit.**
+
+`observe_payload` ([`movers.rs:196`](../../../client/core/src/movers.rs)) and `observe_need`
+(`:205`) both `if let Some(m) = self.movers.get_mut(&entity)` and **silently drop the row when no
+mover exists yet**. Both other hosts document the pre-anchor arrival as legal and buffer for it
+(`MoverLayer.ts:378-380`; `wolves.rs:815-817` keeps a payload for an entity it has not adopted,
+because a zone snapshot may fan `Payload` before `StateObject`).
+
+Consequence: core loses the snapshot's payload and the pawn is stranded at `pace: None` — which, by
+the deliberate choice recorded in [I2](#i2), means **held still forever**. I made the fallback
+honest and then built a way to never leave the fallback.
+
+Second defect in the same shape: `PawnNeed` also fans for `0x40…` **player-pawn** references
+(`client/npc/src/lib.rs:192`) — entities with no position at all. A positional track cannot key
+them, so hanging the rows off `Mover` is wrong independently of the timing bug.
+
+**Chosen fix** (audit's, and it is right): the rows are not the mover's, they are the entity's. A
+separate `GameplayRows` store in core keyed by entity, buffered regardless of anchor, evicted on
+`StateGone` and zone close; `MoverTrack::derive_paces` READS it. That is [P2d](todo.md), and it
+supersedes the `payload`/`needs` fields on `Mover`.
+
+**Worth naming the mechanism, because it is the stream's own thesis turned on me:** I hung the rows
+where my first consumer needed them — the pace derivation — rather than where they belong. That is
+precisely "the label follows the first reader", the pattern the audit identifies as the cause of
+every other leak here.
+
 ## I7 — the surviving drift is NOT any of the five TypeScript defects
 **2026-08-10. Open — the target for P4, now with a source-level answer.**
 
