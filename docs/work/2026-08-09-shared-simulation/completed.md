@@ -3,6 +3,18 @@
 _The verification log: what landed and **how it was checked**. Append-only; authoritative for what
 is done. Items live in [`todo.md`](todo.md) with their boxes ticked._
 
+## 2026-08-10 — P2c item 4 ATTEMPTED and REVERTED
+
+Deleting npc's fold and pointing its accessors at core's model **deadlocks** — the brain
+predicates passed to `nearest_*` call back into `Bot`, re-entering a lock the query already holds
+([I9](issues.md#i9)). Reverted to the P2b delegating form; core's P2c work (items 1-3) is
+untouched and green.
+
+Also observed while verifying: the worker had drifted ~4,000 tics behind again
+([I6](issues.md#i6) recurring, ~10 h after the reset). The revert did not restore npc's move
+intents, so the stall I attributed to the deadlock was at least partly the degraded world. Both
+want a fresh world before item 4 is retried.
+
 ## 2026-08-10 — P2c items 1-3: a host can ASK core, and the fold happens once
 
 **The read half of the contract exists.** `Client` was `cmd_tx`-only on BOTH hosts — commands in,

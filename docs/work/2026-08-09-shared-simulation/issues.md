@@ -2,6 +2,35 @@
 
 _Problems hit, candidate solutions, which we chose and why. Chronological append._
 
+## I9 — reading core's model from npc DEADLOCKS: brain predicates re-enter the lock
+**2026-08-10. Open — P2c item 4 REVERTED because of it; the fix is known and small.**
+
+`Bot::nearest_thing` / `nearest_tile` take the world guard and then run a **brain-supplied
+predicate while still holding it**. Those predicates call back into `Bot`:
+
+```rust
+bot.nearest_thing(at, |cell, kind| {
+    ...
+    bot.tile_kind_at(cell)            // <- locks the mutex nearest_thing already holds
+        .is_none_or(|k| ...) && self.usable_eat(id, kind, now).is_some()
+})
+```
+(`bunnies.rs:378-384`; `bunnies.rs:323` and the wolf scans have the same shape.)
+
+`std::sync::Mutex` is not reentrant, so the second lock blocks forever. Confirmed by reading, and
+the npc process did stop emitting mid-tick when item 4 landed.
+
+**The fix, for whoever takes item 4 next:** take the guard ONCE and pass the view into the
+predicate — `pred(&WorldView, cell, kind)` instead of `pred(cell, kind)` — so a predicate queries
+through the guard it is already inside rather than re-acquiring it. Re-entry then cannot compile,
+which is better than not happening. Two call sites in `bunnies.rs`, more in `wolves.rs`.
+
+**Honesty note on the diagnosis.** Reverting item 4 did **not** restore npc's move intents, and the
+worker was found ~4,000 tics behind at the same moment ([I6](#i6) recurring). So the re-entrancy is
+real and would deadlock regardless, but I cannot claim it was the *sole* cause of the stall I
+observed — the world was degraded underneath it. Both need checking on a fresh world before item 4
+is retried.
+
 ## I8 — `MoverTrack` drops payload/need rows that arrive before the pawn's first anchor
 **2026-08-10. Open — a real bug in code THIS STREAM shipped today, found by the leak audit.**
 
