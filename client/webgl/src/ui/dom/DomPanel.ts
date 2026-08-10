@@ -3090,13 +3090,15 @@ export class DomPanel {
   // (private-browsing contexts, etc.). On error we silently degrade to
   // "no persistence" — the panel still works, it just forgets state.
 
-  private storageGet(suffix: string): string | null {
+  /** Read a per-panel persisted value. `protected` so a subclass can persist its own
+   *  state under the same key prefix (LiveEditPanel's active tab). */
+  protected storageGet(suffix: string): string | null {
     if (!this.storageKey) return null;
     try { return localStorage.getItem(`${this.storageKey}.${suffix}`); }
     catch { return null; }
   }
 
-  private storageSet(suffix: string, value: string): void {
+  protected storageSet(suffix: string, value: string): void {
     if (!this.storageKey) return;
     try { localStorage.setItem(`${this.storageKey}.${suffix}`, value); }
     catch { /* localStorage unavailable. */ }

@@ -134,5 +134,8 @@
   },
   "intentionsPanel": {
     "label": "Intentions"
+  },
+  "liveEditPanel": {
+    "label": "Live Edit"
   }
 }

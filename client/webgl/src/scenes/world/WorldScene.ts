@@ -17,6 +17,8 @@ import { DetailsPanel } from "../../game/panels/details/DetailsPanel";
 import type { DetailsProviders } from "../../game/panels/details/DetailsPanel";
 import { ConditionsPanel } from "../../game/panels/conditions/ConditionsPanel";
 import { IntentionsPanel } from "../../game/panels/intentions/IntentionsPanel";
+import { LiveEditPanel } from "../../game/panels/liveedit/LiveEditPanel";
+import type { LiveEditSnapshot } from "../../game/panels/liveedit/snapshot";
 import { InventoryPanel } from "../../game/panels/InventoryPanel";
 import { InventoryStore } from "../../game/world/InventoryStore";
 import type { ConditionCard, EmotionSlice } from "../../game/panels/conditions/ConditionCards";
@@ -62,6 +64,7 @@ export class WorldScene extends Scene {
   private details: DetailsPanel | null = null;
   private conditionsPanel: ConditionsPanel | null = null;
   private intentionsPanel: IntentionsPanel | null = null;
+  private liveEdit: LiveEditPanel | null = null;
   /** The inventory surface (inventory F7): the PawnInventory mirror + the slot-grid panel. */
   private inventoryStore: InventoryStore | null = null;
   private inventoryPanel: InventoryPanel | null = null;
@@ -149,6 +152,7 @@ export class WorldScene extends Scene {
         // nothing ticks; the row + the corpus + the tic are the whole computation).
         let conditions: ConditionCard[] = [];
         let emotion = { index: 0, label: "Fine", color: 0x9aa4b0 };
+        let emotionMagnitudes: number[] = [];
         // TWO eval inputs now (stat-model F2): the payload (TRAIT + CONDITION rows) and
         // the fanned `needs` sub-table rows, both verbatim — the host decodes neither.
         const payload = this.moverLayer.pawnPayload(e) ?? new Uint32Array(0);
@@ -205,6 +209,10 @@ export class WorldScene extends Scene {
             label: c.emotionLabel(idx) || "Fine",
             color: c.emotionColor(idx) >= 0 ? c.emotionColor(idx) : 0x9aa4b0,
           };
+          // Keep the FULL magnitude vector too. The live-edit panel lists every felt emotion,
+          // and re-running `pawnEmotion` there would be a second evaluation of the identical
+          // thing at a possibly different tic — the exact split live-edit F5 forbids.
+          emotionMagnitudes = Array.from(em.slice(1));
         }
         // Identification (inventory F7): the TOML name + the [Inventory] gate — both
         // by the pawn's KIND through the corpus.
@@ -215,7 +223,7 @@ export class WorldScene extends Scene {
           name = c.thingNames()[info.kind - 1] ?? name;
           hasInventory = c.kindHasNeed(info.kind, "inventory");
         } catch { /* boot race — the 500 ms refresh self-corrects */ }
-        return { ...info, conditions, emotion, name, hasInventory };
+        return { ...info, conditions, emotion, emotionMagnitudes, name, hasInventory };
       },
       thing: (id) => {
         const t = this.panel.view.coldGetPrim(id);
@@ -256,6 +264,46 @@ export class WorldScene extends Scene {
     // DEBUG: the strip's ring-percentage probe (intent-queue-ui I5) — on its own panel now.
     (globalThis as unknown as { __intentions: IntentionsPanel }).__intentions = this.intentionsPanel;
     (globalThis as unknown as { __details: DetailsPanel }).__details = this.details;
+
+    // ── the live-edit inspector (live-edit F5) ── ONE snapshot per refresh, sliced four ways.
+    // Traits and the need rate land in P3/P4; conditions and emotions are the reuse the survey
+    // promised, so they are populated from the very first version.
+    this.liveEdit = new LiveEditPanel(ctx, this.selection, {
+      snapshot: (entity): LiveEditSnapshot | null => {
+        const info = selectionProviders.pawn(entity);
+        if (!info) return null;
+        // NO second eval (live-edit F5): everything below is sliced from the ONE read the
+        // shared provider already did for this pawn at this tic.
+        const emotionRows = [];
+        try {
+          const c = getContent();
+          for (let idx = 0; idx < info.emotionMagnitudes.length; idx++) {
+            const value = info.emotionMagnitudes[idx];
+            if (value === 0 && idx !== info.emotion.index) continue; // only what's actually felt
+            emotionRows.push({
+              index: idx,
+              label: c.emotionLabel(idx) || `#${idx}`,
+              color: c.emotionColor(idx) >= 0 ? c.emotionColor(idx) : 0x9aa4b0,
+              value,
+              active: idx === info.emotion.index,
+            });
+          }
+        } catch { /* content not loaded yet — the panel shows empty tabs. */ }
+        return {
+          // Identity of the CONTENT, so a poll that changes nothing skips the rebuild.
+          key: [
+            info.name,
+            info.conditions.map((x) => `${x.id}:${x.remaining}`).join(","),
+            emotionRows.map((x) => `${x.index}:${x.value}`).join(","),
+          ].join("|"),
+          name: info.name,
+          traits: [],   // P3 — needs a `pawn_traits` accessor + authored trait colour
+          needs: [],    // P4 — needs the (value, min, max, rate) accessor + authored need colour
+          conditions: info.conditions,
+          emotions: emotionRows,
+        };
+      },
+    });;
 
     // ── the inventory surface (inventory F7) ── the store mirrors PawnInventory
     // frames; the panel shows the ACTIVE pawn's slot grid; the details button opens it.
@@ -401,6 +449,15 @@ export class WorldScene extends Scene {
    *  spike ones report their W4f-pending status so they're discoverable without erroring. */
   private registerCommands(): void {
     const view = (): ViewportPanel["view"] => this.panel.view;
+
+    // `/edit` — the live inspector, bound to the current selection (live-edit F4). It FOLLOWS
+    // the selection from here on rather than freezing at open, and opens with empty tabs for a
+    // non-pawn rather than refusing: a command that appears to do nothing reads as broken.
+    this.chat.registerCommand("edit", () => {
+      this.liveEdit?.focus();
+      const p = this.selection.primary;
+      return p?.kind === "pawn" ? undefined : "Live edit: select a pawn to inspect.";
+    });
 
     // `/grid [0|1|2|3]` — 1 region+zone+tile, 2 region+zone, 3 region, 0 off. No arg toggles.
     const gridLabel = ["Debug grid off.", "Debug grid: region + zone + tile.", "Debug grid: region + zone.", "Debug grid: region."];

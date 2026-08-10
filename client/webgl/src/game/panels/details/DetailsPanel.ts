@@ -41,6 +41,10 @@ export interface DetailsProviders {
     conditions: ConditionCard[];
     /** The ACTIVE emotion (emotions F3/F7) — the argmax winner; `color` washes the panel. */
     emotion: { index: number; label: string; color: number };
+    /** Every emotion's magnitude, in declaration order — the same `[sum0..sum15]` the argmax
+     *  was taken over. Carried so the live-edit panel can list them without running a SECOND
+     *  evaluation of the identical thing at a possibly different tic (live-edit F5). */
+    emotionMagnitudes: number[];
   } | null;
   thing(primId: number): {
     textureName?: string; x: number; y: number; width: number; height: number; zIndex: number;

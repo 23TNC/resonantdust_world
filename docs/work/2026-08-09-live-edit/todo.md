@@ -14,30 +14,30 @@ week of work.
 
 ## P0 — the paper
 
-- [ ] Design doc `docs/components/client/webgl/design/live-edit.md`: the panel's shape, the ONE
+- [x] Design doc `docs/components/client/webgl/design/live-edit.md`: the panel's shape, the ONE
       snapshot rule (F5), read-only stance (F6), and the four tabs' data sources. Acceptance:
       docs-check green; work index row.
 
 ## P1 — the panel exists
 
-- [ ] `/edit` registered via `ChatPanel.registerCommand`, opening the panel bound to the current
+- [x] `/edit` registered via `ChatPanel.registerCommand`, opening the panel bound to the current
       selection (F4). Acceptance: `/edit` with a pawn selected opens it; with nothing selected it
       opens with empty tabs rather than refusing.
-- [ ] `LiveEditPanel` with a preview region above and a hand-rolled tab strip below, styled like
+- [x] `LiveEditPanel` with a preview region above and a hand-rolled tab strip below, styled like
       the built-in tabs (I8). Acceptance: switching tabs swaps content and leaves the preview
       mounted.
-- [ ] The panel follows the selection model and re-binds (F4). Acceptance: selecting another pawn
+- [x] The panel follows the selection model and re-binds (F4). Acceptance: selecting another pawn
       re-fills every tab; selecting a tile empties them.
-- [ ] Authored `defaultCell` + a raised `minCols`/`minRows` reflecting what it needs (I7).
+- [x] Authored `defaultCell` + a raised `minCols`/`minRows` reflecting what it needs (I7).
       Acceptance: cleared storage opens it on-grid at a usable size.
 
 ## P2 — the cheap tabs
 
-- [ ] Emotions tab: labels + live values from `pawn_emotion`, coloured by `emotion_color`.
+- [x] Emotions tab: labels + live values from `pawn_emotion`, coloured by `emotion_color`.
       Acceptance: values change as a pawn's conditions change; capture.
-- [ ] Conditions tab: pie squares in a grid with name-on-hover, reusing the existing card
+- [x] Conditions tab: pie squares in a grid with name-on-hover, reusing the existing card
       rendering. Acceptance: matches the conditions panel's squares for the same pawn.
-- [ ] ONE eval snapshot per refresh, sliced to the tabs; only the ACTIVE tab renders (F5).
+- [x] ONE eval snapshot per refresh, sliced to the tabs; only the ACTIVE tab renders (F5).
       Acceptance: eval call count per refresh is 1 with all four tabs present (counter logged).
 
 ## P3 — trait colour and the traits tab
