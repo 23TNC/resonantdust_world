@@ -45,7 +45,8 @@ pub struct Debug {
     outstanding: usize,
     spawn_after: Instant,
     minds: HashMap<u32, Mind>,
-    payloads: HashMap<u32, Vec<u32>>,
+    /// Rows are READ from core (P2d) — the brain keeps no store of its own.
+    client: Option<client::Client>,
 }
 
 impl Debug {
@@ -78,7 +79,7 @@ impl Debug {
             // Adopt-first (spawn-authority P4's lesson): 10 s for a cold edge's snapshot.
             spawn_after: Instant::now() + Duration::from_secs(10),
             minds: HashMap::new(),
-            payloads: HashMap::new(),
+            client: None,
         }
     }
 
@@ -96,7 +97,7 @@ impl Debug {
         let Some(bundle) = &self.bundle else { return DEFAULT_TICS_PER_TILE };
         let rows = bundle.object_trait_rows(
             self.kind,
-            &self.payloads.get(&id).map(|p| payload_traits(p)).unwrap_or_default(),
+            &payload_traits(&self.client.as_ref().map(|c| c.pawn_payload(id)).unwrap_or_default()),
         );
         let v = stat_eval::stat_value(bundle, "ground_speed", &rows, &[]);
         if v >= 1.0 { v.round() as u16 } else { DEFAULT_TICS_PER_TILE }
@@ -193,15 +194,17 @@ impl Brain for Debug {
                 }
             }
             Event::PawnParts { entity_reference, payload, .. } => {
-                if self.minds.contains_key(entity_reference) || self.payloads.len() < 64 {
-                    self.payloads.insert(*entity_reference, payload.clone());
-                }
+                // P2d: core folded this at `emit`; the brain reads it back.
             }
             _ => {}
         }
     }
 
     fn tick(&mut self, bot: &Bot, act: &client::Client) {
+        // P2d: rows are READ from core through this handle.
+        if self.client.is_none() {
+            self.client = Some(act.clone());
+        }
         if self.bundle.is_none() {
             return;
         }

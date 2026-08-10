@@ -23,6 +23,10 @@ use std::collections::HashMap;
 #[derive(Debug, Default)]
 pub struct GameplayRows {
     payload: HashMap<u32, Vec<u32>>,
+    /// The zone each entity's rows arrived under, so a closing zone can evict them. Without it
+    /// the rows leak for the life of the session: a zone leaving the subscription sends no
+    /// per-entity delete, so nothing else ever says the entity is gone.
+    zone: HashMap<u32, u16>,
     /// `entity -> (need reference -> (row, set_tic))`. Keyed by the row's REFERENCE via
     /// `codec::object::row_reference`, not an open-coded modulo — the 48-bit law has one helper
     /// and a second spelling of it is how a lane gets truncated.
@@ -35,12 +39,14 @@ impl GameplayRows {
     }
 
     /// A payload sidecar row. Accepted whether or not the entity has a position yet.
-    pub fn observe_payload(&mut self, entity: u32, payload: Vec<u32>) {
+    pub fn observe_payload(&mut self, entity: u32, zone: u16, payload: Vec<u32>) {
+        self.zone.insert(entity, zone);
         self.payload.insert(entity, payload);
     }
 
     /// One `needs` sub-table row, upserted by its reference.
-    pub fn observe_need(&mut self, entity: u32, need: u64, set_tic: u16) {
+    pub fn observe_need(&mut self, entity: u32, zone: u16, need: u64, set_tic: u16) {
+        self.zone.insert(entity, zone);
         let key = resonantdust_codec::object::row_reference(need);
         self.needs.entry(entity).or_default().insert(key, (need, set_tic));
     }
@@ -63,6 +69,16 @@ impl GameplayRows {
     pub fn forget(&mut self, entity: u32) {
         self.payload.remove(&entity);
         self.needs.remove(&entity);
+        self.zone.remove(&entity);
+    }
+
+    /// A zone left the subscription — evict every entity whose rows arrived under it.
+    pub fn forget_zone(&mut self, zone: u16) {
+        let gone: Vec<u32> =
+            self.zone.iter().filter(|(_, &z)| z == zone).map(|(&e, _)| e).collect();
+        for e in gone {
+            self.forget(e);
+        }
     }
 }
 
@@ -75,8 +91,8 @@ mod tests {
     #[test]
     fn rows_arriving_before_any_position_are_kept() {
         let mut g = GameplayRows::new();
-        g.observe_payload(7, vec![1, 2, 3]);
-        g.observe_need(7, 0xa4fb_8001_0020, 40);
+        g.observe_payload(7, 0, vec![1, 2, 3]);
+        g.observe_need(7, 0, 0xa4fb_8001_0020, 40);
         assert_eq!(g.payload(7), &[1, 2, 3]);
         assert_eq!(g.needs(7).len(), 1);
     }
@@ -85,7 +101,7 @@ mod tests {
     #[test]
     fn a_positionless_player_pawn_reference_is_storable() {
         let mut g = GameplayRows::new();
-        g.observe_need(0x4080_0003, 0x8001_0060, 12);
+        g.observe_need(0x4080_0003, 0, 0x8001_0060, 12);
         assert_eq!(g.needs(0x4080_0003).len(), 1);
     }
 
@@ -94,18 +110,30 @@ mod tests {
     #[test]
     fn a_need_upserts_by_reference() {
         let mut g = GameplayRows::new();
-        g.observe_need(1, 0x0001_8001_0020, 10);
-        g.observe_need(1, 0x00ff_8001_0020, 20);
+        g.observe_need(1, 0, 0x0001_8001_0020, 10);
+        g.observe_need(1, 0, 0x00ff_8001_0020, 20);
         let rows = g.needs(1);
         assert_eq!(rows.len(), 1, "same need reference, one row");
         assert_eq!(rows[0].1, 20, "the newer write won");
     }
 
+    /// The leak the audit caught: a closing zone must take its entities' rows with it. Nothing
+    /// else ever says they are gone — a zone leaving the subscription sends no per-entity delete.
+    #[test]
+    fn a_closing_zone_evicts_its_entities_rows() {
+        let mut g = GameplayRows::new();
+        g.observe_payload(1, 7, vec![1, 2, 3]);
+        g.observe_payload(2, 8, vec![4]);
+        g.forget_zone(7);
+        assert!(!g.has(1), "zone 7's rows leaked");
+        assert!(g.has(2), "zone 8 is untouched");
+    }
+
     #[test]
     fn forgetting_an_entity_drops_both_halves() {
         let mut g = GameplayRows::new();
-        g.observe_payload(1, vec![9]);
-        g.observe_need(1, 0x8001_0020, 5);
+        g.observe_payload(1, 0, vec![9]);
+        g.observe_need(1, 0, 0x8001_0020, 5);
         g.forget(1);
         assert!(!g.has(1));
     }

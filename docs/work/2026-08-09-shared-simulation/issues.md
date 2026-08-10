@@ -3,7 +3,7 @@
 _Problems hit, candidate solutions, which we chose and why. Chronological append._
 
 ## I9 — reading core's model from npc DEADLOCKS: brain predicates re-enter the lock
-**2026-08-10. Open — P2c item 4 REVERTED because of it; the fix is known and small.**
+**2026-08-10. RESOLVED — fixed at the root; P2c item 4 landed. See `completed.md`.**
 
 `Bot::nearest_thing` / `nearest_tile` take the world guard and then run a **brain-supplied
 predicate while still holding it**. Those predicates call back into `Bot`:

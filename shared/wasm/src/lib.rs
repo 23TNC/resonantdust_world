@@ -47,6 +47,15 @@ pub fn default_tics_per_tile_js() -> u16 {
     resonantdust_codec::speed::DEFAULT_TICS_PER_TILE
 }
 
+/// A gameplay row's FULL definition reference — its identity key (`codec::object::row_reference`).
+/// Exported because the browser was re-spelling it as `need % 0x100000000`, and THE 48-BIT LAW
+/// having two spellings is how a lane silently truncates.
+#[cfg(feature = "js")]
+#[wasm_bindgen(js_name = rowReference)]
+pub fn row_reference_js(row: f64) -> u32 {
+    resonantdust_codec::object::row_reference(row as u64)
+}
+
 /// Pack a global tile into a `position_reference` (`codec::object`) — a console/debug
 /// affordance for hand-queueing programs (e.g. minting a posed test pawn with `CREATE`).
 #[cfg(feature = "js")]

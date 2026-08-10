@@ -61,9 +61,11 @@ impl ClientWorld {
     /// never substitute 0: tic 0 is a real tic, and reading it as "now" makes every lazy need
     /// evaluate as though the world had just begun.
     pub fn now_tic_at(&self, now_ms: f64) -> Option<u16> {
+        // ONE clock (P2e): the extrapolation is `ticclock`'s, not a second copy of it here. Core
+        // briefly carried two — this method open-coded the same arithmetic off its own anchor,
+        // which is the defect this phase exists to remove, committed inside the fix for it.
         let (tic, at_ms, rate) = self.anchor?;
-        let elapsed = ((now_ms - at_ms).max(0.0) / 1000.0) * rate;
-        Some(tic.wrapping_add(elapsed as u16))
+        Some(crate::ticclock::extrapolate(tic, at_ms, rate, now_ms))
     }
 
     /// The tic the last anchor stated, without extrapolation — what a fold uses, since it is
@@ -107,12 +109,12 @@ impl ClientWorld {
                     &self.world, &bundle,
                 );
             }
-            E::PawnParts { entity_reference, payload, .. } => {
-                self.rows.observe_payload(*entity_reference, payload.clone());
+            E::PawnParts { entity_reference, macro_position, payload, .. } => {
+                self.rows.observe_payload(*entity_reference, *macro_position, payload.clone());
                 self.movers.invalidate_pace(*entity_reference);
             }
-            E::PawnNeed { entity_reference, need, set_tic, .. } => {
-                self.rows.observe_need(*entity_reference, *need, *set_tic);
+            E::PawnNeed { entity_reference, macro_position, need, set_tic } => {
+                self.rows.observe_need(*entity_reference, *macro_position, *need, *set_tic);
                 self.movers.invalidate_pace(*entity_reference);
             }
             E::ColdTiles { macro_position, layer_id, tiles, .. } => {
@@ -188,6 +190,7 @@ impl ClientWorld {
     pub fn close_zone(&mut self, macro_position: u16) {
         self.world.forget_zone(macro_position);
         self.movers.forget_zone(macro_position);
+        self.rows.forget_zone(macro_position);
     }
 
     /// **Where a pawn is now.** `None` = not tracked.
@@ -252,7 +255,7 @@ mod tests {
                 payload.extend_from_slice(&resonantdust_codec::payload::trait_entry(r, 0));
             }
         }
-        cw.rows.observe_payload(1, payload);
+        cw.rows.observe_payload(1, 0, payload);
         cw.movers.invalidate_pace(1);
         cw.derive_paces(100);
         assert_eq!(cw.movers.get(1).unwrap().pace, Some(24.0));
@@ -283,7 +286,7 @@ mod tests {
             }
         }
         // Payload FIRST — the zone-snapshot order that used to lose it.
-        cw.rows.observe_payload(1, payload);
+        cw.rows.observe_payload(1, 0, payload);
         cw.observe_state(1, 0, u32::from(bunny), (10.0, 10.0), 0, 100);
         cw.derive_paces(100);
         assert_eq!(cw.movers.get(1).unwrap().pace, Some(24.0));

@@ -53,7 +53,7 @@ binder and the affordance query, none of which P4 needs.
       and `CHORD_CAP_TILES`. Acceptance: `bin/sim check worker` green.
 - [x] Move `hop_stride_tiles` into `move_eval` verbatim. Acceptance: unit test covers the clamp at
       both ends — pace 1 → 8 tiles, pace 240 → 1 tile.
-- [x] Add `move_eval::next_hop(from, dest, pace, pathable) -> (landing, tics)` carrying the chord
+- [ ] Add `move_eval::next_hop(from, dest, pace, pathable) -> (landing, tics)` carrying the chord
       step, the `clear_point_fraction` clamp and the recenter. Acceptance: unit tests cover the
       clamp, the recenter and the stride cap. (Amended: "20 live landings" was substituted for
       analytic cases + the live stride check in P1's last item — see `completed.md`.)
@@ -62,7 +62,7 @@ binder and the affordance query, none of which P4 needs.
       passes — sampling the walk at the hop's tic lands exactly where the hop lands.
 - [x] Rewrite worker `MOVE_STEP` and `resolve_walk_position_for` as calls into `move_eval`, and
       delete the private copies. Acceptance: `grep -c 'REANCHOR_TICS\|CHORD_CAP_TILES' server/`
-      is 0.
+      is 0 (run with `-r`; without it grep exits 2 on a directory and prints a misleading 0).
 - [x] Re-run the P0 probe against the rebuilt worker. Acceptance: anchor stride p50 within 0.05
       tiles of the P0 baseline — a pure move changed nothing.
 
@@ -72,7 +72,7 @@ binder and the affordance query, none of which P4 needs.
       intent, pace. Fed from `StateObject` and `MoveIntent`. Acceptance: `bin/rd build core` green.
 - [x] Derive each mover's pace in core through the shared `stat_eval`, never a constant.
       Acceptance: core reports 24 tics/tile for a bunny and 12 for a wolf.
-- [x] Expose `pawn_point(entity, now_tic)` over the track via `move_eval::position_at`.
+- [ ] Expose `pawn_point(entity, now_tic)` over the track via `move_eval::position_at`.
       Acceptance: a headless run logs a moving pawn's point changing between two anchors.
 - [x] Port the replay guards the TS earned — the stale-intent and older-row rejections
       (`MoverLayer.ts:754-776`, `:839`). Acceptance: unit test — a minutes-old intent is rejected.
@@ -84,7 +84,7 @@ binder and the affordance query, none of which P4 needs.
       receives. Acceptance: `bin/rd build core` green.
 - [x] Expose `pathable(x, y)` on it from the corpus flags, and give `MoverTrack` its probe
       internally. Acceptance: the track's `observe_*` no longer take a `pathable` argument.
-- [x] Decide and pin the unstreamed-cell rule in ONE place — the client reads unknown as OPEN, the
+- [ ] Decide and pin the unstreamed-cell rule in ONE place — the client reads unknown as OPEN, the
       worker does not. Acceptance: a unit test asserts the chosen rule; the divergence is logged
       in [`issues.md`](issues.md).
 - [x] Replace `client/npc`'s own `tiles`/`tile_overlays`/thing view with reads of core's.
@@ -103,7 +103,7 @@ binder and the affordance query, none of which P4 needs.
 
 - [x] Expose core's track to the browser through `shared/wasm` as `pawnPoint(entity, nowTic)`.
       Acceptance: at an anchor tic it equals the point that anchor's row carries.
-- [x] Point `MoverLayer`'s render-chase at `pawnPoint` instead of its own `Spec`. Acceptance:
+- [ ] Point `MoverLayer`'s render-chase at `pawnPoint` instead of its own `Spec`. Acceptance:
       typecheck + build green and movers still glide between anchors.
 - [x] Delete `Spec`, the walk, `speedFor`, `computePath` and `SPEC_APPLY_EPS` from `MoverLayer`.
       Acceptance: `grep -c 'walkGreedy\|walkPath\|speedFor\|computePath\|firstLegClear'` is 0.
@@ -112,6 +112,31 @@ binder and the affordance query, none of which P4 needs.
       sprite-sync only. Acceptance: `MoverLayer.ts` under 800 lines, probe still reports.
 - [ ] Re-run the P0 probe for 10 minutes. Acceptance: reseed p50 under 0.5 tiles and zero RENDER
       teleport events — [I1](issues.md#i1) closed by construction, or reopened loudly.
+
+## P4c — what the tick audit found (2026-08-10)
+
+_Nine ticked items were unticked after an adversarial re-run of their own criteria; these are the
+gaps that had no item at all. Full findings in [`tick-audit.md`](tick-audit.md)._
+
+- [ ] Add a core test that feeds a `StateObject` through `Engine::emit` and reads `pawn_point` off
+      the handle, covering the anchor-less `None` path. Acceptance: the test exists and passes.
+- [ ] Cover `next_hop`'s blocked-path branches. Acceptance: a `panic!` inserted in the recenter
+      (`clear == 0`) or in the sub-1 `clear` clamp fails a test; today neither branch is reached.
+- [ ] Make `headless.rs` print one mover's point at two tics between anchors. Acceptance:
+      `grep -c pawn_point client/core/src/bin/headless.rs` is nonzero and a run shows it moving.
+- [ ] Read a live pawn's thirst back through `Client::pawn_needs` and transcribe it. Acceptance: a
+      nonzero value in `completed.md` — no code path produces this observation today.
+- [ ] Point webgl's `pawnNeeds` reader at the wasm accessor. Acceptance:
+      `grep -c 'this.needRows' MoverLayer.ts` is 0 and a live thirst reads nonzero.
+- [ ] Add `queueEntries` and `busy` to the wasm surface, with a webgl caller each. Acceptance:
+      both exist and `grep -rn` finds a caller in `client/webgl/src`.
+- [ ] Reconcile the two stale-intent rules: core rejects past a flat 16 tics, `MoverLayer.ts:837`
+      scales with the destination span. Acceptance: both hosts reject the same intent set.
+- [ ] Delete the worker's private hop tic-cost re-derivation (`main.rs:1662-1675`) — it applies
+      `hop_stride_tiles` without the clamp and floors at 4.0, so `k` can disagree with `Hop::tics`.
+      Acceptance: the scheduler calls `move_eval`.
+- [ ] Run the foreground soak P4 keeps deferring. Acceptance: a dated row naming duration, sample
+      count and mover population, with reseed p50/p90 and RENDER teleports per MINUTE.
 
 ## P5 — the guard, so it cannot come back
 
@@ -167,7 +192,7 @@ them. **The fix is one read surface; the folds then move behind it.**
 
 ## P2c — the read surface: a host ASKS core (before P3)
 
-- [x] Put `ClientWorld` behind a shared cell the `Client` handle can READ, on both hosts
+- [ ] Put `ClientWorld` behind a shared cell the `Client` handle can READ, on both hosts
       (`engine.rs:63-65`, `web.rs:63-65` are `cmd_tx`-only). Acceptance: a core test drives a row
       through the engine and reads `pawn_point` off the handle.
 - [x] Feed that `ClientWorld` from the engine's OWN decode — every arm that emits a state, cold or
@@ -191,7 +216,7 @@ them. **The fix is one read surface; the folds then move behind it.**
 - [x] Give the store ONE eviction rule — drop on `StateGone`/removal and on zone close, mirroring
       `MoverLayer.ts:1371-1372,1383-1384`. Acceptance: unit test — closing a zone drops that zone's
       rows to 0.
-- [x] Expose `pawn_payload(entity)` / `pawn_needs(entity)` on the handle, needs as native
+- [ ] Expose `pawn_payload(entity)` / `pawn_needs(entity)` on the handle, needs as native
       `(u64, u16)` pairs. Acceptance: a headless run prints a live bunny's thirst value nonzero.
 - [x] Delete `payloads`/`need_rows` from the brains (`wolves.rs:90,93`, `bunnies.rs:53-54`,
       `debug.rs:48`) and read core's. Acceptance: `grep -c "payloads\|need_rows"` over
@@ -199,7 +224,7 @@ them. **The fix is one read surface; the folds then move behind it.**
 
 ## P2e — one clock: core answers "what tic is it" (before P3)
 
-- [x] Add `now_tic()` to the read surface off `ticclock::delta_since` (`ticclock.rs:182`) — its
+- [ ] Add `now_tic()` to the read surface off `ticclock::delta_since` (`ticclock.rs:182`) — its
       first production caller ever. Acceptance: `grep -rn delta_since client/core/src` returns a
       non-test caller.
 - [x] Demote `Event::TicAnchor` to DIAGNOSTIC and delete the extrapolation formula from
@@ -288,10 +313,10 @@ old signature would re-import the leak on arrival. Also: **`ticsPerSec()` stays 
 webgl** — `MoverLayer.ts:667` caps the render chase with it, which is [F2](forks.md#f2)
 presentation. The RATE is a shared input; only the evaluation INSTANT becomes core's answer.
 
-- [x] Grow the wasm read surface ONCE — `WorldClient` (`shared/wasm/src/lib.rs:1226`) is write-only
+- [ ] Grow the wasm read surface ONCE — `WorldClient` (`shared/wasm/src/lib.rs:1226`) is write-only
       today. Add `nowTic`, `pawnPayload`, `pawnNeeds`, `queueEntries`, `busy` beside `pawnPoint`.
       Acceptance: `npm run typecheck` + `npm run build` green.
-- [x] Return needs as stride-2 `Float64Array`, NEVER `Uint32Array` — the documented truncation at
+- [ ] Return needs as stride-2 `Float64Array`, NEVER `Uint32Array` — the documented truncation at
       `MoverLayer.ts:805-812` cut `0xa4fb80010020` to `0x80010020` and every need read 0.
       Acceptance: a live pawn's thirst reads nonzero through the accessor.
 - [ ] Collapse webgl's eight hand-rolled u16 now-tic conversions onto `nowTic()` with ONE null

@@ -30,8 +30,12 @@ system cannot.
 - **The wall↔tic estimate** (`client/core/src/ticclock.rs`): every `state`/`event` arrival
   anchors "wire tic `V` arrived at wall `W`". Arrival delay only LAGS an anchor, never leads
   it, so the estimator keeps whichever anchor implies the FURTHEST current tic. Re-anchors are
-  sparse and surface as `Event::TicAnchor`; hosts extrapolate fractional deltas locally by
-  `TIC_HZ`. Measured: a 90-second-old anchor predicted a fresh row's tic within jitter.
+  sparse and surface as `Event::TicAnchor`, which is **DIAGNOSTIC**: hosts ask
+  `Client::now_tic()` rather than re-deriving the estimate, because an instruction to rebuild a
+  shared answer is how two hosts come to disagree about what time it is (shared-simulation P2e —
+  npc kept its own anchor, webgl hand-rolled the conversion eight times). The extrapolation has
+  one spelling, `ticclock::extrapolate`. Measured: a 90-second-old anchor predicted a fresh row's
+  tic within jitter.
 - **Movement is intent + speculation** (`ACTIONS.md` §Movement): a move fans ONE
   `Event::MoveIntent` (entity, dest, first-hop tic); bare continuation hops fan NOTHING; state
   promotes at the seed and final tile only. The renderer walks the pawn fractionally along the

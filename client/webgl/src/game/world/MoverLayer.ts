@@ -80,9 +80,29 @@ interface MoverPart {
   subframes?: Float64Array;
 }
 
-/** Speculation applies a new position only past this tile delta — keeps the warm re-bake
- *  cadence proportional to actual motion, not the frame rate. */
-const SPEC_APPLY_EPS = 1 / 32;
+
+/** The pawn's live WALK, as the client still needs to know about it — no longer a speculation.
+ *  Core computes where the pawn is; this records only what the DISPLAY still asks: whether the
+ *  pawn is walking (the intent strip and the arm-time facing aim), where to (arrival clears it),
+ *  and the last point applied, which is what the divergence probe measures belief against.
+ *
+ *  `fromX/fromY`, `eventTic`, `ticsPerTile` and `path` are carried for the probe's bookkeeping
+ *  only — nothing steps along them. They go when the probe moves out of this file. */
+interface Walk {
+  fromX: number;
+  fromY: number;
+  destX: number;
+  destY: number;
+  eventTic: number;
+  ticsPerTile: number;
+  appliedX: number;
+  appliedY: number;
+  path: { x: number; y: number }[] | null;
+}
+
+/** The render applies a new position only past this tile delta — keeps the warm re-bake cadence
+ *  proportional to actual motion, not the frame rate. */
+const RENDER_APPLY_EPS = 1 / 32;
 
 /** How much of a z-ROW one unit of authored slot `depth` is worth (F1). Slot ordering must stay
  *  strictly INSIDE the pawn's row so the row keeps deciding which pawn is in front: with the
@@ -107,25 +127,6 @@ function hash01(a: number): number {
   return ((a ^ (a >>> 16)) >>> 0) / 4294967296;
 }
 
-/** A live movement speculation: walk from the last authoritative tile toward the intent's dest,
- *  `progress = ticDelta(eventTic) / ticsPerTile` steps along the greedy line. */
-interface Spec {
-  fromX: number;
-  fromY: number;
-  destX: number;
-  destY: number;
-  /** The tic `fromX/fromY` was authoritative at — progress measures from here. */
-  eventTic: number;
-  ticsPerTile: number;
-  /** Last applied fractional tile, to skip sub-epsilon re-bakes. */
-  appliedX: number;
-  appliedY: number;
-  /** The SHARED path from `(fromX, fromY)` (pathfinding I1) — waypoints exclusive of the
-   *  start, one 8-way hop apart. `null` = unavailable (no probe, unstreamed window) and the
-   *  greedy line speculates as before. Recomputed at every reseed, like the worker's
-   *  per-hop recompute. */
-  path: { x: number; y: number }[] | null;
-}
 
 /** One drawn part SLOT of a live pawn — its warm prim + the last-baked fields the eps/skip
  *  compare gates on (human-pawns P3). `parts[0]` is the carrier (selection, hit-testing). */
@@ -152,7 +153,7 @@ interface Mover {
   def: number;
   authX: number;
   authY: number;
-  spec: Spec | null;
+  spec: Walk | null;
   /** The RENDERED fractional tile — a separate track that CHASES the speculation target
    *  (user design, movement-hardening F6): the intent arrives ~4–5 tics late, so rendering
    *  the mathematically-correct spec directly SNAPS the pawn into the future. The chase
@@ -366,7 +367,9 @@ export class MoverLayer {
       // The row is the ONE u64 (trait-rows-u32 F1) as a 48-bit-safe number; the key is
       // its FULL reference — split by MODULO, never bitwise (THE 48-BIT LAW: `&`/`>>>`
       // truncate at 32 bits and would silently mangle anything wider).
-      rows.set(n.need % 0x100000000, [n.need, n.setTic]);
+      // THE 48-bit law has one spelling; core keys these through `codec::object::row_reference`
+      // and this is the last place that re-spelled it (P2d).
+      rows.set(rowReference(n.need), [n.need, n.setTic]);
     }));
     this.unsubs.push(client.onMoveIntent((intent) => this.onMoveIntent(intent)));
     // A zone leaving the subscription sends no per-entity delete, so drop its movers.
@@ -656,7 +659,7 @@ export class MoverLayer {
         continue;
       }
       if (
-        Math.abs(m.rx - m.arx) >= SPEC_APPLY_EPS || Math.abs(m.ry - m.ary) >= SPEC_APPLY_EPS ||
+        Math.abs(m.rx - m.arx) >= RENDER_APPLY_EPS || Math.abs(m.ry - m.ary) >= RENDER_APPLY_EPS ||
         facing !== m.facing
       ) {
         if (facing !== m.facing) {

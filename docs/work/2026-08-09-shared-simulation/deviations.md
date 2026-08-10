@@ -25,6 +25,23 @@ one.
 reasons; not worth a `cfg` fork on its own. Recorded so "core fetches the corpus" is not later
 assumed from the ticked box.
 
+## D4 — four acceptance substitutions were made without logging them here
+**2026-08-10 · found by the tick audit · RESOLVED by this row.**
+
+**What the plan says.** A deviation is logged in `deviations.md` **at the moment of deviating**.
+
+**What I did.** Four criteria were substituted mid-flight and recorded only in `completed.md`
+prose: P1's two "20 landings recorded from the live worker" (replaced with analytic cases), P2c
+item 4's grep (swapped for a different one), and P2d item 3's eviction (narrowed to removal only,
+which then shipped a live leak — rows survived `close_zone` until the audit caught it).
+
+**Why it matters more than it looks.** `completed.md` is a log; `deviations.md` is where the next
+session checks whether the plan still means what it says. Burying a substitution in prose makes it
+invisible exactly where it would be looked for — and the P2d one hid a real bug for a day.
+
+**Fix/status.** RESOLVED: the criteria are corrected in `todo.md`, the leak is fixed and tested,
+and this row exists. The habit is the thing to keep.
+
 ## D2 — `client/core`'s own intent doc already says webgl should be dumb
 **2026-08-10 · found · OPEN → P2b.**
 

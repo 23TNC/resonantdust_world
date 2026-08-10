@@ -56,6 +56,14 @@ const POISON_BAND: f64 = 900.0;
 const POISON_STREAK: u32 = 8;
 
 /// The best-known wall↔tic anchor + learned rate. See the module docs for the rules.
+/// **THE tic extrapolation** — the anchor tic advanced by the wall time since it was stamped, at
+/// the LEARNED rate. One spelling, because every host that re-derived this got a slightly
+/// different answer and `api.rs` used to hand out the formula (P2e).
+pub fn extrapolate(anchor_tic: u16, anchor_ms: f64, tics_per_sec: f64, now_ms: f64) -> u16 {
+    let elapsed = ((now_ms - anchor_ms).max(0.0) / 1000.0) * tics_per_sec;
+    anchor_tic.wrapping_add(elapsed as u16)
+}
+
 pub struct TicEstimate {
     /// The live anchor `(tic, wall_ms)`.
     anchor: Option<(u16, f64)>,
