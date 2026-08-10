@@ -354,13 +354,8 @@ impl Bot {
     /// Track harness-level state off an event (the pause flag + the tic anchor).
     pub(crate) fn note(&mut self, event: &Event) {
         match event {
-            Event::StateObject { entity_reference, tile_x, tile_y, removed, .. } => {
-                if *removed {
-
-                } else {
-
-                }
-            }
+            // `StateObject` is CORE's to fold (P2c/P3) — positions come from its mover track,
+            // so the Bot keeps nothing here.
             Event::Paused { paused } => {
                 if *paused != self.paused {
                     tracing::info!(paused, "simulation freeze changed (/pause)");

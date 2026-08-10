@@ -3,6 +3,20 @@
 _The verification log: what landed and **how it was checked**. Append-only; authoritative for what
 is done. Items live in [`todo.md`](todo.md) with their boxes ticked._
 
+## 2026-08-10 — zero warnings across npc, worker and core
+
+Acting on [I12](issues.md#i12) rather than only recording it. That deadlock hid behind
+`warning: unused variable: view` in a crate with a dozen warnings I had learned to skim, so the
+backlog is the defect, not the noise.
+
+Cleared: two dead `Event::` arms left over from moving folds into core (one of which I had emptied
+into a syntax error and only the compiler caught), the vestigial `bindable` flag in the worker's
+need-trigger, a stale `pack_row` import, `rows_of` duplicating the very helpers it was given, and
+a `dur` the brain no longer needs now that the server times the act.
+
+`bin/sim check npc`, `bin/sim check worker`, `bin/rd build core` — **0 warnings each**. From here a
+new warning means something.
+
 ## 2026-08-10 — P3c: ONE input binder, including the server's own
 
 `Bundle::bind_interaction(name, &InputBinding)` resolves the reserved vocabulary — `pawn`,

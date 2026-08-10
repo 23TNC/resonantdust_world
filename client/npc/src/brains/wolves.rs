@@ -3,7 +3,6 @@
 //! fan-out (F3), then wander it with single A→B `MOVE_TO`s — the WORKER chains the hops (F2);
 //! this brain only picks destinations and waits for arrivals (or a timeout) before the next.
 
-use std::collections::HashMap;
 use std::time::Duration;
 
 use client::world::tile_to_position;
@@ -599,7 +598,7 @@ impl Wolves {
     /// the F5 RESERVED vocabulary (`pawn` = this wolf, `amount` = `magnitude` as f32 bits)
     /// — the same rule the pie menu's composer applies. An unbindable name refuses loudly
     /// (input-rework I11: the hardcoded 3-input drink shape mis-fired move_to live).
-    fn fire_interaction(&self, bot: &Bot, act: &client::Client, interaction: &str, magnitude: f64, dest: (i32, i32)) {
+    fn fire_interaction(&self, _bot: &Bot, act: &client::Client, interaction: &str, magnitude: f64, dest: (i32, i32)) {
         let Some(wolf) = self.wolf else { return };
         let Some(bundle) = &self.bundle else { return };
         let Some(iref) = bundle.gameplay_reference("interaction", interaction) else {
@@ -834,9 +833,8 @@ impl Brain for Wolves {
             // the pre-adoption buffering this arm existed for is now core's, for every host.
             return;
         }
-        // The needs sub-table fan (stat-model F2): one row per frame, keyed by the row's
-        // low 16 — a sip lands as exactly one update here.
-        if let Event::PawnNeed { entity_reference, need, set_tic, .. } = event {
+        // `PawnNeed` is core's (P2d) — the brain reads rows back through the handle.
+        if matches!(event, Event::PawnNeed { .. }) {
             return;
         }
         let Event::StateObject { entity_reference, definition_reference, tile_x, tile_y, removed, .. } = event

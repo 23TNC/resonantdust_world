@@ -168,8 +168,8 @@ impl Bunnies {
     fn rows_of(&self, id: u32) -> (Vec<u64>, Vec<(u64, u16)>, Vec<(u64, u16)>) {
         // shared-simulation P2d: the rows are the ENTITY's and live in core. The brain used to
         // keep its own `payloads`/`need_rows` maps — the fifth copy of one store.
-        let payload = self.client.as_ref().map(|c| c.pawn_payload(id)).unwrap_or_default();
-        let needs = self.client.as_ref().map(|c| c.pawn_needs(id)).unwrap_or_default();
+        let payload = self.payload_of(id);
+        let needs = self.needs_of(id);
         // trait-lights F5: constant binds derive through THE merged accessor.
         let traits = match &self.bundle {
             Some(b) => b.object_trait_rows(def_kind_id(self.def), &payload_traits(&payload)),
@@ -359,12 +359,6 @@ impl Bunnies {
                     let c = (at.0 + ox, at.1 + oy);
                     if let Some(kind) = bot.thing_kind_at(c) {
                         if let Some((i, mag)) = self.usable_eat(id, kind, now) {
-                            let dur = self
-                                .bundle
-                                .as_ref()
-                                .and_then(|b| b.interaction_params(&i))
-                                .map(|ip| ip.duration)
-                                .unwrap_or(0.0);
                             self.fire(bot, act, id, &i, mag, c);
                             if let Some(m) = self.minds.get_mut(&id) {
                                 m.eat_issued = true;

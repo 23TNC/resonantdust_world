@@ -161,7 +161,7 @@ impl Brain for Debug {
         }
     }
 
-    fn on_event(&mut self, _bot: &Bot, act: &client::Client, event: &Event) {
+    fn on_event(&mut self, _bot: &Bot, _act: &client::Client, event: &Event) {
         match event {
             Event::StateObject {
                 entity_reference, definition_reference, tile_x, tile_y, removed, ..
