@@ -189,7 +189,13 @@ present exactly as a backward snap.
 if the resolve rate stays this low with a shared implementation, it is real and gets its own item.
 
 ## I6 — the worker's view of the master tic froze; it ground a backlog it could never finish
-**2026-08-10. Hit during P0. Cleared by restart; root cause NOT found.**
+**2026-08-10. MOVED to its own stream — [2026-08-10-sim-liveness](../2026-08-10-sim-liveness/README.md).**
+
+Kept here because it shaped two of this stream's measurements and will invalidate the remaining
+ones if it recurs; owned there. The evidence below is duplicated into that stream's
+[I1](../2026-08-10-sim-liveness/issues.md#i1).
+
+_Original entry:_
 
 P0's baseline run returned **zero `StateObject` rows in 30 s** with 90 movers resident. Not an
 instrumentation fault — the sim had wedged:
