@@ -95,6 +95,12 @@ impl Client {
         self.world.lock().map(|w| w.pathable(x, y)).unwrap_or(true)
     }
 
+    /// This pawn's DERIVED pace in tics per tile. `None` until its rows have arrived — a caller
+    /// must not substitute a default, which is an 8x error on the pawns it is wrong about (I2).
+    pub fn pawn_pace(&self, entity: u32) -> Option<f64> {
+        self.world.lock().ok()?.movers.get(entity)?.pace
+    }
+
     /// This entity's raw payload opcode stream — the trait/condition rows every eval reads.
     pub fn pawn_payload(&self, entity: u32) -> Vec<u32> {
         self.world.lock().map(|w| w.rows.payload(entity).to_vec()).unwrap_or_default()

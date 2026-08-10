@@ -104,7 +104,7 @@ binder and the affordance query, none of which P4 needs.
       Acceptance: at an anchor tic it equals the point that anchor's row carries.
 - [x] Point `MoverLayer`'s render-chase at `pawnPoint` instead of its own `Spec`. Acceptance:
       typecheck + build green and movers still glide between anchors.
-- [ ] Delete `Spec`, the walk, `speedFor`, `computePath` and `SPEC_APPLY_EPS` from `MoverLayer`.
+- [x] Delete `Spec`, the walk, `speedFor`, `computePath` and `SPEC_APPLY_EPS` from `MoverLayer`.
       Acceptance: zero references remain; the file drops under 800 lines.
 - [ ] Re-run the P0 probe for 10 minutes. Acceptance: reseed p50 under 0.5 tiles and zero RENDER
       teleport events — [I1](issues.md#i1) closed by construction, or reopened loudly.

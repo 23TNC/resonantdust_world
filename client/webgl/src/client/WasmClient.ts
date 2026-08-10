@@ -661,6 +661,13 @@ export class WasmClient {
     return p && p.length === 2 ? [p[0], p[1]] : null;
   }
 
+  /** This pawn's DERIVED pace in tics/tile from core, or `null` when its rows have not
+   *  arrived. Never substitute a default: that is an 8x error on the pawns it is wrong about. */
+  pawnPace(entity: number): number | null {
+    const p = this.world?.pawnPace(entity) ?? 0;
+    return p >= 1 ? p : null;
+  }
+
   /** Core's tic. `null` until the estimate anchors — BAIL, never substitute 0. */
   coreNowTic(): number | null {
     const t = this.world?.nowTic();

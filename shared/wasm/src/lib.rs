@@ -1276,6 +1276,14 @@ impl WorldClient {
         self.inner.pathable(x, y)
     }
 
+    /// This pawn's DERIVED pace in tics per tile — `0` when unknown. The RATE is a shared input
+    /// a renderer legitimately needs (it paces the smoothing chase); only the evaluation INSTANT
+    /// and the POSITION are core's answers alone (F2).
+    #[wasm_bindgen(js_name = pawnPace)]
+    pub fn pawn_pace(&self, entity: u32) -> f64 {
+        self.inner.pawn_pace(entity).unwrap_or(0.0)
+    }
+
     /// This entity's raw payload opcode stream.
     #[wasm_bindgen(js_name = pawnPayload)]
     pub fn pawn_payload(&self, entity: u32) -> Vec<u32> {

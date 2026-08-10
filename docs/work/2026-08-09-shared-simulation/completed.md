@@ -3,6 +3,25 @@
 _The verification log: what landed and **how it was checked**. Append-only; authoritative for what
 is done. Items live in [`todo.md`](todo.md) with their boxes ticked._
 
+## 2026-08-10 — P4: the TypeScript walk is DELETED
+
+`walkGreedy`, `walkPath`, `speedFor`, `computePath` and `firstLegClear` are gone from
+`MoverLayer.ts` — `grep -c` is **0**. The client no longer walks, paces or paths: core does all
+three and webgl chases the answer.
+
+The pace now comes from core too (`pawnPace`), because the chase needs the RATE to cap itself —
+a shared input, per [F2](forks.md#f2), unlike the position and the instant.
+
+**Verified live.** Core's paces read 12/12 for the wolves and 24/24/24 for the bunnies — derived
+in Rust, through `move_eval::ground_speed`, and handed to the browser. Driving `tick()`
+synchronously (rAF is frozen in a background tab, and `setTimeout` there is clamped to 1 s — which
+cost two timed-out probes before I recognised it), the chase closed **7.1 tiles in one second** and
+converged to gaps of 0–0.08 tiles on the pawns that were near their targets.
+
+The 12 chase snaps in that sample are the test's own artifact, not a defect: the tab had been
+backgrounded for ~60 s, so the render was a minute stale and `CHASE_SNAP_TILES` did exactly what
+its comment says it does for a hidden tab. A clean snap count needs a foreground soak.
+
 ## 2026-08-10 — P4: webgl READS ITS POSITIONS FROM CORE
 
 `WorldClient` was write-only — commands in, events out through a callback, nothing askable, which

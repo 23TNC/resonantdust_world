@@ -127,57 +127,6 @@ interface Spec {
   path: { x: number; y: number }[] | null;
 }
 
-/** The server's stepping rule, mirrored EXACTLY (worker `apply` MOVE_TO): `p` fractional greedy
- *  steps from `(fx,fy)` toward `(dx,dy)`. speculative-direction P1: it no longer reports a
- *  facing — spec-space direction disagreed with the render at reseeds, stair-steps and chase
- *  corrections (I1); the sprite now faces its RENDERED motion, and the arm-time initial aim
- *  applies the same e/w-first rule inline. */
-function walkGreedy(
-  fx: number, fy: number, dx: number, dy: number, p: number,
-): { x: number; y: number; done: boolean } {
-  let cx = fx;
-  let cy = fy;
-  let remaining = p;
-  for (;;) {
-    const sx = Math.sign(dx - cx);
-    const sy = Math.sign(dy - cy);
-    if (sx === 0 && sy === 0) return { x: cx, y: cy, done: true };
-    if (remaining < 1) {
-      return { x: cx + sx * remaining, y: cy + sy * remaining, done: false };
-    }
-    cx += sx;
-    cy += sy;
-    remaining -= 1;
-  }
-}
-
-/** DISTANCE-progress along the shared CHORD polyline (chord-movement F5/I1): `p` tiles
- *  of ground covered from `(fx, fy)` through the waypoints — segments have arbitrary
- *  Euclidean lengths now, exactly the worker's tiles/tic schedule, so the glide traces
- *  the same chords at the same pace. */
-function walkPath(
-  fx: number, fy: number, path: { x: number; y: number }[], p: number,
-): { x: number; y: number; done: boolean } {
-  if (path.length === 0) return { x: fx, y: fy, done: true };
-  let prev = { x: fx, y: fy };
-  let left = p;
-  for (const next of path) {
-    const len = Math.hypot(next.x - prev.x, next.y - prev.y);
-    if (left < len) {
-      const f = len > 0 ? left / len : 0;
-      return {
-        x: prev.x + (next.x - prev.x) * f,
-        y: prev.y + (next.y - prev.y) * f,
-        done: false,
-      };
-    }
-    left -= len;
-    prev = next;
-  }
-  const last = path[path.length - 1];
-  return { x: last.x, y: last.y, done: true };
-}
-
 /** One drawn part SLOT of a live pawn — its warm prim + the last-baked fields the eps/skip
  *  compare gates on (human-pawns P3). `parts[0]` is the carrier (selection, hit-testing). */
 interface PartPrim {
@@ -660,7 +609,8 @@ export class MoverLayer {
       const gy = ty - m.ry;
       const gap = Math.max(Math.abs(gx), Math.abs(gy));
       if (gap > 0) {
-        const tilesPerSec = this.client.ticsPerSec() / this.speedFor(key);
+        // The pace is CORE's derivation; the chase only needs the rate to cap itself (F2).
+        const tilesPerSec = this.client.ticsPerSec() / (this.client.pawnPace(key) ?? defaultTicsPerTile());
         if (gap > CHASE_SNAP_TILES) {
           // The RENDER probe (spawn-authority P5): the visible teleport — the chase gave
           // up and snapped. Recorded with the belief→target pair so it correlates (or
@@ -750,7 +700,7 @@ export class MoverLayer {
       // The DISPLAY tile is the floor of the fractional point (chord-movement I2 —
       // client flooring is advisory; the worker validates on its own resolves).
       tileX: Math.floor(m.authX), tileY: Math.floor(m.authY), facing: m.facing,
-      macroPosition: m.macroPosition, moving: !!m.spec, ticsPerTile: this.speedFor(entity),
+      macroPosition: m.macroPosition, moving: !!m.spec, ticsPerTile: this.client.pawnPace(entity) ?? 0,
     };
   }
 
@@ -844,21 +794,6 @@ export class MoverLayer {
     return n;
   }
 
-  /** The pawn's tics-per-tile — its DERIVED `ground_speed` from the fanned rows
-   *  (input-rework F8), through the SAME `stat_eval` the worker spaces hops with; one
-   *  speed authority, now keyed by ENTITY. The default covers only the pre-fan window. */
-  private speedFor(entity: number): number {
-    const payload = this.payloads.get(entity) ?? new Uint32Array(0);
-    const needs = this.pawnNeeds(entity);
-    const d = this.client.ticDelta(0);
-    const now = d === null ? 0 : ((Math.floor(d) % 0x10000) + 0x10000) % 0x10000;
-    // The kind routes the eval through THE merged-traits accessor (trait-lights F5)
-    // so a constant bind contributes here exactly as it does worker-side.
-    const kind = this.movers.get(entity)?.kind ?? 0;
-    const s = this.content.pawnGroundSpeed(kind, payload, needs, now);
-    return s >= 1 ? Math.round(s) : defaultTicsPerTile();
-  }
-
   /** Slice a pawn's up-to-4 packed-channel material bindings out of the stride-8 per-def table
    *  by `objKind` (mirrors {@link WorldBridge}'s `packedFor`), or `undefined` when the def binds
    *  no material — the common case for pawns today (the wolf authors none → flat reconstruction). */
@@ -881,54 +816,6 @@ export class MoverLayer {
    *  authoritative tile. An intent for a pawn we haven't seen yet, or one arriving before the
    *  tic clock anchors, is HELD in {@link pendingIntents} (never dropped — I1) and
    *  re-evaluated by {@link tick} once its preconditions hold. */
-  /** The SHARED path for a spec (pathfinding I1), through the wasm `findPath` over a
-   *  WINDOWED grid the probe fills: endpoints' bounding box + a margin, capped. Outside
-   *  the window reads closed (the wasm doc names the tradeoff); an unstreamed cell reads
-   *  OPEN through the probe (degrade to ground, the shared law). `null` = no probe or no
-   *  path — the greedy line speculates and authoritative rows correct as always. */
-  private computePath(
-    fx: number, fy: number, dx: number, dy: number,
-  ): { x: number; y: number }[] | null {
-    if (!this.pathProbe) return null;
-    const MARGIN = 12;
-    const CAP = 96;
-    const ox = Math.min(fx, dx) - MARGIN;
-    const oy = Math.min(fy, dy) - MARGIN;
-    const w = Math.min(CAP, Math.abs(dx - fx) + 1 + MARGIN * 2);
-    const h = Math.min(CAP, Math.abs(dy - fy) + 1 + MARGIN * 2);
-    const cells = new Uint8Array(w * h);
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        cells[y * w + x] = this.pathProbe(ox + x, oy + y) ? 1 : 0;
-      }
-    }
-    const flat = this.content.findChords(fx, fy, dx, dy, ox, oy, w, h, cells);
-    if (flat.length === 0) return null;
-    const path: { x: number; y: number }[] = [];
-    for (let i = 0; i + 1 < flat.length; i += 2) path.push({ x: flat[i], y: flat[i + 1] });
-    return path;
-  }
-
-  /** Is the continuous segment from the fractional belief point to the first waypoint
-   *  clear of impathable tiles (the start tile exempt — leaving is legal)? Sampled at
-   *  1/32 tile, the worker's `clear_point_fraction` rule client-side. */
-  private firstLegClear(bx: number, by: number, w: { x: number; y: number }): boolean {
-    if (!this.pathProbe) return true;
-    const dx = w.x - bx;
-    const dy = w.y - by;
-    const len = Math.hypot(dx, dy);
-    if (len < 1e-9) return true;
-    const startX = Math.floor(bx);
-    const startY = Math.floor(by);
-    const steps = Math.max(1, Math.ceil(len * 32));
-    for (let i = 1; i <= steps; i++) {
-      const f = i / steps;
-      const tx = Math.floor(bx + dx * f);
-      const ty = Math.floor(by + dy * f);
-      if ((tx !== startX || ty !== startY) && !this.pathProbe(tx, ty)) return false;
-    }
-    return true;
-  }
 
   private onMoveIntent(intent: MoveIntent): void {
     const m = this.movers.get(intent.entityReference);
@@ -940,7 +827,7 @@ export class MoverLayer {
       }
       return;
     }
-    const tpt = this.speedFor(intent.entityReference);
+    const tpt = this.client.pawnPace(intent.entityReference) ?? defaultTicsPerTile();
     // The `event` table replays HISTORY on subscribe (no retention yet — first-pawns I2), and
     // deliveries can arrive out of order — so guard: an intent whose move must already be over
     // ⇒ the authoritative rows carry the outcome; an intent serially older than the live spec
@@ -973,14 +860,8 @@ export class MoverLayer {
     // DRAWN and can never snap back to a tile. Re-anchors and the landing correct.
     const bx = m.rx;
     const by = m.ry;
-    let path = this.computePath(Math.floor(bx), Math.floor(by), intent.tileX, intent.tileY);
-    // The chords validate the LATTICE corridor; the glide starts from the fractional
-    // BELIEF point — when that off-center first leg crosses an impathable tile (the
-    // one-tile water clip the worker also clamps), RECENTER: prepend the current
-    // tile's lattice anchor so the drawn path never crosses the wet tile.
-    if (path && path.length > 0 && this.pathProbe && !this.firstLegClear(bx, by, path[0])) {
-      path = [{ x: Math.floor(bx), y: Math.floor(by) }, ...path];
-    }
+    // The client no longer paths: core walks the pawn and webgl chases the answer (P4).
+    let path: { x: number; y: number }[] | null = null;
     m.spec = {
       fromX: bx,
       fromY: by,
@@ -1060,7 +941,7 @@ export class MoverLayer {
         s.appliedY = ay;
         // The worker's per-hop recompute, mirrored at the reseed cadence (I1): the rest
         // of the route re-chords from the fresh authoritative POINT (its floor tile).
-        s.path = this.computePath(obj.tileX, obj.tileY, s.destX, s.destY);
+        s.path = null; // core owns the route (P4)
       }
     }
 
@@ -1090,7 +971,7 @@ export class MoverLayer {
       // Chebyshev like the jump probe above would under-report every diagonal by up to 30%.
       if (m.authTic !== null) {
         this.noteAnchor(
-          m.kind, this.speedFor(key), Math.hypot(ax - m.authX, ay - m.authY),
+          m.kind, this.client.pawnPace(key) ?? 0, Math.hypot(ax - m.authX, ay - m.authY),
           authDt < 0x8000 ? authDt : 0,
         );
       }
