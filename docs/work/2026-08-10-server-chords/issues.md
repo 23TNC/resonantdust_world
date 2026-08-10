@@ -96,3 +96,51 @@ first item grows a step — sweep an anchor across a grid to force generation, v
 past the single zone, THEN histogram. If anchoring turns out not to generate beyond the active
 radius, the fallback is to build a wall maze in a known zone and measure the hard case directly,
 which is the number that matters anyway.
+
+
+## I5 — core's "what tic is it" ignores wall time, so every position holds between events
+**2026-08-10. Open — found live by the user (movers advance-then-pause at 60fps). Blocks the
+smoothness half of [P5](todo.md).**
+
+```rust
+// client/core/src/client_world.rs
+pub fn now_tic_at(&self, _now_ms: f64) -> Option<u16> {
+    self.tic
+}
+```
+
+The wall clock is **taken and discarded** — the leading underscore is the tell that this was meant
+to extrapolate and never did. `self.tic` is written only here:
+
+```rust
+// client/core/src/web.rs, in emit() — THE fold
+w.set_tic(self.tics.estimate_at(now).map(|t| t.rem_euclid(65536.0) as u16));
+```
+
+Two defects, stacked:
+
+1. **Core's "now" advances on EVENT ARRIVAL, not on wall time.** Between inbound frames
+   `pawn_point` returns a bitwise-identical position however often it is asked. Measured live: six
+   samples over 107 ms returned `120.30518423120411, 79.4302061055012` every time, same tic.
+2. **The fraction is thrown away.** `TicEstimate::estimate_at` returns `f64` tics — a smooth
+   function of wall time, which is exactly what an interpolator needs — and the fold truncates it
+   to `u16`. Even a perfectly fresh integer tic only changes ~5.4 times a second.
+
+**webgl is not at fault.** `MoverLayer.tick` asks core every frame
+(`MoverLayer.ts:585 — const core = this.client.pawnPoint(key)`) and chases the answer. It is
+chasing a target that only moves when a packet lands; the chase closes the gap, then holds. That is
+the "move a bit, pause a bit" the user sees, and it is mid-tile because event arrival has nothing
+to do with tile boundaries. It reads as a stutter rather than a freeze because a compose pass fans
+many rows at once, so the tic jumps in clumps.
+
+**This is NOT fixed by chords.** A lerp between two stated endpoints is only as smooth as the
+answer to "what tic is it now". [P5](todo.md) inherits this clock and will stutter identically
+unless it is fixed — which makes it a prerequisite of P5, not a follow-up.
+
+**The fix** is a fractional now, evaluated on demand rather than stamped:
+- `now_tic_at` uses its `now_ms` against the estimator's anchor + learned rate.
+- The interpolators take `f64` tics. `MoverTrack::point_at(entity, now: u16)` and
+  `move_eval::advance_along(.., now: u16, ..)` are integer-tic today, so the quantisation survives
+  even a fresh answer.
+- Keep `anchored_tic()` integer and event-stamped — a FOLD legitimately wants the receipt tic. The
+  two answers are different questions and currently share one field.

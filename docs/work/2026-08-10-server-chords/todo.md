@@ -94,6 +94,14 @@ false, including one whose criterion had been rewritten after ticking. Do not re
 
 ## P5 — the client interpolates
 
+- [ ] Make `now_tic_at` USE its `now_ms`: extrapolate fractional tics from the estimator's anchor
+      and learned rate ([I5](issues.md#i5)). Acceptance: two `pawn_point` calls 50 ms apart on a
+      walking pawn return DIFFERENT points with no event in between.
+- [ ] Carry `f64` tics through `MoverTrack::point_at` and `move_eval::advance_along`, so a fresh
+      answer is not re-quantised to whole tics. Acceptance: a 60 fps trace of one mover shows a
+      distinct position per frame, not ~5 per second.
+- [ ] Keep `anchored_tic()` integer and event-stamped for the FOLD, which wants the receipt tic.
+      Acceptance: the replay guards still reject an older bundle.
 - [ ] Add `Event::MoveChords` and fold it in `ClientWorld::observe_event`, carrying the payload
       verbatim. Acceptance: a core test brackets `now` and lerps to a known point.
 - [ ] Replace `MoverTrack`'s leg/pace/dest machinery with the stamped chord list; `point_at` picks

@@ -614,6 +614,11 @@ pub fn log_event(event: &Event) {
         Event::MoveIntent { macro_position: zone, entity_reference, tile_x, tile_y, event_tic } => {
             tracing::info!(zone, entity_reference, tile_x, tile_y, event_tic, "move intent")
         }
+        // server-chords P1: the stated route. A brain does not steer from it — `MoverTrack`
+        // will interpolate it in P5 and every host reads position through that one answer.
+        Event::MoveChords { entity_reference, serial, stamps, .. } => {
+            tracing::debug!(entity_reference, serial, chords = stamps.len() / 2 - 1, "chord route")
+        }
         // QueueState is a DISPLAY fan (intent-queue-ui F1) — nothing for a brain to act on.
         Event::QueueState { .. }
         | Event::ColdState { .. }
