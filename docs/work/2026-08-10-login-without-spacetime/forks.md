@@ -122,6 +122,11 @@ deleted with the 0.2.3 tree.
 **Chosen:** follow the convention by hand for this stream; port `docs_check.py` from
 `0.2.3:bin/lib/docs_check.py` as its own small stream once there is enough tree to check.
 
+**Update 2026-08-10:** that stream now exists and owns the port —
+[`2026-08-10-teardown-housekeeping`](../2026-08-10-teardown-housekeeping/todo.md) **P4**, decided in
+its H4. Deleted enforcement for a restored convention is a teardown loose end, not login work. This
+row is resolved-there, not deferred.
+
 **Why.** The convention's value is the discipline, which does not depend on the checker. The
 checker's value is catching drift across hundreds of files, and today there is one work folder and
 no component tree — it would be guarding nothing. Porting it now also drags `bin/rd`'s profile and
