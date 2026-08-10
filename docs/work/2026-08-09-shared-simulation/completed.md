@@ -1,5 +1,44 @@
 # Completed — shared-simulation
 
+## 2026-08-10 — EXIT: delivered in part, superseded in part
+
+**Status: `done` (delivered) — the remaining items move to
+[2026-08-10-server-chords](../2026-08-10-server-chords/README.md).**
+
+**50 of 84 items landed.** What the stream set out to prove is proven: the walk, the pace, the
+world view, the gameplay rows, the position track and the clock all live in `shared/` or
+`client/core`, and both hosts read them. `client/npc` holds no composed view, no row store, no
+tile-only pawn map and no clock of its own. `client/webgl` holds no walk, no pathfinder and no row
+store. The read surface exists on both hosts — `Client` was `cmd_tx`-only when this began.
+
+**And the thesis it was built on turned out to be half right.** The defect was real: one rule
+written twice, and a third host holding nothing. But *one rule, both sides* still leaves the client
+predicting, and a prediction has to be re-proven equal on every edit by every author. I proved that
+the expensive way — I built `move_eval` to make the two walks agree, and an audit then found five
+more divergences in code written **after** it existed. [F9](forks.md#f9) replaces the premise: the
+server states positions with tics and the client interpolates, so there is nothing left to agree
+about.
+
+**What this stream got right and should be inherited:** the read surface, `ClientWorld` as the one
+object a host drives, THE fold at a single `emit` choke point, `GameplayRows` keyed by entity,
+one clock, and `IntentQueues` — which becomes the movement protocol rather than a side channel.
+
+**What it got wrong, recorded rather than buried:**
+
+- [I1](issues.md#i1) — the 2× that opened the stream was a species-pooling artifact of my own
+  measurement. Retracted.
+- [I8](issues.md#i8) — I hung the gameplay rows where their first consumer wanted them, which is
+  the exact pattern the stream exists to delete, and shipped a row leak with it.
+- [I12](issues.md#i12), [I14](issues.md#i14), [I15](issues.md#i15) — three lock re-entrancies, a
+  misdiagnosed "deadlock" that was an idle process, and a `None` doing two jobs.
+- [`tick-audit.md`](tick-audit.md) — **15 of 34 ticked items failed their own criteria** when
+  re-run adversarially, including one whose criterion I had rewritten after ticking it.
+
+**Left broken:** npc issues 0 move intents ([I15](issues.md#i15)). Adoption and the stale-walk
+wedge are fixed; the remaining gate is unfound. It carries to the new stream, where the path is
+re-plumbed anyway.
+
+
 _The verification log: what landed and **how it was checked**. Append-only; authoritative for what
 is done. Items live in [`todo.md`](todo.md) with their boxes ticked._
 
