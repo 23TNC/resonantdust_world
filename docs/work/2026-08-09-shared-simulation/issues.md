@@ -2,6 +2,34 @@
 
 _Problems hit, candidate solutions, which we chose and why. Chronological append._
 
+## I7 — the surviving drift is NOT any of the five TypeScript defects
+**2026-08-10. Open — the target for P4, now with a source-level answer.**
+
+An adversarial source analysis ([`walk-divergence.md`](walk-divergence.md), 42 agents, 33
+candidates, 11 survivors) found five genuine defects in `MoverLayer.ts` — `walkGreedy` steps
+CHEBYSHEV where every other consumer spends progress as EUCLIDEAN tiles, so the "mirrored EXACTLY"
+comment at `:130` is simply false; `walkGreedy` cannot terminate from a fractional start; the
+client reseed skips the `clear` clamp; `spec.ticsPerTile` is frozen at arm time and never
+refreshed; and a same-tic intent tie resolves first-wins on the client and last-wins on the worker.
+
+**And then showed that none of them explains the measured drift.** Each is bounded by one anchor
+interval of progress — 1.33 tiles for a bunny — so they cannot arithmetically produce the observed
+p90 of 4.60 or max of 12.53. Seven of the eight reported candidates also cannot move `anchorStride`
+at all *by construction*, since that metric is a hypot between two SERVER rows.
+
+The mechanisms it points at instead are structural, and the first is the interesting one: **the
+client's speculation arms from the RENDERED point while the worker steps from the AUTHORITATIVE
+one** (`MoverLayer.ts:978-979` seeds from `m.rx/m.ry`; the worker's `MOVE_TO` resolves from
+`p.position_reference`). That is chord-movement F4 working as designed — it exists so an
+interrupted trip re-aims from where the pawn is *drawn* and can never snap backwards — but it means
+the two walks start from different points by construction, every time an order interrupts a walk.
+With 63% of orders arriving mid-walk ([I4](#i4)), that is not an edge case.
+
+**This is exactly what P4 deletes**, and it is the strongest argument yet that the stream's
+structural fix is the right one: five real defects and one by-design divergence all disappear when
+there is one walk instead of two. It also means P4's acceptance (reseed p50 under 0.5 tiles) is a
+genuine test rather than a formality — if the number does not move, this analysis is wrong.
+
 ## I1 — the server walks bunnies at ~2× the pace the client speculates
 **2026-08-09. 2026-08-10: NOT REPRODUCIBLE — the premise was mine and it was wrong.**
 
