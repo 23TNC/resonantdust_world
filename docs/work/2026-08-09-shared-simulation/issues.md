@@ -2,8 +2,30 @@
 
 _Problems hit, candidate solutions, which we chose and why. Chronological append._
 
-## I14 — npc DEADLOCKS on the world lock; the tree is not runnable
-**2026-08-10. OPEN — this is the state I am handing back in. Narrowed, not caught.**
+## I14 — npc adopts NO pawns; `minds` stays empty (NOT a deadlock — I misdiagnosed it twice)
+**2026-08-10. OPEN, root cause identified, fix not written.**
+
+**The symptom I chased for an hour was wrong.** I read "npc stops logging at 0.06% CPU" as a lock
+deadlock and bisected for it. It is neither a deadlock nor a hang: the process is idle because it
+has **nothing to do**. `group count written (npc-host F8) count=0` — `self.minds.len()` is **0**
+while six `module owns pawn` events arrive. No adopted pawns means no per-pawn tick, so no orders,
+no logs, and no CPU. A quiet process and a wedged one look identical from the outside, and I never
+checked which I had.
+
+**The likely cause, and it is mine:** adoption runs through `Bot::pawn_at`, which P3 re-pointed at
+core's mover track after deleting the Bot's own `pawns` map. If the track has no row for an owned
+entity — because the fold populates it from the session that actually streams that zone, and the
+host's own session may not — `pawn_at` returns `None` and the adopt silently fails. The old map
+was filled from the same events but the deletion changed *which* session's stream fills it.
+
+**Next step:** log `pawn_at`'s result at the adopt site, then either feed the module session's
+track or adopt from the `OwnedPawn` event without needing a position first.
+
+_The three re-entrancy fixes made while chasing this are real and worth keeping_ — the eat scans
+genuinely did fetch rows under the scan's own lock, and `nearest_*` now snapshots rather than
+holding the lock across a caller's predicate. They were just not this.
+
+_Original (incorrect) diagnosis, kept because the ruling-out is still useful:_
 
 `rd-npc` stops emitting ~1 s after boot and sits at **0.06% CPU** — a lock wait, not a spin. It
 does not recover. Reproduces with a single module (`bunny_fluffle` alone), so it is not a
