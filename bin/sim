@@ -92,10 +92,19 @@ cmd_test() { require_crate "$1"; local c="$1"; shift; log "test $c"; cargo_in "$
 
 # The path-dep source roots a crate's binary is built from — the stale-binary guard sweeps
 # these for files newer than the binary.
+#
+# `shared/content/src` belongs to every crate that EVALUATES the corpus (master, worker, npc —
+# not the orchestrator, which links no content). Leaving it out is how the worker ran for hours
+# against a loader that predated the corpus it was reading, then crash-looped the moment it was
+# restarted (shared-simulation I6): the guard's whole promise is "a failed build must not
+# silently run yesterday's code", and a shared crate is exactly where yesterday hides — nothing
+# in the consumer's own tree changed, so nothing looked stale.
 dep_roots() {
+  local common="server/st-bindings/src server/uplink/src shared/codec/src"
   case "$1" in
-    npc) echo "client/npc/src client/core/src shared/codec/src shared/dsl/src" ;;
-    *)   echo "$(crate_dir "$1")/src server/st-bindings/src server/uplink/src shared/codec/src" ;;
+    npc)          echo "client/npc/src client/core/src shared/codec/src shared/dsl/src shared/content/src" ;;
+    orchestrator) echo "$(crate_dir "$1")/src $common" ;;
+    *)            echo "$(crate_dir "$1")/src $common shared/content/src" ;;
   esac
 }
 

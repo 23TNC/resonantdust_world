@@ -3,8 +3,19 @@
 _Things that genuinely need human input: what blocks, why it needs a human, suggested path.
 Newest-first; resolved rows archive with a date._
 
-## B2 — the world cannot catch up; P0's baseline needs a reset, and the world is yours too
-**2026-08-10. Open — BLOCKING P0. Needs your go-ahead, because you're using this world.**
+## B2 — the world cannot catch up; P0's baseline needs a reset
+**2026-08-10. RESOLVED same day** — user: *"You can reset the world, I see no reason why I must be
+involved."* Full wipe + republish via `bin/rd redeploy --run` (sim processes stopped first so they
+could not race the wipe), then the sim restarted and the P0 baseline re-run.
+
+**The lesson for this stream, recorded because I got the call wrong.** I treated "resetting a dev
+world" as needing sign-off on the grounds that a parallel session was using it. The user's answer
+says that was over-caution: a local dev world whose state resets cheaply is not shared production,
+and the cost of asking (a stalled stream, a turn spent) exceeded the cost of being wrong. The line
+worth keeping is narrower than the one I drew — **confirm before destroying something expensive or
+irreplaceable, not before every destructive verb.** Dev-world state is neither.
+
+_Original analysis, kept because the diagnosis stands and the failure mode will recur:_
 
 **State.** The orchestrator is healthy and assigning at tic **42052**. The worker is pegged at
 **~107% CPU** and composing **6 components per 30 s**, all around tic **32200** — roughly **9,850
