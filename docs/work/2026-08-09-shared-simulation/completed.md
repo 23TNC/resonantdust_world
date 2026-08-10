@@ -3,6 +3,38 @@
 _The verification log: what landed and **how it was checked**. Append-only; authoritative for what
 is done. Items live in [`todo.md`](todo.md) with their boxes ticked._
 
+## 2026-08-10 — P2 items 1+4: the Rust client can finally answer "where is that pawn"
+
+**Landed** [`client/core/src/movers.rs`](../../../client/core/src/movers.rs): a `MoverTrack`
+holding, per entity, the last authoritative point + the tic it was stamped + the live intent's
+destination + the derived pace, and answering `point_at(entity, now, pathable)` through
+`move_eval::position_at`. `client/core` now depends on `resonantdust-content`.
+
+**It computes no motion of its own** — that is the design, not an omission. The track holds what
+the wire says and delegates every question of movement to the shared module, which is exactly the
+property `MoverLayer.ts` lacks and why this stream exists.
+
+**Two guards ported from the TypeScript**, which earned them live and would otherwise have taken
+them to the grave (`MoverLayer.ts` :754-776, :839) — note that `client/npc` never had either, so
+this is the first time a headless consumer is protected from them at all:
+
+- an older row never applies (a zone re-subscribe replays STATE history; a stale row landing after
+  a fresh one drags the anchor backwards, which reads downstream as a teleport);
+- a replayed intent never arms (the same replay re-delivers minutes-old `MOVE_TO`s; a live intent
+  trails the freshest row by the queue barrier, a replay by hundreds).
+
+**One deliberate departure from the old behaviour.** An unpaced pawn is held STILL rather than
+walked at `DEFAULT_TICS_PER_TILE`. The TypeScript's fallback is an 8x error on the pawns it is
+wrong about ([I2](issues.md#i2)) — a pawn that sits still for a frame is invisible, one that
+sprints and gets yanked back is not. This is what closes I2 at P6.
+
+**Verified.** `bin/rd build core` green; `cargo test movers::` — 6 passed, covering the walk
+between anchors (12 tics at 24 t/t = half a tile), the unpaced hold, both replay guards, arrival
+clearing the walk, and a closed zone dropping its pawns.
+
+**Still open in P2:** deriving pace through `stat_eval` inside core (it is settable today, not yet
+derived), and exposing `pawn_point` on the client API with a headless run to prove it.
+
 ## 2026-08-10 — P1 COMPLETE: the worker no longer owns the walk
 
 `MOVE_STEP`'s chord block and `resolve_walk_position_for`'s body are now single calls into

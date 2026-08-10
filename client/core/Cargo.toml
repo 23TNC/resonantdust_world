@@ -60,6 +60,9 @@ tracing = "0.1"
 # AND transitively inside the repo-root wasm build (shared/compose), so the path
 # must resolve on the real tree — `../../shared/codec`, not a container sibling.
 resonantdust-codec = { path = "../../shared/codec" }
+# The SHARED simulation rules (shared-simulation P2) — the mover track asks
+# `move_eval::position_at` where a walking pawn is; it computes no motion itself.
+resonantdust-content = { path = "../../shared/content" }
 
 # Native host transport, all gated behind the `native` feature. All current
 # environments speak plain ws:// / http:// (see config.rs), so NO TLS backend is
