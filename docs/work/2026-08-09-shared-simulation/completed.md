@@ -3,6 +3,21 @@
 _The verification log: what landed and **how it was checked**. Append-only; authoritative for what
 is done. Items live in [`todo.md`](todo.md) with their boxes ticked._
 
+## 2026-08-10 — P2c COMPLETE: npc's fold is gone; one model, both hosts
+
+Retried item 4 with [I9](issues.md#i9) fixed at the root. `WorldView::nearest_tile`/`nearest_thing`
+now hand the view **into** the predicate (`Fn(&WorldView, …)`), so a caller holding the view behind
+a lock cannot reach back through its own handle for a follow-up question. Re-entry no longer
+deadlocks because it no longer compiles — which is the version of that fix worth having.
+
+`Bot`'s `world` field and its four `Event::` fold arms are deleted; the accessors read
+`self.client.world()`. npc hands core the corpus at login. `grep -c 'self.world'` in
+`client/npc/src/lib.rs` is 0. Four brain predicates updated to take the view.
+
+`client/core` 42 passed, `client/npc` 3 passed, `bin/sim check npc` green.
+
+_Superseded: the first attempt and its revert._
+
 ## 2026-08-10 — P2c item 4 ATTEMPTED and REVERTED
 
 Deleting npc's fold and pointing its accessors at core's model **deadlocks** — the brain

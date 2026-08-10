@@ -417,7 +417,8 @@ impl Wolves {
         }
         // Otherwise walk to the nearest edible thing's OWN cell (meat is pathable) —
         // skipping food on impathable ground (lake meat: refused-forever, see cell_open).
-        let target = bot.nearest_thing(self.at, |cell, kind| {
+        // The view comes IN (I9) — see the bunny scan.
+        let target = bot.nearest_thing(self.at, |view, cell, kind| {
             self.cell_open(bot, cell) && self.usable_eat_kind(kind, now)
         });
         match target {
@@ -642,7 +643,7 @@ impl Wolves {
         // PATHABLE cell in the carrier's 3×3 by the tile mirror — deterministic pick
         // (nearest to the wolf, ties by (y, x)). All-water surroundings = no shore known;
         // leave the wolf to its wander, never a spin.
-        let target = bot.nearest_tile(self.at, |kind| self.usable_drink(kind, now).is_some());
+        let target = bot.nearest_tile(self.at, |_, kind| self.usable_drink(kind, now).is_some());
         match target {
             Some(t) => {
                 if self.drink_target != Some(t) || self.dest.is_none() {

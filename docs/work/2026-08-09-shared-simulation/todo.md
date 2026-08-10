@@ -172,7 +172,7 @@ them. **The fix is one read surface; the folds then move behind it.**
 - [x] Give core the corpus: fetch `/content` at login into an `Arc<Bundle>` on the engine.
       Acceptance: `derive_paces` and `pathable` no longer take a `&Bundle` argument from the host
       (`movers.rs:222`, `world_view.rs:140`).
-- [ ] Delete npc's hand-rolled fold — the `world` field (`lib.rs:267`) and the six `Event::` arms in
+- [x] Delete npc's hand-rolled fold — the `world` field (`lib.rs:267`) and the six `Event::` arms in
       `Bot::note` (`lib.rs:358-420`) become reads of the handle. Acceptance:
       `grep -c world_view::WorldView client/npc/src/lib.rs` is 0.
 

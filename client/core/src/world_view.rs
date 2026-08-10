@@ -150,12 +150,17 @@ impl WorldView {
 
     /// The nearest known tile (Chebyshev) whose composed kind satisfies `pred` — a brain's
     /// "where is the nearest water".
+    ///
+    /// The predicate is handed `&self`. That is not convenience: a caller holding this view
+    /// behind a lock would otherwise reach back through its own handle to ask a follow-up
+    /// question and **deadlock on a non-reentrant mutex** — which is exactly what happened when
+    /// npc first read core's model (I9). Passing the view in makes re-entry fail to compile.
     pub fn nearest_tile(
         &self,
         from: (i32, i32),
-        pred: impl Fn(u16) -> bool,
+        pred: impl Fn(&Self, u16) -> bool,
     ) -> Option<(i32, i32)> {
-        self.nearest(from, |v, at| v.tile_kind_at(at).is_some_and(&pred))
+        self.nearest(from, |v, at| v.tile_kind_at(at).is_some_and(|k| pred(v, k)))
     }
 
     /// The nearest known THING cell whose composed kind AND world cell satisfy `pred`.
@@ -163,12 +168,13 @@ impl WorldView {
     /// The CELL is in the predicate on purpose: a brain must be able to refuse UNREACHABLE food
     /// (a drowned pawn's meat in the lake). The worker refuses impathable destinations, and a
     /// brain that keeps picking one oscillates forever between the refusal and its wander.
+    /// The predicate is handed `&self` for the reason [`WorldView::nearest_tile`] gives.
     pub fn nearest_thing(
         &self,
         from: (i32, i32),
-        pred: impl Fn((i32, i32), u16) -> bool,
+        pred: impl Fn(&Self, (i32, i32), u16) -> bool,
     ) -> Option<(i32, i32)> {
-        self.nearest(from, |v, at| v.thing_kind_at(at).is_some_and(|k| pred(at, k)))
+        self.nearest(from, |v, at| v.thing_kind_at(at).is_some_and(|k| pred(v, at, k)))
     }
 
     /// Shared scan over every streamed cell, Chebyshev-nearest wins. Ties break on the lowest
@@ -289,8 +295,8 @@ mod tests {
         for (x, y) in [(5u8, 5u8), (5, 7)] {
             v.observe_thing(0, obj::pack_tile_reference(x, y), 0x50);
         }
-        assert_eq!(v.nearest_thing((5, 6), |_, k| k == 5), Some((5, 5)), "equidistant → lowest (x,y)");
-        assert_eq!(v.nearest_thing((5, 9), |_, k| k == 5), Some((5, 7)));
-        assert_eq!(v.nearest_thing((5, 6), |_, k| k == 99), None);
+        assert_eq!(v.nearest_thing((5, 6), |_, _, k| k == 5), Some((5, 5)), "equidistant → lowest (x,y)");
+        assert_eq!(v.nearest_thing((5, 9), |_, _, k| k == 5), Some((5, 7)));
+        assert_eq!(v.nearest_thing((5, 6), |_, _, k| k == 99), None);
     }
 }

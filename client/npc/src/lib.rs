@@ -107,6 +107,11 @@ pub async fn run_host(config: ClientConfig, host_name: &str, spec: &[(String, (i
         Some(url) => fetch_corpus(url).await.ok(),
         None => None,
     };
+    // shared-simulation P2c: core answers nothing DERIVED until it holds the corpus — pace,
+    // pathability and every stat read through it.
+    if let Some(b) = bundle.as_ref() {
+        world.client.set_corpus(std::sync::Arc::new(b.clone()));
+    }
     let mut modules: Vec<HostModule> = Vec::new();
     for (name, center) in spec {
         let Some(session) = Bot::login(config.clone(), name).await else {
@@ -259,12 +264,6 @@ pub struct Bot {
     /// engine's LEARNED rate estimate (never raw `TIC_HZ`), stamped at event receipt. Feeds
     /// [`Bot::now_tic`], which is what lets a brain evaluate lazy needs (needs-moodlets F4).
     tic_anchor: Option<(u16, std::time::Instant, f64)>,
-    /// The composed WORLD VIEW — baseline tiles ⊕ overlays ⊕ the thing layer — now owned by
-    /// [`client::world_view::WorldView`] in `client/core` (shared-simulation P2b). The Bot held
-    /// its own copy of all three maps, and `client/webgl` held a SECOND copy in TypeScript; the
-    /// accessors below are thin delegations so there is one composed view for every host, as
-    /// core's intent doc always specified.
-    world: client::world_view::WorldView,
     /// Known PAWN positions (npc-host F11): `entity → world tile`, from `StateObject`
     /// events (removed = gone). What a hosted brain adopts from when the OWNERSHIP frame
     /// loses the race against a resting pawn's one-shot snapshot replay.
@@ -285,7 +284,6 @@ impl Bot {
             paused: false,
             server_url: None,
             tic_anchor: None,
-            world: client::world_view::WorldView::new(),
             pawns: std::collections::HashMap::new(),
         };
         if bot.client.login(name).is_err() {
@@ -376,47 +374,6 @@ impl Bot {
             // The known-zone tile map (interactions P4). Layer 0 is the ground baseline; a
             // zone streams ONE ROW PER BIOME (subtype), each carrying only its own cells —
             // so rows MERGE cell-wise, nonzero winning (seen live: zone 99 = 3 rows).
-            Event::ColdTiles { macro_position, layer_id: 0, tiles, .. } => {
-                self.world.observe_cold_tiles(*macro_position, 0, tiles);
-            }
-            // The known-zone THING baselines (food-chain F8): sparse kind_pos entries.
-            Event::ColdThings { macro_position, things, .. } => {
-                use resonantdust_codec::object as obj;
-                for &kp in things {
-                    let cell = ((kp >> 8) & 0xff) as u8; // tile_reference byte
-                    let kr = obj::kind_pos_ref_kind_reference(kp);
-                    self.world.observe_thing_baseline(*macro_position, cell, kr);
-                }
-            }
-            Event::ColdState {
-                macro_position,
-                position_reference,
-                definition_reference,
-                removed,
-                ..
-            } => {
-                use resonantdust_codec::object as obj;
-                let cell = (obj::position_micro(*position_reference) >> 8) as u8;
-                if obj::def_type_id(*definition_reference) == obj::TYPE_BIOME_TILE {
-                    if *removed {
-                        self.world.remove_tile_overlay(*macro_position, cell);
-                    } else {
-                        self.world.observe_tile_overlay(
-                            *macro_position,
-                            cell,
-                            obj::def_kind_reference(*definition_reference),
-                        );
-                    }
-                }
-                if obj::def_type_id(*definition_reference) == obj::TYPE_BIOME_THING {
-                    // An override WINS the cell; kind 0 stored = suppressed (F8).
-                    let kr = if *removed { 0 } else { obj::def_kind_reference(*definition_reference) };
-                    self.world.observe_thing(*macro_position, cell, kr);
-                }
-            }
-            Event::ZoneClosed { macro_position } => {
-                self.world.forget_zone(*macro_position);
-            }
             _ => {}
         }
     }
@@ -424,20 +381,24 @@ impl Bot {
     /// The composed `kind_id` (baseline ⊕ overlay) of the known tile at world `at`, or
     /// `None` if its zone hasn't streamed.
     pub fn tile_kind_at(&self, at: (i32, i32)) -> Option<u16> {
-        self.world.tile_kind_at(at)
+        self.client.world().lock().ok()?.world.tile_kind_at(at)
     }
 
     /// The nearest known tile (Chebyshev, world coords) whose composed `kind_id`
     /// (baseline ⊕ overlay) satisfies `pred` — the brain's "nearest water" scan
     /// (interactions P4). `None` while no zone has streamed or nothing matches.
-    pub fn nearest_tile(&self, from: (i32, i32), pred: impl Fn(u16) -> bool) -> Option<(i32, i32)> {
-        self.world.nearest_tile(from, pred)
+    pub fn nearest_tile(
+        &self,
+        from: (i32, i32),
+        pred: impl Fn(&client::world_view::WorldView, u16) -> bool,
+    ) -> Option<(i32, i32)> {
+        self.client.world().lock().ok()?.world.nearest_tile(from, pred)
     }
 
     /// The composed THING kind_id at world `at` (food-chain F8) — baseline ⊕ overrides,
     /// kind-0 suppressed. `None` = empty cell or an unstreamed zone.
     pub fn thing_kind_at(&self, at: (i32, i32)) -> Option<u16> {
-        self.world.thing_kind_at(at)
+        self.client.world().lock().ok()?.world.thing_kind_at(at)
     }
 
     /// The nearest known THING (Chebyshev, world coords) whose composed kind_id AND world
@@ -448,9 +409,9 @@ impl Bot {
     pub fn nearest_thing(
         &self,
         from: (i32, i32),
-        pred: impl Fn((i32, i32), u16) -> bool,
+        pred: impl Fn(&client::world_view::WorldView, (i32, i32), u16) -> bool,
     ) -> Option<(i32, i32)> {
-        self.world.nearest_thing(from, pred)
+        self.client.world().lock().ok()?.world.nearest_thing(from, pred)
     }
 
     /// A known pawn's world tile, or `None` if it never streamed (or was removed).

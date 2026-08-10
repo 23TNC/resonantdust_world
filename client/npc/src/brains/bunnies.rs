@@ -320,7 +320,7 @@ impl Bunnies {
                 }
             }
             if let Some(t) =
-                bot.nearest_tile(at, |kind| self.usable_drink(id, kind, now).is_some())
+                bot.nearest_tile(at, |_, kind| self.usable_drink(id, kind, now).is_some())
                     .filter(|c| self.in_area(*c))
             {
                 let pathable = |c: (i32, i32)| {
@@ -375,11 +375,13 @@ impl Bunnies {
             }
             // Skip food on impathable ground (lake drops) — the worker would refuse the
             // trip forever and the bunny would oscillate (the wolves' cell_open rule).
-            if let Some(t) = bot.nearest_thing(at, |cell, kind| {
+            // The view comes IN (I9): asking `bot` for the tile here would re-enter the lock
+            // this query already holds, and a non-reentrant mutex answers that by hanging.
+            if let Some(t) = bot.nearest_thing(at, |view, cell, kind| {
                 if !self.in_area(cell) {
                     return false;
                 }
-                bot.tile_kind_at(cell)
+                view.tile_kind_at(cell)
                     .is_none_or(|k| self.bundle.as_ref().is_none_or(|b| b.tile_pathable(k)))
                     && self.usable_eat(id, kind, now).is_some()
             }) {
