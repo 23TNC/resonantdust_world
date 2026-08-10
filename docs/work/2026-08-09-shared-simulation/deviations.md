@@ -4,6 +4,36 @@ _Where the code departs from the plan (`components/<c>/{design,intent}`). Rows: 
 plan says · what the code does · why · fix/status. Log at the moment of deviating; also log one
 you find._
 
+## D2 — `client/core`'s own intent doc already says webgl should be dumb
+**2026-08-10 · found · OPEN → P2b.**
+
+**What the plan says.** [`docs/components/client/core/intent/client.md`](../../components/client/core/intent/client.md):
+*"The **client** is the game client as a headless Rust library — **all logic, no rendering**...
+`pixijs` will later become a **dumb display** layered over it (via a wasm/FFI shim), and other Rust
+programs can drive it the same way. **There is one contract for every host.**"*
+
+**What the code does.** There is no one contract. `client/npc` builds a composed world view in
+Rust; `client/webgl` builds a second one in TypeScript; `client/core` holds neither. Same for the
+walk (D1). Both hosts re-implement the logic core was specified to own.
+
+**Why this matters more than D1.** I went looking for a reason NOT to pull the world view into
+core — a documented decision that core is a transport layer, some cost that made it wrong. There
+is none, and the opposite is written down. Two supporting facts:
+
+- **Core is not stateless and never was.** `ZoneManager` alone holds seven maps of subscription
+  state, plus the tic estimate and the session. Retaining a composed world view is consistent with
+  what core already is.
+- **Moving it REMOVES a cost rather than adding one.** `findChords` currently takes a `cells` grid
+  that webgl builds and copies across the JS↔wasm boundary on every call
+  (`MoverLayer.ts:709-715`). With the view in core, wasm reads it directly and the copy disappears.
+
+**One distinction to preserve, not collapse.** `WorldBridge` conflates two things: the composed
+*model* (what kind is at this cell, is it pathable — simulation, the server must agree) and the
+*prim cache* (what is drawn there — presentation, per F2's line). Core takes the model. Webgl keeps
+the prim cache as a **derived view** of it, not a second source of truth.
+
+**Fix/status.** OPEN — [P2b](todo.md), four items, ahead of P4.
+
 ## D1 — the client's simulation lives in the presentation layer
 **2026-08-09 · found, not introduced this stream · OPEN → the whole stream is the fix.**
 
