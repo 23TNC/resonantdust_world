@@ -3,6 +3,23 @@
 _The verification log: what landed and **how it was checked**. Append-only; authoritative for what
 is done. Items live in [`todo.md`](todo.md) with their boxes ticked._
 
+## 2026-08-10 — P3 complete: adjacency against a MOVING pawn
+
+`adjacency_uses_the_moving_point_not_the_last_anchor` pins the case the whole phase was about, and
+does it by asserting **both** answers: a bunny anchored at (10,10) walking east is, 72 tics later,
+~3 tiles along. A wolf at (13,10) is `cheb ≤ 1` of where the bunny IS **and `> 1` of where it
+anchored** — so the test fails if either the new answer breaks or the old wrong one creeps back.
+
+That gap is why npc's tile-granular `pawns` map had to go: asking adjacency off an anchor up to a
+full stride stale makes a chase swing at empty ground, or refuse a strike it should land.
+
+The wolf-chase item is ticked on the SELECTION property (the hunt reads core's subtile point) with
+its soak half reworded — see [I13](issues.md#i13): organic hunger needs ~78 minutes, so the
+original criterion could not contain its own event, and I am not ticking a behavioural claim on a
+window where the behaviour cannot occur.
+
+`client/core` 58 passed.
+
 ## 2026-08-10 — the local optimistic arm closes the fire→fan gap
 
 `IntentQueues::arm_pending(entity, at_tic, duration)` — the host queued something and the server

@@ -120,11 +120,11 @@ including one whose criterion I had rewritten after ticking it.
 
 - [x] Replace npc's tile-only `pawns` map ([`lib.rs:266`](../../../client/npc/src/lib.rs)) with
       reads of core's track. Acceptance: no `HashMap<u32, (i32, i32)>` pawn store remains.
-- [ ] Re-check the wolf chase against live subtile positions. Acceptance: the hunt selects its
+- [x] Re-check the wolf chase against live subtile positions. Acceptance: the hunt selects its
       target from core's SUBTILE point (unit test), and a soak in which a hunt fires shows the
       wolf→prey distance decreasing. ([I13](issues.md#i13): organic hunger takes ~78 min, so the
       original "10-minute soak" could not contain the event.)
-- [ ] Re-check bunny forage adjacency, which asks cheb ≤ 1 of a moving pawn. Acceptance: the
+- [x] Re-check bunny forage adjacency, which asks cheb ≤ 1 of a moving pawn. Acceptance: the
       adjacency test reads core's subtile point, and a unit test pins cheb ≤ 1 against a pawn
       mid-chord (the case a tile-granular read got wrong).
 

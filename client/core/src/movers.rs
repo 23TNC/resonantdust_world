@@ -334,6 +334,34 @@ mod tests {
         assert_eq!(t.point_at(1, 900), Some((12.0, 10.0)));
     }
 
+    /// **Adjacency against a pawn MID-CHORD** — the case a tile-granular read got wrong, and the
+    /// reason npc's own `pawns` map had to go (P3).
+    ///
+    /// A walking pawn's last anchor can be a full stride behind it. Asking "is the wolf within
+    /// cheb 1 of the bunny" off that anchor answers about where the bunny WAS, so a chase either
+    /// swings at empty ground or refuses a strike it should land. Core's point moves between
+    /// anchors, so the same question answers about where it IS.
+    #[test]
+    fn adjacency_uses_the_moving_point_not_the_last_anchor() {
+        let corpus = corpus();
+        let mut t = MoverTrack::new();
+        // A bunny anchored at (10,10), walking east to (20,10) at 24 tics/tile.
+        t.observe_state(1, 0, 0, (10.0, 10.0), 0, 100, &open(), Some(&corpus));
+        t.movers.get_mut(&1).unwrap().pace = Some(24.0);
+        t.observe_intent(1, (20.0, 10.0), 101, &open(), Some(&corpus));
+
+        let anchor = (10.0, 10.0);
+        let cheb = |a: (f64, f64), b: (f64, f64)| (a.0 - b.0).abs().max((a.1 - b.1).abs());
+
+        // 72 tics later it has walked 3 tiles. A wolf standing at (13,10) is ADJACENT to where
+        // the bunny is, and 3 tiles from where it anchored.
+        let now = t.point_at(1, 172).unwrap();
+        let wolf = (13.0, 10.0);
+        assert!((now.0 - 13.0).abs() < 0.05, "expected ~3 tiles walked, got {now:?}");
+        assert!(cheb(wolf, now) <= 1.0, "core's point says adjacent");
+        assert!(cheb(wolf, anchor) > 1.0, "the anchor says 3 tiles away — the old wrong answer");
+    }
+
     /// A zone leaving the subscription sends no per-entity delete.
     #[test]
     fn a_closed_zone_drops_its_pawns() {
