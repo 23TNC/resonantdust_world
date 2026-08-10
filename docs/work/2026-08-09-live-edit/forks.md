@@ -119,3 +119,31 @@ inspector right, watch it against a live pawn, then make it an editor.
 
 Rejected: building set-a-need-value now (needs the SET_NEED verb, a permission story, and a
 correct read surface first — three streams' worth in one).
+
+## F1 — RESOLVED by the spike: candidate A, with a hard constraint
+
+2026-08-09, measured in the live client. The question was whether a second `Viewport` (and
+therefore a second WebGL2 context, with every atlas page resident twice) is affordable, or whether
+the preview wants a purpose-built object surface instead.
+
+**The numbers.** Requesting extra WebGL2 contexts one at a time, checking the world viewport's
+context after each: it survived 15 and was **evicted at the 16th**. Every request was *granted* —
+the browser never refused, it silently took the oldest instead, which is exactly the failure mode
+[I1](issues.md#i1) predicted: the world goes blank and nothing throws. (An unbounded first pass
+that made 20 at once killed it outright, twice, and needed a reload each time.)
+
+**Verdict: A — one extra `Viewport` — with the constraint that there is exactly ONE, for the
+app's lifetime.** At a cap of 16, a single additional context is comfortably safe; what is *not*
+safe is creating one per panel open. So the preview's viewport is created lazily on first `/edit`
+and **reused forever** — never re-created on open, never destroyed on close. A leak here does not
+degrade gracefully; it blanks the game on the sixteenth `/edit`.
+
+A wins on the merits given that constraint: zoom and pan come free from the existing `Camera`, the
+world renders correctly by construction, and it cannot drift from the real renderer — which B, a
+second partial implementation of drawing, inevitably would.
+
+**Left unmeasured, and worth knowing:** texture residency. A second `Viewport` has its own
+`TextureResolver` and atlas pages, so the memory cost is real and was not quantified here — the
+spike answered the question that could kill the app, not the one that merely costs RAM. If the
+preview turns out to be heavy, sharing the resolver across contexts is impossible (it is bound to
+its GL context), so the fallback remains B.

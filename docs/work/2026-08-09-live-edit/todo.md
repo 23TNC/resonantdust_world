@@ -66,7 +66,7 @@ week of work.
 
 ## P5 — the preview
 
-- [ ] SPIKE: instantiate a second `Viewport`, measure context creation, texture residency and
+- [x] SPIKE: instantiate a second `Viewport`, measure context creation, texture residency and
       frame cost, and check repeated open/close for context leaks (F1/I1). Acceptance: numbers in
       completed.md and a recorded decision between A and B.
 - [ ] Build the preview per the spike's verdict, centred above the tabs, showing the selected

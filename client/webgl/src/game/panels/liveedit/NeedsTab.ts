@@ -76,13 +76,18 @@ export class NeedsTab implements LiveEditTab {
       bar.style.cssText =
         `width:${(fill(n) * 100).toFixed(1)}%;height:100%;background:${hex(n.color)};`;
       track.appendChild(bar);
-      track.title = `${n.value} / ${n.min}..${n.max}`;
+      // Spell the unit out on hover: "/h" is doing a lot of work for two characters, and
+      // "is that per tic?" is the first thing anyone asks (user, 2026-08-09).
+      track.title =
+        `${n.label}: ${n.value.toFixed(1)} of ${n.min}..${n.max}\n` +
+        `${formatRate(n.rate)} — ${(n.rate * TICS_PER_HOUR).toFixed(2)} units per wall-clock hour`;
 
       const rate = document.createElement("span");
       rate.style.cssText =
         "flex:0 0 auto;min-width:calc(var(--ui-row) * 2.4);text-align:right;" +
         `font-variant-numeric:tabular-nums;color:${n.rate < 0 ? RATE_DOWN : RATE_UP};`;
       rate.textContent = formatRate(n.rate);
+      rate.title = `${(n.rate * TICS_PER_HOUR).toFixed(2)} units per wall-clock hour`;
 
       row.append(label, track, rate);
       this.element.appendChild(row);

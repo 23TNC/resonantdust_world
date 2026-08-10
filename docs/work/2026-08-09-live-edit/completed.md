@@ -110,3 +110,28 @@ chip for those errors is now redundant.
 **Verified live**: the needs tab shows `Thirst [100%] -100/h`, `Hunger [100%] -50.0/h`,
 `Corpus [0%] -12.0/h` — bars in the authored blue / amber / red, rates red for losing, tooltips
 carrying the raw `value / min..max`. Traits, conditions and emotions all still render.
+
+## 2026-08-09 — P5 spike: the preview's verdict
+
+Measured rather than guessed, per [F1](forks.md#f1) — and the measurement was worth it, because
+the answer is a constraint rather than a yes/no.
+
+Requesting extra WebGL2 contexts one at a time and checking the world viewport's context after
+each: it survived 15 and was **evicted at the 16th**. Every request was granted; the browser never
+refused. That is I1's predicted failure exactly — the world goes blank and nothing throws. A first,
+unbounded pass that created 20 at once killed the world's context outright and needed a reload.
+
+**Decision: candidate A (one extra `Viewport`), constrained to exactly ONE for the app's
+lifetime** — created lazily on first `/edit`, reused forever, never re-created per open. One extra
+context against a cap of 16 is comfortably safe; a per-open leak blanks the game on the sixteenth
+`/edit`. A wins on merit under that constraint: zoom and pan come free from `Camera`, the world
+renders correctly by construction, and it cannot drift from the real renderer the way a second
+partial implementation would.
+
+Texture residency is the cost this spike did **not** quantify — it answered the question that can
+kill the app, not the one that merely costs RAM. Recorded as the open risk, with B as the fallback
+if the preview proves heavy.
+
+Also this pass: the needs bar and rate gained hover tooltips spelling the unit out in words
+("units per wall-clock hour") — `/h` is doing a lot of work for two characters, and "is that per
+tic?" was the first question asked of it.
