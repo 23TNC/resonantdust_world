@@ -2,6 +2,23 @@
 
 _Problems hit, candidate solutions, which we chose and why. Chronological append._
 
+## I11 — the unstreamed-cell rule, pinned; and the divergence it was written against
+**2026-08-10. Resolved for the clients; the worker never had the question.**
+
+**The law: an UNSTREAMED cell is PATHABLE.** One named constant,
+`world_view::UNKNOWN_CELL_IS_PATHABLE`, with the behaviour pinned through `pathable()` itself
+(`pathable_reads_an_unstreamed_cell_as_open`) rather than by asserting the constant equals itself.
+
+A client only knows the zones it subscribed. Treating an unseen cell as a wall would stop every
+pawn pathing toward anything beyond its own streamed window — worse and wronger than occasionally
+routing into something the server then clamps, which is a case the worker already handles.
+
+**On the divergence the plan item assumed.** P2b's item said "the client reads unknown as OPEN, the
+worker does not". That premise is false: the worker's own probe reads an unknown cell as open too
+(`server/worker/src/main.rs`), because its view comes from the DB and "unknown" barely arises.
+The real divergence was between the two CLIENTS — npc and webgl each answered it separately —
+and that is closed by both now reading `WorldView::pathable`.
+
 ## I10 — `next_hop`'s RECENTER branch has no reachable test and may be dead
 **2026-08-10. Open — found while closing the tick audit's P1 finding.**
 

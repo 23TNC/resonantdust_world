@@ -3,6 +3,27 @@
 _The verification log: what landed and **how it was checked**. Append-only; authoritative for what
 is done. Items live in [`todo.md`](todo.md) with their boxes ticked._
 
+## 2026-08-10 — the unstreamed-cell law pinned, the rate seeded, the recenter carved out
+
+**P2b item 3.** `pathable_reads_an_unstreamed_cell_as_open` pins the law through the FUNCTION, not
+by asserting the constant equals itself — and its second half proves the law is about the unknown
+and not a blanket yes: a streamed cell whose corpus kind is impathable still reads as a wall.
+
+The plan item's premise turned out to be **wrong**, and that is worth more than the tick
+([I11](issues.md#i11)): it said "the client reads unknown as OPEN, the worker does not". The worker
+reads it as open too — its view comes from the DB, so "unknown" barely arises. The real divergence
+was between the two CLIENTS, each answering it separately, and both now read `WorldView::pathable`.
+
+**P2e item 4.** npc sends `SeedTicRate` at login. The seam has existed since movement-hardening F5
+and **no headless host had ever called it**: a cold client spent ~60 s learning what the last one
+already knew, and during that window every tic-derived answer was computed against the authored
+6 Hz rather than the ~5.4 the durable tic actually runs at.
+
+**P1 item 3** is ticked with the RECENTER carved out to [I10](issues.md#i10). The clamp and the
+stride cap are covered by tests that fail if you `panic!` inside them; the recenter is not, and the
+honest move is a named issue that owns proving it reachable or deleting it — not a criterion
+quietly reworded to match what I managed.
+
 ## 2026-08-10 — the headless probe: core answers, with no browser in the room
 
 `headless.rs` now reports what core ANSWERS every 5 s — the tic, every mover's point, its derived

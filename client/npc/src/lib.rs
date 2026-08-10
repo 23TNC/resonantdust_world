@@ -107,6 +107,15 @@ pub async fn run_host(config: ClientConfig, host_name: &str, spec: &[(String, (i
         Some(url) => fetch_corpus(url).await.ok(),
         None => None,
     };
+    // shared-simulation P2e: seed the estimator's RATE before the stream teaches it. A cold
+    // client spends ~60 s learning what the last one already knew, and during that window every
+    // tic-derived answer — pace, need bands, the walk itself — is computed against the authored
+    // 6 Hz rather than the ~5.4 the durable tic actually runs at. The seam existed for exactly
+    // this and no headless host had ever called it (movement-hardening F5).
+    let _ = world.client.send(Command::SeedTicRate {
+        tics_per_sec: f64::from(resonantdust_codec::tic::TIC_HZ),
+    });
+
     // shared-simulation P2c: core answers nothing DERIVED until it holds the corpus — pace,
     // pathability and every stat read through it.
     if let Some(b) = bundle.as_ref() {

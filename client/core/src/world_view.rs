@@ -216,6 +216,12 @@ mod tests {
     use resonantdust_codec::object as obj;
 
     /// Zone 0's origin is (0,0); fill it with `kind_reference` `kr` everywhere.
+    fn corpus() -> resonantdust_content::loader::Bundle {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
+        let src = resonantdust_content::content::read_content_dir(&root).expect("content/");
+        resonantdust_content::load(&src).expect("corpus loads")
+    }
+
     fn zone0(kr: u16) -> WorldView {
         let mut v = WorldView::new();
         v.observe_cold_tiles(0, 0, &vec![kr; 256]);
@@ -272,6 +278,24 @@ mod tests {
         let v = zone0(0x10);
         assert_eq!(v.tile_kind_at((999, 999)), None);
         assert!(UNKNOWN_CELL_IS_PATHABLE, "the law both hosts must now share");
+    }
+
+    /// The unstreamed-cell law through the FUNCTION, not the constant. Asserting
+    /// `UNKNOWN_CELL_IS_PATHABLE` only restates its own definition; this pins the behaviour a
+    /// caller actually gets, which is the thing two hosts could disagree about.
+    #[test]
+    fn pathable_reads_an_unstreamed_cell_as_open() {
+        let bundle = corpus();
+        let v = WorldView::new(); // nothing streamed at all
+        assert!(v.pathable(&bundle, 999, 999), "an unseen cell must not read as a wall");
+        // The law is about the UNKNOWN, not a blanket yes: a STREAMED cell is judged on its
+        // corpus flags. Find a kind the corpus calls impathable and prove it still says no.
+        let blocked = (1u16..=64)
+            .find(|&k| !bundle.tile_pathable(k))
+            .expect("the corpus authors at least one impathable tile");
+        let mut v2 = WorldView::new();
+        v2.observe_cold_tiles(0, 0, &vec![blocked << 4; 256]);
+        assert!(!v2.pathable(&bundle, 3, 3), "a streamed impathable cell must read as a wall");
     }
 
     /// A zone leaving the subscription takes its overlays and things with it, or the view

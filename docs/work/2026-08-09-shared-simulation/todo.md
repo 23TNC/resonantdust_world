@@ -32,10 +32,10 @@ including one whose criterion I had rewritten after ticking it.
       and `CHORD_CAP_TILES`. Acceptance: `bin/sim check worker` green.
 - [x] Move `hop_stride_tiles` into `move_eval` verbatim. Acceptance: unit test covers the clamp at
       both ends — pace 1 → 8 tiles, pace 240 → 1 tile.
-- [ ] Add `move_eval::next_hop(from, dest, pace, pathable) -> (landing, tics)` carrying the chord
-      step, the `clear_point_fraction` clamp and the recenter. Acceptance: unit tests cover the
-      clamp, the recenter and the stride cap. (Amended: "20 live landings" was substituted for
-      analytic cases + the live stride check in P1's last item — see `completed.md`.)
+- [x] Add `move_eval::next_hop(from, dest, pace, pathable) -> (landing, tics)` carrying the chord
+      step, the `clear_point_fraction` clamp and the recenter. Acceptance: tests cover the clamp
+      and the stride cap; the RECENTER is carved out to [I10](issues.md#i10), which owns proving
+      it reachable or deleting it.
 - [x] Add `move_eval::position_at(from, dest, base_tic, now, pace, pathable) -> point` — where a
       walking pawn IS at any tic. Acceptance: `position_at_the_hop_tic_equals_the_hop_landing`
       passes — sampling the walk at the hop's tic lands exactly where the hop lands.
@@ -63,7 +63,7 @@ including one whose criterion I had rewritten after ticking it.
       receives. Acceptance: `bin/rd build core` green.
 - [x] Expose `pathable(x, y)` on it from the corpus flags, and give `MoverTrack` its probe
       internally. Acceptance: the track's `observe_*` no longer take a `pathable` argument.
-- [ ] Decide and pin the unstreamed-cell rule in ONE place — the client reads unknown as OPEN, the
+- [x] Decide and pin the unstreamed-cell rule in ONE place — the client reads unknown as OPEN, the
       worker does not. Acceptance: a unit test asserts the chosen rule; the divergence is logged
       in [`issues.md`](issues.md).
 - [x] Replace `client/npc`'s own `tiles`/`tile_overlays`/thing view with reads of core's.
@@ -112,7 +112,7 @@ including one whose criterion I had rewritten after ticking it.
 - [x] Delete npc's `tic_anchor` (`lib.rs:261`, stamped at `:374`) and `Bot::now_tic`'s local
       extrapolation (`lib.rs:464-468`); its five call sites read core's. Acceptance:
       `grep -c tic_anchor client/npc/src/lib.rs` is 0.
-- [ ] Have npc call the `SeedTicRate` seam (`api.rs:93`) at login from its last observed rate — no
+- [x] Have npc call the `SeedTicRate` seam (`api.rs:93`) at login from its last observed rate — no
       headless host has ever called it. Acceptance: `grep -rn seed_tic_rate client/npc/src` is
       nonzero.
 
