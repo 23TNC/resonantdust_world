@@ -13,6 +13,13 @@
 
 use std::collections::HashMap;
 
+/// How long a phase-1 (walking) entry may hold a pawn busy before it is treated as stale.
+///
+/// A walk fans no end tic, so without a bound "walking" is forever. 600 tics is 100 s at 6 Hz —
+/// far longer than any single chord at the slowest authored pace, short enough that a missed
+/// completion costs a pawn one wander cycle rather than the rest of the session.
+const WALK_STALE_TICS: u16 = 600;
+
 /// One committed entry in a pawn's queue.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct QueueEntry {
@@ -103,7 +110,14 @@ impl IntentQueues {
             }
         }
         self.entries(entity).iter().any(|e| match e.phase {
-            1 => true,
+            // A walk fans no end tic, so it is bounded by WALK_STALE_TICS from its start rather
+            // than held forever. Unbounded, a missed completion wedges the pawn for the rest of
+            // the session — observed live: ten adopted bunnies, every one busy on a walk the
+            // server had finished, zero orders issued (I14).
+            1 => !resonantdust_codec::tic::tic_after(
+                now,
+                e.started_tic.wrapping_add(WALK_STALE_TICS),
+            ),
             _ => !resonantdust_codec::tic::tic_after(now, e.fire_tic),
         })
     }
@@ -148,6 +162,16 @@ mod tests {
         q.observe(1, 100, &entry(9, 1, 100, 0));
         assert!(q.busy(1, 500), "phase 1 is busy regardless of fire_tic");
         assert_eq!(q.fires_at(1), None, "a walk has no completion tic to report");
+    }
+
+    /// The wedge: a walking entry with no completion fan must not hold a pawn forever. Ten live
+    /// bunnies sat idle on exactly this, each waiting on a walk the server had finished.
+    #[test]
+    fn a_stale_walking_entry_stops_holding_the_pawn() {
+        let mut q = IntentQueues::new();
+        q.observe(1, 100, &entry(9, 1, 100, 0));
+        assert!(q.busy(1, 200), "inside the window it is genuinely walking");
+        assert!(!q.busy(1, 100 + WALK_STALE_TICS + 1), "past it, the pawn is released");
     }
 
     /// A running entry is busy until its fire tic, and idle after.

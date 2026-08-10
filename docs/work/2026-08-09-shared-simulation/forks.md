@@ -47,6 +47,49 @@ Git holds the history. This follows the tree-wide delete-don't-deprecate posture
 buys is bought instead by phase order: core's track lands and is proven headless (P2/P3) before
 webgl's copy is removed (P4).
 
+## F9 — the client gets NO opinion: server-issued chords replace shared speculation
+**2026-08-10. User's direction, and it supersedes this stream's central premise.**
+
+This stream assumed the fix for "two implementations of the walk" is *one* implementation both
+sides run. The user's position is stronger and I think correct:
+
+> "The client MUST ALWAYS display what the server thinks is true... If the client fails to do its
+> job, that's fine — the pawn just becomes idle 80 tiles short, which is the correct state for
+> that pawn. What we have now is the client trying to guess what the server is going to say."
+
+**A shared rule still leaves the client predicting.** Two extrapolators agreeing is a property that
+must be re-earned on every edit; two endpoints and a lerp is a property that cannot break. Every
+movement defect this stream measured — the reseed drift, the chase snaps, `walkGreedy`'s Chebyshev
+step, the retracted 2× — is an extrapolation defect. The design deletes the category rather than
+policing it.
+
+The second half matters as much: **rooting motion to server-issued straight lines bounds the
+failure mode.** A client that falls behind skips forward along a path the server also believes in,
+instead of teleporting from a route only it computed.
+
+**The design** (user, 2026-08-10):
+- The server returns CHORDS — straight segments that cross no impathable tile. Each carries a
+  source position/tic and a destination position/tic, so the client interpolates between two known
+  points and never derives a pace.
+- Queue depth doubles (`INTENT_CAP` 5 → 10). The server queues at most N; the client displays
+  N/2+1 (the running event plus half the queue) and re-requests once its queue drops below that.
+  A request needing more than N chords is truncated; the client re-requests as it drains.
+- **A CANCEL verb** — the missing formal interrupt, and the thing that makes this safe. It clears
+  the queue and has the worker resolve the pawn's position from the tic and place it there. A new
+  player order issues cancel first. This is what I proposed as "truncate the active chord", done
+  properly as an operation rather than a special case.
+- **World change issues interrupts**: a worker changing a tile knows which pathfinding operations
+  are live on it and cancels them; clients then see a short queue and re-request. Server-side
+  re-queue is an optional latency optimisation, not a correctness requirement.
+- **Chase is deferred** — intercept chords are their own problem and want a stable system first.
+
+**What survives from this stream:** the read surface, `ClientWorld`, `GameplayRows`, one clock,
+`IntentQueues` (now the movement protocol rather than a side channel), the composed world view for
+rendering, and the render chase — which gets *more* useful, since "arrive at the stated tic" is
+exactly what it already does. **What it supersedes:** client-side pathfinding, `position_at`'s
+extrapolation, the pace derivation for movement, and the P3b ETA/busy machinery I was mid-fight
+with — bounding a walk the client inferred stops being a problem when the walk arrives stamped.
+
 ## F8 — a WALK counts as busy, and that reduced the order rate on purpose
 **2026-08-10.** `IntentQueues::busy` treats a phase-1 (walking) entry as committed. Wiring the
 brains onto it dropped observed move intents to roughly a third of the wall-clock guess's rate,

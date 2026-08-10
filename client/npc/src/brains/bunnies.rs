@@ -526,9 +526,16 @@ impl Brain for Bunnies {
                 // once at subscribe and may beat this frame — adopt from the world model's
                 // position map so ownership arriving second still lands the mind.
                 if !self.minds.contains_key(entity_reference) {
-                    if let Some(at) = _bot.pawn_at(*entity_reference) {
+                    // Ownership is the FACT; position is a detail that arrives whenever. This
+                    // used to refuse to adopt until `pawn_at` answered, which silently emptied
+                    // the whole fluffle when P3 re-pointed `pawn_at` at core's track: six
+                    // `OwnedPawn` events, `minds.len() == 0`, no per-pawn tick, no orders — a
+                    // brain that looked hung and was merely holding nothing ([I14]).
+                    let at = _bot.pawn_at(*entity_reference).unwrap_or(self.home);
+                    {
                         tracing::info!(pawn = format!("{entity_reference:#010x}"), ?at,
-                            "owned pawn adopted from the world model (snapshot race)");
+                            positioned = _bot.pawn_at(*entity_reference).is_some(),
+                            "owned pawn adopted");
                         self.minds.insert(*entity_reference, Mind {
                             at,
                             dest: None,
