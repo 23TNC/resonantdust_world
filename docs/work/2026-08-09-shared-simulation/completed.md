@@ -3,6 +3,31 @@
 _The verification log: what landed and **how it was checked**. Append-only; authoritative for what
 is done. Items live in [`todo.md`](todo.md) with their boxes ticked._
 
+## 2026-08-10 — P2 item 2: pace is derived, and a THIRD mirrored pair collapses
+
+`move_eval::ground_speed` is now THE pace. Found while wiring the track: the worker's
+`ground_speed_tics` and the wasm bundle's `pawn_ground_speed` were **a second mirrored pair** —
+each assembling the same trait rows and calling the same `stat_eval` in its own words. They
+happened to agree, which is exactly the condition under which a divergence goes unnoticed; the
+2x that opened this stream was invisible for the same reason until the measurement was split by
+kind.
+
+The track stores each pawn's raw payload and `needs` rows (`observe_payload`/`observe_need`) and
+`derive_paces(bundle, now)` evaluates the unpaced ones. A trait or need change clears the cached
+pace, so a condition that slows a stat slows the walk — the property the worker gets by
+re-evaluating per hop.
+
+Also added `move_eval::advance_along`: the tail of `position_at`, split out so the track can
+compute a leg ONCE when the intent arms and interpolate it per frame **through the same
+arithmetic** rather than an equivalent-looking reimplementation. That distinction is the whole
+subject of the module — the cheap path and the correct path must be the same code.
+
+**Verified against the real corpus**, not a fixture: `bunny_and_wolf_derive_their_authored_paces`
+loads `content/` off disk, mints each species' payload the way `CREATE` does, and asserts
+**bunny 24.0 / wolf 12.0** tics/tile — `walks` levels 1 and 2 of `add = [24, 12, 6]`. It skips
+loudly rather than silently passing if the corpus is absent. All 7 track tests green,
+`bin/rd build core` green.
+
 ## 2026-08-10 — P2 items 1+4: the Rust client can finally answer "where is that pawn"
 
 **Landed** [`client/core/src/movers.rs`](../../../client/core/src/movers.rs): a `MoverTrack`

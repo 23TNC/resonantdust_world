@@ -40,6 +40,43 @@ pub fn hop_stride_tiles(tics_per_tile: f64) -> f64 {
 /// A grid pathability probe: `true` = a pawn may occupy that tile.
 pub type Pathable<'a> = &'a dyn Fn(i32, i32) -> bool;
 
+/// **THE pace** — a pawn's derived `ground_speed` in tics per tile (lower is faster).
+///
+/// It belongs here, beside the walk that consumes it, because it was the second mirrored pair in
+/// this system: the worker had `ground_speed_tics` and the wasm bundle had `pawn_ground_speed`,
+/// each assembling the same trait rows and calling the same `stat_eval` in its own words. They
+/// happened to agree — but "happened to" is the whole problem, and a pace that drifts is
+/// indistinguishable from a walk that drifts until you split the measurement by kind.
+///
+/// `kind` is the content object id; `payload` the pawn's raw opcode stream; `needs` its
+/// `(row, set_tic)` sub-table rows. Returns `0.0` when the pawn derives no ground speed at all —
+/// callers must treat that as "cannot ground-move", never as "use a default": a wrong default is
+/// an 8x error on the pawns it is wrong about.
+pub fn ground_speed(
+    bundle: &crate::loader::Bundle,
+    kind: u16,
+    payload: &[u32],
+    needs: &[(u64, u16)],
+    now: u16,
+) -> f64 {
+    let raw_traits = resonantdust_codec::payload::payload_traits(payload);
+    let conditions = resonantdust_codec::payload::payload_conditions(payload);
+    let traits = bundle.object_trait_rows(kind, &raw_traits);
+    let active = crate::needs_eval::active_conditions(bundle, &traits, needs, &conditions, now);
+    crate::stat_eval::stat_value(bundle, "ground_speed", &traits, &active)
+}
+
+/// The content `kind` id carried by a `definition_reference`. A CREATE-minted pawn packs
+/// `TYPE | species | kind | variant` (a nonzero high half tells it apart); a legacy raw
+/// object-id def is the id itself.
+pub fn def_kind_id(definition_reference: u32) -> u16 {
+    if definition_reference >> 16 != 0 {
+        ((definition_reference & 0xffff) >> 4) as u16
+    } else {
+        definition_reference as u16
+    }
+}
+
 /// The tile a fractional world point sits in. The half-open edge rule (chord-movement I2):
 /// subtile 0 belongs to the tile, so this is a floor — matching `codec::object::position_to_tile`
 /// on any point that came from a `position_reference`.
@@ -64,7 +101,7 @@ pub struct Hop {
 /// SUBTILE point, so the real segment can clip a corner the validated one did not — hence the
 /// separate [`crate::path_eval::clear_point_fraction`] on the actual segment. `None` = no route
 /// this hop; the caller steps nothing and re-routes next time.
-fn first_leg(
+pub fn first_leg(
     from: (f64, f64),
     dest_tile: (i32, i32),
     pathable: Pathable,
@@ -156,18 +193,39 @@ pub fn position_at(
     if tile_of(from) == dest_tile || pace < 1.0 {
         return from;
     }
-    let Some(((dx, dy), clear)) = first_leg(from, dest_tile, pathable) else { return from };
-    let len = dx.hypot(dy);
-    if len <= f64::EPSILON {
+    let Some((leg, clear)) = first_leg(from, dest_tile, pathable) else { return from };
+    advance_along(from, leg, clear, base_tic, now, pace)
+}
+
+/// Walk `from` along a PRE-COMPUTED leg for the time elapsed since `base_tic`.
+///
+/// The tail of [`position_at`], split out so a consumer that already knows the leg — the client's
+/// mover track computes it once when an intent arms, rather than re-pathfinding every frame — gets
+/// bit-identical motion instead of an "equivalent" reimplementation. That distinction is the
+/// entire subject of this module: the cheap version and the correct version must be the same code.
+///
+/// `clear` is the pathable fraction of the leg (`1.0` = wholly clear).
+pub fn advance_along(
+    from: (f64, f64),
+    leg: (f64, f64),
+    clear: f64,
+    base_tic: u16,
+    now: u16,
+    pace: f64,
+) -> (f64, f64) {
+    let len = leg.0.hypot(leg.1);
+    if len <= f64::EPSILON || pace < 1.0 {
         return from;
     }
+    // A future `base_tic` reads as elapsed ZERO, never as most of a ring: on the wrapping u16 the
+    // two are the same bits, and guessing wrong teleports the pawn (the needs-eval rule).
     let raw = now.wrapping_sub(base_tic);
     let elapsed = if raw > u16::MAX / 2 { 0 } else { raw } as f64;
     let f = (elapsed / pace / len).min(1.0).min(clear);
     if f <= f64::EPSILON {
         return from;
     }
-    (from.0 + dx * f, from.1 + dy * f)
+    (from.0 + leg.0 * f, from.1 + leg.1 * f)
 }
 
 #[cfg(test)]

@@ -42,7 +42,7 @@ so P2 must have landed. Do not reorder.
 
 - [x] Add a `movers` track to `client/core`: entity → last authoritative point + tic, active
       intent, pace. Fed from `StateObject` and `MoveIntent`. Acceptance: `bin/rd build core` green.
-- [ ] Derive each mover's pace in core through the shared `stat_eval`, never a constant.
+- [x] Derive each mover's pace in core through the shared `stat_eval`, never a constant.
       Acceptance: core reports 24 tics/tile for a bunny and 12 for a wolf.
 - [ ] Expose `pawn_point(entity, now_tic)` over the track via `move_eval::position_at`.
       Acceptance: a headless run logs a moving pawn's point changing between two anchors.
