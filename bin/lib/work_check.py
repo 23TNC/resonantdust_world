@@ -450,6 +450,39 @@ def _tail_entries(path: str, n: int, width: int = 220) -> list[str]:
     return out[-n:]
 
 
+def _execution_order(stream: str) -> list:
+    """Phase ids from an `EXECUTION ORDER` table in `todo.md`, in the order given.
+
+    A plan that gets amended cannot reorder itself: items never move, so new phases append at the
+    end even when they insert in the middle. File order then stops being execution order, and this
+    brief — which reported the first open item in FILE order — sent a resuming session at the wrong
+    phase and at items whose dependencies had not been built (shared-simulation, 2026-08-10: it
+    pointed at P3 when P2c/P2d/P2e had to land first, and at a signature the amendment existed to
+    prevent). A plan that declares its order gets obeyed; one that does not keeps file order.
+    """
+    path = os.path.join(WORK, stream, "todo.md")
+    if not os.path.exists(path):
+        return []
+    order, seen = [], False
+    for line in open(path, encoding="utf-8"):
+        if "EXECUTION ORDER" in line:
+            seen = True
+            continue
+        if not seen:
+            continue
+        if line.startswith("## "):
+            break
+        m = re.search(r"\*\*(P[0-9a-z]+)\*\*", line)
+        if m and m.group(1) not in order:
+            order.append(m.group(1))
+    return order
+
+
+def _phase_id(phase: str) -> str:
+    """A phase heading's id — `P2c` out of `P2c — the read surface (before P3)`."""
+    return phase.split()[0].strip() if phase.strip() else ""
+
+
 def brief(stream: str, next_n: int = 3) -> str:
     """The compact resume payload — what a session needs to continue without re-deriving.
 
@@ -462,6 +495,16 @@ def brief(stream: str, next_n: int = 3) -> str:
     items = _scan_items(stream)
     open_items = [(s, t) for s, done, t in items if not done]
     done_n = len(items) - len(open_items)
+    # Honour a declared EXECUTION ORDER over file order; unlisted phases keep their place at the end.
+    order = _execution_order(stream)
+    if order:
+        rank = {pid: i for i, pid in enumerate(order)}
+        open_items = [
+            it for _, it in sorted(
+                enumerate(open_items),
+                key=lambda p: (rank.get(_phase_id(p[1][0]), len(rank)), p[0]),
+            )
+        ]
     phase = open_items[0][0] if open_items else ""
     L = [f"STREAM  docs/work/{stream}/   ({done_n}/{len(items)} items done · status={_status(stream) or '?'})"]
     if phase:

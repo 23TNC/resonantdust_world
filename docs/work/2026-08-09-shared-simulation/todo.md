@@ -8,8 +8,35 @@ _Items never move; `[x]` IS the move. Context in [`README.md`](README.md), decis
 live fluffle at `:5174/?user=Claude&focus=124,75&zoom=1` read through the console probe P0 builds.
 Server behaviour: `bin/sim logs worker` and `spacetime sql resonantdust-dev-pawn-0`.
 
-**Phase order is load-bearing.** P4 deletes the client's only way to move a pawn between anchors,
-so P2 must have landed. Do not reorder.
+**Phase order is load-bearing, and FILE ORDER IS NOT EXECUTION ORDER.** The 2026-08-10 amendment
+appended its phases at the end because items never move, but they *insert* at the numbers they
+carry. A session that works this file top-to-bottom will run P3 before the read surface P3 depends
+on, and will build P4 item 4's `pawnPoint(entity, nowTic)` — the signature the amendment exists to
+prevent. `rd work brief` reports the first phase with open items in FILE order, so it will point at
+P3; check this list instead.
+
+**EXECUTION ORDER**
+
+| # | phase | what it delivers | gates |
+|---|---|---|---|
+| 1 | **P2c** | the read surface — a host ASKS core; core owns the corpus | everything after it |
+| 2 | **P2d** | the pawn's gameplay ROWS are core's answer ([I8](issues.md#i8)) | P3, P4 |
+| 3 | **P2e** | one clock — core answers "what tic is it" | P4's `nowTic()` |
+| 4 | **P3** | npc reads the mover track | P3b |
+| 5 | **P3b** | the intent queue is STATE, not a picture | — |
+| 6 | **P3c** | one door: the input BINDER | P3d |
+| 7 | **P3d** | one door: the AFFORDANCE query | — |
+| 8 | **P4** + amendments | webgl becomes a display | P5, P6 |
+| 9 | **P5** + amendments | the guard, and the labels that caused this | — |
+| 10 | **P6** + amendments | the exit | — |
+
+**The one hard dependency to keep in view:** P4's original item 4 says `pawnPoint(entity, nowTic)`;
+the amendment supersedes it with `pawnPoint(entity)` plus `nowTic()`. Build the original signature
+and the leak returns on arrival. Read `## P4 — amendments` BEFORE starting `## P4`.
+
+**Scale.** 56 open items. That is a large stream and splitting was offered; the user's call was to
+handle them here. P3b/P3c/P3d are the separable third if that changes — they are the queue, the
+binder and the affordance query, none of which P4 needs.
 
 ## P0 — the measurement, so the fix is provable
 
