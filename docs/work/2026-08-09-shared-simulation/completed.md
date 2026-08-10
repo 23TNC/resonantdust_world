@@ -3,6 +3,35 @@
 _The verification log: what landed and **how it was checked**. Append-only; authoritative for what
 is done. Items live in [`todo.md`](todo.md) with their boxes ticked._
 
+## 2026-08-10 — P2b items 1-3: core holds the world, and the unknown-cell law is pinned
+
+**Landed** [`client/core/src/world_view.rs`](../../../client/core/src/world_view.rs) — npc's
+composed view pulled up unchanged in behaviour: baseline tiles ⊕ cold overlays, the composed thing
+layer (where a stored **0 SUPPRESSES** — the felled tree — so absent and zero cannot mean the same
+thing), `tile_kind_at`, `thing_kind_at`, `nearest_tile`, `nearest_thing`, and **`pathable`**
+derived from the corpus's own `tile_pathable`/`thing_pathable` predicates.
+
+**The unstreamed-cell law now exists as one named constant**, `UNKNOWN_CELL_IS_PATHABLE = true`,
+with the reasoning attached: an unseen cell is unseen, not a wall, and treating it as blocked would
+stop every pawn pathing beyond its own streamed window. It was previously answered independently by
+each host, which is exactly how two clients come to disagree about the same tile.
+
+**`MoverTrack` no longer takes a pathability closure.** It takes the `WorldView` and derives the
+probe itself — because a host that supplies its own probe can supply a *different* one, which is
+this stream's defect one level down. `grep -c 'pathable: &dyn' client/core/src/movers.rs` is 0.
+
+One small improvement over the lifted original: `nearest_*` breaks ties on the lowest `(x, y)`.
+Two hosts scanning one view must agree on WHICH cell, not merely on the distance — an unstable tie
+is the difference between a reproducible brain and a coin flip.
+
+**Verified.** `bin/rd build core` green; the full `client/core` suite is **39 passed, 0 failed**,
+including five new world-view tests (overlay beats baseline, zero-suppression, unseen ≠ empty,
+zone forgetting drops overlays and things, Chebyshev-with-stable-tie).
+
+**Still open in P2b:** replacing `client/npc`'s own `tiles`/`tile_overlays`/`things` maps with
+reads of core's — the deduplication this phase exists for. Core now has the view; npc still has its
+copy.
+
 ## 2026-08-10 — P2 item 2: pace is derived, and a THIRD mirrored pair collapses
 
 `move_eval::ground_speed` is now THE pace. Found while wiring the track: the worker's

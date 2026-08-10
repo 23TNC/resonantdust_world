@@ -51,12 +51,12 @@ so P2 must have landed. Do not reorder.
 
 ## P2b — the composed WORLD VIEW moves into `client/core` ([F7](forks.md#f7))
 
-- [ ] Add a `world` view to `client/core`: baseline tile kinds per zone ⊕ cold overlays ⊕ the
+- [x] Add a `world` view to `client/core`: baseline tile kinds per zone ⊕ cold overlays ⊕ the
       composed thing view, fed from the `ColdTiles`/`ColdThings`/state events core already
       receives. Acceptance: `bin/rd build core` green.
-- [ ] Expose `pathable(x, y)` on it from the corpus flags, and give `MoverTrack` its probe
+- [x] Expose `pathable(x, y)` on it from the corpus flags, and give `MoverTrack` its probe
       internally. Acceptance: the track's `observe_*` no longer take a `pathable` argument.
-- [ ] Decide and pin the unstreamed-cell rule in ONE place — the client reads unknown as OPEN, the
+- [x] Decide and pin the unstreamed-cell rule in ONE place — the client reads unknown as OPEN, the
       worker does not. Acceptance: a unit test asserts the chosen rule; the divergence is logged
       in [`issues.md`](issues.md).
 - [ ] Replace `client/npc`'s own `tiles`/`tile_overlays`/thing view with reads of core's.

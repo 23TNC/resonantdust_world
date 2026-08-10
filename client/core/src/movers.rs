@@ -16,6 +16,10 @@
 //!
 //!   - **An older row never applies.** A zone re-subscribe replays STATE history, and a stale row
 //!     landing after a fresh one drags the anchor backwards.
+//! The track takes the composed [`crate::world_view::WorldView`] rather than a pathability
+//! closure: a host that had to supply its own probe could supply a DIFFERENT one, which is the
+//! defect this stream exists to close, one level down.
+//!
 //!   - **A replayed intent never arms.** The same replay re-delivers minutes-old `MOVE_TO`s. A
 //!     LIVE intent trails the newest row by only the queue barrier; a replay trails it by
 //!     hundreds, so an intent far enough behind the freshest row is history, not an order.
@@ -113,7 +117,8 @@ impl MoverTrack {
         point: (f64, f64),
         facing: u8,
         tic: u16,
-        pathable: &dyn Fn(i32, i32) -> bool,
+        world: &crate::world_view::WorldView,
+        bundle: &resonantdust_content::loader::Bundle,
     ) -> bool {
         if let Some(m) = self.movers.get(&entity) {
             if tic_newer(m.tic, tic) {
@@ -147,7 +152,11 @@ impl MoverTrack {
         // mirrored at the anchor cadence rather than guessed at between them.
         entry.leg = entry
             .dest
-            .and_then(|d| resonantdust_content::move_eval::first_leg(point, tile_of(d), pathable));
+            .and_then(|d| {
+                resonantdust_content::move_eval::first_leg(point, tile_of(d), &|x, y| {
+                    world.pathable(bundle, x, y)
+                })
+            });
         true
     }
 
@@ -159,7 +168,8 @@ impl MoverTrack {
         entity: u32,
         dest: (f64, f64),
         event_tic: u16,
-        pathable: &dyn Fn(i32, i32) -> bool,
+        world: &crate::world_view::WorldView,
+        bundle: &resonantdust_content::loader::Bundle,
     ) -> bool {
         let Some(m) = self.movers.get_mut(&entity) else {
             // No anchor yet — the intent has nothing to walk FROM. Dropping it is safe: the
@@ -176,7 +186,9 @@ impl MoverTrack {
         }
         m.intent_tic = Some(event_tic);
         m.dest = Some(dest);
-        m.leg = resonantdust_content::move_eval::first_leg(m.point, tile_of(dest), pathable);
+        m.leg = resonantdust_content::move_eval::first_leg(m.point, tile_of(dest), &|x, y| {
+            world.pathable(bundle, x, y)
+        });
         true
     }
 
@@ -255,13 +267,22 @@ fn tile_of(p: (f64, f64)) -> (i32, i32) {
 mod tests {
     use super::*;
 
-    fn open(_x: i32, _y: i32) -> bool {
-        true
+    /// An EMPTY view is the open field: every cell is unseen, and unseen is pathable
+    /// ([`crate::world_view::UNKNOWN_CELL_IS_PATHABLE`]).
+    fn open() -> crate::world_view::WorldView {
+        crate::world_view::WorldView::new()
+    }
+
+    /// A corpus is required by the signature but never consulted on an all-unknown view.
+    fn corpus() -> resonantdust_content::loader::Bundle {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
+        let sources = resonantdust_content::content::read_content_dir(&root).expect("content/");
+        resonantdust_content::load(&sources).expect("corpus loads")
     }
 
     fn track_with_pawn() -> MoverTrack {
         let mut t = MoverTrack::new();
-        assert!(t.observe_state(1, 0, 0, (10.0, 10.0), 0, 100, &open));
+        assert!(t.observe_state(1, 0, 0, (10.0, 10.0), 0, 100, &open(), &corpus()));
         t.movers.get_mut(&1).unwrap().pace = Some(24.0);
         t
     }
@@ -271,7 +292,7 @@ mod tests {
     #[test]
     fn a_walking_pawn_moves_between_anchors() {
         let mut t = track_with_pawn();
-        assert!(t.observe_intent(1, (30.0, 10.0), 102, &open));
+        assert!(t.observe_intent(1, (30.0, 10.0), 102, &open(), &corpus()));
         let at_start = t.point_at(1, 100).unwrap();
         let mid = t.point_at(1, 112).unwrap();
         assert_eq!(at_start, (10.0, 10.0));
@@ -283,8 +304,8 @@ mod tests {
     #[test]
     fn an_unpaced_pawn_holds_position() {
         let mut t = MoverTrack::new();
-        t.observe_state(1, 0, 0, (10.0, 10.0), 0, 100, &open);
-        t.observe_intent(1, (30.0, 10.0), 102, &open);
+        t.observe_state(1, 0, 0, (10.0, 10.0), 0, 100, &open(), &corpus());
+        t.observe_intent(1, (30.0, 10.0), 102, &open(), &corpus());
         assert_eq!(t.point_at(1, 400), Some((10.0, 10.0)));
     }
 
@@ -293,8 +314,8 @@ mod tests {
     #[test]
     fn an_older_row_is_rejected() {
         let mut t = track_with_pawn();
-        assert!(t.observe_state(1, 0, 0, (12.0, 10.0), 0, 132, &open));
-        assert!(!t.observe_state(1, 0, 0, (10.0, 10.0), 0, 100, &open));
+        assert!(t.observe_state(1, 0, 0, (12.0, 10.0), 0, 132, &open(), &corpus()));
+        assert!(!t.observe_state(1, 0, 0, (10.0, 10.0), 0, 100, &open(), &corpus()));
         assert_eq!(t.get(1).unwrap().point, (12.0, 10.0));
     }
 
@@ -303,13 +324,13 @@ mod tests {
     #[test]
     fn a_replayed_intent_is_rejected() {
         let mut t = track_with_pawn();
-        assert!(!t.observe_intent(1, (30.0, 10.0), 100u16.wrapping_sub(500), &open));
+        assert!(!t.observe_intent(1, (30.0, 10.0), 100u16.wrapping_sub(500), &open(), &corpus()));
         assert!(!t.get(1).unwrap().walking());
         // ...while an intent inside the barrier arms normally.
-        assert!(t.observe_intent(1, (30.0, 10.0), 104, &open));
+        assert!(t.observe_intent(1, (30.0, 10.0), 104, &open(), &corpus()));
         assert!(t.get(1).unwrap().walking());
         // ...and a serially older one no longer supersedes it.
-        assert!(!t.observe_intent(1, (5.0, 10.0), 103, &open));
+        assert!(!t.observe_intent(1, (5.0, 10.0), 103, &open(), &corpus()));
     }
 
     /// Arrival clears the intent. Without this the pawn keeps being interpolated toward a
@@ -317,9 +338,9 @@ mod tests {
     #[test]
     fn arriving_clears_the_walk() {
         let mut t = track_with_pawn();
-        t.observe_intent(1, (12.0, 10.0), 102, &open);
+        t.observe_intent(1, (12.0, 10.0), 102, &open(), &corpus());
         assert!(t.get(1).unwrap().walking());
-        t.observe_state(1, 0, 0, (12.0, 10.0), 1, 150, &open);
+        t.observe_state(1, 0, 0, (12.0, 10.0), 1, 150, &open(), &corpus());
         assert!(!t.get(1).unwrap().walking());
         assert_eq!(t.point_at(1, 900), Some((12.0, 10.0)));
     }
@@ -328,8 +349,8 @@ mod tests {
     #[test]
     fn a_closed_zone_drops_its_pawns() {
         let mut t = MoverTrack::new();
-        t.observe_state(1, 7, 0, (10.0, 10.0), 0, 100, &open);
-        t.observe_state(2, 8, 0, (20.0, 20.0), 0, 100, &open);
+        t.observe_state(1, 7, 0, (10.0, 10.0), 0, 100, &open(), &corpus());
+        t.observe_state(2, 8, 0, (20.0, 20.0), 0, 100, &open(), &corpus());
         t.forget_zone(7);
         assert!(t.get(1).is_none());
         assert!(t.get(2).is_some());

@@ -43,6 +43,7 @@ pub mod clock;
 pub mod config;
 pub mod gateway;
 pub mod movers;
+pub mod world_view;
 pub mod protocol;
 pub mod ticclock;
 pub mod world;
