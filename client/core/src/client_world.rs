@@ -292,6 +292,38 @@ mod tests {
         assert_eq!(cw.movers.get(1).unwrap().pace, Some(24.0));
     }
 
+    /// The read surface end-to-end, as a HOST sees it: an event goes through the fold and the
+    /// answer comes back off the model. The tick audit unticked P2c item 1 for the absence of
+    /// exactly this — the `emit` fold and the anchor-less `None` path had no test at all.
+    #[test]
+    fn an_event_folded_yields_an_answer_and_no_clock_means_none() {
+        use crate::api::Event;
+        let mut cw = ClientWorld::new();
+        cw.set_corpus(std::sync::Arc::new(corpus()));
+
+        // No TicAnchor yet: the clock has not anchored, so there is NO tic to answer at.
+        assert_eq!(cw.now_tic_at(1000.0), None, "an unanchored clock must answer None, not 0");
+
+        cw.observe_event(&Event::TicAnchor { tic: 100, wall_ms: 0.0, tics_per_sec: 6.0 }, 0.0);
+        assert_eq!(cw.now_tic_at(0.0), Some(100));
+        assert_eq!(cw.now_tic_at(2000.0), Some(112), "12 tics in 2 s at 6 Hz");
+
+        cw.observe_event(&Event::StateObject {
+            macro_position: 0, entity_reference: 1, definition_reference: 0,
+            tile_x: 10, tile_y: 10, sub_x: 8, sub_y: 0, facing: 0, tic: 100, removed: false,
+        }, 0.0);
+        assert_eq!(cw.pawn_point(1, 100), Some((10.5, 10.0)), "subtile survives the fold");
+
+        // And a removal takes both the mover and its rows.
+        cw.rows.observe_payload(1, 0, vec![1, 2, 3]);
+        cw.observe_event(&Event::StateObject {
+            macro_position: 0, entity_reference: 1, definition_reference: 0,
+            tile_x: 10, tile_y: 10, sub_x: 0, sub_y: 0, facing: 0, tic: 101, removed: true,
+        }, 0.0);
+        assert_eq!(cw.pawn_point(1, 101), None);
+        assert!(cw.rows.payload(1).is_empty(), "rows must go with the entity");
+    }
+
     /// A closing zone must clear BOTH halves. A mover left in a closed zone is a ghost that
     /// never moves again; a stale tile is a wall that is no longer there.
     #[test]

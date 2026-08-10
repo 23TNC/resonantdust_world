@@ -118,7 +118,7 @@ binder and the affordance query, none of which P4 needs.
 _Nine ticked items were unticked after an adversarial re-run of their own criteria; these are the
 gaps that had no item at all. Full findings in [`tick-audit.md`](tick-audit.md)._
 
-- [ ] Add a core test that feeds a `StateObject` through `Engine::emit` and reads `pawn_point` off
+- [x] Add a core test that feeds a `StateObject` through `Engine::emit` and reads `pawn_point` off
       the handle, covering the anchor-less `None` path. Acceptance: the test exists and passes.
 - [ ] Cover `next_hop`'s blocked-path branches. Acceptance: a `panic!` inserted in the recenter
       (`clear == 0`) or in the sub-1 `clear` clamp fails a test; today neither branch is reached.

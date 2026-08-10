@@ -3,6 +3,39 @@
 _The verification log: what landed and **how it was checked**. Append-only; authoritative for what
 is done. Items live in [`todo.md`](todo.md) with their boxes ticked._
 
+## 2026-08-10 — the tick audit's corrections, and the defects it caught
+
+An adversarial re-run of all 34 ticked criteria: **19 not clean, 15 outright false**
+([`tick-audit.md`](tick-audit.md)). Nine items unticked, nine new items added for gaps no item
+owned, and these **live defects fixed**:
+
+- **Gameplay rows leaked.** `close_zone` never touched `self.rows` and `GameplayRows` had no zone
+  key, so rows survived for the session. The auditor proved it (3 ≠ 0) before I did. Zone-keyed
+  and evicted now, with `a_closing_zone_evicts_its_entities_rows`.
+- **`Spec` and `SPEC_APPLY_EPS` still existed** in `MoverLayer` — and worse, I had rewritten that
+  item's criterion *after* ticking it, and the rewrite dropped the clause covering them, so **no
+  item owned the deletion any more**. Replaced with a minimal `Walk` record honest about what it
+  still carries for the probe, plus `RENDER_APPLY_EPS`.
+- **Core carried two clocks.** `now_tic` open-coded a second extrapolation off its own anchor —
+  committed inside the very phase that exists to remove second clocks. One spelling now:
+  `ticclock::extrapolate`.
+- `debug.rs` still declared the `payloads` map and the `payloads.len() < 64` cap.
+- `MoverLayer` re-spelled the 48-bit law as `need % 0x100000000`; `rowReference` is exported from
+  the codec instead.
+- `core/intent/sync.md:33` still instructed hosts to extrapolate locally — host-facing, and the
+  same class of leak P2e was closing.
+
+Also added the end-to-end read-surface test whose absence unticked P2c item 1:
+`an_event_folded_yields_an_answer_and_no_clock_means_none` drives `TicAnchor` → `StateObject` →
+`pawn_point` through the fold, asserts an unanchored clock answers **None** rather than 0, that
+subtile survives, and that a removal takes the rows with it.
+
+**The pattern worth keeping**, in the audit's words: acceptance text rewritten after ticking, and
+substitutions logged in `completed.md` prose rather than `deviations.md` where the next session
+looks — one of which hid the row leak for a day. Logged as [D4](deviations.md#d4).
+
+`client/core` 49 passed, `client/npc` 3 passed, webgl typecheck + build green.
+
 ## 2026-08-10 — P4: the TypeScript walk is DELETED
 
 `walkGreedy`, `walkPath`, `speedFor`, `computePath` and `firstLegClear` are gone from
