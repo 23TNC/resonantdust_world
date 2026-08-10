@@ -2,6 +2,29 @@
 
 _Problems hit, candidate solutions, which we chose and why. Chronological append._
 
+## I13 — the wolf-chase criterion cannot be met in a 10-minute soak, by construction
+**2026-08-10. PLAN ERROR — criterion reworded; the underlying check still owed.**
+
+P3's "a wolf closes on a moving bunny without overshoot across a **10-minute soak**" never fired in
+two consecutive soaks (`food=0` in both). Not a bug in the chase — arithmetic:
+
+`hunger` authors `deplete = 43200.0` and a `hungry` band of 10–35 (`content/needs.toml`). A wolf
+mints FULL, so it must drain 65 of 100 units before the hunt triggers: `0.65 × 43200 ≈ 28,000
+tics ≈ **78 minutes** at 6 Hz. A ten-minute window cannot contain the event it is asserting about.
+
+Nor can I force it from the client: `SET_NEED` is not in the edge's verb allowlist
+(movement-hardening), which is correct — a client that could rewrite a pawn's needs is a client
+that can cheat. Queuing it from the browser was silently dropped, as designed.
+
+**Reworded** to what is actually checkable: the SELECTION property (the hunt picks its target from
+core's subtile point, unit-testable) plus a conditional soak assertion (IF a hunt fires, the
+wolf→prey distance decreases). The 78-minute observation is worth having and belongs in a long
+soak, not in this stream's inner loop.
+
+**The general lesson for this plan:** an acceptance criterion that names a duration should be
+checked against the timescale of the behaviour it waits for. Three of this stream's criteria say
+"10-minute soak"; only one of them is about something that happens every few seconds.
+
 ## I12 — the I9 fix left a live deadlock in the wolf path, and the compiler said so
 **2026-08-10. Fixed.**
 
